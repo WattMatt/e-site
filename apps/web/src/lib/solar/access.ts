@@ -6,6 +6,13 @@
  *   public.solar_access_level(project) → 'view' | 'edit' | 'edit_financials' | NULL
  *   public.org_has_solar(org)          → boolean (active, in-date org subscription)
  *
+ * org_has_solar answers ONLY for active members of that org: it returns false
+ * for everyone else, including external project members who hold a View
+ * grant on one of the org's projects. It is not a cross-org oracle. Callers
+ * must therefore NOT use it to choose between "Subscribe" and "Request access"
+ * for an external member (a false there does not mean "unsubscribed"); decide
+ * from solar_access_level and the caller's own org membership instead.
+ *
  * app/api/* routes sit outside (admin)/layout.tsx, so each must call
  * requireSolarLevel (or getSolarAccessLevel) itself.
  */

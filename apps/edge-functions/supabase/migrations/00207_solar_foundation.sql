@@ -23,16 +23,27 @@
 -- grant, at what level, who may request one, and whose grant is honoured:
 --   'edit_financials' — an ACTIVE member of the project's org whose effective
 --       project role (00107: org owner/admin/PM wins, else an active
---       project_members row) is non-null and not client_viewer/supplier;
+--       project_members row) is non-null and not client_viewer/supplier, AND
+--       who passes the user_has_project_access shape (00204) themselves: an
+--       owner/admin/PM of the project's org, or an active project_members row
+--       whose identity org (pm.organisation_id) they are active in;
 --   'view' — an EXTERNAL project member (owner decision 2026-09-28): an active
---       project_members row, role not client_viewer/supplier, whose identity
---       org (pm.organisation_id, the sub-org convention) they are ACTIVE in,
---       and who is NOT an active member of the project's org;
+--       project_members row whose identity org (pm.organisation_id, the
+--       sub-org convention) they are ACTIVE in, with neither the row's role nor
+--       that membership's role client_viewer/supplier, and who is NOT an
+--       active member of the project's org;
 --   NULL — everyone else (client viewers and suppliers from ANY org, anyone
 --       deactivated, non-members). A forged grant row above the max is capped;
 --       one for an ineligible user is inert.
--- LAPSE = HIDDEN BUT KEPT (D-02): every policy goes through the helper, so a
--- lapsed org reads and writes nothing while its rows stay untouched.
+-- LAPSE = HIDDEN BUT KEPT (D-02): every policy on solar.studies and
+-- solar.audit_events goes through the helper, so a lapsed org reads and writes
+-- no Solar data while its rows stay untouched.
+-- NOT SUBSCRIPTION-GATED, deliberately: solar.project_access and
+-- solar.access_requests. A 'subscribe' request exists precisely because the
+-- org has not paid, and owners/admins may set up grants before paying; a grant
+-- confers nothing while the org is unsubscribed (solar_access_level is NULL).
+-- Only active members of the project's own org may raise a 'subscribe'
+-- request; its approval never carries a level.
 --
 -- NEW SCHEMA CHECKLIST (00126): grants below (no anon), config.toml, AND the
 -- production PostgREST db_schema PATCH at apply time — without the PATCH,
@@ -46,6 +57,7 @@
 -- table: solar.studies
 -- table: solar.audit_events
 -- constraint: org_addon_subscriptions_period_when_live ON billing.org_addon_subscriptions
+-- constraint: org_addon_subscriptions_amount_non_negative ON billing.org_addon_subscriptions
 -- function: solar.org_subscription_active(uuid)
 -- function: solar.user_max_grant_level(uuid, uuid)
 -- function: public.org_has_solar(uuid)
@@ -94,6 +106,7 @@
 -- grant_absent: authenticated EXECUTE ON solar.org_subscription_active(uuid)
 -- grant_absent: anon EXECUTE ON solar.user_max_grant_level(uuid, uuid)
 -- grant_absent: authenticated EXECUTE ON solar.user_max_grant_level(uuid, uuid)
+-- anon_execute_absent: ALL prosecdef functions in solar
 -- sql: (SELECT NOT has_schema_privilege('anon', 'solar', 'USAGE'))
 -- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'solar.studies'::regclass AND polcmd IN ('r', '*'))
 -- sql: (SELECT count(*) = 0 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND p.polpermissive = false AND p.polcmd IN ('r', '*'))
@@ -102,12 +115,20 @@
 -- behaviour: scripts/db/assert-solar-foundation-roles.sql — every row ok
 -- @verify:end
 --
--- ⚠ The FORCE bool_and directive above is re-checked on EVERY later deploy
--- (the post-push verifier re-runs every block >= 00185). It covers relkind 'r'
--- in schema solar, which includes each PARTITION of a future partitioned table
--- (meter_readings, D-23). A partition created without FORCE ROW LEVEL SECURITY
--- turns main's deploy red at the verify step. Set FORCE on every partition, or
--- amend this directive in the same PR (the 00204/00206 rule).
+-- ⚠ Three schema-wide sql: directives above are re-checked on EVERY later
+-- deploy (the post-push verifier re-runs every block >= 00185), so a later
+-- migration can turn main red at the verify step while its own push succeeds:
+--   * FORCE bool_and: covers relkind 'r' in schema solar, which includes each
+--     PARTITION of a future partitioned table (meter_readings, D-23). A
+--     partition created without FORCE ROW LEVEL SECURITY fails it.
+--   * exactly ONE policy covering SELECT on solar.studies: a later migration
+--     adding a second read policy (or a FOR ALL policy) on studies fails it.
+--   * no RESTRICTIVE read policy anywhere in schema solar: a later RESTRICTIVE
+--     FOR SELECT / FOR ALL policy on ANY solar table fails it (and is usually
+--     the 00205 bug: a restrictive FOR ALL write gate narrowing reads).
+-- The anon_execute_absent sweep likewise covers every future SECURITY DEFINER
+-- function in solar. Either conform, or amend the directive here in the same
+-- PR and prove the old directive under the new state (the 00204/00206 rule).
 
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that "rolled-back" production
@@ -129,7 +150,7 @@ CREATE TABLE IF NOT EXISTS billing.org_addon_subscriptions (
     feature_key                 TEXT NOT NULL CHECK (feature_key IN ('solar')),
     status                      TEXT NOT NULL DEFAULT 'pending'
                                   CHECK (status IN ('pending','active','non_renewing','past_due','cancelled','refunded')),
-    amount_kobo                 BIGINT NOT NULL,
+    amount_kobo                 BIGINT NOT NULL CONSTRAINT org_addon_subscriptions_amount_non_negative CHECK (amount_kobo >= 0),
     current_period_end          TIMESTAMPTZ,
     paystack_customer_code      TEXT,
     paystack_subscription_code  TEXT UNIQUE,
@@ -186,17 +207,31 @@ RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
         WHEN EXISTS (SELECT 1 FROM projects.projects p
                        JOIN public.user_organisations uo ON uo.organisation_id = p.organisation_id
                       WHERE p.id = p_project_id AND uo.user_id = p_user_id AND uo.is_active)
+        -- It must ALSO pass the user_has_project_access shape (00204) for
+        -- this user: (b) owner/admin/PM of the project's org, or (a) an active
+        -- project_members row whose identity org they are active in.
         THEN CASE WHEN COALESCE(public.user_effective_project_role(p_project_id, p_user_id), '')
                          NOT IN ('', 'client_viewer', 'supplier')
+                   AND (EXISTS (SELECT 1 FROM projects.projects p
+                                  JOIN public.user_organisations uo ON uo.organisation_id = p.organisation_id
+                                 WHERE p.id = p_project_id AND uo.user_id = p_user_id AND uo.is_active
+                                   AND uo.role IN ('owner', 'admin', 'project_manager'))
+                        OR EXISTS (SELECT 1 FROM projects.project_members pm
+                                     JOIN public.user_organisations uo
+                                       ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
+                                    WHERE pm.project_id = p_project_id AND pm.user_id = p_user_id
+                                      AND pm.is_active AND uo.is_active))
                   THEN 'edit_financials' END
         -- External project member: the 00204 clause (a) shape (active row,
-        -- active in the row's identity org) minus client-facing roles. View only.
+        -- active in the row's identity org) minus client-facing roles on
+        -- EITHER the row or the identity-org membership. View only.
         WHEN EXISTS (SELECT 1 FROM projects.project_members pm
                        JOIN public.user_organisations uo
                          ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
                       WHERE pm.project_id = p_project_id AND pm.user_id = p_user_id
                         AND pm.is_active AND uo.is_active
-                        AND pm.role NOT IN ('client_viewer', 'supplier'))
+                        AND pm.role NOT IN ('client_viewer', 'supplier')
+                        AND uo.role NOT IN ('client_viewer', 'supplier'))
         THEN 'view'
     END;
 $$;
@@ -323,6 +358,7 @@ BEGIN
     END IF;
     IF auth.uid() IS NOT NULL THEN NEW.granted_by := auth.uid(); END IF;
     IF TG_OP = 'UPDATE' THEN NEW.granted_at := OLD.granted_at; END IF;
+    IF TG_OP = 'INSERT' AND auth.uid() IS NOT NULL THEN NEW.granted_at := NOW(); END IF;
     NEW.updated_at := NOW();
     RETURN NEW;
 END $$;
@@ -382,6 +418,11 @@ BEGIN
         IF v_max IS NULL THEN
             RAISE EXCEPTION 'access_requests: requester is not an eligible member of this project' USING ERRCODE = '42501';
         END IF;
+        -- Asking an admin to subscribe is for the project's own org only
+        -- ('edit_financials' max = eligible own-org member); externals cannot.
+        IF NEW.kind = 'subscribe' AND v_max <> 'edit_financials' THEN
+            RAISE EXCEPTION 'access_requests: only members of the project''s organisation may request a subscription' USING ERRCODE = '42501';
+        END IF;
         IF array_position(v_ranks, NEW.requested_level) > array_position(v_ranks, v_max) THEN
             NEW.requested_level := v_max;
         END IF;
@@ -410,7 +451,7 @@ BEGIN
             RAISE EXCEPTION 'access_requests: only an org owner/admin may decide' USING ERRCODE = '42501';
         END IF;
         NEW.decided_by := auth.uid(); NEW.decided_at := NOW();
-        IF NEW.status = 'declined' THEN NEW.approved_level := NULL; END IF;
+        IF NEW.status = 'declined' OR NEW.kind = 'subscribe' THEN NEW.approved_level := NULL; END IF;
         IF NEW.status = 'approved' AND NEW.kind = 'access' THEN
             IF NEW.approved_level IS NULL THEN
                 RAISE EXCEPTION 'access_requests: approved_level is required' USING ERRCODE = '23514';
@@ -492,6 +533,7 @@ BEGIN
         RAISE EXCEPTION 'solar.studies: point-of-connection node belongs to another project' USING ERRCODE = '23514';
     END IF;
     IF TG_OP = 'INSERT' THEN NEW.created_by := COALESCE(auth.uid(), NEW.created_by); END IF;
+    IF TG_OP = 'INSERT' AND auth.uid() IS NOT NULL THEN NEW.created_at := NOW(); END IF;
     NEW.updated_by := COALESCE(auth.uid(), NEW.updated_by);
     NEW.updated_at := NOW();
     RETURN NEW;

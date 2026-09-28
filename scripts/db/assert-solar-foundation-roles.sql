@@ -19,6 +19,7 @@ DO $$
 DECLARE
   v_org      UUID := gen_random_uuid();
   v_org2     UUID := gen_random_uuid();
+  v_org3     UUID := gen_random_uuid();   -- a sub-org identity the v_subid user is NOT active in
   v_project  UUID := gen_random_uuid();   -- P1
   v_project2 UUID := gen_random_uuid();   -- P2, same org
   v_node1    UUID := gen_random_uuid();   -- a board on P1
@@ -35,6 +36,11 @@ DECLARE
   v_ext      UUID := gen_random_uuid();   -- EXTERNAL: active in org2, active pm row on P1 (contractor)
   v_ext2     UUID := gen_random_uuid();   -- external whose pm row is INACTIVE
   v_ext3     UUID := gen_random_uuid();   -- external DEACTIVATED in their own org2
+  v_extcv    UUID := gen_random_uuid();   -- external, pm row role client_viewer
+  v_extsup   UUID := gen_random_uuid();   -- external, pm row role supplier
+  v_extuocv  UUID := gen_random_uuid();   -- external, pm row contractor but identity-org role client_viewer
+  v_subid    UUID := gen_random_uuid();   -- own-org contractor whose pm row carries org3, where they are NOT active
+  v_req5     UUID;
   v_req4     UUID;
   v_level    TEXT;
   v_n        INT;
@@ -44,8 +50,8 @@ DECLARE
   u          UUID;
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
-  INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-probe-org'), (v_org2, 'solar-probe-org-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_nogrant, v_client, v_sup, v_orgpm, v_deact, v_foreign, v_ext, v_ext2, v_ext3] LOOP
+  INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-probe-org'), (v_org2, 'solar-probe-org-2'), (v_org3, 'solar-probe-org-3');
+  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_nogrant, v_client, v_sup, v_orgpm, v_deact, v_foreign, v_ext, v_ext2, v_ext3, v_extcv, v_extsup, v_extuocv, v_subid] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -57,7 +63,10 @@ BEGIN
     (v_client, v_org, 'client_viewer', TRUE), (v_sup, v_org, 'supplier', TRUE),
     (v_orgpm, v_org, 'project_manager', TRUE), (v_deact, v_org, 'contractor', TRUE),
     (v_foreign, v_org2, 'admin', TRUE),
-    (v_ext, v_org2, 'contractor', TRUE), (v_ext2, v_org2, 'contractor', TRUE), (v_ext3, v_org2, 'contractor', FALSE);
+    (v_ext, v_org2, 'contractor', TRUE), (v_ext2, v_org2, 'contractor', TRUE), (v_ext3, v_org2, 'contractor', FALSE),
+    (v_extcv, v_org2, 'contractor', TRUE), (v_extsup, v_org2, 'contractor', TRUE),
+    (v_extuocv, v_org2, 'client_viewer', TRUE),
+    (v_subid, v_org, 'contractor', TRUE), (v_subid, v_org3, 'contractor', FALSE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
     (v_project, v_org, 'solar-probe-project', v_admin),
     (v_project2, v_org, 'solar-probe-project-2', v_admin);
@@ -68,7 +77,10 @@ BEGIN
     (v_project2, v_pm, v_org, 'project_manager', TRUE), (v_project2, v_con, v_org, 'contractor', TRUE),
     -- externals: the row carries THEIR identity org (the sub-org convention)
     (v_project, v_ext, v_org2, 'contractor', TRUE), (v_project, v_ext2, v_org2, 'contractor', FALSE),
-    (v_project, v_ext3, v_org2, 'contractor', TRUE);
+    (v_project, v_ext3, v_org2, 'contractor', TRUE),
+    (v_project, v_extcv, v_org2, 'client_viewer', TRUE), (v_project, v_extsup, v_org2, 'supplier', TRUE),
+    (v_project, v_extuocv, v_org2, 'contractor', TRUE),
+    (v_project, v_subid, v_org3, 'contractor', TRUE);
   INSERT INTO structure.nodes (id, project_id, organisation_id, kind, code) VALUES
     (v_node1, v_project, v_org, 'main_board', 'SOLAR-PROBE-MB1'),
     (v_node2, v_project2, v_org, 'main_board', 'SOLAR-PROBE-MB2');
@@ -113,7 +125,9 @@ BEGIN
   INSERT INTO _r VALUES ('admin_is_grantor', public.solar_is_grantor(v_project));
   -- grants (granted_by forced to the caller; organisation_id bound, never trusted)
   INSERT INTO solar.project_access (project_id, user_id, level, organisation_id) VALUES (v_project, v_pm, 'view', v_org2);
-  INSERT INTO solar.project_access (project_id, user_id, level, granted_by) VALUES (v_project, v_con, 'edit', v_pm);
+  INSERT INTO solar.project_access (project_id, user_id, level, granted_by, granted_at) VALUES (v_project, v_con, 'edit', v_pm, '2000-01-01');
+  SELECT count(*) INTO v_n FROM solar.project_access WHERE project_id = v_project AND user_id = v_con AND granted_at > '2001-01-01';
+  INSERT INTO _r VALUES ('grant_insert_granted_at_ignored', v_n = 1);
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_deact, 'edit');
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project2, v_pm, 'view'), (v_project2, v_con, 'edit');
   SELECT count(*) INTO v_n FROM solar.project_access WHERE project_id = v_project AND granted_by = v_admin;
@@ -142,9 +156,11 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('supplier_grant_REFUSED', false);
   END;
   -- the admin creates the study
-  INSERT INTO solar.studies (project_id, nmd_kva) VALUES (v_project, 500);
+  INSERT INTO solar.studies (project_id, nmd_kva, created_at) VALUES (v_project, 500, '2000-01-01');
   SELECT count(*) INTO v_n FROM solar.studies WHERE project_id = v_project;
   INSERT INTO _r VALUES ('admin_creates_study', v_n = 1);
+  SELECT count(*) INTO v_n FROM solar.studies WHERE project_id = v_project AND created_at > '2001-01-01';
+  INSERT INTO _r VALUES ('study_insert_created_at_ignored', v_n = 1);
   RESET ROLE;
 
   -- ── 3. VIEW user: reads, cannot write, is not a grantor ───────────────────
@@ -406,8 +422,12 @@ BEGIN
   SET LOCAL ROLE authenticated;
   -- 00204 clause (a) joins the row's identity org, so the external passes it
   INSERT INTO _r VALUES ('external_passes_user_has_project_access', public.user_has_project_access(v_project));
-  INSERT INTO solar.access_requests (project_id, kind, requested_level) VALUES (v_project, 'access', 'edit')
-  RETURNING id INTO v_req4;
+  BEGIN
+    INSERT INTO solar.access_requests (project_id, kind, requested_level) VALUES (v_project, 'access', 'edit')
+    RETURNING id INTO v_req4;
+  EXCEPTION WHEN OTHERS THEN
+    v_req4 := NULL;   -- reported by external_request_clamped_to_view below
+  END;
   SELECT count(*) INTO v_n FROM solar.access_requests WHERE id = v_req4 AND requested_level = 'view';
   INSERT INTO _r VALUES ('external_request_clamped_to_view', v_n = 1);
   RESET ROLE;
@@ -488,6 +508,89 @@ BEGIN
   SET LOCAL ROLE authenticated;
   INSERT INTO _r VALUES ('external_deactivated_in_own_org_null', public.solar_access_level(v_project) IS NULL);
   RESET ROLE;
+
+  -- ── 7e. Ineligible shapes: client-facing externals, and an own-org member
+  --        whose project row points at a sub-org they are not active in ────
+  DECLARE
+    v_who   UUID[] := ARRAY[v_extcv, v_extsup, v_extuocv, v_subid];
+    v_name  TEXT[] := ARRAY['external_client_viewer', 'external_supplier',
+                            'external_identity_client_viewer', 'sub_org_inactive_identity'];
+    i       INT;
+  BEGIN
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    FOR i IN 1 .. array_length(v_who, 1) LOOP
+      BEGIN
+        INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_who[i], 'view');
+        RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+      EXCEPTION
+        WHEN check_violation THEN INSERT INTO _r VALUES (v_name[i] || '_grant_REFUSED', true);
+        WHEN OTHERS THEN INSERT INTO _r VALUES (v_name[i] || '_grant_REFUSED', false);
+      END;
+    END LOOP;
+    RESET ROLE;
+    FOR i IN 1 .. array_length(v_who, 1) LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', v_who[i]::text, 'role', 'authenticated')::text, true);
+      SET LOCAL ROLE authenticated;
+      BEGIN
+        INSERT INTO solar.access_requests (project_id, kind, requested_level) VALUES (v_project, 'access', 'view');
+        RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+      EXCEPTION
+        WHEN insufficient_privilege THEN INSERT INTO _r VALUES (v_name[i] || '_request_REFUSED', true);
+        WHEN OTHERS THEN INSERT INTO _r VALUES (v_name[i] || '_request_REFUSED', false);
+      END;
+      RESET ROLE;
+    END LOOP;
+    ALTER TABLE solar.project_access DISABLE TRIGGER project_access_bind;
+    FOR i IN 1 .. array_length(v_who, 1) LOOP
+      INSERT INTO solar.project_access (project_id, user_id, organisation_id, level) VALUES (v_project, v_who[i], v_org, 'edit');
+    END LOOP;
+    ALTER TABLE solar.project_access ENABLE TRIGGER project_access_bind;
+    FOR i IN 1 .. array_length(v_who, 1) LOOP
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', v_who[i]::text, 'role', 'authenticated')::text, true);
+      SET LOCAL ROLE authenticated;
+      v_level := public.solar_access_level(v_project);
+      SELECT count(*) INTO v_n FROM solar.studies WHERE project_id = v_project;
+      INSERT INTO _r VALUES (v_name[i] || '_forged_grant_inert', v_level IS NULL AND v_n = 0);
+      RESET ROLE;
+    END LOOP;
+  END;
+
+  -- ── 7f. Subscribe requests: own org only, and approval carries no level ──
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_ext::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO solar.access_requests (project_id, kind) VALUES (v_project, 'subscribe');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('external_subscribe_request_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('external_subscribe_request_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO solar.access_requests (project_id, kind) VALUES (v_project, 'subscribe') RETURNING id INTO v_req5;
+    INSERT INTO _r VALUES ('own_org_subscribe_request_accepted', v_req5 IS NOT NULL);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('own_org_subscribe_request_accepted', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  UPDATE solar.access_requests SET status = 'approved', approved_level = 'edit_financials' WHERE id = v_req5;
+  SELECT count(*) INTO v_n FROM solar.access_requests WHERE id = v_req5 AND status = 'approved' AND approved_level IS NULL;
+  SELECT v_n + count(*) INTO v_n FROM solar.project_access WHERE project_id = v_project AND user_id = v_pm AND level = 'view';
+  INSERT INTO _r VALUES ('subscribe_approval_carries_no_level', v_n = 2);
+  RESET ROLE;
+  BEGIN
+    INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo)
+    VALUES (v_org2, 'solar', 'pending', -1);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('negative_amount_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('negative_amount_REFUSED', false);
+  END;
 
   -- ── 8. Lapse: hidden but kept ─────────────────────────────────────────────
   UPDATE billing.org_addon_subscriptions SET current_period_end = now() - interval '1 day' WHERE organisation_id = v_org;
