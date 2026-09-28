@@ -90,7 +90,8 @@ export async function parseStoredFile(repo: MeterImportRepo, file: MeterFileRow,
   return { outcome: await parseMeterFile({ bytes, fileName: file.original_name, options }), sheetName: null }
 }
 
-async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: SeriesOutcome, body: SeriesBody): Promise<MeterRow> {
+/** `reused`: the request asked for a NEW meter but the file already feeds one, which is used instead. */
+async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: SeriesOutcome, body: SeriesBody): Promise<{ meter: MeterRow; reused: boolean }> {
   // A file feeds ONE meter. If this file already feeds one (an earlier commit, or a retry after a
   // partial failure: the series-hash row is written before any channel), a re-commit resolves to
   // that meter; `new` must not mint a second meter with duplicate readings, and naming a DIFFERENT
@@ -104,12 +105,12 @@ async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: 
     }
     const m = await repo.getMeter(r.meterId)
     if (!m || m.organisation_id !== ctx.orgId) throw new CommitError(404, { error: 'meter_not_found' })
-    return m
+    return { meter: m, reused: 'new' in body.meter }
   }
   if ('existingMeterId' in body.meter) {
     const m = await repo.getMeter(body.meter.existingMeterId)
     if (!m || m.organisation_id !== ctx.orgId) throw new CommitError(404, { error: 'meter_not_found' })
-    return m
+    return { meter: m, reused: false }
   }
   const n = body.meter.new
   if (n.kind === 'water') throw new CommitError(422, { error: 'water_is_not_load' })
@@ -117,7 +118,7 @@ async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: 
     throw new CommitError(422, { error: 'multi_serial_meter_is_virtual', serials: outcome.sourceSerials })
   }
   const area = n.areaM2 ?? null
-  return repo.insertMeter({
+  const inserted = await repo.insertMeter({
     organisation_id: ctx.orgId,
     label: n.label,
     site_label: n.siteLabel ?? outcome.filename.siteHint,
@@ -128,6 +129,7 @@ async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: 
     kind: n.kind,
     node_id: n.nodeId ?? null,
   })
+  return { meter: inserted, reused: false }
 }
 
 function selectChannels(outcome: SeriesOutcome, body: SeriesBody): Array<{ channel: NormalisedChannel; isPrimary: boolean }> {
@@ -192,7 +194,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
 
   // Channel choices are validated before anything is written.
   const selected = selectChannels(outcome, body)
-  const meter = await resolveMeter(repo, ctx, outcome, body)
+  const { meter, reused: reusedMeter } = await resolveMeter(repo, ctx, outcome, body)
   // Clearing and rewriting readings is not atomic across calls. Take the file out of 'accepted' before
   // the first write, so a failure part-way never leaves an accepted file with partial or empty
   // readings; only the final successful updateFile below restores 'accepted'.
@@ -258,5 +260,6 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   await repo.audit(ctx.projectId, 'meter_file_imported', {
     file_id: ctx.file.id, meter_id: meter.id, channels: results.length, identity_resolution: body.identity.resolution,
   })
-  return { meterId: meter.id, reportId, channels: results }
+  // reusedMeter: the UI says the new-meter details were NOT applied (the file already fed this meter).
+  return { meterId: meter.id, meterLabel: meter.label, reusedMeter, reportId, channels: results }
 }

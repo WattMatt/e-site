@@ -124,6 +124,15 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
     expect(state.hashes).toHaveLength(1)
   })
 
+  it('a re-commit asking for a NEW meter says it reused the recorded one (the new details are not applied)', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    const first = await commitMeterFile(repo, ctx, body({}))
+    expect(first).toMatchObject({ reusedMeter: false })
+    const second = await commitMeterFile(repo, ctx, body({ meter: { new: { label: 'Renamed', kind: 'bulk' } } }))
+    expect(second).toMatchObject({ reusedMeter: true, meterId: state.meters[0].id, meterLabel: 'TENANT-1' })
+    expect(state.meters).toEqual([expect.objectContaining({ label: 'TENANT-1', kind: 'tenant' })])
+  })
+
   it('a retry after a failed read-back check reuses the meter it created', async () => {
     const { repo, state, ctx } = setup(A_TEXT)
     state.countOffset = -1
