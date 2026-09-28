@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { createServiceClient } from '@/lib/supabase/server'
-import { billingService } from '@esite/shared'
+import { billingService, FEATURE_PRICES } from '@esite/shared'
 import { addBillingPeriod } from '@/lib/paystack/billing-period'
+import {
+  ORG_ADDON_METADATA_TYPE,
+  ORG_ADDON_CHARGE_EVENT,
+  ORG_ADDON_DUPLICATE_EVENT,
+  ORG_ADDON_UNMATCHED_EVENT,
+  nextAddonPeriodEnd,
+  subscriptionCodeOf,
+} from '@/lib/paystack/org-addon'
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
@@ -182,6 +190,150 @@ async function resolveUserOrg(supabase: Client, userId: string): Promise<string 
     .limit(1)
     .maybeSingle()
   return (data as { organisation_id?: string } | null)?.organisation_id ?? null
+}
+
+// ── Org add-on subscriptions (Solar — billing.org_addon_subscriptions, 00207) ─
+//
+// THIS ROUTE IS THE ONLY WRITER of billing.org_addon_subscriptions (service
+// client; the table has SELECT for org owner/admin and no write policy).
+// /api/paystack/solar-subscribe writes nothing — the first successful charge
+// INSERTS the row. Idempotency: `last_event_id` holds the Paystack charge
+// REFERENCE of the last charge applied — unique per charge and always present.
+// (MV keys on `event.id ?? reference`; Paystack documents no top-level event
+// id, so that is the reference in practice anyway.)
+
+interface AddonRow {
+  id: string
+  organisation_id: string
+  status: string
+  current_period_end: string | null
+  last_event_id: string | null
+  paystack_subscription_code: string | null
+}
+
+const ADDON_COLUMNS =
+  'id, organisation_id, status, current_period_end, last_event_id, paystack_subscription_code'
+
+function addonTable(supabase: Client) {
+  return (supabase as any).schema('billing').from('org_addon_subscriptions')
+}
+
+/**
+ * Apply one successful Solar charge (first or renewal) to the org's row, then
+ * log it and invoice it. Order matters: grant → payment event → notification
+ * → invoice, so a failure 500s before the invoice and the retry finds a
+ * clean state (the same rule as every other branch in this file).
+ */
+async function applyOrgAddonCharge(
+  supabase: Client,
+  a: { orgId: string; existing: AddonRow | null; data: any; firstCharge: boolean },
+): Promise<NextResponse> {
+  const { orgId, existing, data, firstCharge } = a
+  const reference = data.reference as string
+  const amountKobo = (data.amount as number | undefined) ?? FEATURE_PRICES.solar.amountKobo
+  const paidAt = (data.paid_at as string | undefined) ?? new Date().toISOString()
+  const customerCode = data.customer?.customer_code as string | undefined
+  const subscriptionCode = subscriptionCodeOf(data)
+
+  // Already applied: a duplicate delivery, or a retry after a LATER write
+  // failed. Skip only the grant — the payment event and invoice are idempotent
+  // on the reference and must still land. (The MV branch returns early here,
+  // which strands a charge with no invoice if its first attempt 500'd after
+  // the grant.)
+  const alreadyApplied = !!existing?.last_event_id && existing.last_event_id === reference
+
+  // A FIRST charge (it carries initialize-time metadata) for an org whose
+  // subscription is still live is a SECOND purchase — two tabs, or a race past
+  // the route's 409. Money moved: book it and escalate it, never extend with it.
+  const live =
+    !!existing &&
+    (existing.status === 'active' || existing.status === 'non_renewing') &&
+    !!existing.current_period_end &&
+    new Date(existing.current_period_end).getTime() > new Date(paidAt).getTime()
+  const duplicatePurchase = firstCharge && !alreadyApplied && live
+
+  if (!alreadyApplied && !duplicatePurchase) {
+    const periodEnd = nextAddonPeriodEnd(existing?.current_period_end, paidAt)
+    if (existing) {
+      const patch: Record<string, unknown> = {
+        status: 'active',
+        current_period_end: periodEnd,
+        amount_kobo: amountKobo,
+        last_event_id: reference,
+      }
+      if (customerCode) patch.paystack_customer_code = customerCode
+      if (firstCharge) {
+        // A resubscribe after a lapse, cancel or refund — D-02: everything
+        // returns. The old Paystack subscription is dead; forget its code so
+        // subscription.create can bind the new one.
+        patch.paystack_subscription_code = subscriptionCode ?? null
+        patch.started_at = paidAt
+        patch.cancelled_at = null
+        patch.refunded_at = null
+      } else if (subscriptionCode) {
+        patch.paystack_subscription_code = subscriptionCode
+      }
+      const { error } = await addonTable(supabase).update(patch).eq('id', existing.id)
+      if (error) return storageFailure('org_addon renewal', error)
+    } else {
+      const { error } = await addonTable(supabase).insert({
+        organisation_id: orgId,
+        feature_key: 'solar',
+        status: 'active',
+        amount_kobo: amountKobo,
+        current_period_end: periodEnd,
+        paystack_customer_code: customerCode ?? null,
+        paystack_subscription_code: subscriptionCode ?? null,
+        last_event_id: reference,
+        started_at: paidAt,
+      })
+      // A 23505 on org_addon_subscriptions_org_feature_key means a concurrent
+      // delivery inserted first: 500, and Paystack's retry takes the update path.
+      if (error) return storageFailure('org_addon grant', error)
+    }
+  }
+
+  // The reference → org map a refund or chargeback needs (the subscription
+  // table stores no references). A duplicate purchase is logged under its OWN
+  // type, so refunding it — which the notification asks for — never matches
+  // the refund lookup and locks the org's live subscription.
+  const logged = await logPaymentEvent(supabase, {
+    eventType: duplicatePurchase ? ORG_ADDON_DUPLICATE_EVENT : ORG_ADDON_CHARGE_EVENT,
+    reference,
+    organisationId: orgId,
+    amountKobo,
+    payload: { first_charge: firstCharge, paid_at: paidAt, subscription_code: subscriptionCode ?? null },
+  })
+  if (logged.error) return storageFailure('org_addon payment-event log', logged.error)
+
+  if (duplicatePurchase) {
+    const notified = await notifyOrgAdmins(supabase, orgId, {
+      type: 'billing_duplicate_charge',
+      title: 'Duplicate payment received',
+      body:
+        `A second Solar subscription payment was taken (reference ${reference}) while Solar is ` +
+        `already active for this organisation. A refund is required, and the extra Paystack ` +
+        `subscription should be cancelled.`,
+      data: { reference, feature_key: 'solar', amount_kobo: amountKobo },
+    })
+    if (notified.error) return storageFailure('duplicate-charge notification', notified.error)
+  }
+
+  try {
+    await billingService.recordInvoice(supabase as any, orgId, {
+      paystackReference: reference,
+      amountKobo,
+      status: 'paid',
+      description: duplicatePurchase
+        ? 'DUPLICATE PURCHASE — Solar module subscription (already active; refund required)'
+        : `Solar module subscription (annual)${firstCharge ? ' — first charge' : ' — renewal'}`,
+      paidAt,
+    })
+  } catch (err) {
+    return storageFailure('org_addon invoice', err)
+  }
+
+  return ok()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +556,59 @@ export async function POST(req: NextRequest) {
       }
 
       return ok()
+    }
+
+    // Branch A3: org add-on subscription — FIRST charge (Solar, 00207).
+    // Discriminated by metadata.type set in /api/paystack/solar-subscribe.
+    // Must sit before Branch B: this metadata carries org_id but no tier, so
+    // it would otherwise fall to Branch C and be matched against the org's
+    // TIER subscription by customer code. Renewals (metadata 0) are matched
+    // in Branch C0 below.
+    if (metadata.type === ORG_ADDON_METADATA_TYPE) {
+      const orgId = typeof metadata.org_id === 'string' ? metadata.org_id : null
+      if (!orgId || metadata.feature_key !== 'solar') {
+        const logged = await logPaymentEvent(supabase, {
+          eventType: ORG_ADDON_UNMATCHED_EVENT,
+          reference: data.reference,
+          amountKobo: data.amount,
+          payload: { reason: 'metadata names no org or an unknown add-on', metadata },
+        })
+        if (logged.error) return storageFailure('org_addon unmatched log', logged.error)
+        return ok()
+      }
+
+      // An org that does not exist is a condition no retry can fix (the FK
+      // insert would 23503 forever — a poison pill). Record the money, ack.
+      const { data: org, error: orgErr } = await (supabase as any)
+        .from('organisations')
+        .select('id')
+        .eq('id', orgId)
+        .maybeSingle()
+      if (orgErr) return storageFailure('org_addon organisation lookup', orgErr)
+      if (!org) {
+        const logged = await logPaymentEvent(supabase, {
+          eventType: ORG_ADDON_UNMATCHED_EVENT,
+          reference: data.reference,
+          amountKobo: data.amount,
+          payload: { reason: 'organisation not found', org_id: orgId },
+        })
+        if (logged.error) return storageFailure('org_addon unmatched log', logged.error)
+        return ok()
+      }
+
+      const { data: existing, error: readErr } = await addonTable(supabase)
+        .select(ADDON_COLUMNS)
+        .eq('organisation_id', orgId)
+        .eq('feature_key', 'solar')
+        .maybeSingle()
+      if (readErr) return storageFailure('org_addon read', readErr)
+
+      return applyOrgAddonCharge(supabase, {
+        orgId,
+        existing: (existing as AddonRow | null) ?? null,
+        data,
+        firstCharge: true,
+      })
     }
 
     // Branch B: subscription charge (recurring or one-off fallback).

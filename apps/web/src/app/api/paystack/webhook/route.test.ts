@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createHmac } from 'crypto'
 
 /**
@@ -670,5 +670,213 @@ describe('signature', () => {
     expect(res.status).toBe(401)
     expect(serviceClientRef.value.calls).toHaveLength(0)
     expect(recordInvoiceMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org add-on subscription — Solar (billing.org_addon_subscriptions, 00207)
+//
+// The webhook is the ONLY writer of that table. Every assertion below checks
+// the WRITE (or its absence), never just the 200, for the reason given at the
+// top of this file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SOLAR_PLAN = 'PLN_solar_annual'
+const SOLAR_ORG = '7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
+const ADDON = 'billing.org_addon_subscriptions'
+const PAID_AT = '2026-09-28T10:00:00.000Z'
+
+function solarFirstCharge(meta: Record<string, unknown> = {}) {
+  return {
+    event: 'charge.success',
+    data: {
+      reference: REF,
+      amount: 199900,
+      paid_at: PAID_AT,
+      customer: { customer_code: 'CUS_solar' },
+      plan: { plan_code: SOLAR_PLAN },
+      metadata: {
+        type: 'org_addon_subscription',
+        feature_key: 'solar',
+        org_id: SOLAR_ORG,
+        project_id: 'p-1',
+        user_id: 'u-owner',
+        return_to: '/projects/p-1/solar',
+        ...meta,
+      },
+    },
+  }
+}
+
+/** The stored subscription row, as the webhook selects it. */
+function addonRow(over: Record<string, unknown> = {}) {
+  return {
+    id: 'oas-1',
+    organisation_id: SOLAR_ORG,
+    status: 'active',
+    current_period_end: '2027-09-28T10:00:00.000Z',
+    last_event_id: REF,
+    paystack_subscription_code: 'SUB_solar',
+    ...over,
+  }
+}
+
+const orgExists = { 'public.organisations.select': { data: { id: SOLAR_ORG }, error: null } }
+
+describe('org add-on — first Solar charge', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  it('inserts an ACTIVE row with a one-year period — never pending', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(200)
+    const ins = serviceClientRef.value.of(`${ADDON}.insert`)
+    expect(ins).toHaveLength(1)
+    expect(ins[0].payload).toMatchObject({
+      organisation_id: SOLAR_ORG,
+      feature_key: 'solar',
+      status: 'active',
+      amount_kobo: 199900,
+      current_period_end: '2027-09-28T10:00:00.000Z',
+      paystack_customer_code: 'CUS_solar',
+      last_event_id: REF,
+      started_at: PAID_AT,
+    })
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('books the charge: invoice to the org + the reference→org payment event a refund needs', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    await POST(signedReq(solarFirstCharge()))
+    expect(recordInvoiceMock).toHaveBeenCalledTimes(1)
+    expect(recordInvoiceMock.mock.calls[0][1]).toBe(SOLAR_ORG)
+    expect(recordInvoiceMock.mock.calls[0][2]).toMatchObject({ paystackReference: REF, status: 'paid', amountKobo: 199900 })
+    expect(recordInvoiceMock.mock.calls[0][2].description).toMatch(/Solar/)
+    const ev = serviceClientRef.value.of('billing.payment_events.upsert')
+    expect(ev).toHaveLength(1)
+    expect(ev[0].payload).toMatchObject({
+      event_type: 'charge.success.org_addon_subscription',
+      paystack_reference: REF,
+      organisation_id: SOLAR_ORG,
+    })
+  })
+
+  it('never touches the org TIER subscription', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    await POST(signedReq(solarFirstCharge()))
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled()
+    expect(serviceClientRef.value.of('billing.subscriptions.update')).toHaveLength(0)
+  })
+
+  it('a duplicate delivery re-grants nothing but still (idempotently) books the invoice', async () => {
+    serviceClientRef.value = makeClient({
+      ...orgExists,
+      [`${ADDON}.select`]: { data: addonRow({ last_event_id: REF }), error: null },
+    })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    // The invoice write is idempotent on paystack_reference; a first attempt
+    // that 500'd AFTER the grant must still get its invoice on the retry.
+    expect(recordInvoiceMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('an unknown org: 200 (a retry cannot fix it), nothing granted, the money logged', async () => {
+    serviceClientRef.value = makeClient({ 'public.organisations.select': { data: null, error: null } })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+    expect(recordInvoiceMock).not.toHaveBeenCalled()
+    const ev = serviceClientRef.value.of('billing.payment_events.upsert')
+    expect(ev).toHaveLength(1)
+    expect(ev[0].payload).toMatchObject({
+      event_type: 'charge.success.org_addon_subscription.unmatched',
+      paystack_reference: REF,
+      organisation_id: null,
+    })
+  })
+
+  it('an unknown add-on key is logged, not granted, and never looks the org up', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    const res = await POST(signedReq(solarFirstCharge({ feature_key: 'jbcc' })))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of('public.organisations.select')).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')[0].payload.event_type).toBe(
+      'charge.success.org_addon_subscription.unmatched',
+    )
+  })
+
+  it('a resubscribe after a refund restores the row (D-02) and forgets the dead Paystack code', async () => {
+    serviceClientRef.value = makeClient({
+      ...orgExists,
+      [`${ADDON}.select`]: {
+        data: addonRow({
+          status: 'refunded',
+          last_event_id: 'ref_old',
+          current_period_end: '2026-03-01T00:00:00.000Z',
+          paystack_subscription_code: 'SUB_old',
+        }),
+        error: null,
+      },
+    })
+    await POST(signedReq(solarFirstCharge()))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({
+      status: 'active',
+      current_period_end: '2027-09-28T10:00:00.000Z',
+      last_event_id: REF,
+      paystack_subscription_code: null,
+      started_at: PAID_AT,
+      cancelled_at: null,
+      refunded_at: null,
+    })
+    expect(upd[0].filters).toEqual([['eq', 'id', 'oas-1']])
+  })
+
+  it('a second first-charge while LIVE is a double purchase: no grant, admins told, invoice marked', async () => {
+    serviceClientRef.value = makeClient({
+      ...orgExists,
+      [`${ADDON}.select`]: {
+        data: addonRow({ last_event_id: 'ref_other', current_period_end: '2027-12-31T00:00:00.000Z' }),
+        error: null,
+      },
+      'public.user_organisations.select': { data: [{ user_id: 'u-owner' }], error: null },
+    })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+    const note = serviceClientRef.value.of('public.notifications.insert')
+    expect(note).toHaveLength(1)
+    expect(note[0].payload[0]).toMatchObject({ type: 'billing_duplicate_charge', organisation_id: SOLAR_ORG })
+    expect(recordInvoiceMock.mock.calls[0][2].description).toMatch(/DUPLICATE/)
+    // Logged under its OWN type, so refunding the duplicate can never lock the live subscription.
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')[0].payload.event_type).toBe(
+      'charge.success.org_addon_subscription.duplicate',
+    )
+  })
+
+  it('a failed grant 500s BEFORE any invoice or payment event is written', async () => {
+    serviceClientRef.value = makeClient({
+      ...orgExists,
+      [`${ADDON}.insert`]: { data: null, error: { code: '08006', message: 'connection failure' } },
+    })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(500)
+    expect(recordInvoiceMock).not.toHaveBeenCalled()
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')).toHaveLength(0)
+  })
+
+  it('a failed organisation lookup 500s (retryable) rather than being logged as unmatched', async () => {
+    serviceClientRef.value = makeClient({
+      'public.organisations.select': { data: null, error: { code: '08006', message: 'connection failure' } },
+    })
+    const res = await POST(signedReq(solarFirstCharge()))
+    expect(res.status).toBe(500)
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')).toHaveLength(0)
   })
 })
