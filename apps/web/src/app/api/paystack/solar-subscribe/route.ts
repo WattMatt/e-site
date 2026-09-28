@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Please try again shortly.' }, { status: 429 })
   }
 
-  let raw: unknown = null
+  let raw: unknown
   try {
     raw = await req.json()
   } catch {
