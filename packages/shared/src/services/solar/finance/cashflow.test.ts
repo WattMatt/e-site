@@ -192,4 +192,13 @@ describe('blocking inputs', () => {
     expect(() => runFinance({ ...toy, models: [] }, toyEnergy)).toThrow(/at least one finance model/)
     expect(() => runFinance({ ...toy, opex: { ...toy.opex, insuranceFractionOfCapex: 6 } }, toyEnergy)).toThrow(/insuranceFractionOfCapex/)
   })
+
+  it('NaN, negative costs and fractional replacement years are refused, never computed through', () => {
+    expect(() => runFinance({ ...toy, analysis: { ...toy.analysis, cpi: Number.NaN } }, toyEnergy)).toThrow(/cpi/)
+    expect(() => runFinance({ ...toy, analysis: { ...toy.analysis, loadGrowth: Number.NaN } }, toyEnergy)).toThrow(/loadGrowth/)
+    expect(() => runFinance({ ...toy, opex: { ...toy.opex, omZarPerKwpYear: -1 } }, toyEnergy)).toThrow(/omZarPerKwpYear/)
+    expect(() => runFinance({ ...toy, kWpDc: Number.NaN }, toyEnergy)).toThrow(/kWpDc/)
+    expect(() => runFinance({ ...toy, degradation: { ...toy.degradation, batteryEndOfLife: 1.5 } }, toyEnergy)).toThrow(/battery end-of-life/)
+    expect(() => runFinance({ ...toy, replacements: { ...toy.replacements, batteryYear: 7.5 } }, toyEnergy)).toThrow(/batteryYear/)
+  })
 })

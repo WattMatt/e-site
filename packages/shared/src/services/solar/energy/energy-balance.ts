@@ -90,6 +90,7 @@ function validateBattery(b: BatterySpec): void {
   frac('initialSoc', b.initialSoc)
   frac('backupReserve', b.backupReserve)
   if (b.socMin >= b.socMax) throw new Error('battery socMin must be below socMax')
+  if (b.backupReserve >= b.socMax) throw new Error('battery backupReserve must be below socMax')
   if (b.strategy.kind === 'peak-shaving' && !(b.strategy.targetKw >= 0)) throw new Error('peak-shaving targetKw must be ≥ 0')
 }
 

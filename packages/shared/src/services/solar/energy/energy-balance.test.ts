@@ -147,5 +147,7 @@ describe('validation', () => {
     expect(() => energyBalance(input({ load: new Float64Array(10) }))).toThrow(/load must have 8760/)
     expect(() => energyBalance(input({ battery: battery({ socMin: 0.9, socMax: 0.5 }) }))).toThrow(/socMin must be below socMax/)
     expect(() => energyBalance(input({ battery: battery({ roundTripEfficiency: 90 }) }))).toThrow(/roundTripEfficiency/)
+    // a reserve at or above s_max would leave a battery that charges and never discharges
+    expect(() => energyBalance(input({ battery: battery({ socMax: 0.95, backupReserve: 0.97 }) }))).toThrow(/backupReserve must be below socMax/)
   })
 })

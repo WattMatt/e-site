@@ -174,6 +174,22 @@ function validate(f: FinanceInput): void {
   assertFraction('first-year degradation', f.degradation.firstYear)
   assertFraction('annual degradation', f.degradation.annual)
   assertFraction('tax rate', f.tax.companyRate)
+  assertFraction('battery fade per year', f.degradation.batteryFadePerYear)
+  assertFraction('battery end-of-life', f.degradation.batteryEndOfLife)
+  assertFraction('inverterFractionOfCapex', f.replacements.inverterFractionOfCapex)
+  assertFraction('batteryFractionOfCapex', f.replacements.batteryFractionOfCapex)
+  const finite = (name: string, v: number, min = Number.NEGATIVE_INFINITY) => {
+    if (!(Number.isFinite(v) && v >= min)) throw new Error(`${name} must be a finite number ≥ ${min}, got ${v}`)
+  }
+  finite('kWpDc', f.kWpDc, 0)
+  finite('cpi', f.analysis.cpi, -0.99)
+  finite('loadGrowth', f.analysis.loadGrowth, -0.99)
+  finite('omZarPerKwpYear', f.opex.omZarPerKwpYear, 0)
+  finite('monitoringZarPerYear', f.opex.monitoringZarPerYear, 0)
+  finite('section12bQualifyingZar', f.capex.section12bQualifyingZar, 0)
+  for (const [name, y] of [['inverterYear', f.replacements.inverterYear], ['batteryYear', f.replacements.batteryYear]] as const) {
+    if (y !== null && !(Number.isInteger(y) && y >= 1)) throw new Error(`${name} must be a whole year ≥ 1, got ${y}`)
+  }
   for (const m of f.models) {
     if (m.kind === 'debt') assertFraction('loan fraction', m.loanFraction)
     if ((m.kind === 'ppa' || m.kind === 'lease') && !(m.termYears >= 1)) throw new Error(`${m.kind} term must be ≥ 1 year`)
