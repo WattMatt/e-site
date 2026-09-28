@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
-import { loadScheduleData, SCHEDULE_LOAD_ERROR } from './loader'
+import { loadScheduleData, SCHEDULE_LOAD_ERROR, FORMER_MEMBER, PROJECT_MEMBER } from './loader'
 import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 
 const P = 'p1'
@@ -79,6 +79,34 @@ describe('loadScheduleData', () => {
     const offered = d.owners.map((o) => o.id)
     expect(offered).not.toContain('u7')
     expect(offered).not.toContain('u8')
+  })
+
+  it('an eligible owner with no name is labelled, never blank (View users get no email)', async () => {
+    const f = fakeSupabase({
+      userId: 'u2',
+      tables: {
+        'solar.schedule_tasks': [{ id: 't1', project_id: P, work_item_id: 'w1', category: '', zone: '', start_date: '2026-10-01', end_date: '2026-10-02', progress: 0, colour: '#3b82f6', sort_order: 1, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U' }],
+        'projects.work_items': [{ id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u1' }],
+      },
+      rpc: { 'solar.schedule_owner_candidates': { data: [{ user_id: 'u1', full_name: '', email: null }], error: null } },
+    })
+    const d = await loadScheduleData(P, f.client as never, 'view', '2026-09-28')
+    expect(d.tasks[0].ownerName).toBe(PROJECT_MEMBER)
+    expect(d.owners).toEqual([{ id: 'u1', name: PROJECT_MEMBER, email: '' }])
+  })
+
+  it('the display-name fallback for an ineligible owner never uses an email address', async () => {
+    const f = fakeSupabase({
+      userId: 'u2',
+      tables: {
+        'solar.schedule_tasks': [{ id: 't1', project_id: P, work_item_id: 'w1', category: '', zone: '', start_date: '2026-10-01', end_date: '2026-10-02', progress: 0, colour: '#3b82f6', sort_order: 1, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U' }],
+        'projects.work_items': [{ id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u7' }],
+        'public.profiles': [{ id: 'u7', full_name: '', email: 'cas@client.co.za' }],
+      },
+      rpc: { 'solar.schedule_owner_candidates': { data: [], error: null } },
+    })
+    const d = await loadScheduleData(P, f.client as never, 'view', '2026-09-28')
+    expect(d.tasks[0].ownerName).toBe(FORMER_MEMBER)
   })
 
   it('stored settings win over the defaults (per-project working mode and threshold)', async () => {

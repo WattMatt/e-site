@@ -26,6 +26,12 @@ type AnyClient = SupabaseClient<any, any, any>
 type Row = Record<string, unknown>
 
 export const FORMER_MEMBER = 'Former project member'
+/**
+ * An ELIGIBLE owner (from schedule_owner_candidates, so a current member) with
+ * no name on their profile. A View user gets no email from the RPC, so without
+ * this their label would be blank; "Former project member" would be untrue.
+ */
+export const PROJECT_MEMBER = 'Project member'
 
 /** PostgREST's max_rows on this project: a read without .range() is silently cut here. */
 export const SCHEDULE_PAGE_SIZE = 1000
@@ -86,7 +92,7 @@ export async function loadScheduleData(
   const wiById = new Map(wiRows.map((w) => [str(w.id), w]))
 
   const owners: ScheduleOwner[] = ownerRows.map((o) => ({
-    id: str(o.user_id), name: str(o.full_name) || str(o.email), email: str(o.email),
+    id: str(o.user_id), name: str(o.full_name).trim() || str(o.email) || PROJECT_MEMBER, email: str(o.email),
   }))
   const ownerName = new Map(owners.map((o) => [o.id, o.name]))
 
@@ -94,9 +100,12 @@ export async function loadScheduleData(
   const wanted = new Set(taskRows.map((t) => str(t.work_item_id)))
   const missing = [...new Set(wiRows.filter((w) => wanted.has(str(w.id))).map((w) => str(w.assignee_id)).filter((id) => id && !ownerName.has(id)))]
   for (let i = 0; i < missing.length; i += 100) {
-    const profs = (must('public.profiles', await supabase.from('profiles').select('id, full_name, email').in('id', missing.slice(i, i + 100))) ?? []) as Row[]
+    // Names only: never an email address (a View user must not learn one here
+    // when schedule_owner_candidates withholds it). A blank name stays unset
+    // and the bar reads FORMER_MEMBER.
+    const profs = (must('public.profiles', await supabase.from('profiles').select('id, full_name').in('id', missing.slice(i, i + 100))) ?? []) as Row[]
     for (const p of profs) {
-      const name = str(p.full_name) || str(p.email)
+      const name = str(p.full_name).trim()
       if (name) ownerName.set(str(p.id), name)
     }
   }
