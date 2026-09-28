@@ -262,4 +262,25 @@ describe('commitMeterFile: register and skip', () => {
     expect(state.files[0].status).toBe('accepted')
     expect(state.filePatches).toHaveLength(patches)
   })
+  it('skip on a PARTIALLY committed file (meter bound, never accepted) is a 409', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.countOffset = -1
+    await expect(commitMeterFile(repo, ctx, body({}))).rejects.toMatchObject({ status: 500 })
+    expect(state.files[0].status).not.toBe('accepted')
+    await expect(commitMeterFile(repo, ctx, CommitBodySchema.parse({ mode: 'skip', fileId: '9c1a98b5-6ef3-4388-865f-417d3f5d7465', reason: 'Changed my mind' })))
+      .rejects.toMatchObject({ status: 409, body: { error: 'already_imported' } })
+    expect(state.files[0].status).not.toBe('skipped')
+  })
+})
+
+describe('commitMeterFile: a failed re-commit never leaves an accepted file with partial readings', () => {
+  it('writeReadings throwing after the clear takes the file out of accepted', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    expect(state.files[0].status).toBe('accepted')
+    repo.writeReadings = async () => { throw new Error('write readings: connection reset') }
+    await expect(commitMeterFile(repo, ctx, body({}))).rejects.toThrow('connection reset')
+    expect(state.readings.get(state.channels[0].id)?.size ?? 0).toBe(0)   // cleared, nothing rewritten
+    expect(state.files[0].status).toBe('parsed')
+  })
 })

@@ -152,6 +152,10 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   if (body.mode === 'skip') {
     // An imported file's readings are live data; skipping it would only relabel the file.
     if (ctx.file.status === 'accepted') throw new CommitError(409, { error: 'already_imported' })
+    // A partially committed file (bound to a meter, never accepted) is not skippable either: its
+    // meter and channels exist; the way out is to finish the commit (it is idempotent).
+    const bound = await repo.metersForFile(ctx.file.id)
+    if (bound.length > 0) throw new CommitError(409, { error: 'already_imported', meters: bound })
     await repo.updateFile(ctx.file.id, { status: 'skipped', skip_reason: body.reason })
     await repo.audit(ctx.projectId, 'meter_file_skipped', { file_id: ctx.file.id, reason: body.reason })
     return { skipped: true }
@@ -189,6 +193,10 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   // Channel choices are validated before anything is written.
   const selected = selectChannels(outcome, body)
   const meter = await resolveMeter(repo, ctx, outcome, body)
+  // Clearing and rewriting readings is not atomic across calls. Take the file out of 'accepted' before
+  // the first write, so a failure part-way never leaves an accepted file with partial or empty
+  // readings; only the final successful updateFile below restores 'accepted'.
+  if (ctx.file.status === 'accepted') await repo.updateFile(ctx.file.id, { status: 'parsed', skip_reason: null })
   const sameBodyLink = body.identity.resolution === 'link' && identity.conflicts.some((c) => c.kind === 'same_body' && c.meterId === meter.id)
   // Bind file -> meter FIRST, so a retry after any later failure finds this meter (resolveMeter).
   await repo.insertSeriesHash({ organisation_id: ctx.orgId, body_hash: outcome.bodySha256, meter_id: meter.id, file_id: ctx.file.id })
