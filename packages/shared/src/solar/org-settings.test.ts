@@ -52,6 +52,13 @@ describe('Solar org settings', () => {
     expect(r.values.albedo).toBe(0.25)
   })
 
+  it('replacement costs are capped at 100 % (a fraction of the equipment capex)', () => {
+    const form = solarSettingsToForm(solarOrgSettingDefaults())
+    const r = validateSolarOrgSettings({ ...form, inverter_replacement_pct: '150', battery_replacement_pct: '100' })
+    expect(r.errors.inverter_replacement_pct).toBe('Must be between 0 and 100 %')
+    expect(r.errors.battery_replacement_pct).toBeUndefined()
+  })
+
   it('an emptied field is saved as not set (null)', () => {
     const form = solarSettingsToForm(solarOrgSettingDefaults())
     expect(validateSolarOrgSettings({ ...form, om_r_per_kwp_yr: '' }).values.om_r_per_kwp_yr).toBeNull()

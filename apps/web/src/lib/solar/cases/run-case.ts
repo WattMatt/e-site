@@ -16,6 +16,17 @@ import { putGzipText, removeObject, runCsvPath, RUNS_BUCKET } from './storage'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
 
+/** Every sentence a run can store on case_runs.error or return: fixed text — raw errors are logged only. */
+export const RUN_REASONS = {
+  timedOut: 'The run timed out (no result after 90 s).',
+  failed: 'The run failed unexpectedly — try again. If it keeps failing, contact support.',
+  inputsChanged: 'The inputs changed while the run was being prepared — run it again.',
+  notSaved: 'The run finished but its result could not be saved — run it again.',
+  cancelled: 'The run was cancelled.',
+} as const
+
+class RunSentence extends Error {}
+
 export type RunOutcome =
   | { ok: true; runId: string; status: 'succeeded' }
   | { ok: false; status: number; error: string; runId?: string }
@@ -24,8 +35,9 @@ export async function executeCaseRun(a: { user: AnyClient; svc: AnyClient; proje
   const now = a.now ?? Date.now
   const runs = () => a.svc.schema('solar').from('case_runs')
   // A run killed at maxDuration stays 'running' forever; close it so the unique running index frees up.
-  await runs().update({ status: 'failed', error: 'The run timed out (no result after 90 s).' })
-    .eq('case_id', a.caseId).eq('status', 'running').lt('started_at', new Date(now() - RUN_TIMEOUT_MS).toISOString())
+  // Service client, before the context check: scoped to this project as well as the case.
+  await runs().update({ status: 'failed', error: RUN_REASONS.timedOut })
+    .eq('case_id', a.caseId).eq('project_id', a.projectId).eq('status', 'running').lt('started_at', new Date(now() - RUN_TIMEOUT_MS).toISOString())
 
   const loaded = await loadRunContext(a.svc, a.projectId, a.caseId)
   if (!loaded.ok) return { ok: false, status: loaded.status, error: loaded.error }
@@ -51,7 +63,7 @@ export async function executeCaseRun(a: { user: AnyClient; svc: AnyClient; proje
   try {
     const year = await loadWeatherYear(a.svc, weather as { storage_path: string; radiation_db?: string | null })
     const result = simulateCase(input, { id: weather.id, year })
-    if (result.inputsHash !== ctx.currentHash) throw new Error('the inputs changed while the run was being prepared')
+    if (result.inputsHash !== ctx.currentHash) throw new RunSentence(RUN_REASONS.inputsChanged)
     const gsa = weather.gsa_pvout_kwh_per_kwp
     const outputs = buildRunOutputs(result, input, {
       weatherFetchedAt: weather.fetched_at ?? null,
@@ -64,15 +76,23 @@ export async function executeCaseRun(a: { user: AnyClient; svc: AnyClient; proje
       loadReferenceYear: ctx.referenceYear,
     })
     await putGzipText(a.svc, RUNS_BUCKET, path, encodeHourlyCsv(hourlyFromResult(result)))
-    const { data: done } = await runs().update({ status: 'succeeded', outputs, hourly_path: path })
+    const { data: done, error: doneErr } = await runs().update({ status: 'succeeded', outputs, hourly_path: path })
       .eq('id', runId).eq('status', 'running').select('id')
+    if (doneErr) {
+      // A failed write is NOT a cancellation: keep the row honest and say what happened.
+      console.error('[solar-run] finishing update failed', { runId, caseId: a.caseId, projectId: a.projectId, code: doneErr.code })
+      await removeObject(a.svc, RUNS_BUCKET, path)
+      await runs().update({ status: 'failed', error: RUN_REASONS.notSaved }).eq('id', runId).eq('status', 'running')
+      return { ok: false, status: 500, error: RUN_REASONS.notSaved, runId }
+    }
     if (!Array.isArray(done) || done.length === 0) {
       await removeObject(a.svc, RUNS_BUCKET, path)
-      return { ok: false, status: 409, error: 'The run was cancelled.', runId }
+      return { ok: false, status: 409, error: RUN_REASONS.cancelled, runId }
     }
     return { ok: true, runId, status: 'succeeded' }
   } catch (e) {
-    const sentence = `The run failed: ${e instanceof Error ? e.message : 'unexpected error'}`
+    // Only our own fixed sentences reach the user and the row; the raw error is logged with the run id.
+    const sentence = e instanceof RunSentence ? e.message : RUN_REASONS.failed
     console.error('[solar-run] failed', { runId, caseId: a.caseId, projectId: a.projectId, err: String(e) })
     await runs().update({ status: 'failed', error: sentence }).eq('id', runId).eq('status', 'running')
     return { ok: false, status: 500, error: sentence, runId }

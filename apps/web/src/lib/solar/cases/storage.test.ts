@@ -31,6 +31,14 @@ describe('solar storage', () => {
     const { client } = fakeStorage()
     await expect(getGzipText(client as never, RUNS_BUCKET, 'nope')).rejects.toThrow('stored file not found')
   })
+  it('an upload failure throws a fixed sentence; the backend text is logged, not surfaced', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const client = { storage: { from: () => ({ upload: async () => ({ error: { message: 'new row violates policy on bucket_id=solar-runs (pg 42501)' } }) }) } }
+    await expect(putGzipText(client as never, RUNS_BUCKET, 'o/p/c/r.csv.gz', 'x')).rejects.toThrow('The file could not be stored — try again.')
+    await expect(putGzipText(client as never, RUNS_BUCKET, 'o/p/c/r.csv.gz', 'x')).rejects.not.toThrow(/42501|bucket_id/)
+    expect(err).toHaveBeenCalled()
+    err.mockRestore()
+  })
   it('paths are org-first', () => {
     expect(runCsvPath('o', 'p', 'c', 'r')).toBe('o/p/c/r.csv.gz')
     expect(weatherPath('o', 'd')).toBe('o/d.csv.gz')

@@ -73,6 +73,29 @@ describe('getOrFetchWeather', () => {
     expect((callsTo(calls, 'solar.weather_datasets', 'insert')[0]!.payload as { gsa_pvout_kwh_per_kwp: unknown }).gsa_pvout_kwh_per_kwp).toBeNull()
   })
 
+  it('a storage failure saving the CSV → the save sentence (never an unhandled throw), nothing inserted', async () => {
+    h.put.mockRejectedValueOnce(new Error('The file could not be stored — try again.'))
+    const { client, calls } = fakeSupabase({})
+    const r = await getOrFetchWeather({ svc: client as never, orgId: ORG, lat: -26.2, lng: 28.05, userId: U, fetchImpl: okFetch(), rateLimitFn: () => true })
+    expect(r).toEqual({ ok: false, status: 502, error: 'The weather could not be saved — try again.' })
+    expect(callsTo(calls, 'solar.weather_datasets', 'insert')).toHaveLength(0)
+  })
+
+  it('the per-org limit is also counted in the DB (serverless instances do not share memory)', async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString(), old = new Date(Date.now() - 11 * 60_000).toISOString()
+    const rows = (n: number, fetched_at: string, org = ORG) => Array.from({ length: n }, (_, i) =>
+      ({ id: `w${fetched_at}${org}${i}`, organisation_id: org, source: 'pvgis_tmy', lat_round: -30 - i, lng_round: 20, fetched_at }))
+    const fetchImpl = okFetch()
+    const full = fakeSupabase({ tables: { 'solar.weather_datasets': rows(5, recent) } }).client
+    const rl = vi.fn(() => true)
+    expect(await getOrFetchWeather({ svc: full as never, orgId: ORG, lat: -26.2, lng: 28.05, userId: U, fetchImpl, rateLimitFn: rl }))
+      .toEqual({ ok: false, status: 429, error: 'Weather fetches are limited to 5 per 10 minutes for your organisation — try again shortly.' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    // Older than the window, or another organisation's fetches, do not count.
+    const fine = fakeSupabase({ tables: { 'solar.weather_datasets': [...rows(5, old), ...rows(5, recent, 'o2'), ...rows(4, recent)] } }).client
+    expect((await getOrFetchWeather({ svc: fine as never, orgId: ORG, lat: -26.2, lng: 28.05, userId: U, fetchImpl, rateLimitFn: rl })).ok).toBe(true)
+  })
+
   it('an insert failure removes the stored object and returns a sentence', async () => {
     const { client } = fakeSupabase({ writes: { 'solar.weather_datasets:insert': { error: { code: '23514', message: 'check' } } } })
     const r = await getOrFetchWeather({ svc: client as never, orgId: ORG, lat: -26.2, lng: 28.05, userId: U, fetchImpl: okFetch(), rateLimitFn: () => true })

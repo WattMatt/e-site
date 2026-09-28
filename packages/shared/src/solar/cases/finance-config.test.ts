@@ -31,6 +31,23 @@ describe('defaultFinanceConfig', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors['models.ppa.buyoutPriceZar']).toBe('Enter both the buy-out year and price, or neither')
   })
+
+  it('replacement costs are capped at 100 % (the engine takes a fraction ≤ 1)', () => {
+    const f = defaultFinanceConfig(settings)
+    expect(parseFinanceConfig({ ...f, opex: { ...f.opex, inverterReplacementPct: 100, batteryReplacementPct: 100 } }).ok).toBe(true)
+    const r = parseFinanceConfig({ ...f, opex: { ...f.opex, inverterReplacementPct: 150, batteryReplacementPct: 101 } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(Object.keys(r.errors).sort()).toEqual(['opex.batteryReplacementPct', 'opex.inverterReplacementPct'])
+  })
+
+  it('the PPA buy-out year must fall within the PPA term — a field error on the buy-out year', () => {
+    const f = defaultFinanceConfig(settings)
+    const ppa = (buyoutYear: number) => ({ ...f, models: { ...f.models, ppa: { ...f.models.ppa, enabled: true, startTariffZarPerKwh: 1.5, termYears: 20, buyoutYear, buyoutPriceZar: 1000 } } })
+    expect(parseFinanceConfig(ppa(20)).ok).toBe(true)
+    const r = parseFinanceConfig(ppa(25))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors['models.ppa.buyoutYear']).toBe('The buy-out year must fall within the PPA term (20 years)')
+  })
 })
 
 describe('capexTotals', () => {

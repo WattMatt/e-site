@@ -18,7 +18,11 @@ export const weatherPath = (orgId: string, datasetId: string) => `${orgId}/${dat
 
 export async function putGzipText(svc: AnyClient, bucket: SolarBucket, path: string, text: string): Promise<void> {
   const { error } = await svc.storage.from(bucket).upload(path, gzipSync(Buffer.from(text, 'utf8')), { contentType: 'application/gzip', upsert: false })
-  if (error) throw new Error(`storage upload failed: ${error.message}`)
+  if (error) {
+    // The backend text is logged, never surfaced: callers show / store the fixed sentence.
+    console.error('[solar-storage] upload failed', { bucket, path, message: error.message })
+    throw new Error('The file could not be stored — try again.')
+  }
 }
 
 export async function getGzipText(svc: AnyClient, bucket: SolarBucket, path: string): Promise<string> {

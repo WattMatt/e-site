@@ -25,13 +25,15 @@ export const FIN_RUN_REASONS = {
   noFinancials: 'Save the financials first.',
   badFinancials: 'The saved financials are invalid — review each section and save again.',
   badRun: 'The run’s stored configuration could not be read — re-run the case.',
+  fileMissing: 'The stored hourly file for this run is missing — re-run the case.',
+  computeFailed: 'Financials could not be computed from these inputs — check each Financials section and save again.',
 } as const
 
 export type FinRunOutcome = { ok: true; id: string } | { ok: false; status: number; error: string }
 
-export async function latestSucceededRun(user: AnyClient, caseId: string): Promise<Row | null> {
+export async function latestSucceededRun(user: AnyClient, projectId: string, caseId: string): Promise<Row | null> {
   const { data } = await user.schema('solar').from('case_runs').select('id, case_id, status, hourly_path, config_snapshot, outputs, started_at, export_settings:inputs->export')
-    .eq('case_id', caseId).eq('status', 'succeeded').order('started_at', { ascending: false }).limit(1)
+    .eq('case_id', caseId).eq('project_id', projectId).eq('status', 'succeeded').order('started_at', { ascending: false }).limit(1)
   return (Array.isArray(data) ? (data[0] as Row | undefined) : undefined) ?? null
 }
 
@@ -39,9 +41,9 @@ export async function latestSucceededRun(user: AnyClient, caseId: string): Promi
 export const finInputsHash = (input: unknown, tariffRef: unknown, runId: string) => inputsHash({ input, tariffRef, runId })
 
 export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient; projectId: string; caseId: string; userId: string }): Promise<FinRunOutcome> {
-  const run = await latestSucceededRun(a.user, a.caseId)
+  const run = await latestSucceededRun(a.user, a.projectId, a.caseId)
   if (!run) return { ok: false, status: 422, error: FIN_RUN_REASONS.noRun }
-  const { data: finRows } = await a.user.schema('solar').from('case_financials').select('config').eq('case_id', a.caseId)
+  const { data: finRows } = await a.user.schema('solar').from('case_financials').select('config').eq('case_id', a.caseId).eq('project_id', a.projectId)
   const finRow = Array.isArray(finRows) ? (finRows[0] as Row | undefined) : undefined
   if (!finRow) return { ok: false, status: 422, error: FIN_RUN_REASONS.noFinancials }
   const fin = parseFinanceConfig(finRow.config)
@@ -56,24 +58,32 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })
   if (!tariff.ok) return { ok: false, status: 422, error: tariff.reason }
 
+  let hourly: ReturnType<typeof decodeHourlyCsv>
   try {
-    const hourly = decodeHourlyCsv(await getGzipText(a.svc, RUNS_BUCKET, run.hourly_path as string))
+    hourly = decodeHourlyCsv(await getGzipText(a.svc, RUNS_BUCKET, run.hourly_path as string))
+  } catch (e) {
+    console.error('[solar-financials] stored hourly file unreadable', { caseId: a.caseId, runId: run.id, err: String(e) })
+    return { ok: false, status: 500, error: FIN_RUN_REASONS.fileMissing }
+  }
+  let results: Record<string, unknown>
+  try {
     // "Yes (no credit)" is part of the run's hashed input (CaseInput.export.credited): price export at zero.
     const exportCredited = (run.export_settings as { credited?: unknown } | null | undefined)?.credited !== false
     const result = runStoredFinancials({ hourly, year1PvKwh: kpis.annualAcKwh, year1DeliveredKwh: kpis.deliveredKwh, exportCredited }, built.input, tariff.calc)
-    const results = { version: 1, capex: capexTotals(fin.fin.capex, kpis.dcKwp), ...result }
-    const { data, error } = await a.svc.schema('solar').from('case_run_financials').insert({
-      case_run_id: run.id, engine_version: ENGINE_VERSION, fin_inputs: { finance: built.input, config: fin.fin },
-      fin_inputs_hash: finInputsHash(built.input, tariff.tariffRef, run.id as string), tariff_ref: tariff.tariffRef, results,
-      run_by: a.userId,
-    }).select('id')
-    if (error) {
-      console.error('[solar-financials] insert failed', { caseId: a.caseId, runId: run.id, code: error.code })
-      return { ok: false, status: 500, error: humanSolarError(error) }
-    }
-    return { ok: true, id: (Array.isArray(data) ? data[0]?.id : (data as Row | null)?.id) as string }
+    results = { version: 1, capex: capexTotals(fin.fin.capex, kpis.dcKwp), ...result }
   } catch (e) {
-    console.error('[solar-financials] failed', { caseId: a.caseId, runId: run.id, err: String(e) })
-    return { ok: false, status: 500, error: `Financials could not be computed: ${e instanceof Error ? e.message : 'unexpected error'}` }
+    // The engine's validation message is for developers; the user gets a sentence, the log gets the text.
+    console.error('[solar-financials] computation failed', { caseId: a.caseId, runId: run.id, err: String(e) })
+    return { ok: false, status: 422, error: FIN_RUN_REASONS.computeFailed }
   }
+  const { data, error } = await a.svc.schema('solar').from('case_run_financials').insert({
+    case_run_id: run.id, engine_version: ENGINE_VERSION, fin_inputs: { finance: built.input, config: fin.fin },
+    fin_inputs_hash: finInputsHash(built.input, tariff.tariffRef, run.id as string), tariff_ref: tariff.tariffRef, results,
+    run_by: a.userId,
+  }).select('id')
+  if (error) {
+    console.error('[solar-financials] insert failed', { caseId: a.caseId, runId: run.id, code: error.code })
+    return { ok: false, status: 500, error: humanSolarError(error) }
+  }
+  return { ok: true, id: (Array.isArray(data) ? data[0]?.id : (data as Row | null)?.id) as string }
 }

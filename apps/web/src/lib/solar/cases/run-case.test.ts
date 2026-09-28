@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({ ctx: vi.fn(), weather: vi.fn(), put: vi.fn(async (
 vi.mock('./run-context', () => ({ loadRunContext: h.ctx }))
 vi.mock('./weather', () => ({ loadWeatherYear: h.weather }))
 vi.mock('./storage', async (o) => ({ ...(await o<typeof import('./storage')>()), putGzipText: h.put, removeObject: h.remove }))
-import { executeCaseRun } from './run-case'
+import { executeCaseRun, RUN_REASONS } from './run-case'
 
 // Real engine on the stored Johannesburg PVGIS fixture; context, weather file and storage are mocked (no network).
 const P = 'p1', C = 'c1', ORG = 'o1', U = 'u1', W = '22222222-2222-4222-8222-222222222222'
@@ -48,7 +48,8 @@ describe('executeCaseRun', () => {
     const upd = callsTo(svc.calls, 'solar.case_runs', 'update')
     // [0] closes timed-out runs; [1] finishes this one, conditioned on still running
     expect(upd[0]!.payload).toMatchObject({ status: 'failed' })
-    expect(upd[0]!.filters).toEqual(expect.arrayContaining([['eq', 'case_id', C], ['eq', 'status', 'running'], ['lt', 'started_at', '2026-09-28T11:58:30.000Z']]))
+    // The sweep runs on the service client BEFORE the context check, so it is scoped to this project too.
+    expect(upd[0]!.filters).toEqual(expect.arrayContaining([['eq', 'case_id', C], ['eq', 'project_id', P], ['eq', 'status', 'running'], ['lt', 'started_at', '2026-09-28T11:58:30.000Z']]))
     expect(upd[1]!.payload).toMatchObject({ status: 'succeeded', hourly_path: `${ORG}/${P}/${C}/r1.csv.gz` })
     expect(upd[1]!.filters).toEqual(expect.arrayContaining([['eq', 'id', 'r1'], ['eq', 'status', 'running']]))
     const outputs = (upd[1]!.payload as { outputs: { kpis: { dcKwp: number }; provenance: { gsaPvoutKwhPerKwp: number; loadReferenceYear: number; loadBasis: string } } }).outputs
@@ -80,6 +81,17 @@ describe('executeCaseRun', () => {
     await expect(executeCaseRun({ user: rls.client as never, svc, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 403, error: 'You need Edit access to run a case.' })
   })
 
+  it('the finishing UPDATE fails: NOT reported as cancelled — marked failed with a sentence, CSV removed, 500', async () => {
+    const user = fakeSupabase({ writes: { 'solar.case_runs:insert': { data: [{ id: 'r1' }] } } })
+    const svc = fakeSupabase({ writes: { 'solar.case_runs:update': { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } } } })
+    const out = await executeCaseRun({ user: user.client as never, svc: svc.client as never, projectId: P, caseId: C, userId: U })
+    expect(out).toEqual({ ok: false, status: 500, error: RUN_REASONS.notSaved, runId: 'r1' })
+    const last = callsTo(svc.calls, 'solar.case_runs', 'update').at(-1)!
+    expect(last.payload).toEqual({ status: 'failed', error: RUN_REASONS.notSaved })
+    expect(last.filters).toEqual(expect.arrayContaining([['eq', 'id', 'r1'], ['eq', 'status', 'running']]))
+    expect(h.remove).toHaveBeenCalledWith(svc.client, 'solar-runs', `${ORG}/${P}/${C}/r1.csv.gz`)
+  })
+
   it('cancelled while running: the final update finds 0 rows → CSV removed, 409', async () => {
     const user = fakeSupabase({ writes: { 'solar.case_runs:insert': { data: [{ id: 'r1' }] } } })
     const svc = fakeSupabase({ writes: { 'solar.case_runs:update': { data: [] } } })
@@ -88,14 +100,15 @@ describe('executeCaseRun', () => {
     expect(h.remove).toHaveBeenCalledWith(svc.client, 'solar-runs', `${ORG}/${P}/${C}/r1.csv.gz`)
   })
 
-  it('an engine/weather failure is recorded on the row as a sentence (diagnostics in the first deploy)', async () => {
-    h.weather.mockRejectedValueOnce(new Error('stored file not found'))
+  it('an engine/weather failure is recorded on the row as a fixed sentence — never the raw backend text', async () => {
+    h.weather.mockRejectedValueOnce(new Error('connect ECONNREFUSED 10.0.0.7:5432 storage/v1/object/solar-weather'))
     const user = fakeSupabase({ writes: { 'solar.case_runs:insert': { data: [{ id: 'r1' }] } } })
     const svc = fakeSupabase({})
     const out = await executeCaseRun({ user: user.client as never, svc: svc.client as never, projectId: P, caseId: C, userId: U })
-    expect(out).toEqual({ ok: false, status: 500, error: 'The run failed: stored file not found', runId: 'r1' })
+    expect(out).toEqual({ ok: false, status: 500, error: RUN_REASONS.failed, runId: 'r1' })
+    expect(RUN_REASONS.failed).not.toMatch(/ECONNREFUSED|storage/)
     const fail = callsTo(svc.calls, 'solar.case_runs', 'update').at(-1)!
-    expect(fail.payload).toEqual({ status: 'failed', error: 'The run failed: stored file not found' })
+    expect(fail.payload).toEqual({ status: 'failed', error: RUN_REASONS.failed })
     expect(fail.filters).toEqual(expect.arrayContaining([['eq', 'id', 'r1'], ['eq', 'status', 'running']]))
   })
 })

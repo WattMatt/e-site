@@ -65,7 +65,13 @@ export async function getOrFetchWeather(a: {
   const existing = await cachedRow(a.svc, a.orgId, lat, lng)
   if (existing) return { ok: true, dataset: existing, cached: true }
 
-  const allow = (a.rateLimitFn ?? rateLimit)(`solar-weather:${a.orgId}`, WEATHER_RATE_LIMIT.limit, WEATHER_RATE_LIMIT.windowMs)
+  // The in-memory limiter is per serverless instance; the org's datasets fetched inside the window are
+  // the shared count (every successful fetch inserts one row). Both must allow the fetch.
+  const since = new Date(Date.now() - WEATHER_RATE_LIMIT.windowMs).toISOString()
+  const { data: recent } = await a.svc.schema('solar').from('weather_datasets').select('id')
+    .eq('organisation_id', a.orgId).gte('fetched_at', since).limit(WEATHER_RATE_LIMIT.limit)
+  const allow = (Array.isArray(recent) ? recent.length : 0) < WEATHER_RATE_LIMIT.limit
+    && (a.rateLimitFn ?? rateLimit)(`solar-weather:${a.orgId}`, WEATHER_RATE_LIMIT.limit, WEATHER_RATE_LIMIT.windowMs)
   if (!allow) return { ok: false, status: 429, error: 'Weather fetches are limited to 5 per 10 minutes for your organisation — try again shortly.' }
 
   const fetchImpl = a.fetchImpl ?? fetch
@@ -88,7 +94,12 @@ export async function getOrFetchWeather(a: {
 
   const id = randomUUID()
   const path = weatherPath(a.orgId, id)
-  await putGzipText(a.svc, WEATHER_BUCKET, path, text)
+  try {
+    await putGzipText(a.svc, WEATHER_BUCKET, path, text)
+  } catch (e) {
+    console.error('[solar-weather] storing the CSV failed', { orgId: a.orgId, err: String(e) })
+    return { ok: false, status: 502, error: 'The weather could not be saved — try again.' }
+  }
   const gsa = await fetchGsaPvout(fetchImpl, lat, lng)
   const row = {
     id, organisation_id: a.orgId, source: 'pvgis_tmy', lat_round: lat, lng_round: lng,

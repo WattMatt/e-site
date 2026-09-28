@@ -45,9 +45,10 @@ export const CaseFinanceConfigSchema = z.object({
     insurancePctOfCapex: num(0, 10),
     monitoringZarPerYear: num(0, 1e8),
     inverterReplacementYear: int(1, 40).nullable(),
-    inverterReplacementPct: num(0, 200),
+    // A share of that equipment's capex: the engine takes a fraction ≤ 1.
+    inverterReplacementPct: num(0, 100),
     batteryReplacementYear: int(1, 40).nullable(),
-    batteryReplacementPct: num(0, 200),
+    batteryReplacementPct: num(0, 100),
   }).strict(),
   models: z.object({
     cash: z.object({ enabled: z.boolean() }).strict(),
@@ -71,6 +72,10 @@ export const CaseFinanceConfigSchema = z.object({
   }
   if ((m.ppa.buyoutYear === null) !== (m.ppa.buyoutPriceZar === null)) {
     ctx.addIssue({ code: 'custom', path: ['models', 'ppa', 'buyoutPriceZar'], message: 'Enter both the buy-out year and price, or neither' })
+  }
+  // Mirrors the engine's rule (cashflow.ts validate): otherwise Run financials fails on a saved config.
+  if (m.ppa.enabled && m.ppa.buyoutYear !== null && m.ppa.buyoutYear > m.ppa.termYears) {
+    ctx.addIssue({ code: 'custom', path: ['models', 'ppa', 'buyoutYear'], message: `The buy-out year must fall within the PPA term (${m.ppa.termYears} years)` })
   }
 })
 export type CaseFinanceConfig = z.infer<typeof CaseFinanceConfigSchema>

@@ -16,13 +16,13 @@ const s = solarOrgSettingDefaults()
 const cfg = defaultCaseConfig(s, { dcKwp: 100, acKw: 80 })
 const fin = { ...defaultFinanceConfig(s), capex: [{ id: 'a', category: 'modules', description: 'PV', qty: 100_000, unit: 'Wp', rateZar: 12, qualifies12b: true, source: 'manual' }] }
 const hourly = () => { const z = (v: number) => new Float64Array(8760).fill(v); return { load: z(50), pvAc: z(15), selfUse: z(15), import: z(35), export: z(0), curtail: z(0), soc: z(0), importPvOnly: z(35), exportPvOnly: z(0) } }
-const run = { id: R, case_id: C, status: 'succeeded', hourly_path: 'o/p/c/r.csv.gz', config_snapshot: cfg, started_at: '2026-09-28T10:00:00Z',
+const run = { id: R, case_id: C, project_id: P, status: 'succeeded', hourly_path: 'o/p/c/r.csv.gz', config_snapshot: cfg, started_at: '2026-09-28T10:00:00Z',
   outputs: { kpis: { dcKwp: 100, acKw: 80, annualAcKwh: 131_400, deliveredKwh: 131_400 }, provenance: { loadReferenceYear: 2024 } } }
 const calc: BillCalculator = {
   monthlyBills: (f) => Array.from({ length: 12 }, (_, i) => ({ month: i + 1, totalZar: f.importKwh.reduce((a, v) => a + v, 0) * 2 / 12, exportCreditUsedZar: 0 })),
   withExportRateScaled: () => calc,
 }
-const tables = { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, config: fin }] }
+const tables = { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: fin }] }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -74,6 +74,24 @@ describe('executeFinancialsRun', () => {
     expect(none.afterZar).toBeCloseTo(35 * 8760 * 2, 3)   // = the zero-export after-bill
     expect(none.exportCreditUsedZar).toBe(0)
   })
+  it('reads are scoped to the project: another project’s case / financials → not found', async () => {
+    const other = fakeSupabase({ tables: { 'solar.case_runs': [{ ...run, project_id: 'p2' }], 'solar.case_financials': [{ case_id: C, project_id: 'p2', config: fin }] } })
+    await expect(executeFinancialsRun({ user: other.client as never, svc: fakeSupabase().client as never, projectId: P, caseId: C, userId: U }))
+      .resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noRun })
+    const u = fakeSupabase({ tables })
+    await executeFinancialsRun({ user: u.client as never, svc: fakeSupabase().client as never, projectId: P, caseId: C, userId: U })
+    expect(callsTo(u.calls, 'solar.case_runs', 'select')[0]!.filters).toEqual(expect.arrayContaining([['eq', 'project_id', P]]))
+    expect(callsTo(u.calls, 'solar.case_financials', 'select')[0]!.filters).toEqual(expect.arrayContaining([['eq', 'project_id', P]]))
+  })
+  it('an engine validation failure → a human sentence, not the engine’s own message', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bad: BillCalculator = { monthlyBills: () => [], withExportRateScaled: () => bad }
+    h.tariff.mockResolvedValueOnce({ ok: true, calc: bad, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' } })
+    const out = await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: fakeSupabase().client as never, projectId: P, caseId: C, userId: U })
+    expect(out).toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.computeFailed })
+    expect(FIN_RUN_REASONS.computeFailed).not.toMatch(/BillCalculator|monthly bills/)
+    err.mockRestore()
+  })
   it('no succeeded run / no saved financials / no tariff → the named sentence (422)', async () => {
     const empty = fakeSupabase({ tables: { 'solar.case_runs': [], 'solar.case_financials': [] } }).client as never
     await expect(executeFinancialsRun({ user: empty, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noRun })
@@ -84,9 +102,9 @@ describe('executeFinancialsRun', () => {
     await expect(executeFinancialsRun({ user: ok, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: 'No tariff is pinned for this study — pin one on the Tariff tab.' })
   })
   it('invalid saved financials / no capex → sentences before any tariff or file read', async () => {
-    const bad = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, config: { version: 99 } }] } }).client as never
+    const bad = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: { version: 99 } }] } }).client as never
     await expect(executeFinancialsRun({ user: bad, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.badFinancials })
-    const noCapex = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, config: defaultFinanceConfig(s) }] } }).client as never
+    const noCapex = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: defaultFinanceConfig(s) }] } }).client as never
     await expect(executeFinancialsRun({ user: noCapex, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: 'Add capex lines (or apply the org rate card) first.' })
     expect(h.tariff).not.toHaveBeenCalled()
     expect(h.get).not.toHaveBeenCalled()
@@ -107,6 +125,6 @@ describe('executeFinancialsRun', () => {
     expect((out as { error: string }).error).not.toMatch(/completed run/)
     h.get.mockRejectedValueOnce(new Error('stored file not found'))
     await expect(executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: {} as never, projectId: P, caseId: C, userId: U }))
-      .resolves.toEqual({ ok: false, status: 500, error: 'Financials could not be computed: stored file not found' })
+      .resolves.toEqual({ ok: false, status: 500, error: FIN_RUN_REASONS.fileMissing })
   })
 })
