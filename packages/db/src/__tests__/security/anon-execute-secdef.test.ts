@@ -63,6 +63,8 @@ const EXPOSED_SCHEMAS = [
   // 'solar' is created by 00207 and added to db_schema by the PATCH that
   // accompanies its apply (the 00126 new-schema checklist), so it is exposed.
   'solar',
+  // 'tariffs' (00209): same checklist, same PATCH, so exposed.
+  'tariffs',
 ] as const
 
 /** Migration head in production when PRODUCTION_ANON_EXECUTABLE_BEFORE_00186 was captured. */
