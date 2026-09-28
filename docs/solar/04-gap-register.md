@@ -1,8 +1,8 @@
 # E-Site Solar — Gap Register
 
 **Status:** 2026-09-28 · Source evidence: `as-is/01…11` (every item cites `file:line` there).
-All WM Solar findings come from **reading code** (web `origin/main` of `WattMatt/greencalc-sa` at
-`8e9208d8`, 2026-05-20; iOS repo `main`, 2026-08-06). **None has been probed against a live database.**
+All WM Solar findings come from **reading code** of the web app (`origin/main` of `WattMatt/greencalc-sa`
+at `8e9208d8`, 2026-05-20) — the web app is the sole baseline; the iOS app is out of scope. **None has been probed against a live database.**
 The NERSA (44 files) and meter-CSV (2,140 files) folders are **online-only Dropbox placeholders** and
 could not be read — items marked ⛔ are blocked on hydrating them.
 
@@ -24,8 +24,7 @@ S3 = missing capability / UX dead end · S4 = hygiene.
 | A4 | S1 | Public/anon storage buckets: `project-documents`, `tariff-uploads`, `project-schematics` (client drawings by URL) | as-is/01, 03, 07 B.4 | LIVE |
 | A5 | S1 | Stored XSS: A0 layout export `document.write` of layout name; proposal print preview; map popups from project/site/municipality names | as-is/05 §9, 06 A, 07 D, 02 §0.5 | LIVE |
 | A6 | S1 | `compile-latex` (no auth) sends client financials to public texlive.net | as-is/06 A | LIVE |
-| A7 | S1 | iOS: service-role key shipped in TestFlight builds 6–40 (rotation not evidenced); users can self-promote via `is_admin`; tokens in UserDefaults | as-is/08 §9.2 | LIVE — **rotate the key of Supabase `lyctmmqndqegptzkajhz`** |
-| A8 | S2 | Three Supabase refs in play (`zhhcwtftckdwfoactkea` web, `lyctmmqndqegptzkajhz` iOS/schema dump, `rsdisaisxdglmdmzmkyw` sync source); live schema has an FK no migration creates | as-is/07 §0, 08 §1.2 | DECISION D-25 |
+| A8 | S2 | Three Supabase refs in play (`zhhcwtftckdwfoactkea` in `config.toml`, `lyctmmqndqegptzkajhz` in `schema-dump.sql`, `rsdisaisxdglmdmzmkyw` sync source); live schema has an FK no migration creates | as-is/07 §0 | DECISION D-25 |
 | A9 | S1 | Fixes for much of A1–A3 exist only on the unmerged PR #1 branch (`onboarding-standardization`, conflicting with main) | local RECONCILIATION.md | LIVE |
 
 ## B. Calculation correctness (why WM numbers cannot be reused)
@@ -50,11 +49,10 @@ S3 = missing capability / UX dead end · S4 = hygiene.
 | B16 | S1 | Portal shows different assumptions (8 % esc., 25 y, 0.5 %) from the PDF (10 %, 20 y) | 06 A | DESIGN functional §9.4 (frozen snapshot) |
 | B17 | S1 | PV layout: pitch foreshortening applied across the slope; strings/DC-AC double-count arrays with >1 cable; no north reference | 05 §9 | DESIGN functional §6, engine §3.1–3.3 |
 | B18 | S1 | Generation CSV import additive (re-import doubles); months booked into UI-selected year; council import double-count | 06 D | DESIGN functional §10 (idempotent PK) |
-| B19 | S1 | Swift engines: R 2.50/kWh hard-coded; ≈2,580 kWh/kWp; third Calculator engine | 08 §8 | DESIGN (Swift not ported) |
 | B20 | S2 | Advanced sections: Seasonal dead, Grid constraints display-only, Load growth display-only; overrides & 15 % reduction not persisted | 04 E4, E9 | DESIGN functional §7.2 |
 | B21 | S2 | Calculator broken against current tariff schema; Quick Estimate/Sandbox use hard-coded assumptions | 04 §9 | DESIGN (folded into cases) |
 
-## C. Broken / dead features in WM Solar (informational — not ported)
+## C. Broken / dead features in WM Solar (the E-Site version of each feature is specified working — see functional spec §16)
 
 | ID | Finding | Evidence |
 |---|---|---|
@@ -67,7 +65,6 @@ S3 = missing capability / UX dead end · S4 = hygiene.
 | C7 | Second "New Design" can never save (unique name); module config not restored; proposal System Design page blank; `maybeSingle` throws with 2+ layouts | 05 §9 |
 | C8 | Destructive one-click actions: delete tenant(s), clear assignments, "Fix 30-min", "Clear Processed", "Full Sync" (can delete every meter) | 01, 02 |
 | C9 | Settings (financial, derating, diversity, TOU) stored per browser; VAT toggle does nothing; branding saved to the wrong row; "Delete account" only signs out; password change needs no current password | 07 A.6 |
-| C10 | iOS: 8 services never called; parity doc overstated; unit tests not in project; macOS target likely doesn't compile; last build 2026-04-01 | 08 |
 
 ## D. Source-data gaps
 
@@ -88,7 +85,7 @@ S3 = missing capability / UX dead end · S4 = hygiene.
 | ID | Gap | Resolution |
 |---|---|---|
 | E1 | No per-project entitlement (all unlocks per org/user); unlock route charges the caller's oldest org, takes no project | PHASE 1 — `project_feature_unlocks`, `has_project_feature`, project-aware route, webhook/refund/callback branches (data §2) |
-| E2 | Sidebar lock flags per primary org, not per project; mobile has no entitlement checks | PHASE 1 |
+| E2 | Sidebar lock flags per primary org, not per project | PHASE 1 |
 | E3 | No module's data tables enforce a paywall in RLS | PHASE 1 — Solar is the first (data §2.3.3) |
 | E4 | No utility tariff, meter interval, load profile, yield or weather model anywhere in E-Site | PHASES 2–4 |
 | E5 | `FEATURE_PRICES.model` has no `'project'`; org unlock route would accept any key | PHASE 1 |
@@ -106,4 +103,17 @@ F5 transposition + temperature PV model validated against PVGIS/PVsyst · F6 arr
 obstructions and row spacing · F7 string/MPPT voltage checks · F8 north reference · F9 BOM · F10 case
 comparison + sensitivity · F11 tax (12B) and debt/PPA finance models · F12 frozen, hashed proposal
 snapshots with evidential acceptance · F13 idempotent generation ingestion and guarantee derived from the
-accepted case · F14 per-project paid entitlement enforced in the database · F15 mobile field survey.
+accepted case · F14 per-project paid entitlement enforced in the database.
+
+## G. Web features whose gaps are fixed while carrying them over (not dropped)
+
+| ID | Web feature | Gaps fixed in E-Site | Spec |
+|---|---|---|---|
+| G1 | Schematics | Only page 1 of a PDF; card sizes and line waypoints not saved; delete leaves lines; public bucket; hierarchy unused by any calculation | functional §13 |
+| G2 | Schedule (Gantt) | Dates shift −1 day per save in SAST; critical path ignores link type and lag; undo/redo, milestone edit and dependency edit are stubs; filter presets in the browser | functional §14 |
+| G3 | Solar Forecast | Open proxy functions; UTC hours as local; forecast not tied to operations | functional §3.3, §10 |
+| G4 | Handover checklist | Depends on exact folder/template names; open RLS | functional §10 |
+| G5 | Monthly report | No period/snapshot/PDF; edits freeze numbers; placeholder equipment table; YTD rows repeat the month | functional §10 |
+| G6 | Quick Estimate / Sandbox | Hard-coded assumptions; sweep never runs; promote stub; scenarios not reloaded | functional §16 (Manual case + Sweep) |
+| G7 | Projects list + map | XSS in popups; no entitlement awareness | functional §15 |
+| G8 | 3D layout view | Read-only viewer kept; driven by the fixed geometry | functional §6.3 |

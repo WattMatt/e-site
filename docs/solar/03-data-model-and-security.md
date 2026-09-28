@@ -93,7 +93,13 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `org_settings` | org_id, settings jsonb (versioned), updated_by | Defaults (§11 functional spec) |
 | `proposals` | study_id, case_id, version, status, snapshot jsonb, pdf_path, pdf_sha256, share_token_hash, expires_at, issued_by/at, withdrawn_at | Token stored hashed |
 | `proposal_events` | proposal_id, kind (issued/viewed/accepted/declined/withdrawn/expired), actor_name, actor_email, ip, user_agent, pdf_sha256, at | Append-only (no UPDATE/DELETE policies) |
-| `installations`, `guarantees`, `downtime` | Operations (Phase 7) | |
+| `installations`, `guarantees`, `downtime`, `monthly_report_notes`, `handover_items` | Operations (Phase 7) | Handover items reference E-Site document ids |
+| `schematics` | study_id, name, description, floor_plan_id, page_index, file_path, source_revision_id | Anchored like `floor_plan_markups` |
+| `schematic_cards` | schematic_id, meter_id, x, y, w, h (image px) | **Register in `isAnnotated()`** |
+| `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (image px), line_type | Also defines the meter hierarchy; **`isAnnotated()`** |
+| `schedule_tasks` | work_item_id → projects.work_items (type `solar_task`), category, zone, start_date date, end_date date, progress, colour, sort_order, is_milestone | Dates as `date`, never timestamptz |
+| `schedule_segments`, `schedule_dependencies` (type FS/SS/FF/SF, lag_days), `schedule_baselines` (+ baseline tasks), `schedule_filter_presets` (per user) | Gantt | |
+| `solar.schedule_templates`, `handover_templates` | org_id, content jsonb | Org settings |
 | `audit_events` | study_id, verb, object_ref, actor, at | Append-only; feeds Overview activity |
 
 ### 3.1 RLS pattern (every `solar.*` table with project scope)
@@ -166,7 +172,7 @@ YoY diff runs), plus the 8 metros' own books, plus SSEG rules for licensees wher
 ## 5. Security baseline (non-negotiable for the add-on)
 
 1. No anon grants, no anon policies, no public buckets anywhere in `solar`/`tariffs`.
-2. No service-role key in any client (web or mobile); no user-typed API keys (WM iOS asked users to paste
+2. No service-role key in any client (web or mobile); no user-typed API keys (never ask users to paste
    an Anthropic key).
 3. Every external API (PVGIS, geocoding, satellite tiles, LLM) called **server-side** with a server key,
    after role + entitlement checks, rate-limited per org, results cached.

@@ -2,7 +2,11 @@
 
 **Status:** DRAFT for owner review · **Date:** 2026-09-28 · **Author:** Claude (review session)
 **Scope:** the paid, per-project **Solar** add-on inside E-Site (`apps/web`, Next.js 15 App Router), plus its
-platform tariff library and org settings. The mobile (Expo) scope is in §13.
+platform tariff library, org settings and portfolio page.
+**Baseline (owner direction, 2026-09-28):** the **WM Solar web app** is the sole functional source. Every
+feature it offers is carried into E-Site with its defects fixed, or mapped to an existing E-Site module
+that already does the same job. Nothing is taken from the WM Solar iOS app. The complete feature
+traceability is in §16.
 **Companion documents:** `02-calculation-engine-spec.md` (every formula and default),
 `03-data-model-and-security.md` (tables, RLS, entitlements), `04-gap-register.md` (what WM Solar does
 wrong or lacks, and where each item is resolved), `05-development-plan.md`, `06-open-decisions.md`.
@@ -47,7 +51,7 @@ call site checks `.ok`.
 
 | Control | Type | Purpose | Behaviour | Enabled / roles |
 |---|---|---|---|---|
-| Tab bar: Overview · Site & Supply · Load · Tariff · Layout · Yield & Scenarios · Financials · Reports & Proposal · Operations | Link tabs (`?`-free URLs: `/solar/overview`, `/solar/site`, `/solar/load`, `/solar/tariff`, `/solar/layout`, `/solar/yield`, `/solar/financials`, `/solar/reports`, `/solar/operations`) | Move between steps of the study | Plain navigation; no auto-save on tab change (each tab saves explicitly — WM's "save on tab change" is dropped). Unsaved-changes guard: browser `beforeunload` + in-app confirm "Discard unsaved changes?" | Tariff + Financials hidden for roles outside `COST_VIEW_ROLES`. Operations hidden until **[D-12]** Phase 7 ships |
+| Tab bar: Overview · Site & Supply · Load · Schematics · Tariff · Layout · Yield & Scenarios · Financials · Reports & Proposal · Schedule · Operations | Link tabs (`?`-free URLs: `/solar/overview`, `/solar/site`, `/solar/load`, `/solar/schematics`, `/solar/tariff`, `/solar/layout`, `/solar/yield`, `/solar/financials`, `/solar/reports`, `/solar/schedule`, `/solar/operations`) | Move between steps of the study | Plain navigation; no auto-save on tab change (each tab saves explicitly — WM's "save on tab change" is dropped). Unsaved-changes guard: browser `beforeunload` + in-app confirm "Discard unsaved changes?" | Tariff + Financials hidden for roles outside `COST_VIEW_ROLES`. Operations hidden until **[D-12]** Phase 7 ships |
 | Status dot on each tab | Indicator (grey = not started, amber = incomplete, green = complete, red = blocking error) | Show readiness at a glance | Computed server-side by `getSolarReadiness(projectId)` from the rules in §2.3 — **no hard-coded statuses** (WM shipped six constants). Tooltip = the exact rule outcome, e.g. "Load: 2 of 14 tenants unassigned" | All roles |
 | "Stale" banner | Banner | Tell the user that results no longer match inputs | Shown on Yield, Financials and Reports when the selected case's stored `inputs_hash` ≠ hash of current inputs (engine spec §1.3). Button **Re-run selected case** (same as Yield → Run) | Button: `SOLAR_WRITE_ROLES` |
 | Read-only banner | Banner | Explain why controls are disabled | Shown when entitlement = Revoked, or role ∉ `SOLAR_WRITE_ROLES` ("You can view this study; only owners, admins and project managers can change it") | — |
@@ -121,11 +125,14 @@ headline answer from the **selected case** (the one design that reports and prop
 |---|---|---|---|
 | Site & Supply | coordinates set, supply authority set, connection capacity (NMD kVA) set | any of the three missing | coordinates outside South Africa's bounding box (warn, allow override) |
 | Load | site load series exists covering ≥ 12 months at ≤ 60-min resolution **or** a synthesised profile has been accepted, and every non-vacant tenant is either metered or synthesised | coverage < 12 months, or tenants unassigned | an accepted import has a failing validation error (§4.3) |
+| Schematics | ≥ 1 schematic with every study meter placed (or "No schematic required" ticked) | schematics exist but some meters unplaced | — (never blocks a run) |
 | Tariff | a published tariff is pinned for the project and the export rule is set (credit or "no export credit") | tariff pinned but export rule missing | pinned tariff's year is superseded **and** no escalation path chosen |
 | Layout | ≥ 1 array with ≥ 1 module and a north reference; **or** the case uses "manual system size" | layout started but no north reference | an array lies outside every roof area |
 | Yield & Scenarios | selected case exists, last run succeeded, not Stale | cases exist but none selected, or Stale | last run failed |
 | Financials | selected case has capex > 0 and a finance model | capex default untouched (warn "using org defaults") | — |
 | Reports & Proposal | a feasibility report version exists for the selected case's current run | — | — |
+| Schedule | ≥ 1 task, and every task has start, end and owner | tasks missing dates/owner | a dependency cycle exists (refused on save, so only legacy data) |
+| Operations | commissioning date set and ≥ 1 month of generation data | installed but no data | — |
 
 ### 2.4 Headline KPIs (all from the selected case's stored run — never recomputed in the browser)
 
@@ -142,7 +149,8 @@ Simple payback (years) · IRR (%) · NPV (R) · LCOE (R/kWh). Rand values hidden
 Overview system-config panel, the Solar Forecast map and part of Schematics.
 
 ### 3.1 Sections
-A. Location · B. Supply authority & connection · C. Roof sources (drawings) · D. Site constraints.
+A. Location · B. Supply authority & connection · C. Roof sources (drawings) · D. Site constraints ·
+E. Solar resource (carries WM's "Solar Forecast" tab map + long-term summary; see §3.3).
 
 ### 3.2 Controls
 
@@ -165,6 +173,16 @@ A. Location · B. Supply authority & connection · C. Roof sources (drawings) ·
 | **Calibrate scale** (per roof source) | Button | Set pixels-per-metre | Opens the existing calibration flow (`calibrateFloorPlanAction`, per page, role-gated) | `tenants.floor_plan_page_scales` | write | — |
 | Satellite image source | Button **Capture satellite view** | Roof background when no drawing exists **[D-08]** | Server fetches a static satellite tile for the coordinates at known zoom, stores it as a file in Storage, records metres-per-pixel from the tile maths and bearing 0 (north up) — no html2canvas | `solar.roof_sources(kind='satellite', storage_path, m_per_px)` | write | Attribution text stored and printed |
 | Site constraints notes | Textarea | Record shading objects, structural limits, access | Free text, printed in the report appendix | `solar.studies.constraints_note` | write | — |
+
+### 3.3 Solar resource section (from WM's Solar Forecast tab, fixed)
+
+| Control | Type | Purpose | Behaviour | Data | Roles | States |
+|---|---|---|---|---|---|---|
+| **Fetch solar resource** | Button | Get long-term irradiation for the site | Server fetches, for the saved coordinates: Global Solar Atlas (GHI, DNI, DIF, PVOUT kWh/kWp, optimum tilt, temperature) and PVGIS monthly (GHI, DNI, DHI, temperature per month). Cached per rounded lat/lng; attribution stored. Server-side keys only, role + entitlement checked (WM's functions were open proxies) | `solar.weather_datasets` | write | Coordinates missing → disabled, "Set the location first" |
+| Resource summary card | Stats | Show the site's solar potential | Annual GHI (kWh/m²), PVOUT (kWh/kWp), optimum tilt °, average temperature; source + fetch date | same | tech-read | Not fetched → empty state with the button |
+| Monthly irradiation chart | Bar chart (12 months, GHI/DNI/DHI) | Seasonality | Toggle series; **Download CSV** | same | tech-read | — |
+| **Refresh** | Button | Re-fetch after a location change | Replaces the cached dataset; cases using it become Stale | — | write | — |
+| Consistency check | Text | Sanity check | "PVGIS 1,690 vs GSA 1,712 kWh/kWp (1.3 %)"; warns > 7 % | — | tech-read | — |
 
 ---
 
@@ -308,7 +326,7 @@ Summary (kWp, modules, inverters, strings, DC/AC ratio, checks).
 | **Measure** | M | Distance check | Temporary; not saved |
 | Undo / Redo | ⌘Z / ⇧⌘Z | — | Snapshot history (`route-history` pattern) |
 | **Save** | ⌘S | Persist | Writes changed objects with `expectedUpdatedAt`; local IndexedDB draft autosaves every change (`draft-store`); leaving with unsaved changes prompts |
-| **3D preview** | — | Visual check | Read-only extrusion of roof planes and tilted modules **[D-13: keep or drop]** |
+| **3D preview** | — | Visual check (carried from WM) | Read-only 3D view (react-three-fiber): roof planes extruded to their heights, tilted module rows, obstructions; orbit/zoom; **Reset view**; screenshot to PNG |
 | **Export layout sheet** | — | Deliverable | Server renders a PDF (drawing crop + arrays + string colours + legend + north arrow + scale bar + title block) into `projects.reports` kind `solar_layout_sheet`, versioned |
 
 ### 6.4 Properties panel (selection-dependent) and Summary
@@ -458,7 +476,10 @@ that records exactly what the client received.
 | **Import generation data** | Upload (same meter pipeline, meter kind `solar`) or inverter-portal CSV | Actuals | **Idempotent by timestamp** — re-import replaces the same interval, never adds; month/year from the data, not the UI | readings | write |
 | Monthly performance table | Table: expected, actual, variance %, PR, irradiation-corrected expected (if weather uploaded), downtime hours | Track | — | derived | tech-read |
 | Downtime log | Table + **Add downtime** (start, end, cause, excluded from guarantee?) | Record outages | Auto-detected candidates (zero output during daylight from the weather file's sun position, not a fixed 06:00–17:30 window) proposed for confirmation | `solar.downtime` | write |
-| **Generate monthly report** | Button | Client monthly report | Month select → `projects.reports` kind `solar_monthly` with period, metric snapshot JSON and PDF; regenerating a month creates v2, never edits v1 | reports | write ∩ cost-view |
+| **Generate monthly report** | Button | Client monthly report | Month select → `projects.reports` kind `solar_monthly` with period, metric snapshot JSON and PDF; regenerating a month creates v2, never edits v1. Content (from WM's monthly report, fixed): performance summary, expected vs actual per source, downtime table with lost kWh and lost revenue at the **pinned tariff's TOU rates**, yearly-to-date rows that are real YTD sums, equipment table from the installation record (no placeholders), realised consumption from the council/bulk meter | reports | write ∩ cost-view |
+| Monthly report editor | Structured text fields per section (commentary, actions) | Add engineer commentary without freezing numbers | Numbers always come from the snapshot; text fields are separate (WM froze every section on any keystroke) | `solar.monthly_report_notes` | write |
+| 7-day generation forecast panel | Chart | Expected output for the coming week (carried from WM's Solcast card) | Server-side Solcast call (only if licence confirmed **[D-08]**), cached 3 h, converted UTC→SAST; hidden when not licensed | cache | tech-read |
+| Handover checklist | Checklist (template "Solar PV Handover": CoC, SLD as-built, commissioning test sheets, O&M manual, warranties, SSEG registration letter, monitoring login handover…) | Track handover documents (carried from WM's Documents tab checklist) | Each item links to a file in E-Site **Documents** (no separate document store); completion %; template editable in org settings; no dependence on folder names | `solar.handover_items` | write |
 
 ---
 
@@ -497,33 +518,140 @@ alter past results).
 
 ---
 
-## 13. Mobile (Expo) scope — Phase 7
+## 13. Schematics tab — `/solar/schematics` (carried from WM, fixed)
 
-Field capture only; no modelling on the device.
+**Purpose.** Place the study's meters on the site's electrical single-line diagrams and draw the supply
+hierarchy between them, so the meter-to-board relationships are visible and **used** (WM drew them and
+no calculation read them).
 
-| Screen | Controls | Purpose |
-|---|---|---|
-| Solar site survey (per project, entitlement-checked server-side) | Roof photos (tagged: roof, DB, meter, inverter location, obstruction), compass bearing + tilt (device sensors) per photo, GPS stamp, roof type/condition, notes | Collect site facts for the office |
-| Meter reading capture | Meter select, reading value + unit, photo of the register | Spot readings / validation |
-| Handover checklist | Checklist from the Solar handover template with photos + signature | As-built handover |
-| Read-only views | Selected case KPIs (no rand for non-cost roles), issued proposal status, operations summary | Awareness on site |
-Offline queue only for these captures (PowerSync); nothing else.
+### 13.1 List view
+
+| Control | Type | Purpose | Behaviour | Data | Roles | States |
+|---|---|---|---|---|---|---|
+| Schematics list | Table: name, source drawing, page, meters placed / total, updated | See diagrams | Row click opens the editor | `solar.schematics` | tech-read | Empty: "Add a single-line diagram from the project's drawings" |
+| **Add schematic** | Dialog | Link a diagram | Choose a project drawing (`tenants.floor_plans`) **and page** (all pages available — WM showed page 1 only), name, description; or **Blank canvas**. No separate upload/bucket: drawings come from Floor Plans (private, signed URLs; WM's bucket was public) | `solar.schematics(floor_plan_id, page_index)` | write | — |
+| **Replace drawing** | Button | Point at a new revision | Re-anchors to a new file/page; meter cards keep their positions; warns "positions may need adjusting" | — | write | — |
+| **Delete** / **Delete selected** | Buttons (two-step, count shown) | Remove | Deletes the schematic, its cards and lines (cascade — WM left lines behind) | — | write | — |
+| "No schematic required" | Checkbox | Mark step complete without a diagram | Sets readiness green | `studies.schematic_waived` | write | — |
+
+### 13.2 Editor (Konva, on the sheet primitives; coordinates in drawing-image pixels, anchored like `floor_plan_markups`, registered in `isAnnotated()`)
+
+| Control / gesture | Key | Purpose | Behaviour |
+|---|---|---|---|
+| Select / move | V | Move and **resize** meter cards | Position and size both persisted (WM lost sizes); shift-drag snaps to other cards' axes with guides |
+| **Place meter** | P | Put a study meter on the diagram | Click → dialog: pick an unplaced study meter (or **Create meter** stub for an unmetered point); card shows label, shop, kind, colour swatch, include-in-load state |
+| **Connect** | C | Draw a supply line parent → child | Click source card anchor, optional waypoints, target anchor; Esc cancels. Anchors recomputed live after moves (WM's went stale) |
+| Edit waypoints | drag | Re-route a line | Persisted (WM lost them) |
+| **Connections manager** | — | Table of all connections (from, to, line type) with add/delete | Same data as the canvas |
+| Include-in-load toggle on a card | click | Include/exclude the meter's tenant from the site load | Writes `tenant_load_basis.source` (included/excluded); site load becomes Stale |
+| Delete | Del/Backspace | Remove card or line | Deleting a card deletes its lines |
+| Layers: Meters / Lines / Background | toggles | Visibility | — |
+| Pan / zoom / fit | wheel, pinch, space-drag, buttons | Navigate | `use-sheet-viewport`; zoom about the cursor/centre |
+| Undo / Redo | ⌘Z / ⇧⌘Z | — | Snapshot history, one step per completed gesture |
+| **Save** | ⌘S | Persist | Explicit, stale-write refused; IndexedDB draft in between |
+| **Export** | — | Deliverable | PDF sheet (drawing + cards + lines + legend) into `projects.reports` kind `solar_schematic_sheet`; SVG download with the background embedded (not a public URL) |
+
+### 13.3 How the hierarchy is used
+- **Reconciliation:** for each parent meter with children, monthly parent kWh vs Σ children, shown on
+  Load → Checks (flag > ±10 %).
+- **Double-count guard:** the site-load builder refuses to add both a parent and its children to the
+  site series under basis S2 (children win; the parent is used for reconciliation only).
+- The connection graph is also offered when choosing the point-of-connection node (§3.2).
 
 ---
 
-## 14. What is deliberately NOT rebuilt from WM Solar (and why)
+## 14. Schedule tab — `/solar/schedule` (carried from WM, fixed) [D-20]
 
-| WM Solar feature | Decision | Reason / E-Site replacement |
+**Purpose.** A Gantt programme for the solar installation (design, approvals/SSEG application,
+procurement, installation, commissioning, handover). Tasks are E-Site **work items** of type
+`solar_task` (so they appear in My Work, notifications and due-date logic), with Gantt-specific fields
+in a side table.
+
+### 14.1 Header and toolbar
+
+| Control | Type | Purpose | Behaviour | Roles |
+|---|---|---|---|---|
+| **Add task** | Button → Task dialog | Create a task | Fields: name, category, zone, start date, end date (or duration days), owner (project member), status (not started / in progress / done), progress %, colour, notes. Dates are **calendar dates stored as `date`** (WM shifted dates −1 day on every save in SAST) | write |
+| **Add milestone** | Button → Milestone dialog | Zero-duration marker | Name, date, colour, description — **editable after creation** (WM could not edit) | write |
+| **Use template** | Button | Seed a standard solar programme | Inserts the org's Solar schedule template (editable in org settings), dates relative to a chosen start date; empty-state primary action | write |
+| View: Day / Week / Month | Segmented | Time scale | — | tech-read |
+| Search | Input with clear | Filter by name | — | tech-read |
+| Filters | Popover: status, owner, colour; **Save as preset**, preset list, clear all | Focus | Presets stored per user in the DB (not browser) | tech-read |
+| Show: Dependencies / Milestones / Split bars | Toggles | Visibility | — | tech-read |
+| Group by | Select: none, status, owner, colour, category, category & zone | Organise rows | — | tech-read |
+| Baselines | Menu: **Save current as baseline** (name, description), list; **Compare** select shows baseline bars and variance days | Track slippage | — | write (save) / read (compare) |
+| **Import** | Dialog | Bring in a programme | CSV / XLSX / MS Project XML: column mapping, preview, validation (dates, cycles), commit | write |
+| **Export** | Menu | Share | PNG, PDF (A3 landscape, server-rendered), Excel, Word, calendar (.ics) | tech-read |
+| Keyboard shortcuts | `?` | Help overlay | Listed shortcuts all functional (undo/redo implemented) | — |
+
+### 14.2 Chart and list
+
+| Control / gesture | Purpose | Behaviour |
 |---|---|---|
-| Own projects list, auth, orgs, invites, profile, PWA, tours, code-review suite, dashboards of tariff counts | Drop | E-Site owns these |
-| Schedule (Gantt) tab | Drop **[D-20]** | E-Site work items + due dates; a Gantt is a platform decision, not a Solar one |
-| Documents tab | Drop | E-Site Documents + Dropbox sync |
-| Handover checklist | Rebuild as a Site-forms / handover template | Reuse E-Site forms/handover modules |
-| Schematics tab (SLD card editor) | Drop for v1 **[D-21]** | Board hierarchy already in `structure.nodes`; SLD drawings live in Floor Plans |
-| Quick Estimate, Sandbox, Calculator | Fold into cases | One engine; a "Manual" case is the quick estimate |
-| Solcast forecast card | Drop from yield **[D-08]** | Forecasting is an operations concern, not a design input |
-| LaTeX / texlive.net, pdfmake, PDFShift, print popups | Drop | Server-side react-pdf/pdf-lib only |
-| Global cross-project "meter library" with file-name dedupe | Replace | Org-scoped library, sha256 dedupe |
-| Browser-stored settings (localStorage) | Replace | Org defaults in DB + per-case snapshot |
-| AI infographics / tour content | Drop | No product value |
-| External project/site sync (`sync-external-*`, `replicate-to-external`) | Drop | E-Site reads its own tenant schedule |
+| Row list (left) with checkbox, progress badge, drag handle | Select, reorder | Reorder persisted as `sort_order` |
+| Bar drag / resize | Move or change dates | Snaps to days; one undo step per drag |
+| Split bar | Pause a task (segments) | Segments persisted; roll-up duration = Σ segments |
+| Dependency drag (bar end → bar start) | Link tasks | Type selector FS / SS / FF / SF with **lag days**; cycles refused |
+| **Critical path** | Highlight | Computed with all four link types **and lag** (WM treated all as FS without lag), on all tasks regardless of filters |
+| Today line, weekend shading, **Today** / ‹ › buttons | Navigate | — |
+| Bulk actions bar (on selection) | Set status, colour, progress, owner; Delete (two-step with count) | — |
+| Stats panel | Overall completion %, tasks by status, average progress, programme duration, critical-path length | Progress roll-up weighted by duration |
+| Resource workload view | Tasks per owner per week | Highlights > N concurrent tasks (setting) |
+
+### 14.3 Rules
+- Dates are local calendar dates (`date`), never `timestamptz` midnight conversions.
+- Task owner must be an active project member; reassignment notifies the new owner (work-item events).
+- Public holidays (existing SA holiday table) and weekends shaded; optional "working days only" duration mode.
+
+---
+
+## 15. Solar portfolio page — `/solar` (org level; carried from WM's Projects list + map, fixed)
+
+| Control | Type | Purpose | Behaviour | Roles |
+|---|---|---|---|---|
+| Portfolio table | Table: project, location, supply authority, status (study / proposal issued / accepted / operating), selected-case kWp, year-1 saving (cost-view only), last activity | See every Solar project in the org | Only projects the user can access **and** that are unlocked; locked projects listed under "Available to unlock" for owner/admin | Any role with access |
+| Map | Map with project markers | Geographic overview | Marker popups built with text nodes (WM injected HTML — XSS) | same |
+| Filters | Status, province, supply authority | Narrow the list | — | same |
+| **Open** | Row action | Go to the project's Solar Overview | — | same |
+| **Unlock Solar** | Row action (locked projects) | Buy for that project | → project unlock page | OWNER_ADMIN |
+| Portfolio KPIs | Stats | Totals: kWp designed, kWp proposed, kWp operating, generation YTD vs guarantee | cost-view for rand values | same |
+
+---
+
+## 16. Web parity matrix — every WM Solar web feature and where it lands
+
+| WM Solar web feature (as-is ref) | E-Site destination | Status |
+|---|---|---|
+| Project tab: Overview (as-is/01 §2) | Solar Overview §2 (readiness from real rules, KPIs from the stored run) | Carried, fixed |
+| Tenants (01 §3, 02 B) | Load → Tenants §4.4 (reads the E-Site tenant schedule; weighted multi-meter; auto-match with review) | Carried, fixed |
+| Schematics (01 §4) | Schematics tab §13 | Carried, fixed |
+| Load Profile (02 A) | Load → Site profile §4.5 (true 8760, day-type alignment, MD) | Carried, fixed |
+| Costs (03 §8) | Financials → Capex/Opex §8 | Carried, fixed |
+| Tariff (03 §7) | Tariff tab §5 | Carried, fixed |
+| Simulation incl. PVsyst loss chain, battery, advanced sections (04) | Yield & Scenarios §7 (every advanced section either works or is absent) + Financials §8 | Carried, fixed |
+| PV Layout incl. 3D (05) | Layout tab §6 | Carried, fixed + new (auto-fill, strings, north, BOM) |
+| Solar Forecast (04 §6) | Site & Supply → Solar resource §3.3; 7-day forecast in Operations §10 | Carried, fixed |
+| Proposals incl. workspace, share link, client portal, signing (06 A) | Reports & Proposal §9 | Carried, fixed (frozen snapshot, evidential acceptance) |
+| Schedule / Gantt (06 B) | Schedule tab §14 | Carried, fixed |
+| Documents (06 C) | E-Site Documents module (existing, with Dropbox sync) | Mapped to existing |
+| Handover checklist (06 C) | Operations → Handover checklist §10 | Carried, fixed |
+| Generation (06 D) | Operations §10 | Carried, fixed |
+| Monthly report (06 E) | Operations → monthly report §10 | Carried, fixed |
+| Global Load Profiles page: meter library, imports, analysis, comparison, stacking (02 C) | Load → Meters §4.3 (org library, meter chart/heatmap); meter comparison = select 2+ meters → overlay chart; stacking = Site profile by basis | Carried, fixed |
+| Tariff Management page (03) | Platform tariff library §12 | Carried, fixed |
+| Settings → Calculations, Derating, Diversity, TOU, Templates, Branding (07 A.6) | Org Solar settings §11 (DB, not browser); TOU in the tariff library; branding = E-Site org branding | Carried, fixed |
+| Quick Estimate, Sandbox (parameter sweep, promote to project) (04 §9) | A **Manual** case = quick estimate; **Sweep** action on a case (vary kWp/battery over a range → comparison table); "promote" is unnecessary because cases already live in the project | Carried, fixed |
+| Calculator page (04 §9.1) | Tariff tab → bill check + Manual case | Carried, fixed |
+| Projects list + map (07 A.4) | Solar portfolio page §15 | Carried, fixed |
+| Dashboard (tariff DB counts) (07 A.3) | Platform tariff library dashboard §12 | Mapped |
+| Auth, org, users, invites, profile, reset password (07 A.7–A.8) | E-Site auth and user management | Mapped to existing |
+| Import tenant schedule from another system (`sync-external-*`) (07 B.5) | E-Site tenant schedule import (existing) | Mapped to existing |
+| Mapbox/Places geocoding (07 B.2) | Site & Supply → Locate from address (server-side) | Carried, fixed |
+| AI tariff extraction (03 §3) | Library ingestion, AI-assisted for PDF-only books, review before publish | Carried, fixed |
+| AI load-profile / sheet import (02 D) | Deterministic parser with review dialog; AI column-mapping suggestion allowed as a hint only | Carried, fixed |
+| AI proposal narrative (06 A) | Draft narrative button §9.3 **[D-17]** | Carried, fixed (saved, printed) |
+| PWA install / offline (07 A.9) | Not carried — E-Site's own web app shell | Platform concern |
+| Onboarding tours, AI infographics (07 A.11) | Not carried — disabled in WM | Dead in source |
+| Code review suite (07 A.12) | Not carried — not a solar feature | Not solar |
+| `ProjectDashboard` mock (07 A.5) | Not carried — hard-coded mock data | Dead in source |
+| `replicate-to-external`, `export-to-google-sheets`, `batch-geocode-*` (07 B) | Not carried — operational leftovers; exports provided as CSV/XLSX downloads | Replaced |

@@ -6,12 +6,16 @@ pattern). Nothing ships to production until the phase's verification list passes
 **signed-in walk from the empty state** by the owner (the step agents cannot do). Effort is in focused
 build-days (one developer + agents); calendar time depends on review turnaround.
 
+**Baseline:** the WM Solar web app. Every web feature is carried and fixed (functional spec §16); the
+iOS app contributes nothing.
+
 ```
 P0 prerequisites ─► P1 entitlement+skeleton ─► P2 tariff library ─┐
-                                   └────────► P3 load ────────────┼─► P4 engine+yield+financials ─► P6 reports+proposal ─► P7 operations+mobile
-                                                P5 layout ─────────┘                                                      P8 WM data migration / retire WM Solar
+                                   ├────────► P3 load + schematics ┼─► P4 engine+yield+financials ─► P6 reports+proposal+portfolio ─► P7 operations
+                                   ├────────► P5 layout (+3D) ─────┘
+                                   └────────► P5b schedule (Gantt)                                     P8 WM data migration / retire WM Solar
 ```
-P2, P3 and P5 can run in parallel after P1. P4 needs P2 + P3 (P5 optional: manual-size cases work without it).
+P2, P3, P5 and P5b can run in parallel after P1. P4 needs P2 + P3 (P5 optional: manual-size cases work without it).
 
 ---
 
@@ -55,13 +59,14 @@ Verification
 - Every charge in the published 2026/27 year has a source locator; spot-check 30 random charges against the source (owner or delegate).
 - Bill tests within ±2 %; unit test proving c/kWh vs R/kWh cannot be confused (unit NOT NULL + conversion test).
 
-## P3 — Load (≈ 10 days; parallel)
+## P3 — Load + Schematics (≈ 14 days; parallel)
 
 Deliverables
 - Direct-to-Storage upload, server parser (formats found in the hydrated folder; PnP SCADA first), review dialog, validation reports, sha256 dedupe, org meter library.
 - `meter_readings` storage decision (D-23) proven with a volume test (≥ 2 M rows).
 - Tenants sub-tab from `structure.nodes`, weights, auto-match, synthesis archetypes + densities.
-- Site-profile builder (engine §2) incl. reference-year alignment, MD; charts; CSV exports; Checks sub-tab.
+- Site-profile builder (engine §2) incl. reference-year alignment, MD; charts; meter comparison overlay; CSV exports; Checks sub-tab.
+- Schematics tab (functional §13): diagrams from project drawings (all pages), meter cards, connections, include-in-load toggle, reconciliation + double-count guard, sheet export; `solar.schematic_*` in `isAnnotated()`.
 Verification
 - Golden fixtures (as-is/10 §6.4 list + synthetic set): 30-min kWh vs kW same energy; cumulative with rollover; blanks → NULL; decimal comma; `24:00`; 15-min; solar meter export channel.
 - One real mall (e.g. YARONA): Σ tenants vs bulk reconciliation shown; owner confirms the profile shape looks right.
@@ -89,22 +94,34 @@ Verification
 - Auto-fill counts checked by hand on 3 roofs (flat racked, pitched, irregular with obstructions).
 - Touch/tablet walk (pinch, draw) on iPad.
 
-## P6 — Reports & Proposal (≈ 8–10 days)
+## P5b — Schedule / Gantt (≈ 8 days; parallel after P1)
+
+Deliverables: `solar_task` work-item type + Gantt side tables (segments, dependencies with type and lag,
+baselines, milestones, filter presets per user); Schedule tab (functional §14) incl. template seeding,
+import (CSV/XLSX/MS Project XML) and exports (PNG, PDF, XLSX, DOCX, ICS); critical path with all link
+types and lag.
+Verification: date round-trip test in `Africa/Johannesburg` (no −1 day drift); critical-path unit tests
+for FS/SS/FF/SF with lag; cycle refusal; owner walk creating a programme from the template.
+
+## P6 — Reports & Proposal + Portfolio (≈ 10–12 days)
 
 Deliverables
 - react-pdf `solar_feasibility` and `solar_technical` reports (WinAnsi-safe), read-gates, `SavedReportsPanel`.
 - Proposal drafts, issue with frozen snapshot + hash, share token, portal view, accept/decline with stamping, notifications (new types, full CHECK re-declaration), withdraw/revise.
 - Optional LLM narrative (D-17).
+- Solar portfolio page `/solar` with map (functional §15).
 Verification
 - Portal figures byte-identical to PDF snapshot; tampering test (changed case after issue does not change issued proposal).
 - Report glyph test (decoded content streams) for `kWp`, `m²`, `°`, and banned glyphs replaced.
 - Probe with project email toggle off (WM projects resolve 12–13 real recipients).
 
-## P7 — Operations + mobile field capture (≈ 10–12 days; only if D-12 = in scope)
+## P7 — Operations (≈ 10 days)
 
-Deliverables: installations, guarantee from accepted case, idempotent generation ingestion, downtime
-detection from sun position, `solar_monthly` reports with snapshot; Expo screens (survey, meter reading,
-handover checklist) with server-side entitlement.
+Deliverables: installations, guarantee from the accepted case, idempotent generation ingestion, downtime
+detection from sun position, `solar_monthly` reports with snapshot and separate commentary fields,
+handover checklist linked to E-Site Documents, 7-day Solcast forecast panel (if licensed, D-08).
+Verification: re-importing the same generation file changes nothing; a month straddling a year boundary
+books to the right year; monthly report v2 leaves v1 untouched.
 
 ## P8 — WM Solar data migration and retirement (≈ 3–5 days; only if D-25 says migrate)
 
@@ -122,4 +139,4 @@ freeze WM Solar read-only and retire.
 - CLAUDE.md "Current state" + Obsidian `sessions.md` updated at the end of each session.
 
 ## Rough total
-P1–P6 ≈ 57–64 build-days; P7 + P8 ≈ 13–17 more. The critical path is P0 data access → P2/P3 → P4.
+P1–P6 incl. P5b ≈ 71–80 build-days; P7 + P8 ≈ 13–15 more. The critical path is P0 data access → P2/P3 → P4.
