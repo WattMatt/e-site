@@ -101,3 +101,52 @@ describe('reference year: the load and the tariff must share day types', () => {
     expect(jan.totalZar).toBe(56)
   })
 })
+
+describe('withExportRateScaled: the export-rate sensitivity re-prices through the net-billing rules', () => {
+  const tariff = makeTariff({ name: 'flat SSEG', structure: 'flat', charges: [
+    makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 2 }),
+    makeCharge({ component: 'export_credit', unit: 'R_per_kWh', amountExclVat: 1 }),
+  ] })
+  const scaled = (k: number) => makeTariff({ name: 'flat SSEG', structure: 'flat', charges: [
+    makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 2 }),
+    makeCharge({ component: 'export_credit', unit: 'R_per_kWh', amountExclVat: 1 * k }),
+  ] })
+  // Energy-only cap, carry within the municipal FY (ends June). January: 744 kWh x R2 = R1,488 of
+  // energy; 1,240 kWh exported (40 kWh at noon every day) earns R1,240 at k = 1 — under the cap —
+  // but R1,860 at k = 1.5, which naive scaling of the credit USED would have credited in full.
+  const sseg = { ...netBillingRule('municipal', { touExport: false }), capRule: 'energy_charges' as const }
+  const importKwh = new Float64Array(N).fill(1)
+  const exportKwh = Float64Array.from({ length: N }, (_, h) => (h < 744 && h % 24 === 12 ? 40 : 0))
+  const calc = tariffBillCalculator(tariff, { calendar: CAL, referenceYear: 2025, sseg })
+
+  it('k = 1: January uses its R1,240 credit in full (under the R1,488 cap)', () => {
+    expect(calc.monthlyBills({ importKwh, exportKwh })[0]).toEqual({ month: 1, totalZar: 248, exportCreditUsedZar: 1240 })
+  })
+
+  it('k = 1.5: credit used is capped at the energy charges (R1,488, not the naive R1,860) and the rest carries to February', () => {
+    const out = calc.withExportRateScaled(1.5).monthlyBills({ importKwh, exportKwh })
+    expect(out[0]).toEqual({ month: 1, totalZar: 0, exportCreditUsedZar: 1488 })
+    expect(out[0]!.exportCreditUsedZar).toBeLessThan(1240 * 1.5)
+    expect(out[1]!.exportCreditUsedZar).toBe(372) // 1,860 - 1,488 carried into February and used there
+    const direct = costHourly(scaled(1.5), { importKwh, exportKwh }, { calendar: CAL, year: 2025, sseg, holidays: referenceYearHolidays(2025) })
+    expect(out.map((b) => b.exportCreditUsedZar)).toEqual(direct.map((b) => b.credit.used))
+    expect(out.map((b) => b.totalZar)).toEqual(direct.map((b) => b.totalExclVat))
+    for (const b of direct) expect(b.credit.used).toBeLessThanOrEqual(b.energyCharges)
+  })
+
+  it('scales a linked export tariff (Gen-offset) and never the import energy rates', () => {
+    const gen = makeTariff({ name: 'gen-offset', structure: 'flat', charges: [
+      makeCharge({ component: 'export_credit', unit: 'R_per_kWh', amountExclVat: 1 }),
+    ] })
+    const linked = tariffBillCalculator(tariff, { calendar: CAL, referenceYear: 2025, sseg, exportTariff: gen })
+    const noExport = new Float64Array(N)
+    // Import-only bill is unchanged by the export scaling.
+    expect(linked.withExportRateScaled(1.5).monthlyBills({ importKwh, exportKwh: noExport })).toEqual(linked.monthlyBills({ importKwh, exportKwh: noExport }))
+    expect(linked.withExportRateScaled(0.5).monthlyBills({ importKwh, exportKwh })[0]!.exportCreditUsedZar).toBe(620)
+  })
+
+  it('refuses a non-positive or non-finite factor', () => {
+    expect(() => calc.withExportRateScaled(0)).toThrow(RangeError)
+    expect(() => calc.withExportRateScaled(Number.NaN)).toThrow(RangeError)
+  })
+})

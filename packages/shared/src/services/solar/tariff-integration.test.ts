@@ -144,6 +144,21 @@ describe('end to end: 3a site load → 4a engine → 2a Megaflex bill → financ
     expect(fr.year1Bills.exportCreditUsedZar).toBeCloseTo(bills.reduce((s, b) => s + b.credit.used, 0), 6)
   })
 
+  it('the tornado\'s export-rate bar is re-priced through Megaflex + Gen-offset: at +20 % every month\'s credit stays within its energy charges', () => {
+    expect(fr.tornado.omitted).toEqual([])
+    expect(fr.tornado.bars.map((b) => b.variable)).toContain('exportRate')
+    const k = 1 + fr.tornado.swing
+    const scaledGen = { ...genOffset, charges: genOffset.charges.map((c) => (c.component === 'export_credit' || c.component === 'energy' ? { ...c, amountExclVat: c.amountExclVat * k } : c)) }
+    const direct = costHourly(
+      megaflex,
+      { importKwh: result.balance.import, exportKwh: result.balance.export },
+      { calendar: ESKOM_LIKE, year: REFERENCE_YEAR, holidays: HOLIDAYS_2025, exportTariff: scaledGen, sseg: costOpts.sseg, demandForMonth: costOpts.demandForMonth },
+    )
+    for (const b of direct) expect(b.credit.used).toBeLessThanOrEqual(b.energyCharges + 1e-9)
+    const viaAdapter = calc.withExportRateScaled(k).monthlyBills({ importKwh: result.balance.import, exportKwh: result.balance.export })
+    expect(viaAdapter.map((b) => b.exportCreditUsedZar)).toEqual(direct.map((b) => b.credit.used))
+  })
+
   it('produces a finite, positive NPV on the cash model', () => {
     const view = fr.finance.models[0]!.views[0]!
     expect(Number.isFinite(view.npvZar)).toBe(true)

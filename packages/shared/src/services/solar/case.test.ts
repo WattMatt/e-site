@@ -95,6 +95,8 @@ describe('sub-hourly maximum demand reaches the bill (spec §4, §2.6)', () => {
       seen.push(fl.subHourlyImport)
       return stubBillCalculator.monthlyBills(fl)
     },
+    // The export-rate sensitivity re-prices through a scaled calculator; it is not the spied year-1 pricing.
+    withExportRateScaled: (k: number) => stubBillCalculator.withExportRateScaled(k),
   }
   const r = simulateCase(input({ subHourlyLoad: { intervalMin: 30, kw }, loadAdjustment: 0.1 }), weather)
   runFinancials(r, fin, spy)

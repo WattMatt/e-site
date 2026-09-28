@@ -30,6 +30,17 @@ export interface MonthlyBillSummary {
 export interface BillCalculator {
   /** Twelve monthly bills (Jan…Dec) at the base (year-1) tariff. */
   monthlyBills(flows: GridFlows): MonthlyBillSummary[]
+  /**
+   * The same calculator with every export credit RATE × k (k > 0), re-priced through the tariff's
+   * own net-billing rules. The export-rate sensitivity must use this: scaling the credit USED by k
+   * ignores the energy-only cap (credit can never exceed a month's energy charges) and the
+   * carry-forward / financial-year-end forfeit, so it overstates the upside at k > 1.
+   */
+  withExportRateScaled(k: number): BillCalculator
+}
+
+export function assertExportRateFactor(k: number): void {
+  if (!(Number.isFinite(k) && k > 0)) throw new RangeError(`export rate factor ${k} must be a finite number > 0`)
 }
 
 export interface Year1Bills {
@@ -69,4 +80,17 @@ export function year1Bills(
   const after = annual(calc.monthlyBills({ importKwh: withBattery.import, exportKwh: withBattery.export, subHourlyImport: sub?.after }))
   const afterPv = annual(calc.monthlyBills({ importKwh: pvOnly.import, exportKwh: pvOnly.export, subHourlyImport: sub?.afterPvOnly }))
   return { beforeZar: before.total, afterZar: after.total, afterPvOnlyZar: afterPv.total, exportCreditUsedZar: after.credit }
+}
+
+/**
+ * Year-1 bills re-priced with the export credit rate × k — the input the export-rate sensitivity
+ * needs. Same flows as `year1Bills`; only the calculator changes.
+ */
+export function year1BillsRepricer(
+  calc: BillCalculator,
+  withBattery: EnergyBalance,
+  pvOnly: EnergyBalance,
+  sub?: { before?: SubHourlyLoad; after?: SubHourlyLoad; afterPvOnly?: SubHourlyLoad },
+): (k: number) => Year1Bills {
+  return (k) => year1Bills(calc.withExportRateScaled(k), withBattery, pvOnly, sub)
 }

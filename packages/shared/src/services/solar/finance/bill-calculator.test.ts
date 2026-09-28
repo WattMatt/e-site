@@ -25,10 +25,11 @@ describe('year1Bills through a BillCalculator', () => {
   })
 
   it('refuses a calculator that does not return twelve valid months', () => {
-    const bad: BillCalculator = { monthlyBills: () => [] }
+    const bad: BillCalculator = { monthlyBills: () => [], withExportRateScaled: () => bad }
     expect(() => year1Bills(bad, withBatt, pvOnly)).toThrow(/12 monthly bills/)
     const neg: BillCalculator = {
       monthlyBills: (f) => stubBillCalculator.monthlyBills(f).map((b) => ({ ...b, exportCreditUsedZar: -1 })),
+      withExportRateScaled: () => neg,
     }
     expect(() => year1Bills(neg, withBatt, pvOnly)).toThrow(/invalid bill/)
   })

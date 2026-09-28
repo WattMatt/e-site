@@ -4,6 +4,7 @@
  */
 import { escalationRate } from './factors'
 import { runFinance, type FinanceEnergy, type FinanceInput, type FinanceModel, type ViewResult } from './cashflow'
+import type { Year1Bills } from './bill-calculator'
 
 export type TornadoVariable = 'capex' | 'tariffEscalation' | 'yield' | 'discountRate' | 'exportRate'
 
@@ -24,9 +25,26 @@ export interface Tornado {
   baseNpvZar: number
   swing: number
   bars: TornadoBar[]
+  /**
+   * Variables left out because they could not be computed honestly: `exportRate` needs the bills
+   * RE-PRICED at the scaled export rate (`TornadoOptions.exportRateBills`); without it the bar is
+   * omitted rather than approximated by scaling the credit used.
+   */
+  omitted: TornadoVariable[]
 }
 
-function flex(v: TornadoVariable, k: number, f: FinanceInput, e: FinanceEnergy): [FinanceInput, FinanceEnergy] {
+export interface TornadoOptions {
+  /** Year-1 bills with every export credit rate × k, priced through the tariff's net-billing rules (`year1BillsRepricer`). */
+  exportRateBills?: (k: number) => Year1Bills
+}
+
+function flex(
+  v: TornadoVariable,
+  k: number,
+  f: FinanceInput,
+  e: FinanceEnergy,
+  exportRateBills?: (k: number) => Year1Bills,
+): [FinanceInput, FinanceEnergy] {
   switch (v) {
     case 'capex':
       return [
@@ -60,21 +78,10 @@ function flex(v: TornadoVariable, k: number, f: FinanceInput, e: FinanceEnergy):
     }
     case 'discountRate':
       return [{ ...f, analysis: { ...f.analysis, discountRate: f.analysis.discountRate * k } }, e]
-    case 'exportRate': {
-      const extra = e.bills.exportCreditUsedZar * (k - 1)
-      return [
-        f,
-        {
-          ...e,
-          bills: {
-            ...e.bills,
-            afterZar: e.bills.afterZar - extra,
-            afterPvOnlyZar: e.bills.afterPvOnlyZar - extra,
-            exportCreditUsedZar: e.bills.exportCreditUsedZar * k,
-          },
-        },
-      ]
-    }
+    case 'exportRate':
+      // Re-priced, never credit × k: the energy-only cap and the FY-end forfeit must still bind.
+      if (!exportRateBills) throw new Error('exportRate needs re-priced bills')
+      return [f, { ...e, bills: exportRateBills(k) }]
   }
 }
 
@@ -91,13 +98,15 @@ export function tornado(
   modelIndex = 0,
   viewName: ViewResult['view'] = 'owner',
   swing = 0.2,
+  opts: TornadoOptions = {},
 ): Tornado {
   if (!(swing > 0 && swing < 1)) throw new Error('swing must be in (0, 1)')
   const baseNpvZar = npvOf(f, e, modelIndex, viewName)
-  const bars = TORNADO_VARIABLES.map((variable) => {
-    const lowNpvZar = npvOf(...flex(variable, 1 - swing, f, e), modelIndex, viewName)
-    const highNpvZar = npvOf(...flex(variable, 1 + swing, f, e), modelIndex, viewName)
+  const omitted: TornadoVariable[] = opts.exportRateBills ? [] : ['exportRate']
+  const bars = TORNADO_VARIABLES.filter((v) => !omitted.includes(v)).map((variable) => {
+    const lowNpvZar = npvOf(...flex(variable, 1 - swing, f, e, opts.exportRateBills), modelIndex, viewName)
+    const highNpvZar = npvOf(...flex(variable, 1 + swing, f, e, opts.exportRateBills), modelIndex, viewName)
     return { variable, lowNpvZar, highNpvZar, spreadZar: Math.abs(highNpvZar - lowNpvZar) }
   }).sort((a, b) => b.spreadZar - a.spreadZar)
-  return { model: f.models[modelIndex]!.kind, view: viewName, baseNpvZar, swing, bars }
+  return { model: f.models[modelIndex]!.kind, view: viewName, baseNpvZar, swing, bars, omitted }
 }

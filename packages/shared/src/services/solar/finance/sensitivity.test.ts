@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { runFinance, type FinanceEnergy, type FinanceInput } from './cashflow'
 import { DEFAULT_ESCALATION } from './factors'
 import { TORNADO_VARIABLES, tornado } from './sensitivity'
+import type { Year1Bills } from './bill-calculator'
 
 const f: FinanceInput = {
   kWpDc: 100,
@@ -19,8 +20,16 @@ const e: FinanceEnergy = {
   bills: { beforeZar: 900_000, afterZar: 620_000, afterPvOnlyZar: 620_000, exportCreditUsedZar: 40_000 },
 }
 
+// A capped re-pricer: the month's energy charges cap the credit at R 45,000 a year, so scaling the
+// credit (40,000 x 1.2 = 48,000) would overshoot and the re-priced bill must not.
+const CREDIT_CAP = 45_000
+const reprice = (k: number): Year1Bills => {
+  const credit = Math.min(40_000 * k, CREDIT_CAP)
+  return { beforeZar: 900_000, afterZar: 660_000 - credit, afterPvOnlyZar: 660_000 - credit, exportCreditUsedZar: credit }
+}
+
 describe('sensitivity tornado', () => {
-  const t = tornado(f, e)
+  const t = tornado(f, e, 0, 'owner', 0.2, { exportRateBills: reprice })
 
   it('covers the five spec variables, sorted by spread, around the base NPV', () => {
     expect(t.bars.map((b) => b.variable).sort()).toEqual([...TORNADO_VARIABLES].sort())
@@ -53,7 +62,25 @@ describe('sensitivity tornado', () => {
   })
 
   it('export rate has no effect when no export credit is used', () => {
-    const t0 = tornado(f, { ...e, bills: { ...e.bills, exportCreditUsedZar: 0 } })
+    const zero = (): Year1Bills => ({ ...e.bills, exportCreditUsedZar: 0 })
+    const t0 = tornado(f, { ...e, bills: zero() }, 0, 'owner', 0.2, { exportRateBills: zero })
     expect(t0.bars.find((b) => b.variable === 'exportRate')!.spreadZar).toBe(0)
+  })
+
+  it('the export-rate swing uses the RE-PRICED bills, so the net-billing cap still binds (not credit x k)', () => {
+    const bar = t.bars.find((b) => b.variable === 'exportRate')!
+    const npv = (b: Year1Bills) => runFinance(f, { ...e, bills: b }).models[0]!.views[0]!.npvZar
+    expect(bar.highNpvZar).toBeCloseTo(npv(reprice(1.2)), 6)
+    expect(bar.lowNpvZar).toBeCloseTo(npv(reprice(0.8)), 6)
+    // Naive scaling would have credited 48,000 > the 45,000 cap and overstated the high NPV.
+    const naive = npv({ ...e.bills, afterZar: 620_000 - 8_000, afterPvOnlyZar: 620_000 - 8_000, exportCreditUsedZar: 48_000 })
+    expect(bar.highNpvZar).toBeLessThan(naive)
+  })
+
+  it('without a re-pricer the export-rate bar is left out and says so, rather than scaling the credit', () => {
+    const t2 = tornado(f, e)
+    expect(t2.bars.map((b) => b.variable)).not.toContain('exportRate')
+    expect(t2.omitted).toEqual(['exportRate'])
+    expect(t.omitted).toEqual([])
   })
 })

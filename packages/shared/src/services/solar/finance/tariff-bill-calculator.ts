@@ -18,11 +18,11 @@
  */
 import { createBillCalculator, type HourlyCostOptions, type SubHourlyKwh } from '../../../tariffs/bill-calculator'
 import type { TouCalendar } from '../../../tariffs/tou'
-import type { Tariff } from '../../../tariffs/types'
+import type { Charge, Tariff } from '../../../tariffs/types'
 import { listHolidays } from '../../../lib/jbcc/sa-public-holidays'
 import { HOURS_PER_YEAR } from '../time'
 import type { SubHourlyLoad } from '../energy/max-demand'
-import type { BillCalculator } from './bill-calculator'
+import { assertExportRateFactor, type BillCalculator } from './bill-calculator'
 
 export function toSubHourlyKwh(sub: SubHourlyLoad): SubHourlyKwh {
   const perHour = 60 / sub.intervalMin
@@ -55,6 +55,17 @@ export interface TariffBillCalculatorOptions extends Omit<HourlyCostOptions, 'ca
   holidays?: ReadonlySet<string>
 }
 
+/**
+ * Every export credit rate × k. The tariff's OWN export rates are its `export_credit` charges; a
+ * linked export tariff (Eskom Gen-offset) is priced from its `export_credit` AND `energy` rows
+ * (`bill-engine` exportRateRand), so both are scaled there — never the import tariff's energy.
+ */
+function scaleCharges(charges: readonly Charge[], k: number, components: ReadonlySet<Charge['component']>): Charge[] {
+  return charges.map((c) => (components.has(c.component) ? { ...c, amountExclVat: c.amountExclVat * k } : c))
+}
+const OWN_EXPORT: ReadonlySet<Charge['component']> = new Set(['export_credit'])
+const LINKED_EXPORT: ReadonlySet<Charge['component']> = new Set(['export_credit', 'energy'])
+
 export function tariffBillCalculator(tariff: Tariff, opts: TariffBillCalculatorOptions): BillCalculator {
   const { calendar, referenceYear, holidays, ...cost } = opts
   const inner = createBillCalculator(tariff, calendar, holidays ?? referenceYearHolidays(referenceYear), { ...cost, year: referenceYear })
@@ -65,6 +76,12 @@ export function tariffBillCalculator(tariff: Tariff, opts: TariffBillCalculatorO
         exportKwh: flows.exportKwh,
         subHourlyImport: flows.subHourlyImport ? toSubHourlyKwh(flows.subHourlyImport) : undefined,
       })
+    },
+    withExportRateScaled(k) {
+      assertExportRateFactor(k)
+      const scaledTariff: Tariff = { ...tariff, charges: scaleCharges(tariff.charges, k, OWN_EXPORT) }
+      const exportTariff = opts.exportTariff ? { ...opts.exportTariff, charges: scaleCharges(opts.exportTariff.charges, k, LINKED_EXPORT) } : opts.exportTariff
+      return tariffBillCalculator(scaledTariff, { ...opts, exportTariff })
     },
   }
 }

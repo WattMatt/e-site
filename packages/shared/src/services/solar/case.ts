@@ -15,7 +15,7 @@ import { simulatePv, type PvResult, type PvSystem } from './pv/simulate-pv'
 import { energyBalance, type BatterySpec, type EnergyBalance, type ExportSettings, type TouPeriod } from './energy/energy-balance'
 import { subHourlyAfterSolar, type SubHourlyLoad } from './energy/max-demand'
 import type { WeatherYear } from './weather/reference-year'
-import { year1Bills, type BillCalculator, type Year1Bills } from './finance/bill-calculator'
+import { year1Bills, year1BillsRepricer, type BillCalculator, type Year1Bills } from './finance/bill-calculator'
 import { runFinance, type FinanceInput, type FinanceResult } from './finance/cashflow'
 import { tornado, type Tornado } from './finance/sensitivity'
 
@@ -127,5 +127,6 @@ export function runFinancials(result: CaseResult, fin: FinanceInput, bills: Bill
   }
   const finance = runFinance(fin, energy)
   const firstView = finance.models[0]!.views[0]!.view
-  return { engineVersion: ENGINE_VERSION, year1Bills: y1, finance, tornado: tornado(fin, energy, 0, firstView) }
+  const exportRateBills = year1BillsRepricer(bills, result.balance, result.balancePvOnly, result.subHourly)
+  return { engineVersion: ENGINE_VERSION, year1Bills: y1, finance, tornado: tornado(fin, energy, 0, firstView, undefined, { exportRateBills }) }
 }
