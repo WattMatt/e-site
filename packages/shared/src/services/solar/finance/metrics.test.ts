@@ -21,6 +21,12 @@ describe('metrics', () => {
     expect(irr([-100, ...Array(19).fill(20), -40])).toBeCloseTo(0.19037075484528054, 9)
   })
 
+  it('picks the investment root (NPV falling through zero), even when a spurious root is nearer 10 %', () => {
+    // Roots (independent Python bisection): 0.08805290119513931 (NPV rising — spurious, from the
+    // large negative final flow) and 1.3333297014178105 (NPV falling — the investment's IRR).
+    expect(irr([-15, ...Array(19).fill(20), -900])).toBeCloseTo(1.3333297014178105, 7)
+  })
+
   it('is n/a (null) for non-finite or all-zero flows, never the bracket end', () => {
     expect(irr([-100, Number.NaN, 30, 30])).toBeNull()
     expect(irr([-100, Number.POSITIVE_INFINITY])).toBeNull()

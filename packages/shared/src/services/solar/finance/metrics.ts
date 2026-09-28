@@ -11,13 +11,13 @@ export function npv(rate: number, flows: readonly number[]): number {
 export const IRR_LOW = -0.99
 export const IRR_HIGH = 2.0
 
-/** When a cashflow has several IRRs, the one closest to this rate is reported. */
+/** Tie-break among several IRRs of the right kind (see `irr`): the one closest to this rate. */
 export const IRR_GUESS = 0.1
 
 /**
  * IRR by bracketed bisection on [−99 %, 200 %]. The WHOLE bracket is scanned in 1 %-point steps
- * (an integer grid, so no float drift), every sign change is bisected, and the root closest to
- * IRR_GUESS is returned. Taking the first sign change from −99 % is wrong: near −99 % the last
+ * (an integer grid, so no float drift), every sign change is bisected, and the investment's root
+ * (NPV falling through zero) is returned. Taking the first sign change from −99 % is wrong: near −99 % the last
  * flow dominates (it is divided by 0.01ⁿ), so a negative final-year flow — a late replacement —
  * produces a spurious root there. `null` ("n/a") when there is no root, or when any flow is
  * non-finite or every flow is zero.
@@ -55,7 +55,16 @@ export function irr(flows: readonly number[]): number | null {
     fLo = fHi
   }
   if (roots.length === 0) return null
-  return roots.reduce((best, r) => (Math.abs(r - IRR_GUESS) < Math.abs(best - IRR_GUESS) ? r : best))
+  // Several roots: an investment (first non-zero flow negative) earns its IRR where NPV FALLS
+  // through zero as the rate rises; a spurious root created by a negative final flow is a RISING
+  // crossing. Borrowing-type flows mirror this. Among the roots of the right kind, the one closest
+  // to IRR_GUESS wins; if none is of the right kind, all roots compete.
+  const investment = flows.find((f) => f !== 0)! < 0
+  const h = 1e-6
+  const slope = (r: number) => npv(r + h, flows) - npv(r - h, flows)
+  const preferred = roots.filter((r) => (investment ? slope(r) < 0 : slope(r) > 0))
+  const pool = preferred.length > 0 ? preferred : roots
+  return pool.reduce((best, r) => (Math.abs(r - IRR_GUESS) < Math.abs(best - IRR_GUESS) ? r : best))
 }
 
 /**

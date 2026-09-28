@@ -176,6 +176,31 @@ describe('four finance models side by side (D-15)', () => {
   })
 })
 
+describe('geared equity IRR with a balloon and a late replacement', () => {
+  it('reports the equity IRR, not the spurious root the negative final year creates', () => {
+    // 90 % loan over 25 years, analysed over 20: the balloon and a year-20 battery replacement make
+    // the final flow strongly negative. NPV is large and positive, so the IRR must be well above
+    // the discount rate — before the fix the engine reported −52.6 % on an NPV of +R1.80 m.
+    const f: FinanceInput = {
+      ...toy,
+      kWpDc: 100,
+      capex: { totalZar: 1_600_000, inverterZar: 150_000, batteryZar: 450_000, section12bQualifyingZar: 0 },
+      replacements: { inverterYear: null, inverterFractionOfCapex: 0.6, batteryYear: 20, batteryFractionOfCapex: 0.5 },
+      analysis: { years: 20, discountRate: 0.11, cpi: 0.05, escalation: DEFAULT_ESCALATION, loadGrowth: 0 },
+      models: [{ kind: 'debt', loanFraction: 0.9, annualRate: 0.115, termYears: 25, graceMonths: 0 }],
+    }
+    const e: FinanceEnergy = { year1PvKwh: 170_000, bills: { beforeZar: 900_000, afterPvOnlyZar: 650_000, afterZar: 600_000, exportCreditUsedZar: 0 } }
+    const v = runFinance(f, e).models[0]!.views[0]!
+    expect(v.rows[19]!.netZar).toBeLessThan(0)
+    expect(v.npvZar).toBeGreaterThan(0)
+    expect(v.irr!).toBeGreaterThan(f.analysis.discountRate)
+    const flows = [v.upfrontZar, ...v.rows.map((r) => r.netZar)]
+    const at = (r: number) => flows.reduce((s, x, n) => s + x / (1 + r) ** n, 0)
+    expect(Math.abs(at(v.irr!))).toBeLessThan(1e-3)
+    expect(at(v.irr! + 1e-4)).toBeLessThan(0) // NPV falls through the reported root
+  })
+})
+
 describe('load-shedding value (D-14)', () => {
   it('is reported separately and never changes any cashflow, NPV or IRR', () => {
     const withLs = runFinance({ ...toy, loadShedding: { hoursPerYear: 100, backedLoadKw: 10, valueZarPerKwh: 5 } }, toyEnergy)
