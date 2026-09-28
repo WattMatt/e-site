@@ -56,4 +56,20 @@ describe('S4 (monthly bills)', () => {
     const { warnings } = buildS4({ shape, monthlyKwh: kwh, monthlyKva: [null, 1, ...Array(10).fill(null)], referenceYear: 2027 })
     expect(warnings.join(' ')).toMatch(/month 2/)
   })
+  it('billed kVA x PF BELOW the monthly mean leaves the month unchanged and warns (never inverts the shape)', () => {
+    // January mean = 1,488 / 744 = 2 kW; billed 1 kVA x 0.95 = 0.95 kW < 2, so the stretch factor would be negative.
+    const { series, warnings } = buildS4({ shape, monthlyKwh: kwh, monthlyKva: [1, ...Array(11).fill(null)], referenceYear: 2027 })
+    expect(series[0]).toBeCloseTo(1, 12)
+    expect(series[1]).toBeCloseTo(3, 12)
+    expect(monthlyEnergyKwh(series, 2027)[0]).toBeCloseTo(1488, 9)
+    expect(warnings.join(' ')).toMatch(/month 1: billed kVA below average demand; check PF\/kVA/)
+  })
+  it('after clamping and re-scaling, the warning reports the peak actually achieved', () => {
+    // 10 kW wanted: s = (10 - 2) / (3 - 2) = 8, so the 1 kW hours go to -6 -> 0 and the 3 kW hours to 10;
+    // re-scaled to 1,488 kWh that is x 0.4, so the peak achieved is 4 kW.
+    const { series, warnings } = buildS4({ shape, monthlyKwh: kwh, monthlyKva: [10 / 0.95, ...Array(11).fill(null)], referenceYear: 2027 })
+    expect(Math.max(...series.subarray(0, 744))).toBeCloseTo(4, 9)
+    expect(monthlyEnergyKwh(series, 2027)[0]).toBeCloseTo(1488, 9)
+    expect(warnings.join(' ')).toMatch(/month 1: .*clamped and energy re-scaled; peak achieved 4\.00 kW \(billed 10\.00 kW\)/)
+  })
 })

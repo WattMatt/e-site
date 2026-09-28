@@ -1,7 +1,8 @@
 /**
  * Site series by basis (engine spec §2.3). Hourly kW over the reference year. Energy is never
  * scaled by diversity (§2.5); S4's kVA step is an energy-preserving affine stretch about the
- * monthly mean (see the open question on "peak-only transform").
+ * monthly mean (owner decision 5, 2026-09-28). A billed peak below the monthly mean would need a
+ * negative stretch (the shape inverted), so that month is left unchanged and warned.
  */
 import { HOURS_PER_YEAR, monthOf, referenceYearDates } from './calendar'
 
@@ -103,7 +104,13 @@ export function buildS4(input: {
       warnings.push(`month ${month}: the shape is flat, so the billed peak cannot be applied; left unchanged`)
       continue
     }
-    const s = (kva * pf - mean) / (peak - mean)
+    const target = kva * pf
+    if (target < mean) {
+      // A negative stretch factor would turn the month's shape upside down (peaks become troughs).
+      warnings.push(`month ${month}: billed kVA below average demand; check PF/kVA (billed ${target.toFixed(2)} kW, mean ${mean.toFixed(2)} kW); left unchanged`)
+      continue
+    }
+    const s = (target - mean) / (peak - mean)
     let clamped = false
     for (const h of hours) {
       const y = mean + (out[h] - mean) * s
@@ -113,7 +120,8 @@ export function buildS4(input: {
     if (clamped) {
       const e = hours.reduce((acc, h) => acc + out[h], 0)
       for (const h of hours) out[h] *= kwh / e
-      warnings.push(`month ${month}: the peak transform produced negative hours; clamped and energy re-scaled`)
+      const achieved = Math.max(...hours.map((h) => out[h]))
+      warnings.push(`month ${month}: the peak transform produced negative hours; clamped and energy re-scaled; peak achieved ${achieved.toFixed(2)} kW (billed ${target.toFixed(2)} kW)`)
     }
   }
   return { series: out, warnings }
