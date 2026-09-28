@@ -4,8 +4,8 @@ import 'server-only'
  * branded email through send-email. Unlike lib/notify.ts this does NOT go to
  * the project roster — Solar requests go to the org's owners/admins and
  * decisions go to one person. Never throws (a failed notification must not
- * fail the user's action). The four types are in notifications_type_check
- * from 00208; a type missing there makes the bell insert fail silently.
+ * fail the user's action). The six types are in notifications_type_check
+ * (00208 + 00216); a type missing there makes the bell insert fail silently.
  *
  * Email uses send-email's `rfi-created` passthrough ({to, subject, html}),
  * the same shape lib/notify.ts uses for every module.
@@ -19,6 +19,8 @@ export type SolarNotificationType =
   | 'solar_access_requested'
   | 'solar_access_changed'
   | 'solar_access_declined'
+  | 'solar_proposal_accepted'
+  | 'solar_proposal_declined'
 
 export interface SolarNotice {
   type: SolarNotificationType

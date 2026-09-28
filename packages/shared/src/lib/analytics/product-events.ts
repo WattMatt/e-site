@@ -30,6 +30,13 @@ export const PRODUCT_EVENTS = [
   'solar_weather_fetched',
   'solar_financials_run',
   'solar_equipment_saved',
+  // Solar Phase 6 (00216).
+  'solar_report_generated',
+  'solar_proposal_created',
+  'solar_proposal_issued',
+  'solar_proposal_withdrawn',
+  'solar_proposal_responded',
+  'solar_narrative_drafted',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 

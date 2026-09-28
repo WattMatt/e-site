@@ -56,6 +56,7 @@
 -- function: public.solar_rotate_proposal_link(uuid, text, uuid)
 -- function: public.solar_portfolio(uuid)
 -- function: public.user_can_read_report_kind(uuid, text)
+-- function: public.report_kind_is_sensitive(text)
 -- trigger: proposal_templates_bind ON solar.proposal_templates
 -- trigger: proposals_guard ON solar.proposals
 -- trigger: proposal_events_bind ON solar.proposal_events
@@ -106,6 +107,7 @@
 -- sql: (SELECT bool_and(strpos(qual, 'solar_can_see_money') > 0) FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('proposals', 'proposal_events') AND cmd = 'SELECT')
 -- sql: (SELECT count(*) = 3 FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'proposals' AND permissive = 'RESTRICTIVE' AND strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar_can_see_money') > 0)
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('proposals', 'proposal_events', 'proposal_templates') AND cmd = 'ALL')
+-- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_proposal%' FROM pg_proc WHERE oid = 'public.report_kind_is_sensitive(text)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_proposal%' AND prosrc LIKE '%solar_layout_sheet%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_proposal_accepted%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_declined%' AND pg_get_constraintdef(oid) LIKE '%solar_access_declined%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%' FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check')
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%solar_narrative_drafted%' AND pg_get_constraintdef(oid) LIKE '%solar_equipment_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
