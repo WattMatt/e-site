@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { StaleBanner } from '../../_components/StaleBanner'
 import { CaseList } from './CaseList'
 import { CaseEditor } from './CaseEditor'
+import { RunResults } from './RunResults'
 
 export const dynamic = 'force-dynamic'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,8 +29,13 @@ export default async function SolarYieldPage({ params, searchParams }: { params:
       {selected?.status === 'stale' && <StaleBanner projectId={id} caseId={selected.id} caseName={selected.name} canRun={level !== 'view'} />}
       <CaseList projectId={id} level={level} cases={data.cases} studyUpdatedAt={data.studyUpdatedAt} openCaseId={data.editor?.caseId ?? null} />
       {data.editor && (
-        // Keyed on the case and its saved version: a refresh after Save/Run (or opening another case) remounts the draft.
-        <CaseEditor key={`${data.editor.caseId}:${data.editor.updatedAt}`} projectId={id} level={level} data={data.editor} equipment={data.equipment} />
+        <>
+          {/* Keyed on the case and its saved version: a refresh after Save (or opening another case) remounts the draft. */}
+          <CaseEditor key={`${data.editor.caseId}:${data.editor.updatedAt}`} projectId={id} level={level} data={data.editor} equipment={data.equipment} />
+          {data.editor.lastRun
+            ? <RunResults key={data.editor.lastRun.id} projectId={id} caseId={data.editor.caseId} run={data.editor.lastRun} />
+            : <EmptyState dense title="This case has not been run yet" description={level === 'view' ? 'Ask an editor to run it.' : 'Save it, then press Run.'} />}
+        </>
       )}
     </div>
   )
