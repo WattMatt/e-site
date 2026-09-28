@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
+import { loadSolarReadinessExtra } from '@/lib/solar/cases/page-data'
 import { computeSolarReadiness, toSiteReadinessInput } from '@esite/shared'
 import { SolarTabBar } from '../_components/SolarTabBar'
 import { ViewOnlyBanner } from '../_components/ViewOnlyBanner'
@@ -50,7 +51,9 @@ export default async function SolarGatedLayout({
       .eq('user_id', user.id).eq('organisation_id', orgId).eq('is_active', true).limit(1)
     isOwnOrgMember = Array.isArray(membership) && membership.length > 0
   }
-  const readiness = computeSolarReadiness(toSiteReadinessInput(study), level)
+  // Yield / Financials dots come from the stored runs (Phase 4b). Only after the level gate above.
+  const extra = await loadSolarReadinessExtra(supabase, createServiceClient() as unknown as AnyClient, id, level)
+  const readiness = computeSolarReadiness(toSiteReadinessInput(study), level, extra)
 
   return (
     <div className="animate-fadeup">
