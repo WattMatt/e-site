@@ -102,14 +102,24 @@ export async function deleteBaselineAction(input: { projectId: string; baselineI
 }
 
 export async function loadBaselineTasksAction(input: { projectId: string; baselineId: string }): Promise<{ ok: true; tasks: BaselineTaskView[] } | Fail> {
+  if (!uuid.safeParse(input.projectId).success) return { error: 'That project could not be found.' }
+  if (!uuid.safeParse(input.baselineId).success) return { error: 'That baseline is no longer there.' }
   const { solar } = await session(input.projectId, 'view')
-  const { data, error } = await solar().from('schedule_baseline_tasks')
-    .select('task_id, work_item_ref, name, start_date, end_date, is_milestone, sort_order')
-    .eq('baseline_id', input.baselineId).eq('project_id', input.projectId).order('sort_order')
-  if (error) return { error: humanScheduleError(error) }
+  // Paged: PostgREST's max_rows (1,000) would silently cut a large baseline.
+  const rows: Row[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await solar().from('schedule_baseline_tasks')
+      .select('task_id, work_item_ref, name, start_date, end_date, is_milestone, sort_order')
+      .eq('baseline_id', input.baselineId).eq('project_id', input.projectId).order('sort_order').order('id')
+      .range(from, from + 999)
+    if (error) return { error: humanScheduleError(error) }
+    const page = (data ?? []) as Row[]
+    rows.push(...page)
+    if (page.length < 1000) break
+  }
   return {
     ok: true,
-    tasks: ((data ?? []) as Row[]).map((r) => ({
+    tasks: rows.map((r) => ({
       taskId: typeof r.task_id === 'string' ? r.task_id : null, ref: String(r.work_item_ref ?? ''), name: String(r.name ?? ''),
       start: String(r.start_date), end: String(r.end_date), isMilestone: r.is_milestone === true,
     })),

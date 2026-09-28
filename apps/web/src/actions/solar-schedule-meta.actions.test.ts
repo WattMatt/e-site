@@ -96,15 +96,29 @@ describe('baselines', () => {
   })
   it('deletes and loads at the right levels', async () => {
     setup({ tables: { 'solar.schedule_baseline_tasks': [
-      { baseline_id: 'b1', project_id: P, task_id: null, work_item_ref: 'SOLAR-1', name: 'Design', start_date: '2026-10-01', end_date: '2026-10-05', is_milestone: false, sort_order: 1 },
+      { baseline_id: A, project_id: P, task_id: null, work_item_ref: 'SOLAR-1', name: 'Design', start_date: '2026-10-01', end_date: '2026-10-05', is_milestone: false, sort_order: 1 },
     ] } })
     await expect(deleteBaselineAction({ projectId: P, baselineId: A })).resolves.toEqual({ ok: true })
     expect(h.requireSolarLevel).toHaveBeenLastCalledWith(P, 'edit', expect.anything())
     h.requireSolarLevel.mockResolvedValue('view')
-    await expect(loadBaselineTasksAction({ projectId: P, baselineId: 'b1' })).resolves.toEqual({
+    await expect(loadBaselineTasksAction({ projectId: P, baselineId: A })).resolves.toEqual({
       ok: true, tasks: [{ taskId: null, ref: 'SOLAR-1', name: 'Design', start: '2026-10-01', end: '2026-10-05', isMilestone: false }],
     })
     expect(h.requireSolarLevel).toHaveBeenLastCalledWith(P, 'view', expect.anything())
+  })
+  it('a baseline or project id that is not an id is a sentence, and nothing reaches the database', async () => {
+    const { calls } = setup()
+    await expect(loadBaselineTasksAction({ projectId: P, baselineId: 'b1' })).resolves.toEqual({ error: 'That baseline is no longer there.' })
+    await expect(loadBaselineTasksAction({ projectId: 'nope', baselineId: A })).resolves.toEqual({ error: 'That project could not be found.' })
+    expect(calls).toHaveLength(0)
+    expect(h.requireSolarLevel).not.toHaveBeenCalled()
+  })
+  it('a baseline of more than 1,000 tasks loads in full (pages past max_rows)', async () => {
+    setup({ maxRows: 1000, tables: { 'solar.schedule_baseline_tasks': Array.from({ length: 1200 }, (_, i) => (
+      { baseline_id: A, project_id: P, task_id: null, work_item_ref: `SOLAR-${i}`, name: `T${i}`, start_date: '2026-10-01', end_date: '2026-10-05', is_milestone: false, sort_order: i }
+    )) } })
+    const r = await loadBaselineTasksAction({ projectId: P, baselineId: A })
+    expect('tasks' in r && r.tasks.length).toBe(1200)
   })
 })
 
