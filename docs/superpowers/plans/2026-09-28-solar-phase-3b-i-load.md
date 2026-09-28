@@ -33,6 +33,8 @@
 8. **Dropbox import** browses from the project's mapped folder (sub-folders navigable), filters to `.csv .txt .xlsx .xls` ≤ 50 MB, and copies the bytes server-side into `solar-meter-raw` with the caller's client (bucket policy applies), then the same register → parse → review pipeline.
 9. **TOU split** on the KPI strip shows "Pin a tariff on the Tariff tab to see the TOU split" until a pinned tariff exists on `solar.studies` (none does yet; the Tariff tab is a later phase).
 
+> **SUPERSEDED (owner decision 2026-09-29):** the meter comparison overlay (dev plan P3), which this plan left out of scope, was BUILT — Meters sub-tab, `MeterComparison.tsx`: select 2–4 meters → one overlaid downsampled chart over the same window, reusing the meter series route. (Decision 8 here is Dropbox import; the deferral was recorded under "Gaps knowingly left" below.)
+
 ## File structure
 
 | File | Responsibility |

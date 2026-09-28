@@ -35,7 +35,7 @@
 7. **Only study meters can be placed** (`study_meters` row required), so a card can never reference another study's or another org's meter.
 8. **Save is one INVOKER RPC** `public.solar_save_schematic(id, expected_updated_at, cards, lines)` — replace-all inside one transaction, stale write refused with SQLSTATE `40001` (the 00211 layout pattern).
 9. **`solar_schematic_sheet` reads at Solar View** (no rand values). `user_can_read_report_kind()` is redefined IN FULL keeping 00183's branches and ALSO the `solar_layout_sheet` branch Phase 5 (00211) adds, so whichever of 00211/00214 applies last, both kinds stay gated.
-10. **Product events** `solar_site_load_built`, `solar_schematic_saved`, `solar_schematic_sheet_exported` (spec §0.4 rule 8). The CHECK is re-declared in full (00208's list + these three).
+10. **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00214 does not touch `product_events_event_check`; the text below is kept as the historical plan.** ~~**Product events** `solar_site_load_built`, `solar_schematic_saved`, `solar_schematic_sheet_exported` (spec §0.4 rule 8). The CHECK is re-declared in full (00208's list + these three).~~
 11. **The builder's reading of "Sum of tenants":** the stored basis is `S2`; when no tenant ends up metered the result is recorded as effective `S3` (all synthesised), which is what enables the diversity factor (engine §2.5). Tenants with no `tenant_load_basis` row are synthesised from the tenant schedule and counted as **unassigned** (readiness stays amber until the user chooses).
 13. **Beneficial occupation inside the reference year only.** The 3a `synthesiseTenant` zeroes dates before the BO date *of the reference year*; a BO date in a later calendar year (normal at design stage) would zero the whole year. The builder passes the BO date only when it falls inside the reference year; the year-1 ramp for a later BO belongs to the cashflow (which knows the commercial operation date). **Owner may prefer otherwise — open question.**
 12. **Double-count guard (§13.3):** when a parent meter and any of its descendants are both assigned, the descendants are used and the parent is dropped from the series; a tenant whose only meters were dropped contributes nothing (`covered_by_children`) rather than being re-synthesised.
@@ -557,6 +557,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 --   public.solar_save_schematic — replace-all save in one transaction; stale write = 40001.
 --   public.user_can_read_report_kind — redefined IN FULL: 00183's branches + solar_layout_sheet
 --     (00211) + solar_schematic_sheet, both at Solar View.
+--   [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Not in 00214 as built.]
 --   public.product_events CHECK — re-declared in full (00208's list + three Solar verbs).
 --
 -- ACCESS. Every table has the 00207 study shape: SELECT = solar_can_view(project_id); each write verb
@@ -647,6 +648,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'solar.channel_summaries(uuid[])'::regprocedure)
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
 -- sql: (SELECT strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_schematic_sheet') > 0 AND strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_layout_sheet') > 0)
+-- [SUPERSEDED 2026-09-29: the next sql: line is NOT in 00214 as built — no product_events change.]
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_site_load_built%' AND pg_get_constraintdef(oid) LIKE '%solar_schematic_saved%' AND pg_get_constraintdef(oid) LIKE '%solar_schematic_sheet_exported%' AND pg_get_constraintdef(oid) LIKE '%solar_settings_saved%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- behaviour: scripts/db/assert-solar-schematics-roles.sql - every row ok
 -- @verify:end
@@ -1128,6 +1130,7 @@ $function$;
 REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
 
+-- [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Section 9 is NOT in 00214 as built.]
 -- ── 9. Product events (re-declared in full: 00208's list + Solar Load/Schematics) ─
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
@@ -1607,6 +1610,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ### Task 7: Product-event registry gains the three verbs
+
+> **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00214 does not touch `product_events_event_check`; this task was SKIPPED; its text is kept as the historical plan.**
 
 **Files:**
 - Modify: `packages/shared/src/lib/analytics/product-events.ts`
