@@ -26,7 +26,7 @@ type AnyClient = SupabaseClient<any, any, any>
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_UPSERTS = 1000
 
-export type LayoutResult<T = Record<string, never>> = ({ ok: true } & T) | { error: string } | { fieldErrors: Record<string, string> }
+export type LayoutResult<T extends object = object> = ({ ok: true } & T) | { error: string } | { fieldErrors: Record<string, string> }
 
 async function session(projectId: string) {
   const supabase = (await createClient()) as unknown as AnyClient
