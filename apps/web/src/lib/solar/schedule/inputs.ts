@@ -123,3 +123,30 @@ export function resolveOwnerHints(
   })
   return { ids, unmatched: [...unmatched] }
 }
+
+/**
+ * The commit action's input is directly invocable, so the plan is re-read here
+ * (shapes and sizes) and then re-validated with validateImportPlan (dates,
+ * loops, keys); the RPC checks again.
+ */
+export const ImportPlanSchema = z.object({
+  tasks: z.array(z.object({
+    key: z.string().min(1).max(64),
+    sourceRow: z.number().int().nullable(),
+    name: z.string().max(300),
+    category: z.string().max(120),
+    zone: z.string().max(120),
+    start: z.string().max(10),
+    end: z.string().max(10),
+    isMilestone: z.boolean(),
+    progress: z.number(),
+    status: z.enum(GANTT_STATUSES),
+    colour: z.string().nullable(),
+    ownerHint: z.string().max(200).nullable(),
+    description: z.string().max(4000),
+    segments: z.array(z.object({ start: z.string(), end: z.string() })).max(50),
+  })).max(2000),
+  links: z.array(z.object({
+    fromKey: z.string().min(1), toKey: z.string().min(1), type: z.enum(LINK_TYPES), lagDays: z.number().int().min(-365).max(365),
+  })).max(10000),
+})
