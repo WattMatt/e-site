@@ -50,7 +50,6 @@ export async function createScheduleTasksAction(input: {
   tasks: TaskInput[]
   links: LinkInput[]
   replace?: boolean
-  auditVerb?: 'schedule_tasks_added' | 'schedule_imported' | 'schedule_template_applied'
 }): Promise<{ ok: true; ids: Record<string, string> } | Fail> {
   const { supabase, userId } = await session(input.projectId, 'edit')
   if (!userId) return { error: 'You are not signed in.' }
@@ -64,10 +63,14 @@ export async function createScheduleTasksAction(input: {
     p_replace: input.replace === true,
   })
   if (error) return { error: humanScheduleError(error) }
-  const verb = input.auditVerb ?? 'schedule_tasks_added'
+  // The verb is fixed here, never taken from the caller: a server action's
+  // input is client-controlled, so a plain add must not be able to label
+  // itself an import or a template. Imports and templates have their own
+  // actions (solar-schedule-import / -template), which call the RPC after
+  // their own validation and record their own verb.
   await recordSolarAudit({
-    projectId: input.projectId, actorId: userId, verb,
-    objectRef: verb === 'schedule_imported' ? { count: tasks.data.length, mode: input.replace ? 'replace' : 'append' } : { count: tasks.data.length },
+    projectId: input.projectId, actorId: userId, verb: 'schedule_tasks_added',
+    objectRef: { count: tasks.data.length },
   })
   return { ok: true, ids: (data ?? {}) as Record<string, string> }
 }

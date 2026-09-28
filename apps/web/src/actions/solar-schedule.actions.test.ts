@@ -105,10 +105,14 @@ describe('createScheduleTasksAction', () => {
     await expect(createScheduleTasksAction({ projectId: P, tasks: [task], links: [], historyReplay: true } as never)).resolves.toEqual({ ok: true, ids: { a: T } })
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'schedule_tasks_added', objectRef: { count: 1 } })
   })
-  it('an import records its mode', async () => {
+  it('the audit verb is not the client\'s to choose: a plain add labelled as an import is recorded as an add', async () => {
     setup({ rpc: { 'solar.schedule_create_tasks': { data: { a: T }, error: null } } })
-    await createScheduleTasksAction({ projectId: P, tasks: [task], links: [], replace: true, auditVerb: 'schedule_imported' })
-    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'schedule_imported', objectRef: { count: 1, mode: 'replace' } })
+    for (const auditVerb of ['schedule_imported', 'schedule_template_applied']) {
+      h.audit.mockClear()
+      await createScheduleTasksAction({ projectId: P, tasks: [task], links: [], replace: true, auditVerb } as never)
+      expect(h.audit).toHaveBeenCalledTimes(1)
+      expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'schedule_tasks_added', objectRef: { count: 1 } })
+    }
   })
   it('passes the spine’s sentence through', async () => {
     setup({ rpc: { 'solar.schedule_create_tasks': { data: null, error: { code: '22023', message: 'That person is not an active member of this project, so "Design" cannot be given to them.' } } } })
