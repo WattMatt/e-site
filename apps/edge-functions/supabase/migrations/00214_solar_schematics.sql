@@ -105,6 +105,7 @@
 -- grant_absent: anon EXECUTE ON solar.channel_summaries(uuid[])
 -- grant_absent: anon EXECUTE ON public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)
 -- grant_present: authenticated EXECUTE ON solar.channel_readings(uuid[], timestamptz, timestamptz)
+-- grant_present: authenticated EXECUTE ON solar.channel_summaries(uuid[])
 -- grant_present: authenticated EXECUTE ON public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)
 -- grant_absent: anon EXECUTE ON public.user_can_read_report_kind(uuid, text)
 -- anon_execute_absent: ALL prosecdef functions in solar
@@ -112,6 +113,7 @@
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'solar.channel_summaries(uuid[])'::regprocedure)
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
 -- sql: (SELECT strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_schematic_sheet') > 0 AND strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_layout_sheet') > 0)
+-- sql: (SELECT strpos(pg_get_functiondef('solar.schematic_lines_bind()'::regprocedure), 'pg_advisory_xact_lock') > 0 AND strpos(pg_get_functiondef('public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)'::regprocedure), 'pg_advisory_xact_lock') > 0)
 -- behaviour: scripts/db/assert-solar-schematics-roles.sql - every row ok
 -- @verify:end
 
@@ -319,6 +321,11 @@ BEGIN
         RAISE EXCEPTION 'solar.schematic_lines: both meters must be placed on this schematic' USING ERRCODE = '23514';
     END IF;
     IF NEW.line_type = 'supply' THEN
+        -- Serialise per study before the cycle check: two concurrent saves (or direct inserts) on two
+        -- schematics of one study each see the other's edge uncommitted, so each check passes alone
+        -- and together they close a loop. With the lock held, the second writer's CTE runs on a fresh
+        -- READ COMMITTED snapshot that includes the first writer's committed lines.
+        PERFORM pg_advisory_xact_lock(hashtext('solar_schematic_study:' || v_study::text));
         -- A supply line may not close a loop anywhere in the study: the hierarchy must stay acyclic.
         WITH RECURSIVE down(m) AS (
             SELECT l.to_meter_id FROM solar.schematic_lines l JOIN solar.schematics s ON s.id = l.schematic_id
@@ -522,6 +529,7 @@ CREATE OR REPLACE FUNCTION public.solar_save_schematic(
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
     v_project UUID;
+    v_study   UUID;
     v_updated TIMESTAMPTZ;
     v_meters  UUID[];
     v_card    JSONB;
@@ -544,6 +552,11 @@ BEGIN
     IF v_updated IS DISTINCT FROM p_expected_updated_at THEN
         RAISE EXCEPTION 'solar.schematics: stale schematic' USING ERRCODE = '40001';
     END IF;
+    -- Same per-study lock as schematic_lines_bind, taken before any line is written, so a whole
+    -- save is serialised against every other save / line write in the study (reentrant: the
+    -- trigger's own acquisition is then a no-op).
+    SELECT s.study_id INTO v_study FROM solar.schematics s WHERE s.id = p_schematic_id;
+    PERFORM pg_advisory_xact_lock(hashtext('solar_schematic_study:' || v_study::text));
     SELECT COALESCE(array_agg((c ->> 'meterId')::uuid), '{}'::uuid[]) INTO v_meters FROM jsonb_array_elements(p_cards) c;
     DELETE FROM solar.schematic_lines l WHERE l.schematic_id = p_schematic_id;
     DELETE FROM solar.schematic_cards c WHERE c.schematic_id = p_schematic_id AND NOT (c.meter_id = ANY (v_meters));
