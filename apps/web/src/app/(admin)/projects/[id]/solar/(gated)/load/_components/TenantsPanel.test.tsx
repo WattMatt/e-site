@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-const h = vi.hoisted(() => ({ save: vi.fn(), apply: vi.fn(), vacant: vi.fn(), common: vi.fn() }))
+const h = vi.hoisted(() => ({ save: vi.fn(), apply: vi.fn(), vacant: vi.fn(), common: vi.fn(), refresh: vi.fn() }))
 vi.mock('@/actions/solar-load.actions', () => ({ saveTenantBasisAction: h.save, applyAutoMatchAction: h.apply, excludeVacantAction: h.vacant, saveCommonAreaAction: h.common }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh }) }))
 import { TenantsPanel } from './TenantsPanel'
 import type { TenantsView } from '@/lib/solar/load/view-types'
 
@@ -52,6 +52,16 @@ describe('TenantsPanel', () => {
     expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'synthesised', archetype: 'gym', densityOverride: 40, expectedUpdatedAt: 'B0' }))
     await userEvent.click(within(row).getByRole('button', { name: 'Save' }))
     expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedUpdatedAt: 'B1' }))
+  })
+  it('a refreshed view (auto-match landed a meter) re-seeds the row, and the next Save carries the NEW version', async () => {
+    const { rerender } = render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    const refreshed: TenantsView = { ...view, tenants: [{ ...view.tenants[0]!, basis: { id: 'b1', source: 'metered', meters: [{ meterId: 'm1', weight: 1 }], archetype: null, densityOverride: null, updatedAt: 'B5' } }, view.tenants[1]!] }
+    rerender(<TenantsPanel projectId="p1" view={refreshed} canEdit />)
+    const row = screen.getByRole('row', { name: /Pep/ })
+    expect(within(row).getByText(/Pep meter/)).toBeTruthy()
+    expect((within(row).getByRole('combobox', { name: /Source for/ }) as HTMLSelectElement).value).toBe('metered')
+    await userEvent.click(within(row).getByRole('button', { name: 'Save' }))
+    expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'metered', meters: [{ meterId: 'm1', weight: 1 }], expectedUpdatedAt: 'B5' }))
   })
   it('auto-match never pre-ticks an LLM match and applies only ticked pairs', async () => {
     render(<TenantsPanel projectId="p1" view={view} canEdit />)

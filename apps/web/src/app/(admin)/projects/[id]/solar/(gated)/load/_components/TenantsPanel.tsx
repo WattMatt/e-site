@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { applyAutoMatchAction, excludeVacantAction, saveCommonAreaAction, saveTenantBasisAction } from '@/actions/solar-load.actions'
 import { useArmedConfirm } from '@/app/(admin)/projects/[id]/solar/_components/useArmedConfirm'
 import { formatNumber } from '@/components/charts/scale'
+import { useResyncedState } from '@/lib/solar/use-resynced-state'
 import { ARCHETYPE_OPTIONS, type TenantRowView, type TenantsView } from '@/lib/solar/load/view-types'
 import { AssignMetersDialog } from './AssignMetersDialog'
 import { AutoMatchDialog } from './AutoMatchDialog'
@@ -19,11 +20,14 @@ const SOURCE_LABEL: Record<Source, string> = { '': 'Unassigned (synthesised)', m
 
 function TenantRow({ projectId, t, meters, canEdit }: { projectId: string; t: TenantRowView; meters: TenantsView['studyMeters']; canEdit: boolean }) {
   const router = useRouter()
-  const [source, setSource] = useState<Source>(t.basis?.source ?? '')
-  const [assigned, setAssigned] = useState(t.basis?.meters ?? [])
-  const [density, setDensity] = useState(t.basis?.densityOverride == null ? '' : String(t.basis.densityOverride))
-  const [archetype, setArchetype] = useState(t.basis?.archetype ?? '')
-  const [version, setVersion] = useState<string | null>(t.basis?.updatedAt ?? null)
+  // Every field re-seeds when the row's version changes, so a refresh after Auto-match / Exclude vacant
+  // shows the landed meters and the next Save carries the fresh version (not refused as stale).
+  const rowVersion = t.basis?.updatedAt ?? null
+  const [source, setSource] = useResyncedState<Source>(t.basis?.source ?? '', rowVersion)
+  const [assigned, setAssigned] = useResyncedState(t.basis?.meters ?? [], rowVersion)
+  const [density, setDensity] = useResyncedState(t.basis?.densityOverride == null ? '' : String(t.basis.densityOverride), rowVersion)
+  const [archetype, setArchetype] = useResyncedState(t.basis?.archetype ?? '', rowVersion)
+  const [version, setVersion] = useResyncedState<string | null>(rowVersion, rowVersion)
   const [assign, setAssign] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
