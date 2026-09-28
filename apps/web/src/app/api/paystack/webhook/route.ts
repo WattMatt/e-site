@@ -974,16 +974,51 @@ export async function POST(req: NextRequest) {
     if (addon.error) return storageFailure('org_addon invoice lookup', addon.error)
     if (addon.row) {
       if (paid) {
-        const { error: addonErr } = await addonTable(supabase)
-          .update({
+        const row = addon.row
+        const storedEnd = row.current_period_end ? new Date(row.current_period_end).getTime() : NaN
+        // The period THIS invoice pays for, independent of the stored end.
+        const invoicedEnd = nextAddonPeriodEnd(null, inv.paid_at as string | undefined, nextPaymentDate)
+        const extendsPeriod = !Number.isFinite(storedEnd) || new Date(invoicedEnd).getTime() > storedEnd
+
+        let patch: Record<string, unknown> | null
+        let fromStatuses: string[]
+        if (row.status === 'refunded') {
+          // A refunded row comes back only for a genuinely NEW charge: a
+          // different reference from the refunded one AND a period beyond the
+          // refunded period. A late or re-delivered invoice for the refunded
+          // charge must leave it refunded (D-02: hidden until a new payment).
+          const newCharge = !!reference && reference !== row.last_event_id && extendsPeriod
+          patch = newCharge
+            ? { status: 'active', current_period_end: invoicedEnd, last_event_id: reference, refunded_at: null }
+            : null
+          fromStatuses = ['refunded']
+        } else if (row.status === 'cancelled') {
+          // A cancelled row reactivates only for a NEW future period (a
+          // resubscribe); a stale invoice leaves it cancelled.
+          const future = new Date(invoicedEnd).getTime() > Date.now()
+          patch = future && extendsPeriod
+            ? { status: 'active', current_period_end: invoicedEnd, cancelled_at: null, ...(reference ? { last_event_id: reference } : {}) }
+            : null
+          fromStatuses = ['cancelled']
+        } else {
+          patch = {
             status: 'active',
-            current_period_end: nextAddonPeriodEnd(
-              addon.row.current_period_end,
-              inv.paid_at as string | undefined,
-              nextPaymentDate,
-            ),
-          })
-          .eq('id', addon.row.id)
+            current_period_end: nextAddonPeriodEnd(row.current_period_end, inv.paid_at as string | undefined, nextPaymentDate),
+          }
+          // Guarded so a refund or cancel landing between the read and this
+          // write is never overwritten.
+          fromStatuses = ['active', 'past_due', 'non_renewing']
+        }
+
+        if (!patch) {
+          console.info(
+            `Webhook invoice.update: Solar row ${row.id} is ${row.status}; invoice ${reference ?? '(no ref)'} is not a new charge, left unchanged`,
+          )
+          return ok()
+        }
+        const query = addonTable(supabase).update(patch).eq('id', row.id)
+        const { error: addonErr } =
+          fromStatuses.length === 1 ? await query.eq('status', fromStatuses[0]) : await query.in('status', fromStatuses)
         if (addonErr) return storageFailure('org_addon renewal update', addonErr)
       } else {
         const failErr = await markOrgAddonPastDue(supabase, addon.row)

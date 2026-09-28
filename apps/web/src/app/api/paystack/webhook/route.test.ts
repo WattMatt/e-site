@@ -1357,3 +1357,92 @@ describe('org add-on — failed charges', () => {
     expect(serviceClientRef.value.of(`${ADDON}.update`)[0].payload).toEqual({ status: 'past_due' })
   })
 })
+
+describe('org add-on — invoice.update never resurrects without a genuinely new charge', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  function paidInvoice(reference: string, nextPaymentDate: string) {
+    return {
+      event: 'invoice.update',
+      data: {
+        status: 'success',
+        amount: 199900,
+        paid_at: '2027-09-28T09:59:00.000Z',
+        transaction: { reference },
+        subscription: { subscription_code: 'SUB_solar', next_payment_date: nextPaymentDate },
+      },
+    }
+  }
+
+  it('a late invoice for the REFUNDED charge leaves the row refunded', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'refunded', last_event_id: REF, current_period_end: '2027-09-28T10:00:00.000Z' }),
+        error: null,
+      },
+    })
+    const res = await POST(signedReq(paidInvoice(REF, '2028-09-28T10:00:00.000Z')))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a paid invoice with a new reference but no later period leaves the row refunded', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'refunded', last_event_id: REF, current_period_end: '2028-12-31T00:00:00.000Z' }),
+        error: null,
+      },
+    })
+    await POST(signedReq(paidInvoice('ref_other', '2028-09-28T10:00:00.000Z')))
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a NEW paid charge after a refund (new reference, later period) → active again (D-02)', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'refunded', last_event_id: 'ref_old', current_period_end: '2027-09-28T10:00:00.000Z' }),
+        error: null,
+      },
+    })
+    await POST(signedReq(paidInvoice('ref_new', '2028-09-28T10:00:00.000Z')))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({
+      status: 'active',
+      current_period_end: '2028-09-28T10:00:00.000Z',
+      last_event_id: 'ref_new',
+      refunded_at: null,
+    })
+    expect(upd[0].filters).toEqual(expect.arrayContaining([['eq', 'id', 'oas-1'], ['eq', 'status', 'refunded']]))
+  })
+
+  it('a stale paid invoice on a CANCELLED row leaves it cancelled', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'cancelled', current_period_end: '2027-09-28T10:00:00.000Z' }),
+        error: null,
+      },
+    })
+    await POST(signedReq(paidInvoice('ref_stale', '2027-01-01T00:00:00.000Z')))
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a paid invoice for a NEW future period reactivates a cancelled row (a resubscribe)', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'cancelled', current_period_end: '2020-01-01T00:00:00.000Z' }),
+        error: null,
+      },
+    })
+    await POST(signedReq(paidInvoice('ref_new', '2099-01-01T00:00:00.000Z')))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({
+      status: 'active',
+      current_period_end: '2099-01-01T00:00:00.000Z',
+      cancelled_at: null,
+    })
+    expect(upd[0].filters).toEqual(expect.arrayContaining([['eq', 'id', 'oas-1'], ['eq', 'status', 'cancelled']]))
+  })
+})
