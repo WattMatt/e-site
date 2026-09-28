@@ -1049,3 +1049,92 @@ describe('org add-on — renewals', () => {
     expect(recordInvoiceMock).not.toHaveBeenCalled()
   })
 })
+
+describe('org add-on — not_renew / disable', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  // Fixed far-future / far-past ends so the tests do not rot as time passes.
+  const IN_PERIOD = '2099-01-01T00:00:00.000Z'
+  const EXPIRED = '2020-01-01T00:00:00.000Z'
+
+  function subEvent(event: string, extra: Record<string, unknown> = {}) {
+    return {
+      event,
+      data: {
+        subscription_code: 'SUB_solar',
+        customer: { customer_code: 'CUS_solar' },
+        plan: { plan_code: SOLAR_PLAN },
+        ...extra,
+      },
+    }
+  }
+
+  it('not_renew → non_renewing, keeping the paid period (access runs to its end)', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: { data: addonRow({ current_period_end: IN_PERIOD }), error: null },
+    })
+    const res = await POST(signedReq(subEvent('subscription.not_renew')))
+    expect(res.status).toBe(200)
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toEqual({ status: 'non_renewing' })
+    expect(upd[0].filters).toEqual(
+      expect.arrayContaining([['eq', 'id', 'oas-1'], ['in', 'status', ['active', 'past_due']]]),
+    )
+  })
+
+  it('disable MID-PERIOD → non_renewing: the paid year is honoured to its end (owner default)', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: { data: addonRow({ current_period_end: IN_PERIOD }), error: null },
+    })
+    const res = await POST(signedReq(subEvent('subscription.disable')))
+    expect(res.status).toBe(200)
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toEqual({ status: 'non_renewing' })
+    expect(upd[0].filters).toEqual(
+      expect.arrayContaining([['eq', 'id', 'oas-1'], ['in', 'status', ['active', 'past_due']]]),
+    )
+  })
+
+  it('disable AFTER the period ended → cancelled + cancelled_at, never overwriting a refunded row', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: { data: addonRow({ current_period_end: EXPIRED }), error: null },
+    })
+    await POST(signedReq(subEvent('subscription.disable')))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload.status).toBe('cancelled')
+    expect(upd[0].payload.cancelled_at).toEqual(expect.any(String))
+    expect(upd[0].filters).toEqual(
+      expect.arrayContaining([['eq', 'id', 'oas-1'], ['in', 'status', ['active', 'non_renewing', 'past_due']]]),
+    )
+  })
+
+  it('matches by customer + Solar plan when the code was never bound', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: (ctx: any) =>
+        ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')
+          ? { data: addonRow({ paystack_subscription_code: null, current_period_end: IN_PERIOD }), error: null }
+          : { data: null, error: null },
+    })
+    await POST(signedReq(subEvent('subscription.not_renew')))
+    expect(serviceClientRef.value.of(`${ADDON}.update`)[0].payload).toEqual({ status: 'non_renewing' })
+  })
+
+  it('an event for a subscription that is not Solar touches no add-on row', async () => {
+    serviceClientRef.value = makeClient()
+    await POST(signedReq(subEvent('subscription.disable', { plan: { plan_code: 'PLN_starter' } })))
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a failed write 500s so Paystack retries', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: { data: addonRow({ current_period_end: EXPIRED }), error: null },
+      [`${ADDON}.update`]: { data: null, error: { code: '08006', message: 'connection failure' } },
+    })
+    const res = await POST(signedReq(subEvent('subscription.disable')))
+    expect(res.status).toBe(500)
+  })
+})

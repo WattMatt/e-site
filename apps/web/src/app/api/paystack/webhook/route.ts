@@ -1131,6 +1131,37 @@ export async function POST(req: NextRequest) {
       .update({ status: 'expired' })
       .eq('paystack_subscription_code', sub.subscription_code)
     if (mvCancelErr) console.error('Webhook mv cancel error:', mvCancelErr)
+
+    // Org add-on (Solar). Unlike the tier subscription above, these events do
+    // not simply end access (spec §2.3.4): not_renew keeps access until
+    // current_period_end (org_subscription_active admits 'non_renewing').
+    // disable (owner default, Phase 1B) honours a year that is already paid
+    // for: while current_period_end is still in the future it is treated like
+    // not_renew ('non_renewing', access to the period end); once the period
+    // has ended it is 'cancelled'. The status guards stop a late or
+    // re-delivered event from moving a row backwards (neither ever overwrites
+    // 'refunded' or revives 'cancelled').
+    const addon = await findOrgAddon(supabase, {
+      subscriptionCode: sub.subscription_code,
+      customerCode: sub.customer?.customer_code,
+      planCode: sub.plan?.plan_code,
+    })
+    if (addon.error) return storageFailure('org_addon cancel lookup', addon.error)
+    if (addon.row) {
+      const periodEnd = addon.row.current_period_end ? new Date(addon.row.current_period_end).getTime() : NaN
+      const stillPaidFor = Number.isFinite(periodEnd) && periodEnd > Date.now()
+      const { error: addonCancelErr } =
+        event.event === 'subscription.not_renew' || stillPaidFor
+          ? await addonTable(supabase)
+              .update({ status: 'non_renewing' })
+              .eq('id', addon.row.id)
+              .in('status', ['active', 'past_due'])
+          : await addonTable(supabase)
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .eq('id', addon.row.id)
+              .in('status', ['active', 'non_renewing', 'past_due'])
+      if (addonCancelErr) return storageFailure('org_addon cancel', addonCancelErr)
+    }
   }
 
   // A subscription renewal invoice failed — the primary Paystack signal for a
