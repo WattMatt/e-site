@@ -2650,9 +2650,9 @@ describe('commitMeterFile: series', () => {
     await expect(commitMeterFile(generic.repo, generic.ctx, body({}))).rejects.toMatchObject({ status: 422, body: { error: 'unresolved_errors' } })
     const a = setup(A_TEXT)
     await expect(commitMeterFile(a.repo, a.ctx, body({ meter: { new: { label: 'x', kind: 'water' } } }))).rejects.toMatchObject({ status: 422, body: { error: 'water_is_not_load' } })
-    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
+    const b = setup(B2_TEXT, 'SITE RM, , E9001, .csv')
     await expect(commitMeterFile(b.repo, b.ctx, body({}))).rejects.toMatchObject({ status: 422, body: { error: 'multi_serial_meter_is_virtual' } })
-    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E0400', kind: 'virtual' } } }))).resolves.toBeTruthy()
+    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E9001', kind: 'virtual' } } }))).resolves.toBeTruthy()
     expect(b.state.meters[0].serials).toEqual(['30000001', '30000002'])
   })
 

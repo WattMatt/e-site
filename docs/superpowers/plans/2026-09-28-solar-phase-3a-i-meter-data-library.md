@@ -29,15 +29,15 @@
 
 These were measured on the source files on 2026-09-28 while writing this plan. Each is a deliberate deviation from, or sharpening of, the spec; the owner should see them (they are repeated in the final report).
 
-1. **Format A "descending" files are sorted as TEXT, not by time.** YARONA `BULK METER` has 22,761 decreasing steps and 144 increasing ones: rows run `31/12/2024 … 01/12/2024, 31/10/2025 …` — descending by the `DD/MM/YYYY` string. as-is/10 §3 says "none interleaved"; that is wrong. The parser **always sorts by parsed timestamp** and reports `rowOrder: 'unordered'` for such files (a 14-day window inside one month reads `descending`).
-2. **Within one format-A file, `Solar Total Power` is `p14` shifted one interval** (Fourways `Solar`: `STP[t+30min] == p14[t]` on 723 of 734 non-zero steps in the fixture window, 19,018 of 19,312 over the whole file). So the time-label convention is per *channel* for named-power columns, not per format. The parser detects the lag, reports it (`lagged_channel`), and never picks the lagged copy as primary. **Open question for the owner:** is `Solar Total Power` interval-ending while `p14` is interval-beginning?
-3. **Spike threshold uses P95, not P99.** In a 14-day window of 204 Oxford `NAKED COFFEE` (hourly `a14`), 8 of 336 values (2.4 %) are ±59,000 register artefacts, so P99 *is* an artefact and "50 × P99" flags nothing. `50 × P95(|v|)` flags exactly the 8. The full-file behaviour is unchanged in spirit.
+1. **Format A "descending" files are sorted as TEXT, not by time.** SITE YA `BULK METER` has 22,761 decreasing steps and 144 increasing ones: rows run `31/12/2024 … 01/12/2024, 31/10/2025 …` — descending by the `DD/MM/YYYY` string. as-is/10 §3 says "none interleaved"; that is wrong. The parser **always sorts by parsed timestamp** and reports `rowOrder: 'unordered'` for such files (a 14-day window inside one month reads `descending`).
+2. **Within one format-A file, `Solar Total Power` is `p14` shifted one interval** (SITE FV `Solar`: `STP[t+30min] == p14[t]` on 723 of 734 non-zero steps in the fixture window, 19,018 of 19,312 over the whole file). So the time-label convention is per *channel* for named-power columns, not per format. The parser detects the lag, reports it (`lagged_channel`), and never picks the lagged copy as primary. **Open question for the owner:** is `Solar Total Power` interval-ending while `p14` is interval-beginning?
+3. **Spike threshold uses P95, not P99.** In a 14-day window of SITE OX `TENANT-51` (hourly `a14`), 8 of 336 values (2.4 %) are ±59,000 register artefacts, so P99 *is* an artefact and "50 × P99" flags nothing. `50 × P95(|v|)` flags exactly the 8. The full-file behaviour is unchanged in spirit.
 4. **Fixtures are the 14-day window only, not "+ first and last day".** Adding the first and last day of a 16-month file creates a 15-month artificial gap and turns every fixture into a `< 50 %` completeness error. Period metadata is recorded in `manifest.json` instead.
-5. **`NAKED COFFEE`'s artefacts are not "reset pairs" in the as-is sense** (a negative followed by normal readings): they alternate −58,796 / +58,999 / −59,232 … every 1–2 days. Both signs are flagged 4 (spike); negatives among them are counted as `resetPairs`.
-6. **The E log's mall is its last `;` part**, not the third (`DB - 01A Panarottis ; Thabazimbi Square ; MDB - 2 ; Thabazimbi Square`). Site names are compared through `siteKey()` (upper-case, alphanumerics, trailing MALL/SQUARE/CENTRE/CENTER/PLAZA/SHOPPING dropped), which makes `Rustenburg` (town) equal `RUSTENBURG MALL`.
+5. **`TENANT-51`'s artefacts are not "reset pairs" in the as-is sense** (a negative followed by normal readings): they alternate −58,796 / +58,999 / −59,232 … every 1–2 days. Both signs are flagged 4 (spike); negatives among them are counted as `resetPairs`.
+6. **The E log's mall is its last `;` part**, not the third (`DB - 01A TENANT-95 ; Bravo Square ; MDB - 2 ; Bravo Square`). Site names are compared through `siteKey()` (upper-case, alphanumerics, trailing MALL/SQUARE/CENTRE/CENTER/PLAZA/SHOPPING dropped), which makes `Foxtrot` (town) equal `SITE RM`.
 7. **Archetypes are stored as day-type profiles + monthly multipliers, not as a fixed 8,760 array.** A fixed 8,760 cannot respect a given reference year's weekdays and public holidays; the 8,760 is expanded per reference year (Task 20). 3a-ii's `solar.load_archetypes` stores the compact form (spec §3 said "shape 8760 float4").
 8. **D-06 densities are GCR generator-sizing figures** (standard 0.03 kW/m² = 30 W/m², fast food / restaurant 45 W/m²). The engine uses them as the average over operating hours. As-is/10 §6.3 measured a median tenant at 15 W/m² over *all* hours; 30 W/m² over a ~50 % duty cycle is consistent, but **the owner should confirm** (D-06 says the owner reviews the table once).
-9. `PRINCESS MKABAYI` daily files: 43 of them carry the same line-1 serial `01180400` with identical values — the mis-filing affects daily files too.
+9. `SITE PM` daily files: 43 of them carry the same line-1 serial `36291073` with identical values — the mis-filing affects daily files too.
 
 ## File structure
 
@@ -165,39 +165,39 @@ The source folder is `/Volumes/Extreme SSD/WATSON MATTHEUS Dropbox/OFFICE/PROJEC
 - Output file names follow the filename grammar with sites as `SITE xx`, tenants as `TENANT-nn`, serials as pseudonyms.
 - Serial pseudonym = `'3' + (first 12 hex of sha256("esite-meter-fixture:" + digits) as integer mod 10^7, zero-padded to 7)` + any letter suffix. Deterministic, preserves equality, and never contains the real serial.
 
-| id | Source (relative to the folder) | Output file | Fmt | Window |
+| id | Source (pseudonymous reference; resolved by the builder) | Output file | Fmt | Window |
 |---|---|---|---|---|
-| a-bulk | `YARONA/YARONA, , BULK METER, .csv` | `SITE YA, , BULK METER, .csv` | A | 2025-03-10…03-23 |
-| a-tenant | `YARONA/YARONA, SHOP 050, SHOPRITE, 3000.csv` | `SITE YA, SHOP 050, TENANT-23, 3000.csv` | A | same |
-| a-check | `YARONA/YARONA, , CHECK 1, .csv` | `SITE YA, , CHECK 1, .csv` | A | same |
-| a-generator | `YARONA/YARONA, , GENERATOR METER, .csv` | `SITE YA, , GENERATOR METER, .csv` | A | 2025-06-02…06-15 |
-| a-pv-240 | `WHITE RIVER/WHITE RIVER, , SOLAR PLANT 240, .csv` | `SITE WR, , SOLAR PLANT 240, .csv` | A | 2025-03-10…03-23 |
-| a-pv-360 | `WHITE RIVER/WHITE RIVER, , SOLAR PLANT 360, .csv` | `SITE WR, , SOLAR PLANT 360, .csv` | A | same |
-| a-pv-multi | `Fourways Value Mart/Fourways Value Mart, , Solar, .csv` | `SITE FV, , Solar, .csv` | A | same |
-| a-reactive | `Evaton/Evaton, 220, BOXER SUPERSTORES, 2067.csv` | `SITE EV, 220, TENANT-31, 2067.csv` | A | same |
-| a-volts-amps | `CITY CENTRE YORK/CITY CENTRE YORK, 13, REMY'S CLOTHING, 45.csv` | `SITE CY, 13, TENANT-41, 45.csv` | A | same |
-| a-energy-resets | `204 Oxford/204 Oxford, , NAKED COFFEE, .csv` | `SITE OX, , TENANT-51, .csv` | A | 2024-10-10…10-23 |
-| a-level-shift | `FLAMWOOD WALK/FLAMWOOD WALK, 89, Checkers, 3127.csv` | `SITE FW, 89, TENANT-61, 3127.csv` | A | 2024-10-06…10-19 |
-| a-hourly-negative | `VILLAGE WALK/VILLAGE WALK, 12, SHOPRITE CHECKERS, 4821.csv` | `SITE VW, 12, TENANT-71, 4821.csv` | A | 2024-12-27…2025-01-09 |
-| a-tiny-negative | `THAMBI/THAMBI, 3, Pick n Pay, 1995.csv` | `SITE TH, 3, TENANT-81, 1995.csv` | A | 2024-06-03…06-16 |
-| a-empty | `EQUINOX/EQUINOX, , DB 37, .csv` | `SITE EQ, , DB 37, .csv` | A | whole file |
-| a-short | `MORONE (KAPANE) - KSC/MORONE (KAPANE) - KSC, , BEARES, .csv` | `SITE MO, , TENANT-91, .csv` | A | whole file (7 days) |
-| a-water | `BIYELA CENTRE/BIYELA CENTRE, , BC1 - MICY'S CHANNEL BOUTIQE, .csv` | `SITE BC, , BC1 - TENANT-92, .csv` | A | whole file |
-| a-vacant-1 | `FLAMWOOD VALUE/FLAMWOOD VALUE, SHOP 06, Vacant, 450 (2).csv` | `SITE FL, SHOP 06, Vacant, 450 (2).csv` | A | 2025-03-10…03-23 |
-| a-vacant-2 | `Fourways Value Mart/Fourways Value Mart, , SHOP 107 VACANT, .csv` | `SITE FV, , SHOP 107 VACANT, .csv` | A | same |
-| a-twin-of-d | `RUSTENBURG PLAZA/RUSTENBURG PLAZA, 27, ABSA BANK LIMITED, 525.csv` | `SITE RP, 27, TENANT-06, 525.csv` | A | same |
-| d-escaped | `RUSTENBURG PLAZA/_consolidated/RP - ABSA 525.csv` | `RP - TENANT-06 525.csv` | D | same (records split on the literal `\n`) |
-| b-virtual-calc | `SEGONYANA/SEGONYANA, , 36724754_LOCAL MAIN, .csv` | `SITE SG, , {36724754}_LOCAL MAIN, .csv` | B | 2025-10-01…10-14 |
-| b-misfiled | `SEGONYANA/SEGONYANA, , 36338822_DB-26, .csv` | `SITE SG, , {36338822}_DB-26, .csv` | B | same |
-| b-shared-body-1 | `MERINO MALL/MERINO MALL, , Local Main, .csv` | `SITE MR, , Local Main, .csv` | B | 2025-03-10…03-23 |
-| b-shared-body-2 | `TOWN SQUARE/TOWN SQUARE, 09, DB 09, .csv` | `SITE TS, 09, DB 09, .csv` | B | same |
-| b-halfhourly | `PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 35575535, .csv` | `SITE PM, , Meter {35575535}, .csv` | B | same |
-| b-daily | `PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 36084823, .csv` | `SITE PM, , Meter {36084823}, .csv` | B | same (14 daily rows) |
-| b-seven-serials | `RUSTENBURG MALL/RUSTENBURG MALL, , E0400, .csv` | `SITE RM, , E0400, .csv` | B | same |
-| c-energy | `THABAZIMBI/THABAZIMBI, , 01A Panarottis, .csv` | `SITE TZ, , 01A TENANT-95, .csv` | C | same |
-| c-energy-2 | `MERINO MALL/MERINO MALL, , Checkers, .csv` | `SITE MR, , TENANT-96, .csv` | C | same |
-| e-log | `KURUMAN MALL/KURUMAN MALL, , E2495, .csv` | `SITE KM, , E2495, .csv` | E | first 30 rows + rows for serials 36506625, 36339816, 35575535, 33883284, 36339326; tenant part → `TENANT-Ennn`, mall parts → site pseudonyms, `DB…` parts kept |
-| f-derived | `PARKDENE/PARKDENE, , PDB_36506619_KFCDT_22m2V, .csv` | `SITE PD, , PDB_{36506619}_TENANT-97_22m2V, .csv` | F | first 25 lines |
+| a-bulk | `site-5f847ce9b8e6/370de3d9ba4bcb67.A` | `SITE YA, , BULK METER, .csv` | A | 2025-03-10…03-23 |
+| a-tenant | `site-5f847ce9b8e6/65967c2cc259b7c1.A` | `SITE YA, SHOP 050, TENANT-23, 3000.csv` | A | same |
+| a-check | `site-5f847ce9b8e6/4b2d8e46d34aa99d.A` | `SITE YA, , CHECK 1, .csv` | A | same |
+| a-generator | `site-5f847ce9b8e6/61180ef155591c2d.A` | `SITE YA, , GENERATOR METER, .csv` | A | 2025-06-02…06-15 |
+| a-pv-240 | `site-6ecd81568957/f967b4c912e833dc.A` | `SITE WR, , SOLAR PLANT 240, .csv` | A | 2025-03-10…03-23 |
+| a-pv-360 | `site-6ecd81568957/31c0a2ae1cc1dd25.A` | `SITE WR, , SOLAR PLANT 360, .csv` | A | same |
+| a-pv-multi | `site-02159ab53247/c98ab052191ec032.A` | `SITE FV, , Solar, .csv` | A | same |
+| a-reactive | `site-4212b625d081/da2426d13ebd2e58.A` | `SITE EV, 220, TENANT-31, 2067.csv` | A | same |
+| a-volts-amps | `site-029eef041a13/34d2e548637b1519.A` | `SITE CY, 13, TENANT-41, 45.csv` | A | same |
+| a-energy-resets | `site-1c4f602e91f4/66c44632fbbc713f.A` | `SITE OX, , TENANT-51, .csv` | A | 2024-10-10…10-23 |
+| a-level-shift | `site-2b76e0d1cb45/3dd06bb7d4c5f7d1.A` | `SITE FW, 89, TENANT-61, 3127.csv` | A | 2024-10-06…10-19 |
+| a-hourly-negative | `site-856f019d84f6/e0e3fe5a81786d35.A` | `SITE VW, 12, TENANT-71, 4821.csv` | A | 2024-12-27…2025-01-09 |
+| a-tiny-negative | `site-131e7f7776ca/f704b904e728b979.A` | `SITE TH, 3, TENANT-81, 1995.csv` | A | 2024-06-03…06-16 |
+| a-empty | `site-24560dfb48f1/cd0d4c77feaf0e3b.A` | `SITE EQ, , DB 37, .csv` | A | whole file |
+| a-short | `site-d494cbac42f6/54f4fb363b436e90.A` | `SITE MO, , TENANT-91, .csv` | A | whole file (7 days) |
+| a-water | `site-e3cdcac6991e/83ffb159b5600ae6.A` | `SITE BC, , BC1 - TENANT-92, .csv` | A | whole file |
+| a-vacant-1 | `site-7287c42af185/5352acbd3ac56a94.A` | `SITE FL, SHOP 06, Vacant, 450 (2).csv` | A | 2025-03-10…03-23 |
+| a-vacant-2 | `site-02159ab53247/caf6617114e62f70.A` | `SITE FV, , SHOP 107 VACANT, .csv` | A | same |
+| a-twin-of-d | `site-ce0f452ad0cb/de89b6022ed5ef4a.A` | `SITE RP, 27, TENANT-06, 525.csv` | A | same |
+| d-escaped | `site-ce0f452ad0cb/56d9620a95fbb6d1.D` | `RP - TENANT-06 525.csv` | D | same (records split on the literal `\n`) |
+| b-virtual-calc | `site-8029679f4046/961ac7e81b1febae.B` | `SITE SG, , {30182503}_LOCAL MAIN, .csv` | B | 2025-10-01…10-14 |
+| b-misfiled | `site-8029679f4046/d1d8f1a4c7d8ae04.B` | `SITE SG, , {32700578}_DB-26, .csv` | B | same |
+| b-shared-body-1 | `site-d830013fc427/fbaeb142f41c3ecc.B` | `SITE MR, , Local Main, .csv` | B | 2025-03-10…03-23 |
+| b-shared-body-2 | `site-2d26c699e0b1/1de0cf1b6460a260.B` | `SITE TS, 09, DB 09, .csv` | B | same |
+| b-halfhourly | `site-e9cf6a49caa9/1b3f94512446cd32.B` | `SITE PM, , Meter {31599070}, .csv` | B | same |
+| b-daily | `site-e9cf6a49caa9/6be7a716a603573a.B` | `SITE PM, , Meter {39631688}, .csv` | B | same (14 daily rows) |
+| b-seven-serials | `site-d6ffa4c80435/a0e443d32bf1d122.B` | `SITE RM, , E9001, .csv` | B | same |
+| c-energy | `site-0465266003ff/428f3d42a50f69c6.C` | `SITE TZ, , 01A TENANT-95, .csv` | C | same |
+| c-energy-2 | `site-d830013fc427/f2b71faf2094de76.C` | `SITE MR, , TENANT-96, .csv` | C | same |
+| e-log | `site-3d3bb3d89d06/8290db891735a460.E` | `SITE KM, , E9002, .csv` | E | first 30 rows + rows for serials 33103528, 38813110, 31599070, 39614362, 34606877; tenant part → `TENANT-Ennn`, mall parts → site pseudonyms, `DB…` parts kept |
+| f-derived | `site-b535c62513b1/5460394984734387.F` | `SITE PD, , PDB_{31815534}_TENANT-97_22m2V, .csv` | F | first 25 lines |
 
 `{digits}` in an output name = that serial's pseudonym. Not built as fixtures, deliberately: the 6.9 MB `PDB_…_22m2V.xlsx` (the formula-column case is built synthetically in Task 14) and the four filename-grammar edge cases (they are strings in Task 4's tests).
 
@@ -225,46 +225,54 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT = join(HERE, '../../packages/shared/src/meter-data/__fixtures__/corpus')
 
 const W = ['2025-03-10', '2025-03-23']
+// Each source is named ONLY by its pseudonymous reference (the manifest `source` form):
+//   ref = "site-<12 hex sha256(site folder)>/<16 hex sha256(relative path)>.<format>"
+// The builder walks the corpus, hashes every relative path and matches. `out` is the final
+// (already pseudonymised) fixture name. No real site, tenant or serial is written here.
 const FIXTURES = [
-  { id: 'a-bulk', src: 'YARONA/YARONA, , BULK METER, .csv', out: 'SITE YA, , BULK METER, .csv', fmt: 'A', window: W },
-  { id: 'a-tenant', src: 'YARONA/YARONA, SHOP 050, SHOPRITE, 3000.csv', out: 'SITE YA, SHOP 050, TENANT-23, 3000.csv', fmt: 'A', window: W },
-  { id: 'a-check', src: 'YARONA/YARONA, , CHECK 1, .csv', out: 'SITE YA, , CHECK 1, .csv', fmt: 'A', window: W },
-  { id: 'a-generator', src: 'YARONA/YARONA, , GENERATOR METER, .csv', out: 'SITE YA, , GENERATOR METER, .csv', fmt: 'A', window: ['2025-06-02', '2025-06-15'] },
-  { id: 'a-pv-240', src: 'WHITE RIVER/WHITE RIVER, , SOLAR PLANT 240, .csv', out: 'SITE WR, , SOLAR PLANT 240, .csv', fmt: 'A', window: W },
-  { id: 'a-pv-360', src: 'WHITE RIVER/WHITE RIVER, , SOLAR PLANT 360, .csv', out: 'SITE WR, , SOLAR PLANT 360, .csv', fmt: 'A', window: W },
-  { id: 'a-pv-multi', src: 'Fourways Value Mart/Fourways Value Mart, , Solar, .csv', out: 'SITE FV, , Solar, .csv', fmt: 'A', window: W },
-  { id: 'a-reactive', src: 'Evaton/Evaton, 220, BOXER SUPERSTORES, 2067.csv', out: 'SITE EV, 220, TENANT-31, 2067.csv', fmt: 'A', window: W },
-  { id: 'a-volts-amps', src: "CITY CENTRE YORK/CITY CENTRE YORK, 13, REMY'S CLOTHING, 45.csv", out: 'SITE CY, 13, TENANT-41, 45.csv', fmt: 'A', window: W },
-  { id: 'a-energy-resets', src: '204 Oxford/204 Oxford, , NAKED COFFEE, .csv', out: 'SITE OX, , TENANT-51, .csv', fmt: 'A', window: ['2024-10-10', '2024-10-23'] },
-  { id: 'a-level-shift', src: 'FLAMWOOD WALK/FLAMWOOD WALK, 89, Checkers, 3127.csv', out: 'SITE FW, 89, TENANT-61, 3127.csv', fmt: 'A', window: ['2024-10-06', '2024-10-19'] },
-  { id: 'a-hourly-negative', src: 'VILLAGE WALK/VILLAGE WALK, 12, SHOPRITE CHECKERS, 4821.csv', out: 'SITE VW, 12, TENANT-71, 4821.csv', fmt: 'A', window: ['2024-12-27', '2025-01-09'] },
-  { id: 'a-tiny-negative', src: 'THAMBI/THAMBI, 3, Pick n Pay, 1995.csv', out: 'SITE TH, 3, TENANT-81, 1995.csv', fmt: 'A', window: ['2024-06-03', '2024-06-16'] },
-  { id: 'a-empty', src: 'EQUINOX/EQUINOX, , DB 37, .csv', out: 'SITE EQ, , DB 37, .csv', fmt: 'A', window: null },
-  { id: 'a-short', src: 'MORONE (KAPANE) - KSC/MORONE (KAPANE) - KSC, , BEARES, .csv', out: 'SITE MO, , TENANT-91, .csv', fmt: 'A', window: null },
-  { id: 'a-water', src: "BIYELA CENTRE/BIYELA CENTRE, , BC1 - MICY'S CHANNEL BOUTIQE, .csv", out: 'SITE BC, , BC1 - TENANT-92, .csv', fmt: 'A', window: null },
-  { id: 'a-vacant-1', src: 'FLAMWOOD VALUE/FLAMWOOD VALUE, SHOP 06, Vacant, 450 (2).csv', out: 'SITE FL, SHOP 06, Vacant, 450 (2).csv', fmt: 'A', window: W },
-  { id: 'a-vacant-2', src: 'Fourways Value Mart/Fourways Value Mart, , SHOP 107 VACANT, .csv', out: 'SITE FV, , SHOP 107 VACANT, .csv', fmt: 'A', window: W },
-  { id: 'a-twin-of-d', src: 'RUSTENBURG PLAZA/RUSTENBURG PLAZA, 27, ABSA BANK LIMITED, 525.csv', out: 'SITE RP, 27, TENANT-06, 525.csv', fmt: 'A', window: W },
-  { id: 'd-escaped', src: 'RUSTENBURG PLAZA/_consolidated/RP - ABSA 525.csv', out: 'RP - TENANT-06 525.csv', fmt: 'D', window: W },
-  { id: 'b-virtual-calc', src: 'SEGONYANA/SEGONYANA, , 36724754_LOCAL MAIN, .csv', out: 'SITE SG, , {36724754}_LOCAL MAIN, .csv', fmt: 'B', window: ['2025-10-01', '2025-10-14'] },
-  { id: 'b-misfiled', src: 'SEGONYANA/SEGONYANA, , 36338822_DB-26, .csv', out: 'SITE SG, , {36338822}_DB-26, .csv', fmt: 'B', window: ['2025-10-01', '2025-10-14'] },
-  { id: 'b-shared-body-1', src: 'MERINO MALL/MERINO MALL, , Local Main, .csv', out: 'SITE MR, , Local Main, .csv', fmt: 'B', window: W },
-  { id: 'b-shared-body-2', src: 'TOWN SQUARE/TOWN SQUARE, 09, DB 09, .csv', out: 'SITE TS, 09, DB 09, .csv', fmt: 'B', window: W },
-  { id: 'b-halfhourly', src: 'PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 35575535, .csv', out: 'SITE PM, , Meter {35575535}, .csv', fmt: 'B', window: W },
-  { id: 'b-daily', src: 'PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 36084823, .csv', out: 'SITE PM, , Meter {36084823}, .csv', fmt: 'B', window: W },
-  { id: 'b-seven-serials', src: 'RUSTENBURG MALL/RUSTENBURG MALL, , E0400, .csv', out: 'SITE RM, , E0400, .csv', fmt: 'B', window: W },
-  { id: 'c-energy', src: 'THABAZIMBI/THABAZIMBI, , 01A Panarottis, .csv', out: 'SITE TZ, , 01A TENANT-95, .csv', fmt: 'C', window: W },
-  { id: 'c-energy-2', src: 'MERINO MALL/MERINO MALL, , Checkers, .csv', out: 'SITE MR, , TENANT-96, .csv', fmt: 'C', window: W },
-  { id: 'e-log', src: 'KURUMAN MALL/KURUMAN MALL, , E2495, .csv', out: 'SITE KM, , E2495, .csv', fmt: 'E', window: null },
-  { id: 'f-derived', src: 'PARKDENE/PARKDENE, , PDB_36506619_KFCDT_22m2V, .csv', out: 'SITE PD, , PDB_{36506619}_TENANT-97_22m2V, .csv', fmt: 'F', window: null },
+  { id: 'a-bulk', ref: 'site-5f847ce9b8e6/370de3d9ba4bcb67.A', out: 'SITE YA, , BULK METER, .csv', fmt: 'A', window: W },
+  { id: 'a-tenant', ref: 'site-5f847ce9b8e6/65967c2cc259b7c1.A', out: 'SITE YA, SHOP 050, TENANT-23, 3000.csv', fmt: 'A', window: W },
+  { id: 'a-check', ref: 'site-5f847ce9b8e6/4b2d8e46d34aa99d.A', out: 'SITE YA, , CHECK 1, .csv', fmt: 'A', window: W },
+  { id: 'a-generator', ref: 'site-5f847ce9b8e6/61180ef155591c2d.A', out: 'SITE YA, , GENERATOR METER, .csv', fmt: 'A', window: ['2025-06-02', '2025-06-15'] },
+  { id: 'a-pv-240', ref: 'site-6ecd81568957/f967b4c912e833dc.A', out: 'SITE WR, , SOLAR PLANT 240, .csv', fmt: 'A', window: W },
+  { id: 'a-pv-360', ref: 'site-6ecd81568957/31c0a2ae1cc1dd25.A', out: 'SITE WR, , SOLAR PLANT 360, .csv', fmt: 'A', window: W },
+  { id: 'a-pv-multi', ref: 'site-02159ab53247/c98ab052191ec032.A', out: 'SITE FV, , Solar, .csv', fmt: 'A', window: W },
+  { id: 'a-reactive', ref: 'site-4212b625d081/da2426d13ebd2e58.A', out: 'SITE EV, 220, TENANT-31, 2067.csv', fmt: 'A', window: W },
+  { id: 'a-volts-amps', ref: 'site-029eef041a13/34d2e548637b1519.A', out: 'SITE CY, 13, TENANT-41, 45.csv', fmt: 'A', window: W },
+  { id: 'a-energy-resets', ref: 'site-1c4f602e91f4/66c44632fbbc713f.A', out: 'SITE OX, , TENANT-51, .csv', fmt: 'A', window: ['2024-10-10', '2024-10-23'] },
+  { id: 'a-level-shift', ref: 'site-2b76e0d1cb45/3dd06bb7d4c5f7d1.A', out: 'SITE FW, 89, TENANT-61, 3127.csv', fmt: 'A', window: ['2024-10-06', '2024-10-19'] },
+  { id: 'a-hourly-negative', ref: 'site-856f019d84f6/e0e3fe5a81786d35.A', out: 'SITE VW, 12, TENANT-71, 4821.csv', fmt: 'A', window: ['2024-12-27', '2025-01-09'] },
+  { id: 'a-tiny-negative', ref: 'site-131e7f7776ca/f704b904e728b979.A', out: 'SITE TH, 3, TENANT-81, 1995.csv', fmt: 'A', window: ['2024-06-03', '2024-06-16'] },
+  { id: 'a-empty', ref: 'site-24560dfb48f1/cd0d4c77feaf0e3b.A', out: 'SITE EQ, , DB 37, .csv', fmt: 'A', window: null },
+  { id: 'a-short', ref: 'site-d494cbac42f6/54f4fb363b436e90.A', out: 'SITE MO, , TENANT-91, .csv', fmt: 'A', window: null },
+  { id: 'a-water', ref: 'site-e3cdcac6991e/83ffb159b5600ae6.A', out: 'SITE BC, , BC1 - TENANT-92, .csv', fmt: 'A', window: null },
+  { id: 'a-vacant-1', ref: 'site-7287c42af185/5352acbd3ac56a94.A', out: 'SITE FL, SHOP 06, Vacant, 450 (2).csv', fmt: 'A', window: W },
+  { id: 'a-vacant-2', ref: 'site-02159ab53247/caf6617114e62f70.A', out: 'SITE FV, , SHOP 107 VACANT, .csv', fmt: 'A', window: W },
+  { id: 'a-twin-of-d', ref: 'site-ce0f452ad0cb/de89b6022ed5ef4a.A', out: 'SITE RP, 27, TENANT-06, 525.csv', fmt: 'A', window: W },
+  { id: 'd-escaped', ref: 'site-ce0f452ad0cb/56d9620a95fbb6d1.D', out: 'RP - TENANT-06 525.csv', fmt: 'D', window: W },
+  { id: 'b-virtual-calc', ref: 'site-8029679f4046/961ac7e81b1febae.B', out: 'SITE SG, , 30182503_LOCAL MAIN, .csv', fmt: 'B', window: ['2025-10-01', '2025-10-14'] },
+  { id: 'b-misfiled', ref: 'site-8029679f4046/d1d8f1a4c7d8ae04.B', out: 'SITE SG, , 32700578_DB-26, .csv', fmt: 'B', window: ['2025-10-01', '2025-10-14'] },
+  { id: 'b-shared-body-1', ref: 'site-d830013fc427/fbaeb142f41c3ecc.B', out: 'SITE MR, , Local Main, .csv', fmt: 'B', window: W },
+  { id: 'b-shared-body-2', ref: 'site-2d26c699e0b1/1de0cf1b6460a260.B', out: 'SITE TS, 09, DB 09, .csv', fmt: 'B', window: W },
+  { id: 'b-halfhourly', ref: 'site-e9cf6a49caa9/1b3f94512446cd32.B', out: 'SITE PM, , Meter 31599070, .csv', fmt: 'B', window: W },
+  { id: 'b-daily', ref: 'site-e9cf6a49caa9/6be7a716a603573a.B', out: 'SITE PM, , Meter 39631688, .csv', fmt: 'B', window: W },
+  { id: 'b-seven-serials', ref: 'site-d6ffa4c80435/a0e443d32bf1d122.B', out: 'SITE RM, , E9001, .csv', fmt: 'B', window: W },
+  { id: 'c-energy', ref: 'site-0465266003ff/428f3d42a50f69c6.C', out: 'SITE TZ, , 01A TENANT-95, .csv', fmt: 'C', window: W },
+  { id: 'c-energy-2', ref: 'site-d830013fc427/f2b71faf2094de76.C', out: 'SITE MR, , TENANT-96, .csv', fmt: 'C', window: W },
+  { id: 'e-log', ref: 'site-3d3bb3d89d06/8290db891735a460.E', out: 'SITE KM, , E9002, .csv', fmt: 'E', window: null },
+  { id: 'f-derived', ref: 'site-b535c62513b1/5460394984734387.F', out: 'SITE PD, , PDB_31815534_TENANT-97_22m2V, .csv', fmt: 'F', window: null },
 ]
-const E_KEEP_SERIALS = new Set(['36506625', '36339816', '35575535', '33883284', '36339326'])
+// E-log rows kept beyond the first E_FIRST_ROWS, named by their serial PSEUDONYM (pseudoSerial),
+// never by the real serial. The pseudonyms are the ones that appear in the committed fixture.
+const E_KEEP_PSEUDO = new Set(['33103528', '38813110', '31599070', '39614362', '34606877'])
 const E_FIRST_ROWS = 30
-// Keys produced by siteKey() (must match packages/shared/src/meter-data/register.ts).
-const SITE_BY_KEY = {
-  PARKDENE: 'SITE PD', PRINCESSMKABAYI: 'SITE PM', MERINO: 'SITE MR', THABAZIMBI: 'SITE TZ',
-  TOWN: 'SITE TS', RUSTENBURG: 'SITE RM', KURUMAN: 'SITE KM', SEGONYANA: 'SITE SG',
+// Site pseudonyms for E-log mall parts, keyed by sha256("esite-site:" + siteKey(name)) (16 hex).
+// siteKey() must match packages/shared/src/meter-data/register.ts.
+const SITE_BY_KEY_HASH = {
+  c6edb4fb87acb4f6: 'SITE PD', d182ab21d8b3203d: 'SITE PM', '13e45e03cbfd8533': 'SITE MR', '94779987cd18e987': 'SITE TZ',
+  '3a043102e8313a38': 'SITE TS', e9f508348b46e046: 'SITE RM', '79a8645af3ce2a7c': 'SITE KM', c0bbe82ac3073156: 'SITE SG',
 }
+const siteByName = (name) => SITE_BY_KEY_HASH[sha256('esite-site:' + siteKey(name)).slice(0, 16)]
 
 function siteKey(s) {
   const words = String(s).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean)
@@ -276,9 +284,6 @@ function pseudoSerial(real) {
   if (!m) return real
   const h = createHash('sha256').update('esite-meter-fixture:' + m[1]).digest('hex').slice(0, 12)
   return '3' + (BigInt('0x' + h) % 10000000n).toString().padStart(7, '0') + m[2]
-}
-function outName(name) {
-  return name.replace(/\{(\d+)\}/g, (_, d) => pseudoSerial(d))
 }
 function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex')
@@ -412,14 +417,14 @@ If any count differs, stop: the corpus changed or the script is wrong — do not
 
 ```bash
 cd packages/shared/src/meter-data/__fixtures__/corpus
-grep -l -i -E "yarona|shoprite|checkers|segonyana|merino|kuruman|parkdene|thabazimbi|panarottis|naked|capitec|nedbank|absa|kfc|pick n pay|36506625|36338822|36724754|35575535|01180400" -- *.csv || echo "clean"
+grep -l -i -E "$REAL_NAMES_AND_SERIALS" -- *.csv || echo "clean"
 cd -
 ```
 Expected: `clean`. (`manifest.json` is excluded deliberately: it records the source path for reproducibility, and those names are already in `docs/solar/as-is/10-meter-csv-source.md`.)
 
 - [ ] **Step 4: Write the two register fixtures**
 
-`packages/shared/src/meter-data/__fixtures__/register/SITE YA_Consolidation_Summary.9col.csv` — the YARONA `.xls` summary saved as CSV, with tenants replaced by `TENANT-nn` in workbook row order and file names by `SA - TENANT-nn.csv` (shop numbers, areas, status and QA values are the real ones). LF line endings:
+`packages/shared/src/meter-data/__fixtures__/register/SITE YA_Consolidation_Summary.9col.csv` — the SITE YA `.xls` summary saved as CSV, with tenants replaced by `TENANT-nn` in workbook row order and file names by `SA - TENANT-nn.csv` (shop numbers, areas, status and QA values are the real ones). LF line endings:
 
 ```
 Meter Filename,Matched Layout Name,Shop Number,Area (sqm),Status,DUBBEL,CORRECT,ADDED,NOT ON DRAWINGS 
@@ -861,14 +866,14 @@ describe('parseMeterFilename — {SITE}, {SHOP_NO}, {LABEL}, {AREA}[ (n)]', () =
     expect([p.shopNo, p.label, p.areaM2Hint, p.dupIndex]).toEqual(['SHOP 06', 'Vacant', 450, 2])
   })
   // as-is/10 §6.4 edge cases, anonymised but structurally identical.
-  it('shop number containing commas (THAMBI "11A,13,12")', () => {
+  it('shop number containing commas (SITE TH "11A,13,12")', () => {
     const p = parseMeterFilename('SITE TH, 11A,13,12, TENANT-02, 225.csv')
     expect([p.siteHint, p.shopNo, p.label, p.areaM2Hint]).toEqual(['SITE TH', '11A, 13, 12', 'TENANT-02', 225])
   })
   it('shop number with ", " and "&" (VENDA "C2, C3 & C4")', () => {
     expect(parseMeterFilename('SITE VP, C2, C3 & C4, TENANT-03, 270.csv').shopNo).toBe('C2, C3 & C4')
   })
-  it('stray quote (CITY CENTRE YORK "4-5-6)', () => {
+  it('stray quote (SITE CY "4-5-6)', () => {
     const p = parseMeterFilename('SITE CY, "4-5-6, TENANT-04, 272.csv')
     expect([p.shopNo, p.label, p.areaM2Hint]).toEqual(['4-5-6', 'TENANT-04', 272])
   })
@@ -879,7 +884,7 @@ describe('parseMeterFilename — {SITE}, {SHOP_NO}, {LABEL}, {AREA}[ (n)]', () =
     expect(parseMeterFilename('SITE SG, , 30123456_DB-26, .csv').serialHint).toBe('30123456')
     expect(parseMeterFilename('SITE PM, , Meter 30654321, .csv').serialHint).toBe('30654321')
     expect(parseMeterFilename('SITE PD, , PDB_31234567_TENANT-97_22m2V, .csv').serialHint).toBe('31234567')
-    expect(parseMeterFilename('SITE KM, , E2495, .csv').serialHint).toBeNull()
+    expect(parseMeterFilename('SITE KM, , E9002, .csv').serialHint).toBeNull()
   })
   it('audit-tree name "<CODE> - <TENANT> <AREA>"', () => {
     expect(parseMeterFilename('RP - TENANT-06 525.csv')).toMatchObject({
@@ -1892,7 +1897,7 @@ export function applyScaleCorrection(readings: Reading[], segment: LevelShiftSeg
 
 /**
  * Share of consecutive slots where b[i+1] equals a[i], over pairs where both are present and
- * non-zero. 1.0 means b is a copy of a delayed by one interval (Fourways "Solar Total Power").
+ * non-zero. 1.0 means b is a copy of a delayed by one interval (SITE FV "Solar Total Power").
  */
 export function laggedDuplicateShare(a: Reading[], b: Reading[]): number | null {
   let considered = 0
@@ -2384,10 +2389,10 @@ const text = (b: Uint8Array) => decodeMeterText(b).text
 
 describe('siteKey', () => {
   it('drops MALL/SQUARE/CENTRE/PLAZA suffixes', () => {
-    expect(siteKey('Princess Mkabayi Mall')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('PRINCESS MKABAYI MALL')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('Town Square Mall')).toBe('TOWN')
-    expect(siteKey('Rustenburg')).toBe(siteKey('RUSTENBURG MALL'))
+    expect(siteKey('Delta Echo Mall')).toBe('DELTAECHO')
+    expect(siteKey('DELTA ECHO MALL')).toBe('DELTAECHO')
+    expect(siteKey('Alpha Square Mall')).toBe('ALPHA')
+    expect(siteKey('Foxtrot')).toBe(siteKey('FOXTROT MALL'))
     expect(siteKey('SITE PD')).toBe('SITEPD')
   })
 })
@@ -2432,9 +2437,9 @@ describe('downloader log (E)', () => {
     expect(new Set(rows.map((r) => r.mallName))).toContain('SITE TS')
   })
   it('parses the name shapes found in the corpus', () => {
-    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Town Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Thabazimbi Square ; MDB - 2 ; Thabazimbi Square,False,\n3,Parkdene - 3 ; Parkdene,False,\n'
+    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Alpha Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Bravo Square ; MDB - 2 ; Bravo Square,False,\n3,Charlie - 3 ; Charlie,False,\n'
     expect(parseDownloadLog(t).map((r) => [r.tenantName, r.mallName, r.downloaded])).toEqual([
-      ['A', 'Town Square Mall', true], ['B', 'Thabazimbi Square', false], ['Parkdene - 3', 'Parkdene', false],
+      ['A', 'Alpha Square Mall', true], ['B', 'Bravo Square', false], ['Charlie - 3', 'Charlie', false],
     ])
   })
 })
@@ -3792,16 +3797,16 @@ async function whole(rel: string) {
 }
 
 describe.skipIf(!DIR)('corpus smoke test (METER_CORPUS_DIR = the 006. METER CSV folder)', () => {
-  it('YARONA BULK METER, whole file: text-sorted rows, weekday mean ≈ 194 kW (as-is/10), not 388', async () => {
-    const o = await whole('YARONA/YARONA, , BULK METER, .csv')
+  it('SITE YA BULK METER, whole file: text-sorted rows, weekday mean ≈ 194 kW (as-is/10), not 388', async () => {
+    const o = await whole('SITE YA/SITE YA, , BULK METER, .csv')
     expect(o.report.rowOrder).toBe('unordered')
     const m = weekdayMean(o.channels[0])
     expect(m).toBeGreaterThan(180)
     expect(m).toBeLessThan(210)
   }, 60_000)
 
-  it('THABAZIMBI 01A Panarottis (C), whole file: weekday mean ≈ 17 kW (as-is/10), not 8.4', async () => {
-    const o = await whole('THABAZIMBI/THABAZIMBI, , 01A Panarottis, .csv')
+  it('SITE TZ 01A TENANT-95 (C), whole file: weekday mean ≈ 17 kW (as-is/10), not 8.4', async () => {
+    const o = await whole('SITE TZ/SITE TZ, , 01A TENANT-95, .csv')
     const m = weekdayMean(o.channels.find((c) => c.spec.sourceColumn === 'P1 (kWh)') as NormalisedChannel)
     expect(m).toBeGreaterThan(15)
     expect(m).toBeLessThan(19)
@@ -5045,7 +5050,7 @@ describe('S1 (bulk)', () => {
   it('adds existing PV generation when the bulk meter sits downstream of it', () => {
     expect(buildS1({ bulk: k(100), supplyPointConfirmed: true, existingPv: k(20) })[0]).toBe(120)
   })
-  it('reconciliation shows the ratio and does not assume bulk ⊇ tenants (YARONA ≈ 2.5)', () => {
+  it('reconciliation shows the ratio and does not assume bulk ⊇ tenants (SITE YA ≈ 2.5)', () => {
     const r = reconcileMonthly(Array(12).fill(100), Array(12).fill(250))
     expect(r[0]).toEqual({ month: 1, bulkKwh: 100, tenantsKwh: 250, ratio: 2.5 })
     expect(reconcileMonthly([0, ...Array(11).fill(1)], Array(12).fill(1))[0].ratio).toBeNull()
@@ -5464,7 +5469,7 @@ Expected: all green. The shared count is the Task 1 baseline plus this plan's te
 - [ ] **Step 2: Check the anonymisation one last time**
 
 ```bash
-git grep -n -i -E "yarona|shoprite|segonyana|merino|kuruman|parkdene|thabazimbi|panarottis" -- packages/shared/src || echo "clean"
+git grep -n -i -E "$REAL_NAMES_AND_SERIALS" -- packages/shared/src || echo "clean"
 ```
 Expected: `clean` (only `scripts/solar/build-meter-fixtures.mjs` and `manifest.json`, which are outside `packages/shared/src` or excluded, name sources).
 

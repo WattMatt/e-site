@@ -86,7 +86,7 @@ export function applyScaleCorrection(readings: Reading[], segment: LevelShiftSeg
 
 /**
  * Share of consecutive slots where b[i+1] equals a[i], over pairs where both are present and
- * non-zero. 1.0 means b is a copy of a delayed by one interval (Fourways "Solar Total Power").
+ * non-zero. 1.0 means b is a copy of a delayed by one interval (a site PV meter, "Solar Total Power").
  */
 export function laggedDuplicateShare(a: Reading[], b: Reading[]): number | null {
   let considered = 0

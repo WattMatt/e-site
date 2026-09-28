@@ -7,10 +7,10 @@ const text = (b: Uint8Array) => decodeMeterText(b).text
 
 describe('siteKey', () => {
   it('drops MALL/SQUARE/CENTRE/PLAZA suffixes', () => {
-    expect(siteKey('Princess Mkabayi Mall')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('PRINCESS MKABAYI MALL')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('Town Square Mall')).toBe('TOWN')
-    expect(siteKey('Rustenburg')).toBe(siteKey('RUSTENBURG MALL'))
+    expect(siteKey('Delta Echo Mall')).toBe('DELTAECHO')
+    expect(siteKey('DELTA ECHO MALL')).toBe('DELTAECHO')
+    expect(siteKey('Alpha Square Mall')).toBe('ALPHA')
+    expect(siteKey('Foxtrot')).toBe(siteKey('FOXTROT MALL'))
     expect(siteKey('SITE PD')).toBe('SITEPD')
   })
 })
