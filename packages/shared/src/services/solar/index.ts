@@ -3,3 +3,4 @@
 export * from './version'
 export * from './hash'
 export * from './time'
+export * from './weather/pvgis-tmy'
