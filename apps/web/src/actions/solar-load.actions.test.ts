@@ -59,6 +59,20 @@ describe('solar-load actions', () => {
     expect(calls.filter((c) => c.op !== 'select')).toHaveLength(0)
   })
 
+  it('saveLoadSettingsAction never writes the basis or the allowance, and requires bills from the SAVED basis', async () => {
+    const tables = { ...base, 'solar.studies': [{ id: 's1', project_id: P, updated_at: 'T0', load_basis: 'S4' }] }
+    const form = { loadBasis: 'S2' as const, referenceYear: '', loadGrowthPct: '', diversityFactor: '', commonAreaPct: '99' }
+    const { calls } = setup({ tables })
+    const r = await saveLoadSettingsAction({ projectId: P, form, bills: EMPTY_BILLS_FORM, expectedUpdatedAt: 'T0' })
+    expect(r).toMatchObject({ fieldErrors: { bills: expect.stringMatching(/January/) } })
+    expect(callsTo(calls, 'solar.studies', 'update')).toHaveLength(0)
+    const ok = setup({ tables: { ...tables, 'solar.studies': [{ id: 's1', project_id: P, updated_at: 'T0', load_basis: 'S2' }] }, writes: { 'solar.studies:update': { data: [{ updated_at: 'T1' }] } } })
+    expect(await saveLoadSettingsAction({ projectId: P, form: { ...form, loadBasis: 'S4' }, bills: EMPTY_BILLS_FORM, expectedUpdatedAt: 'T0' })).toEqual({ ok: true, updatedAt: 'T1' })
+    const payload = callsTo(ok.calls, 'solar.studies', 'update')[0]!.payload as Record<string, unknown>
+    expect(payload).not.toHaveProperty('load_basis')
+    expect(payload).not.toHaveProperty('common_area_pct')
+  })
+
   it('updateStudyMeterAction refuses a meter outside the study and a node of another project; confirms supply point only for bulk', async () => {
     setup()
     expect(await updateStudyMeterAction({ projectId: P, meterId: 'mX', patch: { label: 'x' }, expectedUpdatedAt: 'M0' })).toEqual({ error: 'That meter is not in this study.' })

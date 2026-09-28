@@ -6,15 +6,20 @@ const form = (over: Partial<LoadSettingsForm> = {}): LoadSettingsForm => ({
 })
 
 describe('load settings', () => {
-  it('defaults blanks and maps to columns', () => {
-    const r = validateLoadSettings(form(), EMPTY_BILLS_FORM)
+  it('defaults blanks and maps to columns — never the basis or the common-area allowance', () => {
+    // load_basis belongs to the Load basis bar and common_area_pct to the Tenants tab: a settings save
+    // writing them from its own (possibly stale) copy would undo those controls.
+    const r = validateLoadSettings(form({ loadBasis: 'S4', commonAreaPct: '42' }), { ...EMPTY_BILLS_FORM, months: EMPTY_BILLS_FORM.months.map(() => ({ kwh: '10', kva: '' })) })
     expect(r.errors).toEqual({})
-    expect(r.values).toEqual({ load_basis: 'S2', reference_year: null, load_growth_pct: 0, diversity_factor: 1, common_area_pct: 0, monthly_bills: null })
+    expect(r.values).not.toHaveProperty('load_basis')
+    expect(r.values).not.toHaveProperty('common_area_pct')
+    const blank = validateLoadSettings(form(), EMPTY_BILLS_FORM)
+    expect(blank.values).toEqual({ reference_year: null, load_growth_pct: 0, diversity_factor: 1, monthly_bills: null })
   })
 
   it('validates ranges', () => {
     const r = validateLoadSettings(form({ referenceYear: '1999', loadGrowthPct: '25', diversityFactor: '0.4', commonAreaPct: '101' }), EMPTY_BILLS_FORM)
-    expect(Object.keys(r.errors).sort()).toEqual(['commonAreaPct', 'diversityFactor', 'loadGrowthPct', 'referenceYear'])
+    expect(Object.keys(r.errors).sort()).toEqual(['diversityFactor', 'loadGrowthPct', 'referenceYear'])
   })
 
   it('S4 needs twelve positive monthly kWh; kVA optional but positive', () => {

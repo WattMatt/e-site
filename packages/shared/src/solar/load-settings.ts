@@ -28,12 +28,17 @@ export const EMPTY_BILLS_FORM: BillsForm = {
 }
 export type LoadSettingsField = keyof LoadSettingsForm | 'bills'
 export interface StoredBills { archetype: ArchetypeCode; powerFactor: number; months: Array<{ kwh: number; kva: number | null }> }
+/**
+ * What a settings save writes. Deliberately NOT load_basis (owned by the Load basis bar) nor
+ * common_area_pct (owned by the Tenants tab): the settings form holds its own copy of both, and
+ * writing them from that copy would silently undo the control that owns them. `form.loadBasis`
+ * is still read — it decides whether the twelve bills are required — and the server sets it from
+ * the SAVED row, never from the client.
+ */
 export interface LoadSettingsValues {
-  load_basis: LoadBasisChoice | null
   reference_year: number | null
   load_growth_pct: number
   diversity_factor: number
-  common_area_pct: number
   monthly_bills: StoredBills | null
 }
 
@@ -75,8 +80,6 @@ export function validateLoadSettings(form: LoadSettingsForm, bills: BillsForm): 
   if (!(growth >= -20 && growth <= 20)) errors.loadGrowthPct = 'Load growth must be between -20 and 20 %/yr'
   const div = num(form.diversityFactor) ?? 1
   if (!(div >= 0.5 && div <= 1)) errors.diversityFactor = 'Diversity factor must be between 0.5 and 1.0'
-  const common = num(form.commonAreaPct) ?? 0
-  if (!(common >= 0 && common <= 100)) errors.commonAreaPct = 'Common-area allowance must be between 0 and 100 %'
 
   let monthly: StoredBills | null = null
   const anyBill = bills.months.some((m) => m.kwh.trim() !== '' || m.kva.trim() !== '')
@@ -97,11 +100,9 @@ export function validateLoadSettings(form: LoadSettingsForm, bills: BillsForm): 
   }
   return {
     values: {
-      load_basis: form.loadBasis === '' ? null : form.loadBasis,
       reference_year: year === null || Number.isNaN(year) ? null : year,
       load_growth_pct: growth,
       diversity_factor: div,
-      common_area_pct: common,
       monthly_bills: monthly,
     },
     errors,

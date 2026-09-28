@@ -101,7 +101,12 @@ export async function saveLoadSettingsAction(input: {
   // Directly invocable: coerce every field to a string so a malformed body gets sentences, not a TypeError.
   const f = (input.form ?? {}) as unknown as Record<string, unknown>
   const s = (k: string) => (f[k] == null ? '' : String(f[k]))
-  const form: LoadSettingsForm = { loadBasis: s('loadBasis') as LoadSettingsForm['loadBasis'], referenceYear: s('referenceYear'), loadGrowthPct: s('loadGrowthPct'), diversityFactor: s('diversityFactor'), commonAreaPct: s('commonAreaPct') }
+  // The basis that decides whether bills are required is the SAVED one (the Load basis bar owns it);
+  // the client's copy may be stale. Neither the basis nor the allowance is written here.
+  const { data: saved } = await supabase.schema('solar').from('studies').select('load_basis').eq('project_id', input.projectId).maybeSingle()
+  const savedBasis = (saved as { load_basis?: string | null } | null)?.load_basis
+  const loadBasis: LoadSettingsForm['loadBasis'] = savedBasis === 'S3' ? 'S2' : savedBasis === 'S1' || savedBasis === 'S2' || savedBasis === 'S4' ? savedBasis : ''
+  const form: LoadSettingsForm = { loadBasis, referenceYear: s('referenceYear'), loadGrowthPct: s('loadGrowthPct'), diversityFactor: s('diversityFactor'), commonAreaPct: s('commonAreaPct') }
   const b = input.bills && Array.isArray(input.bills.months) && input.bills.months.length === 12 ? input.bills : EMPTY_BILLS_FORM
   const bills: BillsForm = { archetype: b.archetype, powerFactor: String(b.powerFactor ?? ''), months: b.months.map((m) => ({ kwh: String(m?.kwh ?? ''), kva: String(m?.kva ?? '') })) }
   const check = validateLoadSettings(form, bills)
