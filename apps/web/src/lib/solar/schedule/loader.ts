@@ -77,7 +77,7 @@ export async function loadScheduleData(
     // By project and type, not by an IN list of ids: 2,000 ids is a ~74 KB URL,
     // past the gateway's limit. A task whose work item is missing is dropped below.
     readAll('projects.work_items', () => supabase.schema('projects').from('work_items')
-      .select('id, ref, title, status, assignee_id')
+      .select('id, ref, title, status, assignee_id, gatekeeper_id')
       .eq('project_id', projectId).eq('item_type', 'solar_task').order('id')),
   ])
   const projRow = must('projects.projects', proj as Res) as Row | null
@@ -122,6 +122,7 @@ export async function loadScheduleData(
       isMilestone: t.is_milestone === true, status: st.status, awaitingSignOff: st.awaitingSignOff,
       progress: Number(t.progress ?? 0), colour: str(t.colour, '#3b82f6'),
       ownerId, ownerName: ownerName.get(ownerId) ?? FORMER_MEMBER,
+      gatekeeperId: typeof wi.gatekeeper_id === 'string' && wi.gatekeeper_id ? wi.gatekeeper_id : null,
       sortOrder: Number(t.sort_order ?? 0), description: str(t.description), updatedAt: str(t.updated_at),
       segments: segs.get(str(t.id)) ?? [],
     })

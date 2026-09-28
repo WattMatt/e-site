@@ -8,7 +8,7 @@ const owners = [{ id: 'u1', name: 'Ann Smith', email: 'a@x' }, { id: 'u2', name:
 const cal = makeWorkCalendar('calendar')
 const existing: ScheduleTaskView = {
   id: 't1', workItemId: 'w1', ref: 'SOLAR-1', name: 'Design', category: 'Design', zone: '', start: '2026-10-01', end: '2026-10-05',
-  isMilestone: false, status: 'in_progress', awaitingSignOff: false, progress: 40, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann Smith',
+  isMilestone: false, status: 'in_progress', awaitingSignOff: false, gatekeeperId: null, progress: 40, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann Smith',
   sortOrder: 1, description: '', updatedAt: 'U1', segments: [],
 }
 const base = { owners, cal, canEdit: true, defaultStart: '2026-09-28', onClose: vi.fn() }

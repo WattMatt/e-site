@@ -25,6 +25,11 @@ export const TaskInputSchema = z.object({
   colour: colour.nullable().optional(),
   description: z.string().max(4000).optional(),
   segments: z.array(segment).max(50).optional(),
+  /**
+   * Only an undo of a delete sends this: the ORIGINAL sign-off person. The RPC
+   * honours it only while that person is still eligible; otherwise the caller.
+   */
+  gatekeeperId: z.string().uuid().nullable().optional(),
 })
 export type TaskInput = z.infer<typeof TaskInputSchema>
 
@@ -66,6 +71,7 @@ export function toRpcTask(t: TaskInput): Record<string, unknown> {
     key: t.key, name: t.name, start: t.start, end: t.end, is_milestone: t.isMilestone ?? false,
     category: t.category ?? '', zone: t.zone ?? '', owner_id: t.ownerId ?? null, status: t.status ?? 'not_started',
     progress: t.progress ?? 0, colour: t.colour ?? null, description: t.description ?? '', segments: t.segments ?? [],
+    ...(t.gatekeeperId ? { gatekeeper_id: t.gatekeeperId } : {}),
   }
 }
 

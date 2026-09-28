@@ -86,6 +86,20 @@ describe('createScheduleTasksAction', () => {
     })
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'schedule_tasks_added', objectRef: { count: 1 } })
   })
+  it('sends gatekeeper_id only when a task carries one (undo of a delete); a normal create does not', async () => {
+    const { rpcCalls } = setup({ rpc: { 'solar.schedule_create_tasks': { data: { a: T, b: T }, error: null } } })
+    const GK = '33333333-3333-4333-8333-333333333333'
+    await createScheduleTasksAction({ projectId: P, tasks: [{ ...task, gatekeeperId: GK }, { ...task, key: 'b' }], links: [] })
+    const sent = rpcCalls[0].args.p_tasks as Array<Record<string, unknown>>
+    expect(sent[0].gatekeeper_id).toBe(GK)
+    expect('gatekeeper_id' in sent[1]).toBe(false)
+  })
+  it('refuses a gatekeeper that is not an id', async () => {
+    const { rpcCalls } = setup()
+    const res = await createScheduleTasksAction({ projectId: P, tasks: [{ ...task, gatekeeperId: 'someone' }], links: [] })
+    expect(res).toEqual({ error: 'Check the task: every date must be a real calendar date and every task needs a name.' })
+    expect(rpcCalls).toHaveLength(0)
+  })
   it('an import records its mode', async () => {
     setup({ rpc: { 'solar.schedule_create_tasks': { data: { a: T }, error: null } } })
     await createScheduleTasksAction({ projectId: P, tasks: [task], links: [], replace: true, auditVerb: 'schedule_imported' })

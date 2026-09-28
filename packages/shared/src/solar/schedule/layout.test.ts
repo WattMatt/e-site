@@ -5,7 +5,7 @@ import { makeWorkCalendar, saHolidaySet } from './calendar'
 
 const task = (id: string, start: string, end: string, over: Partial<ScheduleTaskView> = {}): ScheduleTaskView => ({
   id, workItemId: id, ref: id, name: id, category: 'C', zone: '', start, end, isMilestone: false, status: 'not_started',
-  awaitingSignOff: false, progress: 0, colour: '#3b82f6', ownerId: 'u', ownerName: 'U', sortOrder: 1, description: '',
+  awaitingSignOff: false, gatekeeperId: null, progress: 0, colour: '#3b82f6', ownerId: 'u', ownerName: 'U', sortOrder: 1, description: '',
   updatedAt: 'T', segments: [], ...over,
 })
 const base = (over: Partial<GanttLayoutInput>): GanttLayoutInput => ({

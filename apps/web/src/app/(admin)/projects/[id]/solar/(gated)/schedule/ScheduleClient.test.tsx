@@ -44,7 +44,7 @@ import { ScheduleClient } from './ScheduleClient'
 const P = 'p1'
 const task = (id: string, over: Partial<ScheduleTaskView> = {}): ScheduleTaskView => ({
   id, workItemId: `w${id}`, ref: `SOLAR-${id.slice(1)}`, name: `Task ${id}`, category: '', zone: '', start: '2026-10-01', end: '2026-10-05',
-  isMilestone: false, status: 'not_started', awaitingSignOff: false, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
+  isMilestone: false, status: 'not_started', awaitingSignOff: false, gatekeeperId: null, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
   sortOrder: Number(id.slice(1)), description: '', updatedAt: 'U1', segments: [], ...over,
 })
 const data = (over: Partial<ScheduleData> = {}): ScheduleData => ({
@@ -130,6 +130,20 @@ describe('ScheduleClient', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(false))
     await act(async () => { key('y', { ctrlKey: true }) })
     await waitFor(() => expect(h.del).toHaveBeenLastCalledWith({ projectId: P, taskIds: ['t9'] }))
+  })
+
+  it('undoing a delete sends the ORIGINAL gatekeeper', async () => {
+    const GK = '44444444-4444-4444-8444-444444444444'
+    const start = data({ tasks: [task('t1', { gatekeeperId: GK }), ...data().tasks.slice(1)] })
+    h.load.mockResolvedValue({ ok: true, data: data({ tasks: data().tasks.slice(1), links: [] }) })
+    render(<ScheduleClient initial={start} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SOLAR-1' }))
+    key('Delete')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm: delete 1 task' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false))
+    await act(async () => { key('z', { ctrlKey: true }) })
+    await waitFor(() => expect(h.create).toHaveBeenCalled())
+    expect(h.create.mock.calls[0][0].tasks[0].gatekeeperId).toBe(GK)
   })
 
   it('removing a link resolves its id from the CURRENT links, before and after undo re-creates it', async () => {

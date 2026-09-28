@@ -7,7 +7,7 @@ import {
 
 const task = (id: string, over: Partial<ScheduleTaskView> = {}): ScheduleTaskView => ({
   id, workItemId: `wi-${id}`, ref: `SOLAR-${id}`, name: `Task ${id}`, category: '', zone: '',
-  start: '2026-10-01', end: '2026-10-02', isMilestone: false, status: 'not_started', awaitingSignOff: false,
+  start: '2026-10-01', end: '2026-10-02', isMilestone: false, status: 'not_started', awaitingSignOff: false, gatekeeperId: null,
   progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann', sortOrder: 1, description: '',
   updatedAt: 'T', segments: [], ...over,
 })

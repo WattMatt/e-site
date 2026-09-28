@@ -16,7 +16,7 @@ const data = {
   projectId: P, projectName: 'Kings Walk / Phase 2', canEdit: false, currentUserId: 'u1', today: '2026-09-28',
   tasks: [{
     id: 't1', workItemId: 'w1', ref: 'SOLAR-1', name: 'Design', category: 'Design', zone: '', start: '2026-10-01', end: '2026-10-02',
-    isMilestone: false, status: 'not_started', awaitingSignOff: false, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
+    isMilestone: false, status: 'not_started', awaitingSignOff: false, gatekeeperId: null, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
     sortOrder: 1, description: '', updatedAt: 'U', segments: [],
   }],
   links: [], owners: [], baselines: [], presets: [], settings: { durationMode: 'calendar', workloadThreshold: 2, updatedAt: null },

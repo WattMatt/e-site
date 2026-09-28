@@ -5,7 +5,7 @@ import { buildScheduleRows, GANTT_HEADER_HEIGHT, GANTT_ROW_HEIGHT, type Schedule
 
 const t = (id: string, over: Partial<ScheduleTaskView> = {}): ScheduleTaskView => ({
   id, workItemId: `w${id}`, ref: `SOLAR-${id}`, name: `Task ${id}`, category: 'Design', zone: '', start: '2026-10-01', end: '2026-10-02',
-  isMilestone: false, status: 'in_progress', awaitingSignOff: false, progress: 40, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
+  isMilestone: false, status: 'in_progress', awaitingSignOff: false, gatekeeperId: null, progress: 40, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
   sortOrder: Number(id), description: '', updatedAt: 'U', segments: [], ...over,
 })
 const dt = () => {

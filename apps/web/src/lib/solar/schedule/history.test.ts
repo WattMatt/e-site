@@ -8,7 +8,7 @@ import type { ScheduleLinkView } from './types'
 
 const task = (id: string, over: Partial<ScheduleTaskView> = {}): ScheduleTaskView => ({
   id, workItemId: `w${id}`, ref: `SOLAR-${id}`, name: `Task ${id}`, category: 'C', zone: 'Z', start: '2026-10-01', end: '2026-10-03',
-  isMilestone: false, status: 'in_progress', awaitingSignOff: false, progress: 30, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
+  isMilestone: false, status: 'in_progress', awaitingSignOff: false, gatekeeperId: null, progress: 30, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann',
   sortOrder: 1, description: 'd', updatedAt: 'U', segments: [], ...over,
 })
 const link = (p: string, s: string): ScheduleLinkView => ({ id: `${p}${s}`, predecessorId: p, successorId: s, type: 'FS', lagDays: 1 })
@@ -38,6 +38,12 @@ describe('entries carry their exact inverse', () => {
       tasks: [expect.objectContaining({ key: 'b', name: 'Task b', start: '2026-10-01', end: '2026-10-03', ownerId: 'u1', status: 'in_progress', progress: 30, category: 'C', zone: 'Z' })],
       links: [{ from: 'a', to: 'b', type: 'FS', lagDays: 1 }, { from: 'b', to: 'c', type: 'FS', lagDays: 1 }],
     }])
+  })
+  it('delete: backward keeps the ORIGINAL sign-off person, so undo does not hand the seat to whoever pressed it', () => {
+    const e = entryForDelete('Delete', [task('b', { gatekeeperId: 'gk-original' }), task('c')], [], ['b', 'c'])
+    const op = e.backward[0]
+    if (op.kind !== 'create') throw new Error('expected create')
+    expect(op.tasks.map((t) => t.gatekeeperId)).toEqual(['gk-original', null])
   })
   it('create: backward deletes the ids the server returned', () => {
     const e = entryForCreate('Add task', [{ key: 'new', name: 'N', start: '2026-10-01', end: '2026-10-01' }], [], { new: 't9' })

@@ -8,7 +8,7 @@ import type { ScheduleData } from './types'
 
 const t = (id: string, over: Partial<ScheduleTaskView>): ScheduleTaskView => ({
   id, workItemId: `w${id}`, ref: `SOLAR-${id}`, name: `Task ${id}`, category: 'Design', zone: '', start: '2026-10-01', end: '2026-10-02',
-  isMilestone: false, status: 'not_started', awaitingSignOff: false, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann Smith',
+  isMilestone: false, status: 'not_started', awaitingSignOff: false, gatekeeperId: null, progress: 0, colour: '#3b82f6', ownerId: 'u1', ownerName: 'Ann Smith',
   sortOrder: Number(id), description: '', updatedAt: 'U', segments: [], ...over,
 })
 const data: ScheduleData = {

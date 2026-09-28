@@ -23,6 +23,8 @@ export interface ScheduleTaskView {
   colour: string
   ownerId: string
   ownerName: string
+  /** Who signs the task off (projects.work_items.gatekeeper_id); null if none. */
+  gatekeeperId: string | null
   sortOrder: number
   description: string
   updatedAt: string

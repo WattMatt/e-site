@@ -78,6 +78,8 @@ export function snapshotTask(t: ScheduleTaskView): TaskInput {
     key: t.id, name: t.name, start: t.start, end: t.end, isMilestone: t.isMilestone, category: t.category, zone: t.zone,
     ownerId: t.ownerId, status: t.status, progress: t.progress, colour: t.colour, description: t.description,
     segments: t.segments.map((s) => ({ start: s.start, end: s.end })),
+    // Undo of a delete keeps sign-off with the original person (Q1), not whoever pressed Undo.
+    gatekeeperId: t.gatekeeperId,
   }
 }
 

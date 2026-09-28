@@ -16,7 +16,7 @@ function fake() {
         { id: 't4', project_id: P, work_item_id: 'w4', category: '', zone: '', start_date: '2026-10-10', end_date: '2026-10-12', progress: 0, colour: '#3b82f6', sort_order: 4, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U4' },
       ],
       'projects.work_items': [
-        { id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u1' },
+        { id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u1', gatekeeper_id: 'u5' },
         { id: 'w2', project_id: P, item_type: 'solar_task', ref: 'SOLAR-2', title: 'SSEG submitted', status: 'closed', assignee_id: 'u9' },
         { id: 'w3', project_id: P, item_type: 'solar_task', ref: 'SOLAR-3', title: 'Removed', status: 'void', assignee_id: 'u1' },
         // Owned before Cas became a client viewer: still named on the bar, never offered in the picker.
@@ -63,6 +63,7 @@ describe('loadScheduleData', () => {
     ])
     expect(d.tasks[0].segments).toEqual([{ start: '2026-10-01', end: '2026-10-02' }, { start: '2026-10-04', end: '2026-10-05' }])
     expect(d.tasks[1].isMilestone).toBe(true)
+    expect(d.tasks.map((t) => t.gatekeeperId)).toEqual(['u5', null, null])
     expect(d.links).toEqual([{ id: 'd1', predecessorId: 't1', successorId: 't2', type: 'FS', lagDays: 1 }])
     expect(d.settings).toEqual({ durationMode: 'calendar', workloadThreshold: 2, updatedAt: null })
     expect(d.presets).toEqual([{ id: 'f1', name: 'Mine', filters: { search: '', statuses: ['done'], ownerIds: [], colours: [] } }])
