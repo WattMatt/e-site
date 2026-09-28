@@ -1,0 +1,28 @@
+{
+  "source": {
+    "file": "2025/Free-State-Province.xlsx",
+    "sha256": "f03f27abc0e71ab1ec087ff9c696b69146871ded3c63ca0c42a18b2dc000db50",
+    "sheet": "CENTLEC - KOPANONG",
+    "rows": "1,175-186"
+  },
+  "cells": {
+    "A1": "Centlec  - Kopanong Municipality",
+    "B1": 0.122,
+    "A175": "15. Tariff V: Departmental: streetlights\n(Prepaid and Conventional)",
+    "A176": "Summer",
+    "A177": "Energy charge (R/kWh):",
+    "B177": 2.79,
+    "A178": "Winter",
+    "A179": "Energy charge (R/kWh):",
+    "B179": 2.79,
+    "A181": "16. SSEG (New)",
+    "A182": "Basic charges:",
+    "B182": "R110,00",
+    "A183": "Peak(R/kWh):",
+    "B183": "R1,42",
+    "A184": "Standard (R/kWh):",
+    "B184": "R0,98",
+    "A185": "Off-peak(R/kWh):",
+    "B185": "R0,62"
+  }
+}

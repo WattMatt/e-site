@@ -1,0 +1,24 @@
+{
+  "source": {
+    "file": "2025/Limpopo-Province.xlsx",
+    "sha256": "da050f47737ec4b6c3c1190e2b062ae8e41742a490aaf63fdea9a1956f2b05ba",
+    "sheet": "LEPHALALE",
+    "rows": "1-7"
+  },
+  "cells": {
+    "A1": "LEPHALALE",
+    "B1": 0.1039,
+    "A2": "Domestic Prepaid & Conventional",
+    "B2": "Domestic Prepaid & Conventional",
+    "A3": "Block 1 (0-50 kWh)",
+    "B3": "R1,6464/kWh",
+    "A4": "Block 2 (51 – 350 kWh)",
+    "B4": "R2,0889/kWh",
+    "A5": "Block 3 (351 – 600 kWh)",
+    "B5": "R3,0002/kWh",
+    "A6": "Block 4 (>600 kWh)",
+    "B6": "R3,6052/kWh",
+    "A7": "Basic Charge:",
+    "B7": "R 202,25 /month"
+  }
+}
