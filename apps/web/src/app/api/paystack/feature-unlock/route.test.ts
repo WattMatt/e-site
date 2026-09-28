@@ -149,6 +149,13 @@ describe('POST /api/paystack/feature-unlock — existing gates are untouched', (
     expect(res.status).toBe(400)
   })
 
+  it('refuses the Solar subscription key — it is an annual plan, not a one-time unlock', async () => {
+    const res = await POST(req({ feature_key: 'solar' }))
+    expect(res.status).toBe(400)
+    expect(hasFeatureMock).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('rejects a return_to that is not a string rather than crashing', async () => {
     const res = await POST(req({ feature_key: 'jbcc', return_to: { evil: true } }))
     // Either a 400 from the schema or a fallback path — never a 500, and never
