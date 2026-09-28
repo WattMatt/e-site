@@ -172,6 +172,46 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
   })
 })
 
+// q14 first so a promoted q14 is written BEFORE the old primary p14; "Solar Total Power" repeats p14
+// one interval later (a lagged channel, owner decision 3: never primary).
+const A_LAG_TEXT = (() => {
+  const p = [...Array(48).keys()].map((i) => 40 + (i % 7) + i * 0.25)
+  const rows = [...Array(48).keys()].map((i) => {
+    const d = new Date(Date.UTC(2025, 2, 10, 0, 0) + i * 1_800_000)
+    return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00,${5 + (i % 3)},${p[i]},${i === 0 ? 1 : p[i - 1]}`
+  })
+  return 'sep=,\r\n\r\ndate,q14,p14,Solar Total Power\r\n' + rows.join('\r\n') + '\r\n'
+})()
+
+describe('commitMeterFile: the primary channel', () => {
+  it('the parser defaults to p14 and never the lagged copy', async () => {
+    const { repo, state, ctx } = setup(A_LAG_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    expect(state.channels.filter((c) => c.is_primary).map((c) => c.source_column)).toEqual(['p14'])
+  })
+  it.each([
+    ['a lagged channel', [{ sourceColumn: 'Solar Total Power', include: true, isPrimary: true }], 'lagged'],
+    ['an excluded column', [{ sourceColumn: 'q14', include: false, isPrimary: true }], 'excluded'],
+    ['an unknown column', [{ sourceColumn: 'nope', include: true, isPrimary: true }], 'unknown_column'],
+  ])('an explicit primary that is %s is a 422', async (_label, channels, reason) => {
+    const { repo, state, ctx } = setup(A_LAG_TEXT)
+    await expect(commitMeterFile(repo, ctx, body({ channels }))).rejects.toMatchObject({ status: 422, body: { error: 'primary_not_eligible', reason } })
+    expect(state.channels).toHaveLength(0)
+  })
+  it('moving the primary on a re-commit demotes the old one first (one primary per meter and file)', async () => {
+    const { repo, state, ctx } = setup(A_LAG_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    await commitMeterFile(repo, ctx, body({ channels: [{ sourceColumn: 'q14', include: true, isPrimary: true }] }))
+    expect(state.channels.filter((c) => c.is_primary).map((c) => c.source_column)).toEqual(['q14'])
+  })
+  it('an old primary left out of the re-commit is demoted too', async () => {
+    const { repo, state, ctx } = setup(A_LAG_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    await commitMeterFile(repo, ctx, body({ channels: [{ sourceColumn: 'p14', include: false }, { sourceColumn: 'q14', include: true, isPrimary: true }] }))
+    expect(state.channels.filter((c) => c.is_primary).map((c) => c.source_column)).toEqual(['q14'])
+  })
+})
+
 describe('commitMeterFile: register and skip', () => {
   it('imports a consolidation summary once', async () => {
     const { repo, state, ctx } = setup(REGISTER_9COL, 'SITE YA_Consolidation_Summary.9col.csv')

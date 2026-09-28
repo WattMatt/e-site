@@ -81,6 +81,10 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
       return m
     },
     async upsertChannel(row) {
+      // 00210's partial unique index meter_channels_one_primary_per_file (meter_id, file_id) WHERE is_primary.
+      if (row.is_primary && state.channels.some((c) => c.meter_id === row.meter_id && c.file_id === row.file_id && c.is_primary && c.source_column !== row.source_column)) {
+        throw new Error('upsert channel: duplicate key value violates unique constraint "meter_channels_one_primary_per_file"')
+      }
       const existing = state.channels.find((c) => c.meter_id === row.meter_id && c.file_id === row.file_id && c.source_column === row.source_column)
       if (existing) {
         Object.assign(existing, row)
@@ -92,6 +96,10 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
     },
     async channelsForFile(meterId, fileId) {
       return state.channels.filter((c) => c.meter_id === meterId && c.file_id === fileId).map((c) => ({ id: c.id, source_column: c.source_column, is_primary: c.is_primary }))
+    },
+    async demoteChannel(channelId) {
+      const c = state.channels.find((x) => x.id === channelId)
+      if (c) c.is_primary = false
     },
     async clearChannelReadings(channelId) {
       const n = state.readings.get(channelId)?.size ?? 0

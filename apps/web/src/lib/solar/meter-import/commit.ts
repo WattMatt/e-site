@@ -133,6 +133,15 @@ function selectChannels(outcome: SeriesOutcome, body: SeriesBody): Array<{ chann
   const included = outcome.channels.filter((c) => choice.get(c.spec.sourceColumn)?.include ?? c.spec.sourceUnit !== 'unknown')
   const explicit = (body.channels ?? []).filter((c) => c.isPrimary).map((c) => c.sourceColumn)
   if (explicit.length > 1) throw new CommitError(422, { error: 'one_primary_channel', columns: explicit })
+  if (explicit.length === 1) {
+    const column = explicit[0]
+    // Owner decision 3: a lagged channel (its time label follows the other convention) is never primary.
+    const reason = !outcome.channels.some((c) => c.spec.sourceColumn === column) ? 'unknown_column'
+      : !included.some((c) => c.spec.sourceColumn === column) ? 'excluded'
+      : outcome.report.laggedChannels.some((l) => l.column === column) ? 'lagged'
+      : null
+    if (reason) throw new CommitError(422, { error: 'primary_not_eligible', column, reason })
+  }
   const primary = explicit[0] ?? outcome.primaryColumn
   return included.map((channel) => ({ channel, isPrimary: channel.spec.sourceColumn === primary }))
 }
@@ -173,6 +182,8 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     if (body.identity.resolution === 'link' && !('existingMeterId' in body.meter)) throw new CommitError(422, { error: 'link_needs_existing_meter' })
   }
 
+  // Channel choices are validated before anything is written.
+  const selected = selectChannels(outcome, body)
   const meter = await resolveMeter(repo, ctx, outcome, body)
   const sameBodyLink = body.identity.resolution === 'link' && identity.conflicts.some((c) => c.kind === 'same_body' && c.meterId === meter.id)
   // Bind file -> meter FIRST, so a retry after any later failure finds this meter (resolveMeter).
@@ -181,10 +192,15 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   const results: Array<{ channelId: string; sourceColumn: string; readings: number }> = []
   if (!sameBodyLink) {
     const chunk = opts.chunkSize ?? READING_CHUNK
+    const storedChannels = await repo.channelsForFile(meter.id, ctx.file.id)
+    // Demote an old primary BEFORE promoting the new one (meter_channels_one_primary_per_file), and
+    // demote one this commit leaves out altogether.
+    const newPrimary = selected.find((s) => s.isPrimary)?.channel.spec.sourceColumn ?? null
+    for (const c of storedChannels) if (c.is_primary && c.source_column !== newPrimary) await repo.demoteChannel(c.id)
     // A re-commit REPLACES a stored channel's readings (write_readings only upserts, so a changed
     // timestamp set would leave stale rows and fail the read-back forever). The channel row is kept.
-    const stored = new Set((await repo.channelsForFile(meter.id, ctx.file.id)).map((c) => c.id))
-    for (const { channel, isPrimary } of selectChannels(outcome, body)) {
+    const stored = new Set(storedChannels.map((c) => c.id))
+    for (const { channel, isPrimary } of selected) {
       let readings = channel.readings
       for (const sc of (body.scaleCorrections ?? []).filter((s) => s.sourceColumn === channel.spec.sourceColumn)) {
         const seg = channel.levelShifts[sc.segmentIndex]

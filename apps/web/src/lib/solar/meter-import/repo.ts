@@ -97,6 +97,8 @@ export interface MeterImportRepo {
   /** Channels already stored for this (meter, file). */
   channelsForFile(meterId: string, fileId: string): Promise<ExistingChannel[]>
   upsertChannel(row: ChannelRow): Promise<string>
+  /** is_primary = false on one channel (before another is promoted). */
+  demoteChannel(channelId: string): Promise<void>
   /** Empty a channel's readings (solar.clear_channel_readings; Edit on its library). Returns rows removed. */
   clearChannelReadings(channelId: string): Promise<number>
   writeReadings(channelId: string, chunk: { ts: string[]; value: Array<number | null>; quality: number[] }): Promise<number>
@@ -214,6 +216,10 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
     async upsertChannel(row) {
       const r = await solar().from('meter_channels').upsert(row, { onConflict: 'meter_id,file_id,source_column' }).select('id').single()
       return (must(r, 'upsert channel') as { id: string }).id
+    },
+    async demoteChannel(channelId) {
+      const r = await solar().from('meter_channels').update({ is_primary: false }).eq('id', channelId)
+      if (r.error) throw new Error(`demote channel: ${r.error.message}`)
     },
     async clearChannelReadings(channelId) {
       const r = await solar().rpc('clear_channel_readings', { p_channel_id: channelId })
