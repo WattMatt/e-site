@@ -28,6 +28,16 @@ export interface AccessPanelRequest {
   createdAt: string
 }
 
+/** An open "ask an admin to subscribe" request, raised from any project of the org. */
+export interface AccessPanelSubscribeRequest {
+  id: string
+  requesterName: string
+  /** The project it was raised from (the subscription itself is org-wide). */
+  projectName: string
+  note: string | null
+  createdAt: string
+}
+
 export interface AccessPanelData {
   projectId: string
   projectName: string
@@ -36,4 +46,8 @@ export interface AccessPanelData {
   requests: AccessPanelRequest[]
   otherProjects: Array<{ id: string; name: string }>
   subscription: { status: string; currentPeriodEnd: string | null } | null
+  /** Pending subscribe requests for the whole organisation (owner default 3). */
+  subscribeRequests: AccessPanelSubscribeRequest[]
+  /** public.org_has_solar(org) — the caller is a grantor, so an own-org member. */
+  orgSubscribed: boolean
 }

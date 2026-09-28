@@ -11,7 +11,9 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { isSolarAccessLevel, SOLAR_EXCLUDED_ROLES } from '@esite/shared'
-import type { AccessPanelData, AccessPanelMember, AccessPanelRequest } from './access-panel-types'
+import type {
+  AccessPanelData, AccessPanelMember, AccessPanelRequest, AccessPanelSubscribeRequest,
+} from './access-panel-types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -32,7 +34,7 @@ export async function loadSolarAccessPanel(projectId: string): Promise<AccessPan
   const orgId = project.organisation_id as string
   const svc = createServiceClient() as unknown as AnyClient
 
-  const [pmRes, orgRes, grantsRes, reqRes, projRes, subRes] = await Promise.all([
+  const [pmRes, orgRes, grantsRes, reqRes, projRes, subRes, subReqRes, orgSubRes] = await Promise.all([
     svc.schema('projects').from('project_members').select('user_id, role, organisation_id')
       .eq('project_id', projectId).eq('is_active', true),
     svc.from('user_organisations').select('user_id, role').eq('organisation_id', orgId).eq('is_active', true),
@@ -44,6 +46,12 @@ export async function loadSolarAccessPanel(projectId: string): Promise<AccessPan
       .eq('organisation_id', orgId).neq('id', projectId).order('name'),
     supabase.schema('billing').from('org_addon_subscriptions').select('status, current_period_end')
       .eq('organisation_id', orgId).eq('feature_key', 'solar').maybeSingle(),
+    // Owner default 3: subscribe requests are org-wide (one subscription covers
+    // every project), so list those raised from ANY project of the org. RLS
+    // (requester or solar_is_grantor(project)) scopes this to the caller's org.
+    supabase.schema('solar').from('access_requests').select('id, project_id, requester_id, note, created_at')
+      .eq('organisation_id', orgId).eq('kind', 'subscribe').eq('status', 'pending').order('created_at'),
+    supabase.rpc('org_has_solar', { p_org_id: orgId }),
   ])
 
   const orgRole = new Map<string, string>(((orgRes.data ?? []) as Row[]).map((r) => [r.user_id as string, r.role as string]))
@@ -63,9 +71,11 @@ export async function loadSolarAccessPanel(projectId: string): Promise<AccessPan
 
   const grants = new Map<string, Row>(((grantsRes.data ?? []) as Row[]).map((g) => [g.user_id as string, g]))
   const requests = (reqRes.data ?? []) as Row[]
+  const subRequests = (subReqRes.data ?? []) as Row[]
   const ids = new Set<string>([
     ...entries.keys(),
     ...requests.map((r) => r.requester_id as string),
+    ...subRequests.map((r) => r.requester_id as string),
     ...[...grants.values()].map((g) => g.granted_by as string | null).filter((v): v is string => Boolean(v)),
   ])
   const { data: profiles } = ids.size
@@ -101,6 +111,16 @@ export async function loadSolarAccessPanel(projectId: string): Promise<AccessPan
     createdAt: r.created_at as string,
   }))
 
+  const otherProjects = ((projRes.data ?? []) as Row[]).map((p) => ({ id: p.id as string, name: p.name as string }))
+  const projectNames = new Map<string, string>([[projectId, project.name as string], ...otherProjects.map((p) => [p.id, p.name] as [string, string])])
+  const subscribeRequests: AccessPanelSubscribeRequest[] = subRequests.map((r) => ({
+    id: r.id as string,
+    requesterName: nameOf(r.requester_id as string),
+    projectName: projectNames.get(r.project_id as string) ?? 'another project',
+    note: (r.note as string | null) ?? null,
+    createdAt: r.created_at as string,
+  }))
+
   const sub = subRes.data as Row | null
   return {
     projectId,
@@ -108,7 +128,9 @@ export async function loadSolarAccessPanel(projectId: string): Promise<AccessPan
     organisationId: orgId,
     members,
     requests: reqs,
-    otherProjects: ((projRes.data ?? []) as Row[]).map((p) => ({ id: p.id as string, name: p.name as string })),
+    otherProjects,
     subscription: sub ? { status: sub.status as string, currentPeriodEnd: (sub.current_period_end as string | null) ?? null } : null,
+    subscribeRequests,
+    orgSubscribed: !orgSubRes.error && orgSubRes.data === true,
   }
 }

@@ -17,6 +17,7 @@ vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
 
 import {
   setSolarMemberLevelAction, decideSolarRequestAction, copySolarAccessFromProjectAction,
+  markSubscribeRequestDoneAction,
 } from './solar-access.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 
@@ -167,5 +168,56 @@ describe('copySolarAccessFromProjectAction', () => {
       payload: { level: 'edit' }, filters: expect.arrayContaining([['eq', 'project_id', P], ['eq', 'user_id', 'b']]),
     })
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'access_copied', objectRef: { source_project_id: P2, copied: 1, skipped: 1 } }))
+  })
+})
+
+// Owner default 3 (2026-09-28): subscribe requests are listed on the Access
+// panel; a grantor presses "Mark done", which sets status 'approved' through
+// 00207's guard (approved_level stays NULL for a subscribe request).
+describe('markSubscribeRequestDoneAction', () => {
+  const sub = { id: 's1', project_id: P2, requester_id: 'u4', kind: 'subscribe', status: 'pending' }
+
+  it('refuses a non-grantor before any write', async () => {
+    const { calls } = setup({ tables: { 'solar.access_requests': [sub] } }, [])
+    await expect(markSubscribeRequestDoneAction('s1'))
+      .resolves.toEqual({ error: 'Only an organisation owner or admin can manage Solar access.' })
+    expect(calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+  })
+
+  it('refuses an access request (that is Approve / Decline)', async () => {
+    setup({ tables: { 'solar.access_requests': [{ ...sub, kind: 'access' }] } })
+    await expect(markSubscribeRequestDoneAction('s1'))
+      .resolves.toEqual({ error: 'That is not a subscription request.' })
+  })
+
+  it('sets status approved (no level) only while still pending, audits and tells the requester', async () => {
+    const { calls } = setup({ tables: { 'solar.access_requests': [sub] } })
+    await expect(markSubscribeRequestDoneAction('s1')).resolves.toEqual({ ok: true })
+    const upd = callsTo(calls, 'solar.access_requests', 'update')[0]
+    expect(upd.payload).toEqual({ status: 'approved' })
+    expect(upd.filters).toEqual(expect.arrayContaining([['eq', 'id', 's1'], ['eq', 'status', 'pending'], ['eq', 'kind', 'subscribe']]))
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P2, actorId: ADMIN, verb: 'subscribe_request_done', objectRef: { request_id: 's1', user_id: 'u4' } })
+    expect(h.notify).toHaveBeenCalledWith(['u4'], ['u4@x.test'], expect.objectContaining({
+      type: 'solar_access_changed',
+      title: 'Your request for Solar was answered',
+      body: 'An admin marked your request for Solar on Other Mall as done.',
+      email: true,
+    }))
+  })
+
+  it('says "already answered" when someone else got there first', async () => {
+    setup({ tables: { 'solar.access_requests': [sub] }, writes: { 'solar.access_requests:update': { data: [] } } })
+    await expect(markSubscribeRequestDoneAction('s1'))
+      .resolves.toEqual({ error: 'This request has already been answered — reload to see it.' })
+    expect(h.notify).not.toHaveBeenCalled()
+  })
+})
+
+describe('decideSolarRequestAction on a subscribe request', () => {
+  it('refuses — subscription requests are marked done, not approved at a level', async () => {
+    const { calls } = setup({ tables: { 'solar.access_requests': [{ id: 's1', project_id: P, requester_id: 'u4', kind: 'subscribe', status: 'pending' }] } })
+    await expect(decideSolarRequestAction({ requestId: 's1', decision: 'approve' }))
+      .resolves.toEqual({ error: 'That is not an access request.' })
+    expect(calls.filter((c) => c.op !== 'select')).toHaveLength(0)
   })
 })

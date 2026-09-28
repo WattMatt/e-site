@@ -7,12 +7,14 @@ const h = vi.hoisted(() => ({
   setLevel: vi.fn(),
   decide: vi.fn(),
   copy: vi.fn(),
+  markDone: vi.fn(),
 }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push: vi.fn() }) }))
 vi.mock('@/actions/solar-access.actions', () => ({
   setSolarMemberLevelAction: h.setLevel,
   decideSolarRequestAction: h.decide,
   copySolarAccessFromProjectAction: h.copy,
+  markSubscribeRequestDoneAction: h.markDone,
 }))
 
 import { AccessPanel } from './AccessPanel'
@@ -33,6 +35,8 @@ const data: AccessPanelData = {
   ],
   otherProjects: [{ id: 'p2', name: 'Other Mall' }],
   subscription: { status: 'active', currentPeriodEnd: '2027-09-28T08:00:00Z' },
+  subscribeRequests: [],
+  orgSubscribed: true,
 }
 
 beforeEach(() => {
@@ -40,6 +44,7 @@ beforeEach(() => {
   h.setLevel.mockResolvedValue({ ok: true, updatedAt: 'T2' })
   h.decide.mockResolvedValue({ ok: true })
   h.copy.mockResolvedValue({ ok: true, copied: 2, skipped: 1 })
+  h.markDone.mockResolvedValue({ ok: true })
 })
 
 describe('AccessPanel', () => {
@@ -119,10 +124,38 @@ describe('AccessPanel', () => {
   })
 
   it('empty states', () => {
-    render(<AccessPanel data={{ ...data, members: [], requests: [], otherProjects: [], subscription: null }} />)
+    render(<AccessPanel data={{ ...data, members: [], requests: [], otherProjects: [], subscription: null, orgSubscribed: false }} />)
     expect(screen.getByText('No requests waiting.')).toBeDefined()
+    expect(screen.getByText('No one has asked for a subscription.')).toBeDefined()
     expect(screen.getByText('No project members yet — add them in project settings.')).toBeDefined()
     expect(screen.getByText('No other projects in this organisation.')).toBeDefined()
     expect(screen.getByText('Not subscribed')).toBeDefined()
+  })
+
+  // Owner default 3 (2026-09-28).
+  const subReq = { id: 's1', requesterName: 'Sam Site', projectName: 'Other Mall', note: null, createdAt: T1 }
+
+  it('lists subscribe requests (requester, project, date) with Mark done while unsubscribed', async () => {
+    render(<AccessPanel data={{ ...data, subscription: null, orgSubscribed: false, subscribeRequests: [{ ...subReq, note: 'Client wants PV' }] }} />)
+    expect(screen.getByText('Subscription requests')).toBeDefined()
+    expect(screen.getByText(/Sam Site asked for Solar on Other Mall on 28 Sep 2026/)).toBeDefined()
+    expect(screen.getByText('“Client wants PV”')).toBeDefined()
+    expect(screen.queryByText('Resolved — Solar is now active for your organisation')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Mark done' }))
+    expect(h.markDone).toHaveBeenCalledWith('s1')
+    expect(h.refresh).toHaveBeenCalled()
+  })
+
+  it('once the organisation is subscribed, open subscribe requests show under Resolved', () => {
+    render(<AccessPanel data={{ ...data, subscribeRequests: [subReq] }} />)
+    expect(screen.getByText('Resolved — Solar is now active for your organisation')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Mark done' })).toBeDefined()
+  })
+
+  it('shows a Mark done failure as a sentence', async () => {
+    h.markDone.mockResolvedValueOnce({ error: 'This request has already been answered — reload to see it.' })
+    render(<AccessPanel data={{ ...data, orgSubscribed: false, subscribeRequests: [subReq] }} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Mark done' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('This request has already been answered — reload to see it.')
   })
 })

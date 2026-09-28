@@ -128,6 +128,9 @@ export async function decideSolarRequestAction(input: {
 
   const gate = await grantorCheck(supabase, r.project_id)
   if ('error' in gate) return gate
+  // One control per intent: a subscribe request is closed with "Mark done"
+  // (markSubscribeRequestDoneAction), never approved at a level.
+  if (r.kind !== 'access') return { error: 'That is not an access request.' }
   if (r.status !== 'pending') return { error: ALREADY_ANSWERED }
 
   const approve = input.decision === 'approve'
@@ -175,6 +178,49 @@ export async function decideSolarRequestAction(input: {
     await emitProductEvent({ actorId: gate.userId, projectId: r.project_id, event: 'solar_access_changed', properties: { level: approvedLevel, via: 'request' } })
   }
   revalidatePath(accessPath(r.project_id))
+  return { ok: true }
+}
+
+/**
+ * Owner default 3 (2026-09-28): close an "ask an admin to subscribe" request.
+ * Sets status 'approved' through 00207's access_requests_guard, which checks
+ * the caller is a grantor, stamps decided_by/decided_at and forces
+ * approved_level NULL for a subscribe request. Conditioned on status =
+ * 'pending' so a concurrent answer is reported, not overwritten.
+ */
+export async function markSubscribeRequestDoneAction(requestId: string): Promise<SolarAccessActionResult> {
+  const supabase = (await createClient()) as unknown as AnyClient
+  const { data: req } = await supabase.schema('solar').from('access_requests')
+    .select('id, project_id, requester_id, kind, status')
+    .eq('id', requestId)
+    .maybeSingle()
+  if (!req) return { error: 'Request not found.' }
+  const r = req as { id: string; project_id: string; requester_id: string; kind: string; status: string }
+
+  const gate = await grantorCheck(supabase, r.project_id)
+  if ('error' in gate) return gate
+  if (r.kind !== 'subscribe') return { error: 'That is not a subscription request.' }
+  if (r.status !== 'pending') return { error: ALREADY_ANSWERED }
+
+  const { data, error } = await supabase.schema('solar').from('access_requests')
+    .update({ status: 'approved' })
+    .eq('id', r.id).eq('kind', 'subscribe').eq('status', 'pending')
+    .select('id')
+  if (error) return { error: humanSolarError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: ALREADY_ANSWERED }
+
+  const name = await projectName(supabase, r.project_id)
+  await recordSolarAudit({ projectId: r.project_id, actorId: gate.userId, verb: 'subscribe_request_done', objectRef: { request_id: r.id, user_id: r.requester_id } })
+  await notifySolarUsers([r.requester_id], await recipientEmails(r.requester_id), {
+    type: 'solar_access_changed',
+    projectId: r.project_id,
+    projectName: name,
+    title: 'Your request for Solar was answered',
+    body: `An admin marked your request for Solar on ${name} as done.`,
+    route: `/projects/${r.project_id}/solar`,
+    email: true,
+  })
+  revalidatePath(`/projects/${r.project_id}/solar`, 'layout')
   return { ok: true }
 }
 

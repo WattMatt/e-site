@@ -14,9 +14,11 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import {
-  copySolarAccessFromProjectAction, decideSolarRequestAction, setSolarMemberLevelAction,
+  copySolarAccessFromProjectAction, decideSolarRequestAction, markSubscribeRequestDoneAction, setSolarMemberLevelAction,
 } from '@/actions/solar-access.actions'
-import type { AccessPanelData, AccessPanelMember, AccessPanelRequest } from '@/lib/solar/access-panel-types'
+import type {
+  AccessPanelData, AccessPanelMember, AccessPanelRequest, AccessPanelSubscribeRequest,
+} from '@/lib/solar/access-panel-types'
 import { useArmedConfirm } from '../_components/useArmedConfirm'
 
 const ERR: CSSProperties = { margin: '4px 0 0', fontSize: 12, color: 'var(--c-red)' }
@@ -30,6 +32,7 @@ export function AccessPanel({ data }: { data: AccessPanelData }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <SubscriptionCard subscription={data.subscription} />
+      <SubscribeRequestsCard requests={data.subscribeRequests} orgSubscribed={data.orgSubscribed} onDone={refresh} />
       <Card>
         <CardHeader><span className="data-panel-title">Requests</span></CardHeader>
         <CardBody>
@@ -93,6 +96,59 @@ function SubscriptionCard({ subscription }: { subscription: AccessPanelData['sub
         </div>
       </CardBody>
     </Card>
+  )
+}
+
+/**
+ * Owner default 3 (2026-09-28): "ask an admin to subscribe" requests, org-wide.
+ * Mark done closes one (status 'approved' via 00207's guard). Once the org is
+ * subscribed the open ones are listed under "Resolved" — subscribing answered
+ * them — and can still be marked done.
+ */
+function SubscribeRequestsCard({
+  requests, orgSubscribed, onDone,
+}: { requests: AccessPanelSubscribeRequest[]; orgSubscribed: boolean; onDone: () => void }) {
+  return (
+    <Card>
+      <CardHeader><span className="data-panel-title">Subscription requests</span></CardHeader>
+      <CardBody>
+        {requests.length === 0
+          ? <p style={MUTED}>No one has asked for a subscription.</p>
+          : <>
+              {orgSubscribed && <p style={{ ...MUTED, marginBottom: 8 }}>Resolved — Solar is now active for your organisation</p>}
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 12 }}>
+                {requests.map((r) => <SubscribeRequestRow key={r.id} request={r} onDone={onDone} />)}
+              </ul>
+            </>}
+      </CardBody>
+    </Card>
+  )
+}
+
+function SubscribeRequestRow({ request, onDone }: { request: AccessPanelSubscribeRequest; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function markDone() {
+    setBusy(true)
+    setError(null)
+    const res = await markSubscribeRequestDoneAction(request.id)
+    setBusy(false)
+    if ('error' in res) { setError(res.error); return }
+    onDone()
+  }
+
+  return (
+    <li style={{ borderBottom: '1px solid var(--c-border)', paddingBottom: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 13 }}>
+        <span>{`${request.requesterName} asked for Solar on ${request.projectName} on ${formatSolarDate(request.createdAt)}`}</span>
+        <Button type="button" size="sm" variant="secondary" onClick={() => void markDone()} isLoading={busy} style={{ marginLeft: 'auto' }}>
+          Mark done
+        </Button>
+      </div>
+      {request.note && <p style={{ ...MUTED, marginTop: 4 }}>{`“${request.note}”`}</p>}
+      {error && <p role="alert" style={ERR}>{error}</p>}
+    </li>
   )
 }
 
