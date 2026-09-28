@@ -26,7 +26,11 @@
 --      attribution. North lives here (it belongs to the sheet).
 --   2. solar.layouts: named design options per study, bound to one roof source
 --      for life (changing it would misalign every object). `summary` is a
---      server-computed cache so the list and readiness never load geometry.
+--      cache the save ACTION computes so the list and readiness never load
+--      geometry. It is display-only: an Edit user calling the RPC over
+--      PostgREST can write any summary for their own project, which moves only
+--      that project's readiness dot, so it gates nothing. Readers of geometry
+--      (loader, export) drop rows that fail the save-time shape check.
 --   3. solar.layout_objects: geometry in IMAGE PIXELS, with the scale stamped by
 --      the database at first save and pinned forever after (a recalibration
 --      never moves a saved design's metres). floor_plan_id and page_index are
@@ -121,13 +125,19 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Path: <organisation_id>/<project_id>/<file>. Reads need a Solar level on the
 -- project in segment 2; a non-uuid segment reads nothing (never a cast error).
+-- The regex guards the cast inside a CASE: Postgres does not promise to
+-- evaluate AND operands left to right, so `regex AND f(x::uuid)` could cast
+-- first and raise on another bucket's non-uuid path.
 -- No INSERT/UPDATE/DELETE policy: only the service role writes (the capture route).
 DROP POLICY IF EXISTS solar_roof_images_select ON storage.objects;
 CREATE POLICY solar_roof_images_select ON storage.objects FOR SELECT TO authenticated
     USING (
         bucket_id = 'solar-roof-images'
-        AND (storage.foldername(name))[2] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        AND public.solar_can_view(((storage.foldername(name))[2])::uuid)
+        AND CASE
+            WHEN (storage.foldername(name))[2] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN public.solar_can_view(((storage.foldername(name))[2])::uuid)
+            ELSE false
+        END
     );
 
 -- ── 1. Roof sources ───────────────────────────────────────────────────────────

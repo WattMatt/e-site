@@ -44,3 +44,21 @@ describe('planAutoFill', () => {
       .toEqual({ ok: false, error: 'This drawing page has no scale yet — calibrate it before drawing.' })
   })
 })
+
+describe('review fix: one metric frame for positions', () => {
+  it('an obstruction saved at a different scale is avoided where it was DRAWN', () => {
+    // Roof at 10 px/m; the page was later recalibrated to 20 px/m and a plant room drawn in
+    // the middle of the roof in pixels (80..120, 40..80). Converted with its own 20 px/m it
+    // would sit at 4..6 m — half-way to the corner — and modules would cover the real one.
+    const plant = { id: 'O', kind: 'obstruction' as const, pixelsPerMeter: 20, geometry: { points: [80, 40, 120, 40, 120, 80, 80, 80] }, props: { name: 'P', setbackM: 0, heightM: 2 } }
+    const p = planAutoFill({ ...base, mode: 'flat', obstructions: [plant] }, 'A')
+    expect(p.ok).toBe(true)
+    if (!p.ok) return
+    const inside = (x: number, y: number) => x > 80 && x < 120 && y > 40 && y < 80
+    for (const q of p.object.geometry.modules) {
+      const cx = (q[0]! + q[2]! + q[4]! + q[6]!) / 4
+      const cy = (q[1]! + q[3]! + q[5]! + q[7]!) / 4
+      expect(inside(cx, cy)).toBe(false)
+    }
+  })
+})

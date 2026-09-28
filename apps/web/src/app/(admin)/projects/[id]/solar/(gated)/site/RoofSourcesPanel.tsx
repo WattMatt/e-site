@@ -86,6 +86,7 @@ export function RoofSourcesPanel({
                 <td align="center"><Tick ok={s.northSet} yes="North set" no="North not set" /></td>
                 <td align="right">
                   <Link href={`/projects/${projectId}/solar/layout/sources/${s.id}`}>Open sheet</Link>
+                  {' · '}<Link href={`/projects/${projectId}/solar/layout`}>Layouts</Link>
                   {canEdit && <> · <RemoveButton onConfirm={() => void remove(s.id)} /></>}
                 </td>
               </tr>

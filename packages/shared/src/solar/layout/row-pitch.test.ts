@@ -43,3 +43,9 @@ describe('row pitch', () => {
     expect(() => manualRowPitch({ slopeLengthM: 2.278, tiltDeg: 15, pitchM: 2 })).toThrow('shorter than')
   })
 })
+
+describe('review fix: winter solstice for the site hemisphere', () => {
+  it('a northern site designs against 21 December, mirroring the southern result', () => {
+    expect(solsticeElevationDeg(26.2, 9)).toBeCloseTo(solsticeElevationDeg(-26.2, 9), 12)
+  })
+})

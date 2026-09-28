@@ -1,8 +1,11 @@
 /**
  * Layout Summary and BOM (functional spec §6.4). Pure.
  *
- * Every metre figure uses the object's OWN pixelsPerMeter snapshot. An object
- * without one (unsaved) is skipped from metre figures but still counted.
+ * Every AREA uses the object's OWN pixelsPerMeter snapshot. An object without
+ * one (unsaved) uses `fallbackPpm` (the sheet's current scale) when the caller
+ * passes it, else it is skipped from metre figures but still counted.
+ * A DISTANCE between two objects converts both positions with ONE scale (the
+ * array's) — positions share one image space, so mixing scales would move them.
  * Utilisation = module plan area / roof plan area — for a flush array on a
  * pitched roof both are foreshortened the same way, so the ratio is the true one.
  */
@@ -31,7 +34,8 @@ export interface LayoutSummary {
 
 const round = (n: number, dp = 6) => Math.round(n * 10 ** dp) / 10 ** dp
 
-export function layoutSummary(objects: LayoutObject[], conditions: DesignConditions): LayoutSummary {
+export function layoutSummary(objects: LayoutObject[], conditions: DesignConditions, fallbackPpm: number | null = null): LayoutSummary {
+  const ppmOf = (o: LayoutObject) => o.pixelsPerMeter ?? fallbackPpm
   const arrays = objects.filter(isArrayObject)
   const roofs = objects.filter((o) => o.kind === 'roof')
   const inverters = objects.filter((o) => o.kind === 'inverter')
@@ -51,11 +55,15 @@ export function layoutSummary(objects: LayoutObject[], conditions: DesignConditi
     t.count += n
     t.kwp = round(t.kwp + kwp)
     byType.set(label, t)
-    if (a.pixelsPerMeter) for (const q of a.geometry.modules) moduleAreaM2 += polygonArea(pxToM(q, a.pixelsPerMeter))
+    const appm = ppmOf(a)
+    if (appm) for (const q of a.geometry.modules) moduleAreaM2 += polygonArea(pxToM(q, appm))
   }
 
   let roofAreaM2 = 0
-  for (const r of roofs) if (r.pixelsPerMeter && r.kind === 'roof') roofAreaM2 += polygonArea(pxToM(r.geometry.points, r.pixelsPerMeter))
+  for (const r of roofs) {
+    const rppm = ppmOf(r)
+    if (rppm && r.kind === 'roof') roofAreaM2 += polygonArea(pxToM(r.geometry.points, rppm))
+  }
 
   const acKw = inverters.reduce((s, o) => s + (o.kind === 'inverter' ? o.props.inverter.acKw : 0), 0)
 
@@ -131,7 +139,7 @@ export interface BomRow {
   unit: string
 }
 
-export function layoutBom(objects: LayoutObject[], summary: LayoutSummary): BomRow[] {
+export function layoutBom(objects: LayoutObject[], summary: LayoutSummary, fallbackPpm: number | null = null): BomRow[] {
   const rows: BomRow[] = summary.modulesByType.map((t) => ({ item: 'Module', description: t.label, quantity: t.count, unit: 'ea' }))
   const invs = new Map<string, number>()
   for (const o of objects) if (o.kind === 'inverter') {
@@ -153,14 +161,16 @@ export function layoutBom(objects: LayoutObject[], summary: LayoutSummary): BomR
   for (const s of objects) {
     if (s.kind !== 'string') continue
     const inv = invById.get(s.props.inverterId)
+    const first = s.props.modules[0] ? arrayById.get(s.props.modules[0].arrayId) : undefined
+    const frame = first ? (first.pixelsPerMeter ?? fallbackPpm) : null
+    if (!inv || inv.kind !== 'inverter' || !frame) continue
     const pts = s.props.modules.flatMap((m) => {
-      const a = arrayById.get(m.arrayId)
-      const q = a?.geometry.modules[m.index]
-      return a && q && a.pixelsPerMeter ? [vertexMean(pxToM(q, a.pixelsPerMeter))] : []
+      const q = arrayById.get(m.arrayId)?.geometry.modules[m.index]
+      return q ? [vertexMean(pxToM(q, frame))] : []
     })
-    if (!inv || inv.kind !== 'inverter' || !inv.pixelsPerMeter || pts.length === 0) continue
+    if (pts.length === 0) continue
     const c = vertexMean(pts)
-    const ip = { x: inv.geometry.x / inv.pixelsPerMeter, y: inv.geometry.y / inv.pixelsPerMeter }
+    const ip = { x: inv.geometry.x / frame, y: inv.geometry.y / frame }
     dcM += (Math.abs(c.x - ip.x) + Math.abs(c.y - ip.y)) * 2 * DC_ROUTING_FACTOR
   }
   if (dcM > 0) rows.push({ item: 'DC cable', description: 'String home runs, + and −, Manhattan route × 1.1 (estimate)', quantity: round(dcM, 2), unit: 'm' })
@@ -168,8 +178,11 @@ export function layoutBom(objects: LayoutObject[], summary: LayoutSummary): BomR
 }
 
 function csvField(v: string | number): string {
-  const s = String(v)
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  let s = String(v)
+  // A text cell starting with = + - @ (or tab/CR) is run as a formula by
+  // spreadsheet apps; module/inverter names are free text (CSV injection).
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  return /[",\r\n']/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
 export function bomToCsv(rows: BomRow[]): string {

@@ -33,3 +33,13 @@ describe('planModuleBlock', () => {
     expect(p).toEqual({ ok: false, error: 'No whole module fits in that rectangle inside the roof setback.' })
   })
 })
+
+describe('review fix: a pitched roof needs its fall line before a block', () => {
+  it('refuses rather than foreshortening along sheet-up', () => {
+    const pitched = { id: 'R', kind: 'roof' as const, pixelsPerMeter: 10, geometry: { points: [0, 0, 200, 0, 200, 120, 0, 120] },
+      props: { name: 'P', roofType: 'pitched' as const, pitchDeg: 30, fallBearingDeg: null, heightM: 6, setbackM: 0.5, maxLoadKgM2: null } }
+    const r = planModuleBlock({ roof: pitched, obstructions: [], sheetPixelsPerMeter: 10, startPx: { x: 10, y: 10 }, endPx: { x: 100, y: 100 },
+      module: M, orientation: 'portrait', mounting: 'flush', tiltDeg: 30, facingSheetDeg: 0, gapM: 0.02, rowPitchM: null }, 'B')
+    expect(r).toEqual({ ok: false, error: "Draw the roof's fall line first (Properties → Draw fall line)." })
+  })
+})

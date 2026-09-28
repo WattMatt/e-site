@@ -58,3 +58,10 @@ describe('RoofSourcesPanel', () => {
     expect(screen.getByText('Satellite capture is not configured on this server.')).toBeTruthy()
   })
 })
+
+describe('RoofSourcesPanel — review fix', () => {
+  it('each row links to the Layout tab (spec §3.2 C)', () => {
+    render(<RoofSourcesPanel {...base} canEdit sources={[row]} />)
+    expect(screen.getByRole('link', { name: 'Layouts' }).getAttribute('href')).toBe('/projects/p1/solar/layout')
+  })
+})

@@ -239,6 +239,14 @@ export async function deleteProjectReportAction(
   const report = row as { storage_path: string; kind: string } | null
   if (!report) return { error: 'Not found' }
 
+  // A Solar kind is removed on the Solar EDIT level, not just an org write role
+  // (an org admin with only Solar View must not delete exported layout sheets).
+  if (solarLevelForKind(report.kind)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+    if (!solarLevelAllows(level, 'edit')) return { error: 'You do not have Solar edit access on this project.' }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error: deleteErr } = await (supabase as any)
     .schema('projects').from('reports')

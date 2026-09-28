@@ -49,3 +49,12 @@ describe('exportLayoutSheetAction', () => {
       .resolves.toEqual({ error: 'The sheet image could not be read — try again.' })
   })
 })
+
+describe('exportLayoutSheetAction — review fix: bounded client inputs', () => {
+  it('refuses an absurd crop and an over-long note', async () => {
+    await expect(exportLayoutSheetAction({ projectId: P, layoutId: L, jpegBase64: JPEG_1PX, crop: { x: 0, y: 0, w: 1e9, h: 1 } }))
+      .resolves.toEqual({ error: 'The sheet image could not be read — try again.' })
+    await expect(exportLayoutSheetAction({ projectId: P, layoutId: L, jpegBase64: JPEG_1PX, crop: { x: 0, y: 0, w: 1, h: 1 }, note: 'x'.repeat(2001) }))
+      .resolves.toEqual({ error: 'The note is too long (2000 characters at most).' })
+  })
+})

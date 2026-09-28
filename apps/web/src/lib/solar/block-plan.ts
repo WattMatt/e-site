@@ -36,6 +36,11 @@ export function planModuleBlock(i: {
 }, newId: string): { ok: true; object: { id: string; kind: 'module_block'; pixelsPerMeter: null; geometry: ModulesGeometry; props: ArrayProps } } | { ok: false; error: string } {
   const ppm = i.roof.pixelsPerMeter ?? i.sheetPixelsPerMeter
   if (!ppm) return { ok: false, error: 'This drawing page has no scale yet — calibrate it before drawing.' }
+  // Flush on a pitch is foreshortened along the fall line; without one the
+  // direction would be invented (the auto-fill planner refuses the same way).
+  if (i.roof.props.roofType === 'pitched' && i.roof.props.fallBearingDeg === null) {
+    return { ok: false, error: "Draw the roof's fall line first (Properties → Draw fall line)." }
+  }
   const roofM = pxToM(i.roof.geometry.points, ppm)
   let fp
   try {

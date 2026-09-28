@@ -18,9 +18,14 @@ const MIN_DESIGN_ELEVATION_DEG = 1
 const rad = (d: number) => (d * Math.PI) / 180
 const deg = (r: number) => (r * 180) / Math.PI
 
+/**
+ * Solar elevation on the WINTER solstice of the site's hemisphere: 21 June in
+ * the south (D-11), 21 December (declination −23.44°) in the north, so a
+ * northern latitude never designs against its summer sun.
+ */
 export function solsticeElevationDeg(latDeg: number, solarHour: number): number {
   const h = rad(15 * (solarHour - 12))
-  const d = rad(JUNE_SOLSTICE_DECLINATION_DEG)
+  const d = rad(latDeg > 0 ? -JUNE_SOLSTICE_DECLINATION_DEG : JUNE_SOLSTICE_DECLINATION_DEG)
   const phi = rad(latDeg)
   return deg(Math.asin(Math.sin(phi) * Math.sin(d) + Math.cos(phi) * Math.cos(d) * Math.cos(h)))
 }

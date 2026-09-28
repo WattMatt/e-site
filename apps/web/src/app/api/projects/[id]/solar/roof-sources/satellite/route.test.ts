@@ -84,3 +84,12 @@ describe('POST satellite capture', () => {
     expect(h.remove).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('POST satellite capture — review fix', () => {
+  it('bounds the Mapbox request with a timeout', async () => {
+    setup()
+    await POST(req(), ctx)
+    const init = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![1] as RequestInit
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+})

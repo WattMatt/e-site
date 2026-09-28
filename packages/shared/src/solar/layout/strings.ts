@@ -97,7 +97,9 @@ export function autoString(i: AutoStringInput): AutoStringResult {
   const perMppt = maxStringsPerMppt(i.module, i.inverter)
 
   const taken = new Set(i.existingStrings.flatMap((s) => s.modules.map((m) => `${m.arrayId}#${m.index}`)))
-  const queue: ModuleRef[] = i.arrays.flatMap((a) =>
+  // One queue PER ARRAY: a series string never spans two arrays (they may face
+  // or tilt differently, and the check is computed for one mounting).
+  const queues: ModuleRef[][] = i.arrays.map((a) =>
     serpentineOrder(a.quads, a.facingSheetDeg)
       .map((index) => ({ arrayId: a.id, index }))
       .filter((m) => !taken.has(`${m.arrayId}#${m.index}`)),
@@ -111,16 +113,19 @@ export function autoString(i: AutoStringInput): AutoStringResult {
   }
 
   const strings: AutoStringResult['strings'] = []
-  let cursor = 0
+  const unstrung: ModuleRef[] = []
   let full = false
-  while (queue.length - cursor >= n) {
-    const mppt = nextMppt()
-    if (mppt === null) { full = true; break }
-    strings.push({ mppt, modules: queue.slice(cursor, cursor + n) })
-    used.set(mppt, (used.get(mppt) ?? 0) + 1)
-    cursor += n
+  for (const queue of queues) {
+    let cursor = 0
+    while (!full && queue.length - cursor >= n) {
+      const mppt = nextMppt()
+      if (mppt === null) { full = true; break }
+      strings.push({ mppt, modules: queue.slice(cursor, cursor + n) })
+      used.set(mppt, (used.get(mppt) ?? 0) + 1)
+      cursor += n
+    }
+    unstrung.push(...queue.slice(cursor))
   }
-  const unstrung = queue.slice(cursor)
   let reason: string | null = null
   if (full) reason = 'The inverter has no free MPPT input for the remaining modules.'
   else if (unstrung.length > 0) {

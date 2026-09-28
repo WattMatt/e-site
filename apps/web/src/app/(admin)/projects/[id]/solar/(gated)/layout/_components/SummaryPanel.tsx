@@ -2,10 +2,12 @@
 /** Summary (functional spec §6.4). Computed from the CURRENT (unsaved) objects so it moves as you draw. */
 import { layoutSummary, type DesignConditions, type LayoutObject } from '@esite/shared'
 
-export function SummaryPanel({ objects, conditions, onDownloadBom }: {
+export function SummaryPanel({ objects, conditions, onDownloadBom, fallbackPpm = null }: {
   objects: LayoutObject[]; conditions: DesignConditions; layoutName: string; onDownloadBom(): void
+  /** The sheet's current scale, for objects not yet saved (no stamped scale). */
+  fallbackPpm?: number | null
 }) {
-  const s = layoutSummary(objects, conditions)
+  const s = layoutSummary(objects, conditions, fallbackPpm)
   const row = (k: string, v: string) => <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--c-text-dim)' }}>{k}</span><span>{v}</span></div>
   return (
     <section aria-label="Summary" style={{ fontSize: 13, display: 'grid', gap: 4 }}>

@@ -14,8 +14,10 @@ import { EMPTY_SELECTION, type LayoutTool } from '../../_components/SolarCanvas'
 
 const SolarCanvas = dynamic(() => import('../../_components/SolarCanvas').then((m) => m.SolarCanvas), { ssr: false })
 
-export function SheetSettings({ projectId, source, sheet, canEdit }: {
+export function SheetSettings({ projectId, source, sheet, canEdit, canCalibrate }: {
   projectId: string; source: RoofSourceRow; sheet: { key: string; signedUrl: string | null; isPdf: boolean; pageIndex: number }; canEdit: boolean
+  /** calibrateFloorPlanAction admits ORG_WRITE_ROLES only (decision 3); say so up front rather than after the click. */
+  canCalibrate: boolean
 }) {
   const router = useRouter()
   const [tool, setTool] = useState<LayoutTool>('select')
@@ -36,7 +38,8 @@ export function SheetSettings({ projectId, source, sheet, canEdit }: {
       <p style={{ fontSize: 13 }}>{source.label} · scale {source.pixelsPerMeter === null ? 'not set' : `${source.pixelsPerMeter.toFixed(1)} px/m`} · north {source.northSet ? `${source.northBearingDeg}°` : 'not set'}</p>
       {canEdit && (
         <div style={{ display: 'flex', gap: 6, fontSize: 12, alignItems: 'center' }}>
-          {source.kind === 'drawing' && <button type="button" onClick={() => { setPoints(null); setTool('calibrate') }}>Calibrate scale</button>}
+          {source.kind === 'drawing' && <button type="button" disabled={!canCalibrate} onClick={() => { setPoints(null); setTool('calibrate') }}>Calibrate scale</button>}
+          {source.kind === 'drawing' && !canCalibrate && <span>Only an owner, admin or project manager can set a drawing’s scale.</span>}
           <button type="button" onClick={() => setTool('north')}>Set north (click two points: from, then towards north)</button>
           {tool === 'calibrate' && points && (<>
             <label>Real distance m <input type="number" value={metres} onChange={(e) => setMetres(e.target.value)} style={{ width: 80 }} /></label>

@@ -33,8 +33,8 @@ function Controls({ resetRef, target }: { resetRef: React.MutableRefObject<(() =
   return null
 }
 
-export function Layout3DPreview({ objects }: { objects: LayoutObject[] }) {
-  const scene = useMemo(() => buildScene3d(objects), [objects])
+export function Layout3DPreview({ objects, framePpm = null }: { objects: LayoutObject[]; framePpm?: number | null }) {
+  const scene = useMemo(() => buildScene3d(objects, framePpm), [objects, framePpm])
   const resetRef = useRef<(() => void) | null>(null)
   const glRef = useRef<HTMLCanvasElement | null>(null)
   const all = [...scene.roofs.flatMap((r) => r.top), ...scene.modules.flatMap((m) => m.corners)]

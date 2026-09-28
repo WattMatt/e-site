@@ -23,7 +23,10 @@ export function AutoFillDialog(p: {
     rowSpacing: spacing === 'auto' ? { kind: 'auto' } : { kind: 'manual', pitchM: Number(pitch) || 0 },
     gapMm: Number(gap) || 0, shadeFree: p.shadeFree,
   }
-  const plan = useMemo(() => planAutoFill(req, p.newId), [JSON.stringify(req), p.newId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The plan must not depend on the id: the host may hand a fresh id on every
+  // render, and a plan that changes identity re-fires onPreview → host
+  // re-render → new plan … (an endless loop). The id is applied at Place.
+  const plan = useMemo(() => planAutoFill(req, 'preview'), [JSON.stringify(req)]) // eslint-disable-line react-hooks/exhaustive-deps
   const { onPreview } = p
   useEffect(() => { onPreview(plan.ok ? plan.object.geometry.modules : null) }, [plan, onPreview])
   useEffect(() => () => onPreview(null), [onPreview])
@@ -52,7 +55,7 @@ export function AutoFillDialog(p: {
         ? <div>{plan.count} modules · {((plan.count * p.module.powerW) / 1000).toFixed(2)} kWp{plan.alphaDeg !== null ? ` · design sun ${plan.alphaDeg.toFixed(1)}°` : ''}</div>
         : <p role="alert" style={{ color: '#dc2626' }}>{plan.error}</p>}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" disabled={!plan.ok || plan.count === 0} onClick={() => { if (plan.ok) p.onPlace(plan) }}>Place</button>
+        <button type="button" disabled={!plan.ok || plan.count === 0} onClick={() => { if (plan.ok) p.onPlace({ ...plan, object: { ...plan.object, id: p.newId } }) }}>Place</button>
         <button type="button" onClick={p.onClose}>Cancel</button>
       </div>
     </div>

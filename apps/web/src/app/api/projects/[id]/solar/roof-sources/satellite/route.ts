@@ -26,6 +26,7 @@ type AnyClient = SupabaseClient<any, any, any>
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_BYTES = 20 * 1024 * 1024
 const BUCKET = 'solar-roof-images'
+const MAPBOX_TIMEOUT_MS = 15_000
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const token = process.env.MAPBOX_ACCESS_TOKEN
@@ -55,8 +56,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   let bytes: Uint8Array
   let contentType: string
+  // Bounded: a hung upstream must not hold the function open. (AbortController +
+  // timer rather than AbortSignal.timeout, which not every runtime provides.)
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), MAPBOX_TIMEOUT_MS)
   try {
-    const res = await fetch(mapboxStaticUrl({ lat, lng, zoom, token }), { cache: 'no-store' })
+    const res = await fetch(mapboxStaticUrl({ lat, lng, zoom, token }), { cache: 'no-store', signal: ac.signal })
     contentType = res.headers.get('content-type') ?? ''
     if (!res.ok || !/^image\/(png|jpeg)/.test(contentType)) {
       // The URL carries the token — never log it.
@@ -66,6 +71,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     bytes = new Uint8Array(await res.arrayBuffer())
   } catch {
     return NextResponse.json({ error: 'The satellite service did not answer — try again.' }, { status: 502 })
+  } finally {
+    clearTimeout(timer)
   }
   if (bytes.length === 0 || bytes.length > MAX_BYTES) {
     return NextResponse.json({ error: 'The satellite service did not answer — try again.' }, { status: 502 })

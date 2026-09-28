@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { loadRoofSources, loadLayoutEditor, scaleForSource } from './layout-loader'
 import { fakeSupabase } from '@/test/fake-supabase'
-import { GENERIC_MODULE_550 } from '@esite/shared'
+import { GENERIC_INVERTER_50KW, GENERIC_MODULE_550 } from '@esite/shared'
+
+const O1 = '55555555-5555-4555-8555-555555555555'
 
 const P = 'p1'
 const tables = {
@@ -14,7 +16,7 @@ const tables = {
   'tenants.floor_plans': [{ id: 'fp1', name: 'Roof', file_path: 'a/v2.pdf', pixels_per_meter: 50 }],
   'tenants.floor_plan_page_scales': [],
   'solar.layouts': [{ id: 'L1', project_id: P, name: 'A', roof_source_id: 'rs1', module_spec: GENERIC_MODULE_550, default_tilt_deg: 10, design_t_min_c: -5, design_t_amb_max_c: 35, summary: { dcKwp: 1.1 }, updated_at: 'T2' }],
-  'solar.layout_objects': [{ id: 'o1', layout_id: 'L1', kind: 'inverter', geometry: { x: 1, y: 2 }, props: { name: 'I' }, pixels_per_meter: 50 }],
+  'solar.layout_objects': [{ id: O1, layout_id: 'L1', kind: 'inverter', geometry: { x: 1, y: 2 }, props: { name: 'I', inverter: GENERIC_INVERTER_50KW }, pixels_per_meter: 50 }],
   'structure.nodes': [{ id: 'n1', project_id: P, code: 'MB1', name: 'Main', status: 'active' }],
   'solar.org_settings': [{ organisation_id: 'o1', settings: { version: 1, values: { edge_setback_flat_m: 0.6 } } }],
 }
@@ -50,7 +52,7 @@ describe('loadLayoutEditor', () => {
     expect(d!.source.sheet).toEqual({ key: 'rs1', signedUrl: 'https://signed/drawings/a/v2.pdf', isPdf: true, pageIndex: 1 })
     expect(d!.sheetPixelsPerMeter).toBe(50)
     expect(d!.drawingChanged).toBe(true)
-    expect(d!.objects).toEqual([{ id: 'o1', kind: 'inverter', geometry: { x: 1, y: 2 }, props: { name: 'I' }, pixelsPerMeter: 50 }])
+    expect(d!.objects).toEqual([{ id: O1, kind: 'inverter', geometry: { x: 1, y: 2 }, props: { name: 'I', inverter: GENERIC_INVERTER_50KW }, pixelsPerMeter: 50 }])
     expect(d!.setbackDefaults.flatM).toBe(0.6)
     expect(d!.shadeFree).toEqual({ fromHour: 9, toHour: 15 })
     expect(d!.nodes).toEqual([{ id: 'n1', label: 'MB1 — Main' }])
@@ -59,5 +61,35 @@ describe('loadLayoutEditor', () => {
   it('null for a layout of another project', async () => {
     const { client } = fakeSupabase({ tables })
     expect(await loadLayoutEditor(client as never, client as never, 'other', 'L1', vi.fn())).toBeNull()
+  })
+})
+
+describe('review fixes', () => {
+  it('a new revision at the SAME path still counts as the drawing having changed', async () => {
+    const t = {
+      ...tables,
+      'solar.roof_sources': [{ ...tables['solar.roof_sources'][0]!, file_path: 'a/v2.pdf', source_revision_id: 'rev1' }],
+      'tenants.floor_plans': [{ id: 'fp1', name: 'Roof', file_path: 'a/v2.pdf', source_revision_id: 'rev2', pixels_per_meter: 50 }],
+    }
+    const { client } = fakeSupabase({ tables: t })
+    const r = await loadRoofSources(client as never, P)
+    expect(r.sources[0]!.drawingChanged).toBe(true)
+  })
+  it('a stored object that is malformed is left out instead of crashing every reader', async () => {
+    const t = { ...tables, 'solar.layout_objects': [
+      ...tables['solar.layout_objects'],
+      { id: '66666666-6666-4666-8666-666666666666', layout_id: 'L1', kind: 'array', geometry: {}, props: {}, pixels_per_meter: 50 },
+    ] }
+    const { client } = fakeSupabase({ tables: t })
+    const d = await loadLayoutEditor(client as never, client as never, P, 'L1', vi.fn(async () => null))
+    expect(d!.objects.map((o) => o.id)).toEqual([O1])
+  })
+})
+
+describe('review fix: the editor lists the study’s layouts (spec §6.1 left column)', () => {
+  it('siblings are the project’s layouts by name', async () => {
+    const { client } = fakeSupabase({ tables })
+    const d = await loadLayoutEditor(client as never, client as never, P, 'L1', vi.fn(async () => null))
+    expect(d!.siblings).toEqual([{ id: 'L1', name: 'A' }])
   })
 })

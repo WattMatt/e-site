@@ -34,9 +34,16 @@ export type AutoFillPlan =
   | { ok: true; object: ArrayObject; count: number; alphaDeg: number | null }
   | { ok: false; error: string }
 
-export function obstaclesInMetres(obstructions: ObstructionObject[], fallbackPpm: number): Obstacle[] {
+/**
+ * Obstructions in the SAME metric frame as the roof they are tested against.
+ * Positions are image pixels in one shared image space, so every position in
+ * one computation is divided by ONE scale (`framePpm`, the roof's) — dividing
+ * an obstruction by its own snapshot would move it when the page was
+ * recalibrated between the two saves.
+ */
+export function obstaclesInMetres(obstructions: ObstructionObject[], framePpm: number): Obstacle[] {
   return obstructions.map((o) => {
-    const ppm = o.pixelsPerMeter ?? fallbackPpm
+    const ppm = framePpm
     return isCircleGeometry(o.geometry)
       ? { kind: 'circle' as const, centre: { x: o.geometry.cx / ppm, y: o.geometry.cy / ppm }, radiusM: o.geometry.r / ppm, setbackM: o.props.setbackM }
       : { kind: 'polygon' as const, points: pxToM(o.geometry.points, ppm), setbackM: o.props.setbackM }

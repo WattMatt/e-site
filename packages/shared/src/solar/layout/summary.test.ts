@@ -78,3 +78,29 @@ describe('storedSummary', () => {
     expect(s).toEqual({ moduleCount: 2, dcKwp: 1.1, acKw: 50, arraysWithModules: 1, arrayOutsideRoof: false, stringsFail: 1 })
   })
 })
+
+describe('review fixes', () => {
+  it('BOM CSV neutralises spreadsheet formulas in text fields (CSV injection)', () => {
+    const csv = bomToCsv([
+      { item: 'Module', description: '=HYPERLINK("http://x","d")', quantity: 1, unit: 'ea' },
+      { item: '+cmd', description: '-2+3', quantity: 2, unit: '@x' },
+    ])
+    const cells = csv.split('\r\n').slice(1).filter(Boolean).flatMap((l) => l.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/))
+    for (const c of cells) expect(/^"?[=+\-@\t\r]/.test(c), c).toBe(false)
+    expect(csv).toContain(`"'=HYPERLINK(""http://x"",""d"")"`)
+  })
+  it('DC cable length uses ONE frame: an inverter saved at another scale sits at its drawn pixels', () => {
+    const inv20 = { ...INVERTER, pixelsPerMeter: 20 } as LayoutObject
+    const objs = [ROOF, ARRAY, inv20, STRING]
+    const rows = layoutBom(objs, layoutSummary(objs, COND))
+    expect(rows[3]!.quantity).toBeCloseTo(9.5 * 2 * DC_ROUTING_FACTOR, 6)
+  })
+  it('unsaved objects use the sheet scale for metre figures', () => {
+    const unsavedRoof = { ...ROOF, pixelsPerMeter: null } as LayoutObject
+    const unsavedArray = { ...ARRAY, pixelsPerMeter: null } as LayoutObject
+    const s = layoutSummary([unsavedRoof, unsavedArray], COND, PPM)
+    expect(s.roofAreaM2).toBe(240)
+    expect(s.moduleAreaM2).toBe(4)
+    expect(layoutSummary([unsavedRoof, unsavedArray], COND).utilisationPct).toBeNull()
+  })
+})

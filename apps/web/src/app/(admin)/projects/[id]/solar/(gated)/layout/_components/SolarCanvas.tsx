@@ -74,9 +74,13 @@ export function SolarCanvas(p: SolarCanvasProps) {
   const [dragNow, setDragNow] = useState<Pt | null>(null)
   const [exporting, setExporting] = useState(false)
   const lenBeforeTouch = useRef<number | null>(null)
+  // A two-point pick (north / fall / calibrate) completed by a TOUCH press is
+  // only committed on lift: the first finger of a pinch must not fire it.
+  const pendingPair = useRef<number[] | null>(null)
   const onPinchStart = useCallback(() => {
     setDraft((pts) => rollbackPinchVertex(pts, lenBeforeTouch.current))
     lenBeforeTouch.current = null
+    pendingPair.current = null
   }, [])
   const vp = useSheetViewport({ containerRef, image, resetKey: `${p.sheet.key}:${p.sheet.pageIndex}`, onPinchStart, fitKeys: ['0'] })
 
@@ -99,7 +103,8 @@ export function SolarCanvas(p: SolarCanvasProps) {
     const on = !p.readOnly && p.tool === 'select' && p.selection.ids.length > 0 && groupRef.current
     tr.nodes(on ? [groupRef.current as Konva.Group] : [])
     tr.getLayer()?.batchDraw()
-  }, [selectionKey, p.readOnly, p.tool, p.selection.ids.length])
+    // `exporting` unmounts the Transformer; re-bind when it comes back.
+  }, [selectionKey, p.readOnly, p.tool, p.selection.ids.length, exporting])
 
   function pointer(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>): Pt | null {
     const stage = e.target.getStage()
@@ -111,6 +116,21 @@ export function SolarCanvas(p: SolarCanvasProps) {
     if (draft.length >= 6 && (p.tool === 'roof' || (p.tool === 'obstruction' && !p.circleMode))) p.onPolygon(p.tool, draft)
     setDraft([])
   }
+  const closable = draft.length >= 6 && (p.tool === 'roof' || (p.tool === 'obstruction' && !p.circleMode))
+
+  // §6.3: double-click OR Enter closes a roof/obstruction outline; Escape drops it.
+  const finishRef = useRef(finishPolygon)
+  finishRef.current = finishPolygon
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      if (e.key === 'Enter' && (p.tool === 'roof' || p.tool === 'obstruction')) { e.preventDefault(); finishRef.current() }
+      else if (e.key === 'Escape') setDraft([])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [p.tool])
 
   function onDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     if (!isPrimaryDrawPress(e.evt) || vp.panningRef.current) return
@@ -144,7 +164,10 @@ export function SolarCanvas(p: SolarCanvasProps) {
       case 'measure': {
         const next = draft.length >= 4 ? [pt.x, pt.y] : [...draft, pt.x, pt.y]
         setDraft(next)
-        if (next.length === 4 && p.tool !== 'measure') { p.onTwoPoints(p.tool, next); setDraft([]) }
+        if (next.length === 4 && p.tool !== 'measure') {
+          if (isTouchEvent(e.evt)) { pendingPair.current = next; return }
+          p.onTwoPoints(p.tool, next); setDraft([])
+        }
         return
       }
       default:
@@ -159,6 +182,9 @@ export function SolarCanvas(p: SolarCanvasProps) {
   }
 
   function onUp() {
+    const pair = pendingPair.current
+    pendingPair.current = null
+    if (pair && (p.tool === 'north' || p.tool === 'fall' || p.tool === 'calibrate')) { p.onTwoPoints(p.tool, pair); setDraft([]); return }
     if (!dragStart || !dragNow) { setDragStart(null); return }
     const a = dragStart
     const b = dragNow
@@ -341,6 +367,14 @@ export function SolarCanvas(p: SolarCanvasProps) {
             {!exporting && <Transformer ref={trRef} resizeEnabled={false} rotateEnabled flipEnabled={false} />}
           </Layer>
         </Stage>
+      )}
+      {img && (
+        <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
+          {closable && <button type="button" onClick={finishPolygon} title="Close the outline (Enter)">Close shape</button>}
+          <button type="button" onClick={vp.fitToView} title="Fit to view (0)" aria-label="Fit to view">⤢</button>
+          <button type="button" onClick={vp.zoomIn} title="Zoom in (+)" aria-label="Zoom in">+</button>
+          <button type="button" onClick={vp.zoomOut} title="Zoom out (−)" aria-label="Zoom out">−</button>
+        </div>
       )}
     </div>
   )

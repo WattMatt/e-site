@@ -11,7 +11,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createSe
 vi.mock('@/lib/solar/access', () => ({ getSolarAccessLevel: h.getSolarAccessLevel }))
 vi.mock('@/lib/auth/require-role', () => ({ requireEffectiveRole: h.requireEffectiveRole, requireRole: h.requireRole }))
 
-import { listProjectReportsAction, getProjectReportUrlAction } from './project-reports.actions'
+import { listProjectReportsAction, getProjectReportUrlAction, deleteProjectReportAction } from './project-reports.actions'
 import { fakeSupabase } from '@/test/fake-supabase'
 
 const P = '00000000-0000-0000-0000-000000000011'
@@ -52,5 +52,23 @@ describe('Solar report kinds read on the Solar level', () => {
   it('does not consult Solar for an ordinary kind', async () => {
     await listProjectReportsAction(P, 'tenant_schedule')
     expect(h.getSolarAccessLevel).not.toHaveBeenCalled()
+  })
+})
+
+describe('deleteProjectReportAction — review fix: Solar kinds need Solar Edit', () => {
+  it('an org writer with only Solar View cannot delete a layout sheet', async () => {
+    const { client } = fakeSupabase({ tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: 'o' }] } })
+    h.createClient.mockResolvedValue(client)
+    h.requireRole.mockResolvedValue({ ok: true })
+    h.getSolarAccessLevel.mockResolvedValue('view')
+    await expect(deleteProjectReportAction(P, R)).resolves.toEqual({ error: 'You do not have Solar edit access on this project.' })
+  })
+  it('Solar Edit may delete it', async () => {
+    const { client } = fakeSupabase({ tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: 'o' }] } })
+    h.createClient.mockResolvedValue(client)
+    h.requireRole.mockResolvedValue({ ok: true })
+    h.getSolarAccessLevel.mockResolvedValue('edit')
+    h.createServiceClient.mockReturnValue({ storage: { from: () => ({ remove: vi.fn(async () => ({ error: null })) }) } })
+    await expect(deleteProjectReportAction(P, R)).resolves.toEqual({ ok: true })
   })
 })

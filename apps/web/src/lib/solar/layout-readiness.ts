@@ -22,7 +22,10 @@ export async function loadLayoutReadiness(supabase: AnyClient, projectId: string
   return {
     layouts: layouts.length,
     arraysWithModules: layouts.reduce((s, l) => s + (Number(l.summary?.arraysWithModules) || 0), 0),
-    northSet: layouts.length > 0 && layouts.every((l) => north.get(l.roof_source_id) === true),
+    // Spec §2.3 green = ≥ 1 array with modules and a north reference: ONE complete
+    // layout is enough; an empty draft on an un-north'd sheet must not hold it back.
+    northSet: layouts.some((l) => north.get(l.roof_source_id) === true && (Number(l.summary?.arraysWithModules) || 0) > 0)
+      || (layouts.length > 0 && layouts.every((l) => north.get(l.roof_source_id) === true)),
     arrayOutsideRoof: layouts.some((l) => l.summary?.arrayOutsideRoof === true),
   }
 }

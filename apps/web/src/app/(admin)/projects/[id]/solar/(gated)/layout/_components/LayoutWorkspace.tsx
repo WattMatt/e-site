@@ -19,6 +19,7 @@ import { planModuleBlock } from '@/lib/solar/block-plan'
 import { getDraft, setDraft, clearDraft } from '@/lib/sheet/draft-store'
 import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
 import type { LayoutEditorData } from '@/lib/solar/layout-loader'
+import { applySaveResult, draftOffer, LAYERS, visibleObjects, type LayoutDraft } from '@/lib/solar/layout-editor-state'
 import { EMPTY_SELECTION, type ExportJpeg, type LayoutTool, type Selection } from './SolarCanvas'
 import { LayoutToolbar } from './LayoutToolbar'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -31,7 +32,7 @@ const SolarCanvas = dynamic(() => import('./SolarCanvas').then((m) => m.SolarCan
 })
 const Layout3DPreview = dynamic(() => import('./Layout3DPreview').then((m) => m.Layout3DPreview), { ssr: false })
 
-type Draft = { objects: LayoutObject[]; basedOn: string; savedAt: string }
+type Draft = LayoutDraft
 const uuid = () => crypto.randomUUID()
 
 export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; canEdit: boolean }) {
@@ -52,7 +53,11 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   const [preview, setPreview] = useState<number[][] | null>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [restorable, setRestorable] = useState<Draft | null>(null)
+  const [restorable, setRestorable] = useState<{ draft: Draft; stale: boolean } | null>(null)
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(() => new Set())
+  // A STABLE id for the auto-fill result: a fresh uuid() per render re-planned
+  // and re-previewed on every render (review C1).
+  const [fillId, setFillId] = useState('')
   const [show3d, setShow3d] = useState(false)
   const [northInput, setNorthInput] = useState(north === null ? '' : String(north))
   const exporterRef = useRef<ExportJpeg | null>(null)
@@ -66,17 +71,22 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
 
   const commit = useCallback((next: LayoutObject[]) => setHist((h) => pushHistory(h, next)), [])
 
-  // Drafts: autosave every change; offer a restore when a draft for THIS server version differs.
+  // Drafts: autosave every change; offer a restore when a stored draft differs
+  // from the server copy — including a draft of an OLDER version (after a
+  // stale-save refusal and a reload), flagged so, so work is never dropped.
+  const [draftChecked, setDraftChecked] = useState(false)
   useEffect(() => {
     void getDraft<Draft>(draftKey).then((d) => {
-      if (d && d.basedOn === data.layout.updatedAt && diffObjects(data.objects, d.objects).upserts.length + diffObjects(data.objects, d.objects).deletes.length > 0) setRestorable(d)
+      setRestorable(draftOffer(d ?? null, data.layout.updatedAt, data.objects))
+      setDraftChecked(true)
     })
   }, [draftKey, data.layout.updatedAt, data.objects])
   useEffect(() => {
-    if (!canEdit) return
+    // Never overwrite a draft the user has not yet restored or discarded.
+    if (!canEdit || !draftChecked || restorable) return
     const t = setTimeout(() => { if (dirty) void setDraft<Draft>(draftKey, { objects, basedOn: updatedAt, savedAt: new Date().toISOString() }) }, 500)
     return () => clearTimeout(t)
-  }, [objects, dirty, draftKey, updatedAt, canEdit])
+  }, [objects, dirty, draftKey, updatedAt, canEdit, draftChecked, restorable])
 
   const roofs = objects.filter((o): o is RoofObject => o.kind === 'roof')
   const obstructions = objects.filter((o): o is ObstructionObject => o.kind === 'obstruction')
@@ -94,14 +104,15 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   async function save() {
     if (!dirty || saving) return
     setSaving(true); setMessage(null)
+    const sent = objects
     const res = await saveLayoutObjectsAction({ projectId: data.projectId, layoutId: data.layout.id, expectedUpdatedAt: updatedAt,
       upserts: diff.upserts.map(({ id, kind, geometry, props }) => ({ id, kind, geometry, props })), deletes: diff.deletes })
     setSaving(false)
     if ('error' in res) { setMessage(res.error); return }
     if ('fieldErrors' in res) { setMessage(Object.values(res.fieldErrors)[0] ?? 'Could not save.'); return }
-    const stamped = objects.map((o) => (o.id in res.pixelsPerMeter ? ({ ...o, pixelsPerMeter: res.pixelsPerMeter[o.id] ?? null } as LayoutObject) : o))
-    setSaved(stamped)
-    setHist((h) => ({ ...h, present: stamped }))
+    // Fold into what the user has NOW: edits made during the round trip stay (review I3).
+    setSaved(applySaveResult(sent, [], res.pixelsPerMeter).saved)
+    setHist((h) => ({ ...h, present: applySaveResult(sent, h.present, res.pixelsPerMeter).present }))
     setUpdatedAt(res.updatedAt)
     await clearDraft(draftKey)
     setMessage('Saved.')
@@ -135,7 +146,10 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
     const inv = objects.find((o) => o.id === inverterId)
     const first = objects.find(isArrayObject)
     if (!inv || inv.kind !== 'inverter' || !first) { setMessage('Place an array and an inverter first.'); return }
-    const sameModule = objects.filter(isArrayObject).filter((a) => a.props.module.model === first.props.module.model && a.props.module.make === first.props.module.make)
+    // Same module AND mounting (the check is computed for one mounting); strings
+    // never span two arrays — autoString cuts per array (review I6).
+    const sameModule = objects.filter(isArrayObject).filter((a) => a.props.module.model === first.props.module.model
+      && a.props.module.make === first.props.module.make && a.props.mounting === first.props.mounting)
     try {
       const r = autoString({
         arrays: sameModule.map((a) => ({ id: a.id, quads: a.geometry.modules, facingSheetDeg: a.props.facingSheetDeg })),
@@ -157,7 +171,7 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   }
 
   function downloadBom() {
-    const csv = bomToCsv(layoutBom(objects, layoutSummary(objects, conditions)))
+    const csv = bomToCsv(layoutBom(objects, layoutSummary(objects, conditions, data.sheetPixelsPerMeter), data.sheetPixelsPerMeter))
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     a.download = `${data.layout.name.replace(/[^\w.-]+/g, '_')}-bom.csv`
@@ -168,6 +182,7 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   function openAutoFill() {
     const roof = selectedObject?.kind === 'roof' ? selectedObject : roofs.length === 1 ? roofs[0]! : null
     if (!roof) { setMessage('Select a roof area to fill.'); return }
+    setFillId(uuid())
     setAutoFillRoof(roof)
   }
 
@@ -204,8 +219,9 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
       )}
       {!calibrated && <p role="alert">This sheet has no scale yet. <a href={`/projects/${data.projectId}/solar/layout/sources/${data.source.id}`}>Calibrate it</a> before drawing.</p>}
       {restorable && (
-        <p role="status">Unsaved changes from {new Date(restorable.savedAt).toLocaleString('en-ZA')} were found.{' '}
-          <button type="button" onClick={() => { commit(restorable.objects); setRestorable(null) }}>Restore</button>{' '}
+        <p role="status">Unsaved changes from {new Date(restorable.draft.savedAt).toLocaleString('en-ZA')} were found
+          {restorable.stale ? ' — they were made on an older version of this layout; restoring puts them on top of the current one' : ''}.{' '}
+          <button type="button" onClick={() => { commit(restorable.draft.objects); setRestorable(null) }}>Restore</button>{' '}
           <button type="button" onClick={() => { void clearDraft(draftKey); setRestorable(null) }}>Discard</button>
         </p>
       )}
@@ -219,12 +235,40 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
           North (° clockwise from sheet-up) <input type="number" value={northInput} onChange={(e) => setNorthInput(e.target.value)} style={{ width: 70 }} />
           <button type="button" onClick={() => void saveNorth(Number(northInput), null)} disabled={northInput.trim() === '' || !Number.isFinite(Number(northInput))}>Set</button>
           {tool === 'string' && <span>{stringDraft.inverterId ? `String: ${stringDraft.modules.length} modules — Enter to finish` : 'Click an inverter, then modules in order'}</span>}
+          {tool === 'string' && stringDraft.inverterId && stringDraft.modules.length > 0 && <button type="button" onClick={finishString}>Finish string</button>}
+          {tool === 'fall' && <span>Click the ridge (high side), then the eave (low side) — the fall line runs downhill.</span>}
+          {(selection.ids.length > 0 || selection.modules.length > 0) && <button type="button" onClick={deleteSelection}>Delete selection</button>}
         </div>
       )}
       {message && <p role="status" style={{ fontSize: 12 }}>{message}</p>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0,1fr) 300px', gap: 12 }}>
+        <aside aria-label="Layouts and layers" style={{ display: 'grid', gap: 12, alignContent: 'start', fontSize: 13 }}>
+          <nav aria-label="Layouts">
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>Layouts</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {data.siblings.map((l) => (
+                <li key={l.id}>{l.id === data.layout.id
+                  ? <strong aria-current="page">{l.name}</strong>
+                  : <a href={`/projects/${data.projectId}/solar/layout/${l.id}`}>{l.name}</a>}</li>
+              ))}
+            </ul>
+            <a href={`/projects/${data.projectId}/solar/layout`} style={{ fontSize: 12 }}>All layouts</a>
+          </nav>
+          <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend style={{ fontSize: 13, fontWeight: 600 }}>Layers</legend>
+            {LAYERS.map((l) => (
+              <label key={l.key} style={{ display: 'block' }}>
+                <input type="checkbox" checked={!hiddenLayers.has(l.key)} onChange={() => setHiddenLayers((h) => {
+                  const n = new Set(h)
+                  if (n.has(l.key)) n.delete(l.key); else n.add(l.key)
+                  return n
+                })} /> {l.label}
+              </label>
+            ))}
+          </fieldset>
+        </aside>
         <div>
-          <SolarCanvas onExporter={onExporter} sheet={data.source.sheet} objects={objects} preview={preview} selection={selection} tool={tool}
+          <SolarCanvas onExporter={onExporter} sheet={data.source.sheet} objects={visibleObjects(objects, hiddenLayers)} preview={preview} selection={selection} tool={tool}
             readOnly={readOnly} circleMode={circleMode} sheetPixelsPerMeter={data.sheetPixelsPerMeter}
             onSelect={(sel) => {
               setSelection(sel)
@@ -267,19 +311,19 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
             onTranslate={(ids, dx, dy) => commit(translateObjects(objects, ids, dx, dy))}
             onTransform={(ids, deg, dx, dy) => commit(translateObjects(rotateObjects(objects, ids, deg, { x: 0, y: 0 }), ids, dx, dy))}
           />
-          {show3d && <Layout3DPreview objects={objects} />}
+          {show3d && <Layout3DPreview objects={objects} framePpm={data.sheetPixelsPerMeter} />}
         </div>
         <aside style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
           {autoFillRoof && (
             <AutoFillDialog roof={autoFillRoof} obstructions={obstructions} sheetPixelsPerMeter={data.sheetPixelsPerMeter} latDeg={data.latitude}
               northBearingDeg={north} module={data.layout.moduleSpec} defaultTiltDeg={data.layout.defaultTiltDeg} shadeFree={data.shadeFree}
-              newId={uuid()} onPreview={setPreview} onClose={() => setAutoFillRoof(null)}
+              newId={fillId} onPreview={setPreview} onClose={() => setAutoFillRoof(null)}
               onPlace={(plan) => { commit([...objects, plan.object]); setAutoFillRoof(null); setPreview(null) }} />
           )}
           <PropertiesPanel object={selectedObject} objects={objects} northBearingDeg={north} conditions={conditions} nodes={data.nodes} readOnly={readOnly}
             onChange={(next) => commit(objects.map((o) => (o.id === next.id ? next : o)))}
             onDrawFallLine={(roofId) => { setFallFor(roofId); setTool('fall') }} onAutoString={runAutoString} />
-          <SummaryPanel objects={objects} conditions={conditions} layoutName={data.layout.name} onDownloadBom={downloadBom} />
+          <SummaryPanel objects={objects} conditions={conditions} layoutName={data.layout.name} onDownloadBom={downloadBom} fallbackPpm={data.sheetPixelsPerMeter} />
         </aside>
       </div>
     </div>

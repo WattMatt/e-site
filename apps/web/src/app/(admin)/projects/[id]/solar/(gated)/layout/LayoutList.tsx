@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { GENERIC_MODULE_550, type LayoutModuleSpec } from '@esite/shared'
 import { createLayoutAction, deleteLayoutAction, duplicateLayoutAction, renameLayoutAction } from '@/actions/solar-layout.actions'
+import { uniqueCopyName } from '@/lib/solar/layout-editor-state'
 import { useArmedConfirm } from '../../_components/useArmedConfirm'
 
 type Row = { id: string; name: string; roofSourceId: string; dcKwp: number | null; moduleCount: number | null; updatedAt: string }
@@ -64,7 +65,7 @@ export function LayoutList({ projectId, canEdit, layouts, sources }: { projectId
               <td align="right">{l.dcKwp === null ? '—' : `${l.dcKwp.toFixed(2)} kWp`}</td>
               <td align="right">{new Date(l.updatedAt).toLocaleDateString('en-ZA')}</td>
               <td align="right">{canEdit && <>
-                <button type="button" onClick={() => void act(duplicateLayoutAction({ projectId, layoutId: l.id, name: `${l.name} (copy)` }))}>Duplicate</button>{' '}
+                <button type="button" onClick={() => void act(duplicateLayoutAction({ projectId, layoutId: l.id, name: uniqueCopyName(l.name, layouts.map((x) => x.name)) }))}>Duplicate</button>{' '}
                 <button type="button" onClick={() => setRenaming({ id: l.id, name: l.name, updatedAt: l.updatedAt })}>Rename</button>{' '}
                 <DeleteButton onConfirm={() => void act(deleteLayoutAction({ projectId, layoutId: l.id }))} />
               </>}</td>

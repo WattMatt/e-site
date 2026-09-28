@@ -19,3 +19,17 @@ describe('scene3d', () => {
     expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(2.278 * Math.sin(Math.PI / 12), 6)
   })
 })
+
+describe('scene3d — review fixes', () => {
+  const flat: RoofObject = { ...pitched, props: { ...pitched.props, roofType: 'flat', pitchDeg: 0, fallBearingDeg: null } }
+  it('positions share ONE frame: an obstruction saved at another scale stays at its drawn pixels', () => {
+    const obs: LayoutObject = { id: 'O', kind: 'obstruction', pixelsPerMeter: 20, geometry: { points: [40, 40, 60, 40, 60, 60, 40, 60] }, props: { name: 'O', setbackM: 0.5, heightM: 1 } }
+    const scene = buildScene3d([flat, obs], 10)
+    expect(scene.obstructions[0]!.base.map((v) => v[0])).toEqual([4, 6, 6, 4])
+  })
+  it('unsaved objects render with the sheet scale', () => {
+    const scene = buildScene3d([{ ...flat, pixelsPerMeter: null }], 10)
+    expect(scene.roofs).toHaveLength(1)
+    expect(buildScene3d([{ ...flat, pixelsPerMeter: null }]).roofs).toHaveLength(0)
+  })
+})

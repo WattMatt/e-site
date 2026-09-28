@@ -7,7 +7,7 @@ import 'server-only'
  * admin RLS, not secret) is read with the service client.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { readSolarOrgSettings, type LayoutModuleSpec, type LayoutObject } from '@esite/shared'
+import { readSolarOrgSettings, validateObjectInput, type LayoutModuleSpec, type LayoutObject } from '@esite/shared'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -29,10 +29,11 @@ export interface RoofSourceRow {
 
 type SourceDb = {
   id: string; kind: 'drawing' | 'satellite'; floor_plan_id: string | null; page_index: number; file_path: string | null
+  source_revision_id?: string | null
   north_bearing_deg: number | string | null; storage_path: string | null; m_per_px: number | string | null
   attribution: string | null; updated_at: string
 }
-const SOURCE_COLS = 'id, kind, floor_plan_id, page_index, file_path, north_bearing_deg, storage_path, m_per_px, attribution, updated_at'
+const SOURCE_COLS = 'id, kind, floor_plan_id, page_index, file_path, source_revision_id, north_bearing_deg, storage_path, m_per_px, attribution, updated_at'
 const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null)
 
 /** The scale 00211's layout_objects_bind would stamp: page scale, else page 1 → drawing, satellite → 1 / m per px. */
@@ -54,10 +55,10 @@ export function scaleForSource(
 async function sourcesWithScales(supabase: AnyClient, rows: SourceDb[]) {
   const fpIds = [...new Set(rows.map((r) => r.floor_plan_id).filter((x): x is string => !!x))]
   const [{ data: plans }, { data: pages }] = await Promise.all([
-    fpIds.length ? supabase.schema('tenants').from('floor_plans').select('id, name, file_path, pixels_per_meter').in('id', fpIds) : Promise.resolve({ data: [] }),
+    fpIds.length ? supabase.schema('tenants').from('floor_plans').select('id, name, file_path, source_revision_id, pixels_per_meter').in('id', fpIds) : Promise.resolve({ data: [] }),
     fpIds.length ? supabase.schema('tenants').from('floor_plan_page_scales').select('floor_plan_id, page_index, pixels_per_meter').in('floor_plan_id', fpIds) : Promise.resolve({ data: [] }),
   ])
-  const planRows = (plans ?? []) as Array<{ id: string; name: string; file_path: string; pixels_per_meter: number | string | null }>
+  const planRows = (plans ?? []) as Array<{ id: string; name: string; file_path: string; source_revision_id?: string | null; pixels_per_meter: number | string | null }>
   const planById = new Map(planRows.map((p) => [p.id, p]))
   const drawingScale = new Map(planRows.map((p) => [p.id, num(p.pixels_per_meter)]))
   const pageScale = new Map(((pages ?? []) as Array<{ floor_plan_id: string; page_index: number; pixels_per_meter: number | string }>)
@@ -74,7 +75,9 @@ async function sourcesWithScales(supabase: AnyClient, rows: SourceDb[]) {
       pixelsPerMeter: scaleForSource(r, drawingScale, pageScale),
       northBearingDeg: north,
       northSet: north !== null,
-      drawingChanged: r.kind === 'drawing' && !!plan && plan.file_path !== r.file_path,
+      // §6.5 anchor = file_path + source_revision_id: a new revision written to the SAME path counts.
+      drawingChanged: r.kind === 'drawing' && !!plan && (plan.file_path !== r.file_path
+        || (!!plan.source_revision_id && !!r.source_revision_id && plan.source_revision_id !== r.source_revision_id)),
       attribution: r.attribution,
       updatedAt: r.updated_at,
       currentFilePath: plan?.file_path ?? null,
@@ -94,6 +97,22 @@ export async function loadRoofSources(supabase: AnyClient, projectId: string): P
     studyId: (study as { id?: string } | null)?.id ?? null,
     sources: full.map(({ currentFilePath: _c, storagePath: _s, ...r }) => r),
   }
+}
+
+export type StoredObjectRow = { id: string; kind: string; geometry: unknown; props: unknown; pixels_per_meter: number | string | null }
+
+/**
+ * Rows of solar.layout_objects → LayoutObject, dropping any row that fails the
+ * same shape check a save applies. The table accepts any JSON from a direct
+ * PostgREST write by an Edit user, and one malformed row would otherwise crash
+ * the summary, the canvas and the export for every viewer.
+ */
+export function parseStoredObjects(rows: StoredObjectRow[]): LayoutObject[] {
+  return rows.flatMap((o) => {
+    const err = validateObjectInput({ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props })
+    if (err) { console.error('[solar-layout] skipped a malformed stored object', { id: o.id, kind: o.kind }); return [] }
+    return [{ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props, pixelsPerMeter: num(o.pixels_per_meter) } as LayoutObject]
+  })
 }
 
 export interface LayoutListRow {
@@ -126,6 +145,8 @@ export interface LayoutEditorData {
   shadeFree: { fromHour: number; toHour: number }
   setbackDefaults: { flatM: number; pitchedM: number }
   nodes: Array<{ id: string; label: string }>
+  /** Every layout of the study, for the editor's left column (spec §6.1). */
+  siblings: Array<{ id: string; name: string }>
 }
 
 export async function loadLayoutEditor(
@@ -140,11 +161,12 @@ export async function loadLayoutEditor(
   } | null
   if (!l) return null
 
-  const [{ data: srcRows }, { data: objRows }, { data: study }, { data: nodeRows }] = await Promise.all([
+  const [{ data: srcRows }, { data: objRows }, { data: study }, { data: nodeRows }, { data: siblingRows }] = await Promise.all([
     supabase.schema('solar').from('roof_sources').select(SOURCE_COLS).eq('id', l.roof_source_id),
     supabase.schema('solar').from('layout_objects').select('id, kind, geometry, props, pixels_per_meter').eq('layout_id', l.id),
     supabase.schema('solar').from('studies').select('latitude, organisation_id').eq('project_id', projectId).maybeSingle(),
     supabase.schema('structure').from('nodes').select('id, code, name').eq('project_id', projectId).eq('status', 'active').order('code'),
+    supabase.schema('solar').from('layouts').select('id, name').eq('project_id', projectId).order('name'),
   ])
   const [src] = await sourcesWithScales(supabase, (srcRows ?? []) as SourceDb[])
   if (!src) return null
@@ -171,12 +193,12 @@ export async function loadLayoutEditor(
     source: { ...sourceRow, sheet: { key: src.id, signedUrl, isPdf, pageIndex: src.pageIndex } },
     sheetPixelsPerMeter: src.pixelsPerMeter,
     drawingChanged: src.drawingChanged,
-    objects: ((objRows ?? []) as Array<{ id: string; kind: string; geometry: unknown; props: unknown; pixels_per_meter: number | string | null }>)
-      .map((o) => ({ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props, pixelsPerMeter: num(o.pixels_per_meter) }) as LayoutObject),
+    objects: parseStoredObjects((objRows ?? []) as StoredObjectRow[]),
     latitude: num((study as { latitude?: unknown } | null)?.latitude),
     shadeFree: { fromHour: n('row_spacing_shade_free_from_hour', 9), toHour: n('row_spacing_shade_free_to_hour', 15) },
     setbackDefaults: { flatM: n('edge_setback_flat_m', 0.5), pitchedM: n('edge_setback_pitched_m', 0.3) },
     nodes: ((nodeRows ?? []) as Array<{ id: string; code: string; name: string | null }>)
       .map((x) => ({ id: x.id, label: x.name ? `${x.code} — ${x.name}` : x.code })),
+    siblings: ((siblingRows ?? []) as Array<{ id: string; name: string }>).map((x) => ({ id: x.id, name: x.name })),
   }
 }

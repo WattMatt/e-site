@@ -76,3 +76,11 @@ describe('setRoofNorthAction', () => {
       .resolves.toEqual({ error: 'North is two points on the sheet.' })
   })
 })
+
+describe('setRoofNorthAction — review fix', () => {
+  it('a bearing that rounds up to 360 is stored as 0 (the column refuses 360)', async () => {
+    setup({ writes: { 'solar.roof_sources:update': { data: [{ updated_at: 'T2' }] } } })
+    await expect(setRoofNorthAction({ projectId: P, roofSourceId: RS, bearingDeg: 359.996, points: null, expectedUpdatedAt: 'T1' }))
+      .resolves.toEqual({ ok: true, updatedAt: 'T2', bearingDeg: 0 })
+  })
+})

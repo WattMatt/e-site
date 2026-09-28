@@ -53,3 +53,13 @@ describe('LayoutList', () => {
     expect(screen.getByText('Add a roof source in Site & Supply first.')).toBeTruthy()
   })
 })
+
+describe('LayoutList — review fix', () => {
+  it('Duplicate proposes a name no other layout has', async () => {
+    h.dup.mockResolvedValue({ ok: true, id: 'L9' })
+    const two = [...layouts, { ...layouts[0]!, id: 'L2', name: 'Option A (copy)' }]
+    render(<LayoutList projectId="p1" canEdit layouts={two} sources={sources} />)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Duplicate' })[0]!)
+    await waitFor(() => expect(h.dup).toHaveBeenCalledWith({ projectId: 'p1', layoutId: 'L1', name: 'Option A (copy 2)' }))
+  })
+})

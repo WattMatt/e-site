@@ -87,3 +87,20 @@ describe('autoString', () => {
     })).toThrow('No string length passes')
   })
 })
+
+describe('autoString — review fix: a series string never spans two arrays', () => {
+  const small = { ...INV, mppts: 4, vDcMax: 110, vMpptMin: 60, vMpptMax: 100, iMpptMax: 40 }
+  it('strings are cut per array; each array keeps its own remainder', () => {
+    const r = autoString({
+      arrays: [
+        { id: 'A', quads: [quad(0, 0), quad(10, 0), quad(20, 0)], facingSheetDeg: 0 },
+        { id: 'B', quads: [quad(0, 40), quad(10, 40), quad(20, 40)], facingSheetDeg: 180 },
+      ],
+      existingStrings: [], inverterId: 'I', inverter: small, module: M, mounting: 'racked', conditions: COND,
+    })
+    expect(r.strings).toHaveLength(2)
+    for (const s of r.strings) expect(new Set(s.modules.map((m) => m.arrayId)).size).toBe(1)
+    expect(r.unstrung).toHaveLength(2)
+    expect(r.reason).toBe('2 modules are left over — fewer than one string of 2.')
+  })
+})

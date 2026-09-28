@@ -70,7 +70,8 @@ export async function setRoofNorthAction(input: {
   if (input.points !== null && !(Array.isArray(input.points) && input.points.length === 4 && input.points.every((v) => typeof v === 'number' && Number.isFinite(v)))) {
     return { error: 'North is two points on the sheet.' }
   }
-  const bearingDeg = Math.round(mod360(input.bearingDeg) * 100) / 100
+  // Round THEN wrap: 359.996 rounds to 360, which the column (< 360) refuses.
+  const bearingDeg = mod360(Math.round(mod360(input.bearingDeg) * 100) / 100)
   const { data, error } = await supabase.schema('solar').from('roof_sources')
     .update({ north_bearing_deg: bearingDeg, north_points: input.points })
     .eq('id', input.roofSourceId).eq('project_id', input.projectId).eq('updated_at', input.expectedUpdatedAt)

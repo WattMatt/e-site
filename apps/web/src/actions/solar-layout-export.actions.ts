@@ -11,7 +11,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
-import { scaleForSource } from '@/lib/solar/layout-loader'
+import { parseStoredObjects, scaleForSource, type StoredObjectRow } from '@/lib/solar/layout-loader'
+
+/** The crop drives the scale bar; the canvas never exports more than this. */
+const MAX_CROP_PX = 20_000
+const MAX_NOTE = 2000
 import { renderLayoutSheetPdf } from '@/lib/solar/layout-sheet-pdf'
 import { layoutSummary, stringColour, type LayoutObject } from '@esite/shared'
 
@@ -31,7 +35,8 @@ export async function exportLayoutSheetAction(input: {
   if (!user) return { error: 'You are not signed in.' }
   if (typeof input.jpegBase64 !== 'string' || input.jpegBase64.length < 100 || input.jpegBase64.length > 9_500_000) return { error: 'The sheet image could not be read — try again.' }
   const c = input.crop
-  if (!c || ![c.x, c.y, c.w, c.h].every((v) => typeof v === 'number' && Number.isFinite(v)) || c.w <= 0 || c.h <= 0) return { error: 'The sheet image could not be read — try again.' }
+  if (!c || ![c.x, c.y, c.w, c.h].every((v) => typeof v === 'number' && Number.isFinite(v)) || c.w <= 0 || c.h <= 0 || c.w > MAX_CROP_PX || c.h > MAX_CROP_PX) return { error: 'The sheet image could not be read — try again.' }
+  if (input.note != null && (typeof input.note !== 'string' || input.note.length > MAX_NOTE)) return { error: 'The note is too long (2000 characters at most).' }
 
   const { data: layout } = await supabase.schema('solar').from('layouts')
     .select('id, project_id, organisation_id, name, roof_source_id, design_t_min_c, design_t_amb_max_c').eq('id', input.layoutId).eq('project_id', input.projectId).maybeSingle()
@@ -57,8 +62,7 @@ export async function exportLayoutSheetAction(input: {
       new Map(((pages ?? []) as Array<{ page_index: number; pixels_per_meter: number }>).map((x) => [`${src.floor_plan_id}#${x.page_index}`, Number(x.pixels_per_meter)])))
   } else ppm = scaleForSource(src, new Map(), new Map())
 
-  const objects = ((objs ?? []) as Array<{ id: string; kind: string; geometry: unknown; props: unknown; pixels_per_meter: number | null }>)
-    .map((o) => ({ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props, pixelsPerMeter: o.pixels_per_meter == null ? null : Number(o.pixels_per_meter) }) as LayoutObject)
+  const objects: LayoutObject[] = parseStoredObjects((objs ?? []) as StoredObjectRow[])
   const s = layoutSummary(objects, { tMinC: Number(l.design_t_min_c), tAmbMaxC: Number(l.design_t_amb_max_c) })
   const inverters = new Map(objects.filter((o) => o.kind === 'inverter').map((o) => [o.id, o.kind === 'inverter' ? o.props.name : '']))
   const legend = objects.filter((o) => o.kind === 'string').map((o, i) => ({
