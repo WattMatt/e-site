@@ -122,4 +122,23 @@ describe('TaskDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }))
     expect(onDelete).toHaveBeenCalledWith('t1')
   })
+
+  it('the gatekeeper can sign off a task that is awaiting sign-off, with the version it was read at', async () => {
+    const onSignOff = vi.fn(async () => null)
+    const waiting = { ...existing, status: 'done' as const, awaitingSignOff: true, gatekeeperId: 'gk' }
+    render(<TaskDialog {...base} mode="task" initial={waiting} viewerId="gk" onSubmit={vi.fn()} onSignOff={onSignOff} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign off' }))
+    await waitFor(() => expect(onSignOff).toHaveBeenCalledWith({ id: 't1', expectedUpdatedAt: 'U1', status: 'done' }))
+  })
+  it('no Sign off for anyone but the gatekeeper, nor for a task that is not awaiting sign-off, nor below Edit', () => {
+    const waiting = { ...existing, status: 'done' as const, awaitingSignOff: true, gatekeeperId: 'gk' }
+    const { unmount } = render(<TaskDialog {...base} mode="task" initial={waiting} viewerId="someone-else" onSubmit={vi.fn()} onSignOff={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Sign off' })).toBeNull()
+    unmount()
+    const r2 = render(<TaskDialog {...base} mode="task" initial={{ ...existing, gatekeeperId: 'gk' }} viewerId="gk" onSubmit={vi.fn()} onSignOff={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Sign off' })).toBeNull()
+    r2.unmount()
+    render(<TaskDialog {...base} canEdit={false} mode="task" initial={waiting} viewerId="gk" onSubmit={vi.fn()} onSignOff={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Sign off' })).toBeNull()
+  })
 })

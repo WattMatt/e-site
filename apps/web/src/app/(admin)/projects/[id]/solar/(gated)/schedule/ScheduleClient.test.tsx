@@ -148,6 +148,15 @@ describe('ScheduleClient', () => {
     expect(h.create.mock.calls[0][0].tasks[0].gatekeeperId).toBe(GK)
   })
 
+  it('the gatekeeper signs off an awaiting task from its dialog through the update action, with its token', async () => {
+    const start = data({ tasks: [task('t1', { status: 'done', awaitingSignOff: true, gatekeeperId: 'u1', updatedAt: 'U7' }), ...data().tasks.slice(1)] })
+    h.load.mockResolvedValue({ ok: true, data: start })
+    render(<ScheduleClient initial={start} />)
+    fireEvent.click(screen.getByRole('button', { name: 'SOLAR-1 Task t1' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign off' }))
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({ projectId: P, patches: [{ id: 't1', status: 'done', expectedUpdatedAt: 'U7' }] }))
+  })
+
   it('removing a link resolves its id from the CURRENT links, before and after undo re-creates it', async () => {
     render(<ScheduleClient initial={data()} />)
     fireEvent.click(await stub('stub open link t1 t2'))

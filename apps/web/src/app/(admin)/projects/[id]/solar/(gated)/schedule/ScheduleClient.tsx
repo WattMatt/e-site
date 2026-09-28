@@ -458,7 +458,8 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
 
       {(dialog?.kind === 'task' || dialog?.kind === 'milestone') && (
         <TaskDialog key={`${dialog.kind}:${dialog.taskId ?? 'new'}`} mode={dialog.kind} initial={editing} owners={data.owners} cal={cal}
-          canEdit={data.canEdit} defaultStart={data.today}
+          canEdit={data.canEdit} defaultStart={data.today} viewerId={data.currentUserId}
+          onSignOff={(patch) => update('Sign off', [patch], true)}
           onSubmit={onDialogSubmit} onDelete={(id) => void deleteTasks([id])} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'link' && (

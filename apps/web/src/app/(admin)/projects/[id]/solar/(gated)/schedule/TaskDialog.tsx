@@ -33,6 +33,10 @@ export interface TaskDialogProps {
   /** Resolves to null on success (the dialog closes) or a sentence to show. */
   onSubmit: (r: TaskDialogResult) => Promise<string | null>
   onDelete?: (id: string) => void
+  /** The signed-in user (ScheduleData.currentUserId): the Sign off button is theirs only if they are the gatekeeper. */
+  viewerId?: string
+  /** Sign off a task awaiting sign-off (status done → the work item closes). Resolves like onSubmit. */
+  onSignOff?: (patch: TaskPatch) => Promise<string | null>
   onClose: () => void
 }
 
@@ -42,7 +46,7 @@ const PANEL = {
   maxWidth: 'calc(100vw - 32px)', maxHeight: '90vh', overflow: 'auto', fontSize: 13, display: 'grid', gap: 8,
 } as const
 
-export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, onSubmit, onDelete, onClose }: TaskDialogProps) {
+export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, onSubmit, onDelete, viewerId, onSignOff, onClose }: TaskDialogProps) {
   const milestone = mode === 'milestone'
   const [name, setName] = useState(initial?.name ?? '')
   const [category, setCategory] = useState(initial?.category ?? '')
@@ -128,6 +132,18 @@ export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, 
     else onClose()
   }
 
+  // The status select already reads "Done" for a task awaiting sign-off, so Save
+  // would send nothing: the gatekeeper needs an explicit action.
+  const canSignOff = canEdit && !!initial && initial.awaitingSignOff && !!viewerId && initial.gatekeeperId === viewerId && !!onSignOff
+  async function signOff() {
+    if (!initial || !onSignOff) return
+    setBusy(true)
+    const err = await onSignOff({ id: initial.id, expectedUpdatedAt: initial.updatedAt, status: 'done' })
+    setBusy(false)
+    if (err) setErrors([err])
+    else onClose()
+  }
+
   const ro = !canEdit
   const noun = milestone ? 'milestone' : 'task'
   return (
@@ -175,7 +191,12 @@ export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, 
                 {GANTT_STATUSES.map((s) => <option key={s} value={s}>{GANTT_STATUS_LABELS[s]}</option>)}
               </select>
             </label>
-            {initial?.awaitingSignOff && <div style={{ color: 'var(--c-amber)' }}>Done — awaiting sign-off by the person who scheduled it.</div>}
+            {initial?.awaitingSignOff && (
+              <div style={{ color: 'var(--c-amber)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span>{canSignOff ? 'Done — awaiting your sign-off.' : 'Done — awaiting sign-off by the person who scheduled it.'}</span>
+                {canSignOff && <button type="button" disabled={busy} onClick={() => void signOff()}>Sign off</button>}
+              </div>
+            )}
             <label>Progress % <input type="number" min={0} max={100} step={5} disabled={ro} value={progress} onChange={(e) => setProgress(e.target.value)} /></label>
           </>
         )}
