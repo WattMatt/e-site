@@ -3,3 +3,4 @@
 export * from './config'
 export * from './finance-config'
 export * from './equipment'
+export * from './tou-periods'
