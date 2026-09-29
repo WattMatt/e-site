@@ -48,6 +48,45 @@ export default async function SettingsPage() {
           </div>
         </div>
 
+        {/* WhatsApp — linking lives on /settings/account, which was otherwise
+            reachable only through the red "Delete Account" button. */}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">WhatsApp</span>
+          </div>
+          <div style={{ padding: '16px 18px' }}>
+            <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+              Get site items assigned to you on WhatsApp, and acknowledge, finish or add photos by replying.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Link
+                href="/settings/account"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Link my WhatsApp →
+              </Link>
+              {isAdmin && (
+                <Link
+                  href="/settings/whatsapp"
+                  style={{
+                    display: 'inline-block',
+                    fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                    border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Manage WhatsApp →
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Organisation */}
         {isAdmin && org && (
           <div className="data-panel">

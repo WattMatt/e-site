@@ -66,6 +66,24 @@ describe('linking by an inbound code', () => {
     expect(r.reason).toBe('no_pending_link')
     expect(sent).toEqual([LINK_REPLIES.noPending])
   })
+  it('just the six digits (no LINK prefix) from a number mid-link also links — people type the code they see', async () => {
+    ;(store.linkByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({ id: LINK, user_id: 'U', phone_e164: PHONE, status: 'pending_otp' })
+    const r = await processInbound(row(' 482917 '), deps())
+    expect(r).toMatchObject({ outcome: 'applied', reason: 'linked' })
+    expect(sent).toEqual([LINK_REPLIES.linked])
+  })
+  it('six digits from a number with NO link in progress is not treated as a code', async () => {
+    const r = await processInbound(row('482917'), deps())
+    expect(r.outcome).toBe('unknown_sender')
+    expect(store.pendingOtpLinks).not.toHaveBeenCalled()
+  })
+  it('anything else from a number mid-link is told to send the code, never "ask your project manager"', async () => {
+    ;(store.linkByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({ id: LINK, user_id: 'U', phone_e164: PHONE, status: 'pending_otp' })
+    const r = await processInbound(row('hello'), deps())
+    expect(r).toMatchObject({ outcome: 'refused', reason: 'awaiting_link_code', userId: 'U' })
+    expect(sent).toEqual([LINK_REPLIES.sendCode])
+    expect(patches).toEqual([])
+  })
   it('if another account took the number meanwhile, it says so', async () => {
     ;(store.updateLink as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('duplicate key value violates unique constraint'))
     const r = await processInbound(row('LINK 482917'), deps())
