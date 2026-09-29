@@ -174,7 +174,7 @@ describe('free content — never guess', () => {
     expect(store.calls.map((c) => c[0]).filter((f) => f !== 'wa_my_projects')).toEqual(['wa_open_items'])
     expect(store.linkPatches[0]).toMatchObject({ pending_inbound_id: 'in-1' })
     expect(meta.sent[0].kind).toBe('list')
-    expect((meta.sent[0].extra as Array<{ id: string }>).map((x) => x.id)).toEqual([`pick:${A}`, `pick:${B}`])
+    expect((meta.sent[0].extra as Array<{ id: string }>).map((x) => x.id)).toEqual(['menu:post', `pick:${A}`, `pick:${B}`])
   })
   it('picking replays the held message onto the chosen item', async () => {
     setLink(link({ pending_inbound_id: 'in-0' }))

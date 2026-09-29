@@ -185,11 +185,142 @@ export async function handleChannelContent(msg: InboundMessage, link: LinkRow, i
 
 export { decodePayload }
 
-async function startPost(deps: ProcessorDeps, link: LinkRow): Promise<ProcessResult> { return res('refused', 'todo', link.user_id, null) }
-async function promptForPost(deps: ProcessorDeps, link: LinkRow, _p: PendingPost): Promise<ProcessResult> { return res('refused', 'todo', link.user_id, null) }
-async function askClassify(deps: ProcessorDeps, link: LinkRow, _p: PendingPost): Promise<ProcessResult> { return res('refused', 'todo', link.user_id, null) }
-async function holdInPost(deps: ProcessorDeps, link: LinkRow, _p: PendingPost, _id: string): Promise<ProcessResult> { return res('refused', 'todo', link.user_id, null) }
-async function classifyPost(deps: ProcessorDeps, link: LinkRow, _c: 'diary' | 'issue', _id: string): Promise<ProcessResult> { return res('refused', 'todo', link.user_id, null) }
+function newPostId(): string {
+  return crypto.randomUUID()
+}
 
-export async function expireStalePost(_deps: ProcessorDeps, _link: LinkRow): Promise<string | null> { return null }
-export async function pickPrefixRows(_deps: ProcessorDeps, _link: LinkRow): Promise<Array<{ id: string; title: string; description?: string }>> { return [] }
+async function currentProjectRow(deps: ProcessorDeps, link: LinkRow): Promise<ProjectRow | null> {
+  const list = await myProjects(deps, link)
+  return list.find((p) => p.id === link.current_project_id) ?? null
+}
+
+async function promptForPost(deps: ProcessorDeps, link: LinkRow, post: PendingPost): Promise<ProcessResult> {
+  await deps.meta.sendText(link.phone_e164, CHANNEL.postPrompt(post.project_name ?? 'the project'))
+  return res('applied', 'post_armed', link.user_id, null)
+}
+
+async function askClassify(deps: ProcessorDeps, link: LinkRow, post: PendingPost): Promise<ProcessResult> {
+  await deps.meta.sendButtons(link.phone_e164, CHANNEL.postAsk(post.project_name ?? 'the project'), [
+    { id: encodePayload({ kind: 'post', choice: 'diary', postId: post.post_id }), title: CHANNEL.diaryButton },
+    { id: encodePayload({ kind: 'post', choice: 'issue', postId: post.post_id }), title: CHANNEL.issueButton },
+  ])
+  const next = { ...post, asked: true }
+  await deps.store.updateLink(link.id, { pending_post: next })
+  link.pending_post = next
+  return res('unmatched', 'post_asked', link.user_id, null)
+}
+
+/** "Post to {project}" chosen from the menu or the pick list. A held unmatched message becomes the post's first message. */
+async function startPost(deps: ProcessorDeps, link: LinkRow): Promise<ProcessResult> {
+  const project = await currentProjectRow(deps, link)
+  const post: PendingPost = {
+    post_id: newPostId(), project_id: project?.id ?? null, project_name: project?.name ?? null,
+    inbound_ids: link.pending_inbound_id ? [link.pending_inbound_id] : [], started_at: deps.now().toISOString(), asked: false,
+  }
+  await deps.store.updateLink(link.id, { pending_post: post, pending_inbound_id: null })
+  link.pending_post = post
+  link.pending_inbound_id = null
+  if (!project) return sendProjectList(deps, link, await myProjects(deps, link), CHANNEL.whichProject)
+  if (project.role === 'client_viewer') {
+    await deps.store.updateLink(link.id, { pending_post: null })
+    await deps.meta.sendText(link.phone_e164, CHANNEL.notYourProject)
+    return res('refused', 'client_viewer_post', link.user_id, null)
+  }
+  return post.inbound_ids.length ? askClassify(deps, link, post) : promptForPost(deps, link, post)
+}
+
+async function holdInPost(deps: ProcessorDeps, link: LinkRow, post: PendingPost, inboundId: string): Promise<ProcessResult> {
+  const next: PendingPost = { ...post, inbound_ids: [...post.inbound_ids, inboundId] }
+  await deps.store.updateLink(link.id, { pending_post: next })
+  link.pending_post = next
+  if (!next.project_id) return res('unmatched', 'post_held', link.user_id, null)
+  if (!next.asked) return askClassify(deps, link, next)
+  return res('unmatched', 'post_held', link.user_id, null)
+}
+
+export async function expireStalePost(deps: ProcessorDeps, link: LinkRow): Promise<string | null> {
+  const post = link.pending_post as PendingPost | null
+  if (!post || isWithin(post.started_at, deps.now(), PENDING_POST_TTL_MS)) return null
+  for (const id of post.inbound_ids) {
+    await deps.store.markInbound(id, { outcome: 'unmatched', outcome_reason: 'post_expired', resolved_user_id: link.user_id,
+      resolved_item_id: null, processed_at: deps.now().toISOString() })
+  }
+  await deps.store.updateLink(link.id, { pending_post: null })
+  link.pending_post = null
+  return post.inbound_ids.length ? CHANNEL.postExpired(post.project_name) : null
+}
+
+/** Rows prepended to the foundation's "Which item is this for?" list. */
+export async function pickPrefixRows(deps: ProcessorDeps, link: LinkRow): Promise<Array<{ id: string; title: string; description?: string }>> {
+  const project = await currentProjectRow(deps, link)
+  if (project?.role === 'client_viewer') return []
+  return [{ id: encodePayload({ kind: 'menu', row: 'post' }),
+    title: project ? CHANNEL.postToProject(project.name) : CHANNEL.postToAProject, description: CHANNEL.postNotItem }]
+}
+
+const extOf = (mime: string) => (mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg')
+
+async function classifyPost(deps: ProcessorDeps, link: LinkRow, choice: 'diary' | 'issue', postId: string): Promise<ProcessResult> {
+  const { store, meta, now } = deps
+  const to = link.phone_e164
+  const post = link.pending_post as PendingPost | null
+  if (!post || post.post_id !== postId || !isWithin(post.started_at, now(), PENDING_POST_TTL_MS)) {
+    await meta.sendText(to, CHANNEL.postGone)
+    return res('refused', 'post_gone', link.user_id, null)
+  }
+  if (!post.project_id || post.inbound_ids.length === 0) {
+    await meta.sendText(to, CHANNEL.postEmpty)
+    return res('refused', 'post_empty', link.user_id, null)
+  }
+  const rows = (await Promise.all(post.inbound_ids.map((id) => store.inboundById(id)))).filter((r): r is InboundRow => Boolean(r))
+  const msgs = rows.map((r) => ({ row: r, msg: r.raw as InboundMessage }))
+  const texts = msgs.map((m) => m.msg.text).filter((t): t is string => Boolean(t && t.trim()))
+  const body = texts.join('\n')
+  const photos = msgs.filter((m) => m.msg.type === 'image' && m.msg.imageId)
+  const name = post.project_name ?? 'the project'
+  let itemId: string | null = null
+
+  if (choice === 'diary') {
+    const r = await store.call('wa_post_diary', { p_user: link.user_id, p_project: post.project_id, p_body: body, p_inbound: rows[0]?.id ?? null })
+    if (r?.code !== 'ok') {
+      await meta.sendText(to, CHANNEL.postRefused(String(r?.message ?? "you can't post to this project")))
+      await store.updateLink(link.id, { pending_post: null })
+      return res('refused', `diary_${r?.code ?? 'error'}`, link.user_id, null)
+    }
+    for (const { row: pr, msg } of photos) {
+      const { bytes, mime } = await meta.fetchMedia(msg.imageId!)
+      const file = `wa-${msg.id}.${extOf(mime)}`
+      const path = `${r.organisation_id}/${post.project_id}/${r.id}/${file}`
+      await store.upload('diary-attachments', path, bytes, mime)
+      await store.call('wa_add_diary_attachment', { p_user: link.user_id, p_entry: r.id, p_path: path, p_name: file,
+        p_mime: mime, p_size: bytes.length, p_inbound: pr.id })
+    }
+    await meta.sendText(to, CHANNEL.diaryDone(name, photos.length))
+  } else {
+    const title = (texts[0] ?? '').slice(0, 120)
+    const r = await store.call('wa_post_issue', { p_user: link.user_id, p_project: post.project_id, p_title: title, p_inbound: rows[0]?.id ?? null })
+    if (r?.code !== 'ok') {
+      await meta.sendText(to, CHANNEL.postRefused(String(r?.message ?? "you can't raise issues on this project")))
+      await store.updateLink(link.id, { pending_post: null })
+      return res('refused', `issue_${r?.code ?? 'error'}`, link.user_id, null)
+    }
+    itemId = r.id
+    if (body) await store.call('wa_add_note', { p_user: link.user_id, p_item: r.id, p_body: body, p_inbound: rows[0]?.id ?? null })
+    for (const { row: pr, msg } of photos) {
+      const { bytes, mime } = await meta.fetchMedia(msg.imageId!)
+      const path = `${r.organisation_id}/${post.project_id}/${r.id}/wa-${msg.id}.${extOf(mime)}`
+      await store.upload('work-item-attachments', path, bytes, mime)
+      await store.call('wa_add_attachment', { p_user: link.user_id, p_item: r.id, p_bucket: 'work-item-attachments',
+        p_path: path, p_mime: mime, p_role: 'evidence', p_inbound: pr.id })
+    }
+    await meta.sendText(to, CHANNEL.issueDone(r.ref, name, r.assignee_name ?? null))
+  }
+
+  for (const r of rows) {
+    await store.markInbound(r.id, { outcome: 'applied', outcome_reason: `posted_${choice}`, resolved_user_id: link.user_id,
+      resolved_item_id: itemId, processed_at: now().toISOString() })
+  }
+  await store.updateLink(link.id, { pending_post: null })
+  link.pending_post = null
+  return res('applied', `posted_${choice}`, link.user_id, itemId)
+}
