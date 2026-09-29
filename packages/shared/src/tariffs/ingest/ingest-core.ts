@@ -247,7 +247,7 @@ export async function runIngest(
       // year still loads for review instead of failing tariffs.charge CHECK charge_block_order mid-file.
       const insertable = draft.tariffs.map((t) => ({ ...t, charges: t.charges.map((c) =>
         c.blockMaxKwh !== null && (c.blockMinKwh === null || c.blockMaxKwh <= c.blockMinKwh)
-          ? { ...c, blockMinKwh: null, blockMaxKwh: null } : c) }))
+          ? { ...c, blockMinKwh: null, blockMaxKwh: null, blockBasis: null } : c) }))
       const ids = await store.insertTariffs(yearId, sourceDocumentId, insertable)
       const links = draft.tariffs.flatMap((t) => {
         if (!t.exportTariffCode) return []

@@ -75,7 +75,7 @@ describe('runIngest', () => {
     const y = [...store.state.years.values()][0]
     expect(y).toMatchObject({ state: 'in_review' })
     const stored = [...store.state.tariffsByYear.values()].flat()[0].charges[0]
-    expect([stored.blockMinKwh, stored.blockMaxKwh]).toEqual([null, null])
+    expect([stored.blockMinKwh, stored.blockMaxKwh, stored.blockBasis]).toEqual([null, null, null])
   })
   it('is idempotent on sha256', async () => {
     const store = createMemoryTariffStore()

@@ -134,6 +134,10 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
         if (c.blockMaxKwh !== null && (c.blockMinKwh === null || c.blockMaxKwh <= c.blockMinKwh)) {
           throw new Error('charge insert: new row for relation "charge" violates check constraint "charge_block_order"')
         }
+        // ...and charge_block_basis_with_block: a basis exactly when there is a lower bound.
+        if ((c.blockMinKwh === null) !== (c.blockBasis === null)) {
+          throw new Error('charge insert: new row for relation "charge" violates check constraint "charge_block_basis_with_block"')
+        }
       }
       const ids = new Map<string, string>()
       const rows = tariffs.map((t) => {
