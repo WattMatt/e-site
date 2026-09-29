@@ -4,6 +4,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { readRolesForKind } from '@/lib/reports/report-kind-access'
+import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
@@ -165,12 +166,12 @@ export async function getProjectReportUrlAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: row } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path, kind, version')
+    .select('storage_path, kind, version, organisation_id')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const report = row as { storage_path: string; kind: string; version: number } | null
+  const report = row as { storage_path: string; kind: string; version: number; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
   // The kind is only known once the row is read, so the gate runs here. After
@@ -181,6 +182,14 @@ export async function getProjectReportUrlAction(
   if (readRoles) {
     const guard = await requireEffectiveRole(supabase, projectId, readRoles)
     if (!guard.ok) return { error: guard.error }
+  }
+
+  // The path is signed with the SERVICE client, which bypasses storage RLS, so it is trusted only when
+  // it is canonical and under the row's own <org>/<project>/ (00207 refuses writing any other; this also
+  // holds for a row that predates it). See lib/reports/report-path.ts.
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) {
+    console.error('getProjectReportUrlAction: refused a report path outside its row', { projectId, reportId })
+    return { error: REPORT_PATH_REFUSED }
   }
 
   const service = createServiceClient()
@@ -213,22 +222,37 @@ export async function deleteProjectReportAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: row } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path, kind')
+    .select('storage_path, kind, organisation_id')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const report = row as { storage_path: string; kind: string } | null
+  const report = row as { storage_path: string; kind: string; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: deleteErr } = await (supabase as any)
+  const { data: deleted, error: deleteErr } = await (supabase as any)
     .schema('projects').from('reports')
     .delete()
     .eq('id', reportId)
     .eq('project_id', projectId)
+    .select('id')
 
   if (deleteErr) return { error: deleteErr.message ?? 'Failed to delete report' }
+
+  // RLS answers a refused delete with zero rows, not an error: only remove the file when exactly this
+  // one row went, or a caller who may not delete the row would still remove its file.
+  if (!Array.isArray(deleted) || deleted.length !== 1) {
+    return { error: 'Nothing was deleted — the report may already be gone, or you may not be allowed to delete it.' }
+  }
+
+  // The object is removed with the SERVICE client, so its path is trusted only when it belongs to the
+  // row (a forged row could otherwise name another org's file). The row is already gone; an orphaned
+  // private object is harmless.
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) {
+    console.error('deleteProjectReportAction: kept an object outside its row', { projectId, reportId })
+    return { ok: true }
+  }
 
   // Best-effort object removal — an orphaned private object is harmless.
   const service = createServiceClient()

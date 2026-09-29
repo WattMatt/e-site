@@ -25,6 +25,7 @@ import type {
 import { gatherQcReportData } from '@/lib/reports/qc-report-data'
 import { renderQcReport } from '@/lib/reports/qc-report'
 import { notifyQcIssued } from '@/lib/qc-email'
+import { reportPathBelongsTo } from '@/lib/reports/report-path'
 import { resolveProjectRecipients } from '@/lib/recipients'
 import { dispatchNotification } from '@/lib/notifications'
 
@@ -182,10 +183,14 @@ export async function deleteQcReportAction(
 
   const { data: pdfRows } = await (service as any)
     .schema('projects').from('reports')
-    .select('storage_path')
+    .select('storage_path, organisation_id')
+    .eq('project_id', report.project_id)
     .eq('source_table', 'qc_reports')
     .eq('source_id', reportId)
-  const pdfPaths = ((pdfRows ?? []) as { storage_path: string }[]).map((r) => r.storage_path)
+  // Removed with the SERVICE client: only files inside the row's own <org>/<project>/ folder (00207).
+  const pdfPaths = ((pdfRows ?? []) as { storage_path: string; organisation_id: string }[])
+    .filter((r) => reportPathBelongsTo(r.storage_path, r.organisation_id, report.project_id))
+    .map((r) => r.storage_path)
 
   const { error: deleteErr } = await (service as any)
     .schema('projects').from('qc_reports')
@@ -197,6 +202,7 @@ export async function deleteQcReportAction(
   await (service as any)
     .schema('projects').from('reports')
     .delete()
+    .eq('project_id', report.project_id)
     .eq('source_table', 'qc_reports')
     .eq('source_id', reportId)
   if (photoPaths.length) {
