@@ -111,7 +111,7 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `bill_checks` | study_id, month, entered values, modelled values | |
 | `layouts` | study_id, name UNIQUE per study, roof_source_id, module_id, updated_at | |
 | `layout_objects` | layout_id, kind (roof/obstruction/array/module_block/inverter/string/equipment/north), geometry jsonb (image px), pixels_per_meter snapshot, props jsonb | **Register in `isAnnotated()`** |
-| `cases` | study_id, name, pv_source (layout/manual), layout_id, config jsonb (full case input), finance jsonb, updated_at | |
+| `cases` | study_id, name, pv_source (layout/manual), layout_id (FK → layouts, ON DELETE RESTRICT, same project — 00218), config jsonb (full case input), finance jsonb, updated_at | |
 | `case_runs` | case_id, engine_version, inputs jsonb, inputs_hash, weather_dataset_id, tariff_ref jsonb, status, error, outputs jsonb (KPIs, monthly), hourly_path (Storage, 8760 columns compressed), run_by, started_at, finished_at | Immutable after finish |
 | `weather_datasets` | source (pvgis_tmy/upload), lat_round, lng_round, fetched_at, storage_path, meta jsonb | Cache shared per org (lat/lng rounded to 0.01°) |
 | `equipment` | org_id (NULL = platform catalogue), kind (module/inverter/battery), make, model, specs jsonb, retired_at | Never hard-deleted |

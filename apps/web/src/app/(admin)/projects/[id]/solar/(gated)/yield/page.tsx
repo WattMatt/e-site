@@ -28,12 +28,12 @@ export default async function SolarYieldPage({ params, searchParams }: { params:
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {selected?.status === 'stale' && <StaleBanner projectId={id} caseId={selected.id} caseName={selected.name} canRun={level !== 'view'} />}
-      <CaseList projectId={id} level={level} cases={data.cases} studyUpdatedAt={data.studyUpdatedAt} openCaseId={data.editor?.caseId ?? null} />
+      <CaseList projectId={id} level={level} cases={data.cases} studyUpdatedAt={data.studyUpdatedAt} openCaseId={data.editor?.caseId ?? null} layouts={data.layouts} />
       {data.compare && <CompareView columns={data.compare} showMoney={level === 'edit_financials'} />}
       {data.editor && (
         <>
           {/* Keyed on the case and its saved version: a refresh after Save (or opening another case) remounts the draft. */}
-          <CaseEditor key={`${data.editor.caseId}:${data.editor.updatedAt}`} projectId={id} level={level} data={data.editor} equipment={data.equipment} />
+          <CaseEditor key={`${data.editor.caseId}:${data.editor.updatedAt}`} projectId={id} level={level} data={data.editor} equipment={data.equipment} layouts={data.layouts} />
           {data.editor.lastRun
             ? <RunResults key={data.editor.lastRun.id} projectId={id} caseId={data.editor.caseId} run={data.editor.lastRun} />
             : <EmptyState dense title="This case has not been run yet" description={level === 'view' ? 'Ask an editor to run it.' : 'Save it, then press Run.'} />}

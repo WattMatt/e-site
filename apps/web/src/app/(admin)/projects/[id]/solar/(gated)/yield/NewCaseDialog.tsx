@@ -1,20 +1,23 @@
 'use client'
-/** New case (functional spec §7.1): Manual size or a copy of an existing case. From layout arrives with Phase 5. */
+/** New case (functional spec §7.1): Manual size, a copy of an existing case, or From layout (sizes from the layout, re-derived server-side). */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { createSolarCaseAction } from '@/actions/solar-cases.actions'
+import type { LayoutChoice } from '@/lib/solar/cases/page-data'
 
-type Start = 'manual' | 'copy'
+type Start = 'manual' | 'copy' | 'layout'
 const alert = { color: 'var(--c-red, #dc2626)', fontSize: 12 }
 
-export function NewCaseDialog({ projectId, cases, onClose }: { projectId: string; cases: Array<{ id: string; name: string }>; onClose: () => void }) {
+export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { projectId: string; cases: Array<{ id: string; name: string }>; layouts?: LayoutChoice[]; onClose: () => void }) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [start, setStart] = useState<Start>('manual')
   const [dc, setDc] = useState('')
   const [ac, setAc] = useState('')
   const [from, setFrom] = useState(cases[0]?.id ?? '')
+  const usable = layouts.filter((l) => (l.moduleCount ?? 0) > 0)
+  const [layoutId, setLayoutId] = useState(usable[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
@@ -22,7 +25,7 @@ export function NewCaseDialog({ projectId, cases, onClose }: { projectId: string
     setBusy(true); setErrors({}); setError(null)
     const r = await createSolarCaseAction({
       projectId, name,
-      start: start === 'copy' ? { kind: 'copy', fromCaseId: from } : { kind: 'manual', dcKwp: Number(dc), acKw: Number(ac) },
+      start: start === 'copy' ? { kind: 'copy', fromCaseId: from } : start === 'layout' ? { kind: 'layout', layoutId } : { kind: 'manual', dcKwp: Number(dc), acKw: Number(ac) },
     })
     setBusy(false)
     if ('ok' in r) { onClose(); router.push(`/projects/${projectId}/solar/yield?case=${r.caseId}`) }
@@ -50,7 +53,13 @@ export function NewCaseDialog({ projectId, cases, onClose }: { projectId: string
             {cases.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         )}
-        <label><input type="radio" name="start" aria-label="From layout" disabled /> From layout <span style={{ color: 'var(--c-text-dim)' }}>Arrives with the Layout tab</span></label>
+        <label><input type="radio" name="start" aria-label="From layout" disabled={usable.length === 0} checked={start === 'layout'} onChange={() => setStart('layout')} /> From layout
+          {usable.length === 0 && <span style={{ color: 'var(--c-text-dim)' }}> — draw a layout with modules on the Layout tab first</span>}</label>
+        {start === 'layout' && (
+          <select aria-label="Layout" value={layoutId} onChange={(e) => setLayoutId(e.target.value)}>
+            {usable.map((l) => <option key={l.id} value={l.id}>{l.name}{l.dcKwp !== null ? ` — ${l.dcKwp} kWp` : ''}</option>)}
+          </select>
+        )}
       </fieldset>
       {error && <span role="alert" style={alert}>{error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>

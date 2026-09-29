@@ -43,6 +43,8 @@ export interface FinancialsPageData {
   hasStudy: boolean
   cases: Array<{ id: string; name: string; hasRun: boolean }>
   caseId: string | null; caseName: string
+  /** The selected case is built from a layout, so "Import BOM from layout" has something to import. */
+  caseFromLayout: boolean
   config: CaseFinanceConfig; configUpdatedAt: string | null; isDefault: boolean
   runSize: { dcKwp: number; acKw: number; batteryKwh: number | null } | null
   caseLoadSheddingEnabled: boolean
@@ -88,12 +90,12 @@ export function resultsView(row: Row): FinancialResultsView {
 
 export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, projectId: string, caseIdParam: string | undefined): Promise<FinancialsPageData> {
   const empty: FinancialsPageData = {
-    hasStudy: false, cases: [], caseId: null, caseName: '', config: defaultFinanceConfig(solarOrgSettingDefaults()), configUpdatedAt: null, isDefault: true,
+    hasStudy: false, cases: [], caseId: null, caseName: '', caseFromLayout: false, config: defaultFinanceConfig(solarOrgSettingDefaults()), configUpdatedAt: null, isDefault: true,
     runSize: null, caseLoadSheddingEnabled: false, runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: VAT_RATE,
   }
   const shared = await loadStudyInputs(svc, projectId)
   if (!shared) return empty
-  const { data: caseData } = await user.schema('solar').from('cases').select('id, study_id, project_id, name, pv_source, config, updated_at').eq('project_id', projectId)
+  const { data: caseData } = await user.schema('solar').from('cases').select('id, study_id, project_id, name, pv_source, layout_id, config, updated_at').eq('project_id', projectId)
   const rows = (caseData ?? []) as CaseRow[]
   const { latest, ok } = await runsByCase(user, projectId)
   const cases = rows.map((r) => ({ id: r.id, name: r.name, hasRun: ok.has(r.id) }))
@@ -144,7 +146,7 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
   const caseCfg = parseCaseConfig(row.config)
 
   return {
-    hasStudy: true, cases, caseId, caseName: row.name,
+    hasStudy: true, cases, caseId, caseName: row.name, caseFromLayout: row.pv_source === 'layout' && Boolean(row.layout_id),
     config, configUpdatedAt: parsedFin?.ok ? (finRow!.updated_at as string) : null, isDefault,
     runSize: kpis ? { dcKwp: kpis.dcKwp, acKw: kpis.acKw, batteryKwh: kpis.batteryKwh ?? null } : null,
     caseLoadSheddingEnabled: caseCfg.ok ? caseCfg.config.loadShedding.enabled : false,

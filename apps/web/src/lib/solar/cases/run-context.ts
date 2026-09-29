@@ -25,7 +25,7 @@ export interface StudyRow {
   export_mode: StudyExportMode | null; export_limit_kw: number | null; nmd_kva: number | null
   load_basis: string | null; reference_year: number | null; selected_case_id: string | null; updated_at: string
 }
-export interface CaseRow { id: string; study_id: string; project_id: string; name: string; pv_source: string; config: unknown; updated_at: string }
+export interface CaseRow { id: string; study_id: string; project_id: string; name: string; pv_source: string; layout_id?: string | null; config: unknown; updated_at: string }
 
 export interface StudyInputs {
   study: StudyRow

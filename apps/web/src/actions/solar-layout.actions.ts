@@ -108,10 +108,10 @@ export async function renameLayoutAction(input: { projectId: string; layoutId: s
 }
 
 /**
- * "Refused if a case uses the layout" (§6.2) is enforced by the DATABASE: the
- * cases migration (Yield & Scenarios phase) must declare cases.layout_id
- * REFERENCES solar.layouts(id) with NO ACTION, and humanLayoutError maps that
- * 23503 to "Used by a case — change the case first."
+ * "Refused if a case uses the layout" (§6.2) is enforced by the DATABASE:
+ * 00218 declares cases.layout_id REFERENCES solar.layouts(id) ON DELETE
+ * RESTRICT, and humanLayoutError maps that 23503 to "Used by a case — change
+ * the case first."
  */
 export async function deleteLayoutAction(input: { projectId: string; layoutId: string }): Promise<LayoutResult> {
   const { supabase, userId } = await session(input.projectId)

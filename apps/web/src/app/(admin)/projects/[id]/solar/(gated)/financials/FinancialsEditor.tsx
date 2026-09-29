@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { CaseFinanceConfig, CapexLine } from '@esite/shared/solar-cases'
 import { Button } from '@/components/ui/Button'
-import { saveSolarFinancialsAction, applySolarRateCardAction, runSolarFinancialsAction } from '@/actions/solar-financials.actions'
+import { saveSolarFinancialsAction, applySolarRateCardAction, runSolarFinancialsAction, importLayoutBomAction } from '@/actions/solar-financials.actions'
 import type { FinancialsPageData } from '@/lib/solar/cases/financials-page-data'
 import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
 import { num, rand } from '@/components/solar/format'
@@ -27,14 +27,18 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
   const [cfg, setCfg] = useState<CaseFinanceConfig>(data.config)
   const [saved, setSaved] = useState<CaseFinanceConfig | null>(data.isDefault ? null : data.config)
   const [updatedAt, setUpdatedAt] = useState<string | null>(data.configUpdatedAt)
-  const [busy, setBusy] = useState<'save' | 'apply' | 'run' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'apply' | 'run' | 'bom' | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const dirty = useMemo(() => saved === null || JSON.stringify(cfg) !== JSON.stringify(saved), [cfg, saved])
   useSolarDirtyGuard(saved !== null && dirty)
   const setGroup = <K extends 'opex' | 'analysis' | 'loadShedding'>(k: K, patch: Partial<CaseFinanceConfig[K]>) => setCfg((c) => ({ ...c, [k]: { ...c[k], ...patch } }))
   const setModel = <K extends keyof CaseFinanceConfig['models']>(k: K, patch: Partial<CaseFinanceConfig['models'][K]>) => setCfg((c) => ({ ...c, models: { ...c.models, [k]: { ...c.models[k], ...patch } } }))
-  const setLine = (i: number, patch: Partial<CapexLine>) => setCfg((c) => ({ ...c, capex: c.capex.map((l, j) => (j === i ? { ...l, ...patch, source: 'manual' } : l)) }))
+  // Editing a line makes it the user's ('manual'), except pricing a BOM line: the BOM carries
+  // quantities only, so a rate typed on it keeps it a BOM line (and survives a re-import).
+  const setLine = (i: number, patch: Partial<CapexLine>) => setCfg((c) => ({ ...c, capex: c.capex.map((l, j) => (j === i
+    ? { ...l, ...patch, source: l.source === 'layout_bom' && Object.keys(patch).every((k) => k === 'rateZar' || k === 'qualifies12b') ? 'layout_bom' : 'manual' }
+    : l)) }))
   const nn = (v: number | null) => (v === null ? Number.NaN : v)
   // Field errors are keyed by dotted zod path; any error no rendered field claims is listed under the form.
   const claimed = new Set<string>()
@@ -54,6 +58,12 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
   const apply = async () => {
     setBusy('apply'); setMsg(null); setErrors({})
     const r = await applySolarRateCardAction({ projectId, caseId: data.caseId!, config: cfg })
+    setBusy(null)
+    if ('ok' in r) setCfg(r.config); else if ('fieldErrors' in r) setErrors(r.fieldErrors); else setMsg(r.error)
+  }
+  const importBom = async () => {
+    setBusy('bom'); setMsg(null); setErrors({})
+    const r = await importLayoutBomAction({ projectId, caseId: data.caseId!, config: cfg })
     setBusy(null)
     if ('ok' in r) setCfg(r.config); else if ('fieldErrors' in r) setErrors(r.fieldErrors); else setMsg(r.error)
   }
@@ -78,7 +88,8 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Button type="button" size="sm" variant="secondary" onClick={() => setCfg((c) => ({ ...c, capex: [...c.capex, { id: `l${Date.now().toString(36)}${c.capex.length}`, category: 'modules', description: '', qty: 0, unit: 'item', rateZar: 0, qualifies12b: true, source: 'manual' }] }))}>Add line</Button>
           <Button type="button" size="sm" variant="secondary" disabled={busy !== null || !data.caseId} onClick={apply}>{busy === 'apply' ? 'Applying…' : 'Apply org rate card'}</Button>
-          <Button type="button" size="sm" variant="secondary" disabled title="Arrives with the Layout tab">Import BOM from layout</Button>
+          <Button type="button" size="sm" variant="secondary" disabled={busy !== null || !data.caseId || !data.caseFromLayout}
+            title={data.caseFromLayout ? undefined : 'This case is not built from a layout — choose From layout on Yield & Scenarios'} onClick={importBom}>{busy === 'bom' ? 'Importing…' : 'Import BOM from layout'}</Button>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table>

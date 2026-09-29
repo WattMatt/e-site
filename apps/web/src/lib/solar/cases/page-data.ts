@@ -13,6 +13,7 @@ import {
   type CaseConfig, type CaseLosses, type CaseRunOutputs, type CaseStatus, type RunKpis,
 } from '@esite/shared/solar-cases'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
+import { loadLayoutList } from '@/lib/solar/layout-loader'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -29,8 +30,12 @@ export interface RunView { id: string; startedAt: string; finishedAt: string | n
 export interface EquipmentOption { id: string; make: string; model: string; retired: boolean; specs: Record<string, number | boolean> }
 export interface EquipmentOptions { modules: EquipmentOption[]; inverters: EquipmentOption[]; batteries: EquipmentOption[] }
 export interface WeatherView { id: string; latRound: number; lngRound: number; fetchedAt: string; radiationDb: string | null; gsaPvoutKwhPerKwp: number | null }
+/** A layout a case can be built from (Phase 5; sizes shown from the stored summary, re-derived on link). */
+export interface LayoutChoice { id: string; name: string; moduleCount: number | null; dcKwp: number | null }
 export interface CaseEditorData {
   caseId: string; name: string; updatedAt: string; config: CaseConfig; buildReasons: string[]
+  /** 'layout' = DC/AC come from `layoutId` (00218 FK) and are not edited in the case. */
+  pvSource: 'manual' | 'layout'; layoutId: string | null
   status: CaseStatus; statusLabel: string; running: boolean
   weather: WeatherView | null
   studyExport: { mode: string | null; limitKw: number | null }
@@ -45,6 +50,7 @@ export interface YieldPageData {
   hasStudy: boolean; studyUpdatedAt: string | null; selectedCaseId: string | null
   cases: CaseCardView[]; editor: CaseEditorData | null; compare: CompareColumn[] | null
   equipment: EquipmentOptions
+  layouts: LayoutChoice[]
 }
 
 const emptyEquipment = (): EquipmentOptions => ({ modules: [], inverters: [], batteries: [] })
@@ -111,8 +117,8 @@ function statusOf(latest: Row | undefined, lastOk: Row | undefined, currentHash:
 
 export async function loadYieldPageData(user: AnyClient, svc: AnyClient, projectId: string, level: SolarAccessLevel, q: { caseId?: string; compare?: string }): Promise<YieldPageData> {
   const shared = await loadStudyInputs(svc, projectId)
-  if (!shared) return { hasStudy: false, studyUpdatedAt: null, selectedCaseId: null, cases: [], editor: null, compare: null, equipment: emptyEquipment() }
-  const { data: caseData } = await user.schema('solar').from('cases').select('id, study_id, project_id, name, pv_source, config, updated_at, created_at')
+  if (!shared) return { hasStudy: false, studyUpdatedAt: null, selectedCaseId: null, cases: [], editor: null, compare: null, equipment: emptyEquipment(), layouts: [] }
+  const { data: caseData } = await user.schema('solar').from('cases').select('id, study_id, project_id, name, pv_source, layout_id, config, updated_at, created_at')
     .eq('project_id', projectId).order('created_at', { ascending: true })
   const rows = (caseData ?? []) as CaseRow[]
   const { latest, ok } = await runsByCase(user, projectId)
@@ -167,6 +173,7 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
       const w = c.ctx.weather
       editor = {
         caseId: r.id, name: r.name, updatedAt: r.updated_at, config,
+        pvSource: r.pv_source === 'layout' ? 'layout' : 'manual', layoutId: r.layout_id ?? null,
         buildReasons: c.ctx.build.ok ? [] : c.ctx.build.reasons,
         status: card.status, statusLabel: card.statusLabel, running: card.status === 'running',
         weather: w ? {
@@ -206,7 +213,9 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
     equipment = { modules: pick('module'), inverters: pick('inverter'), batteries: pick('battery') }
   }
 
-  return { hasStudy: true, studyUpdatedAt: shared.study.updated_at, selectedCaseId: shared.study.selected_case_id, cases, editor, compare, equipment }
+  const layouts: LayoutChoice[] = level === 'view' ? [] : (await loadLayoutList(user, projectId)).map((l) => ({ id: l.id, name: l.name, moduleCount: l.moduleCount, dcKwp: l.dcKwp }))
+
+  return { hasStudy: true, studyUpdatedAt: shared.study.updated_at, selectedCaseId: shared.study.selected_case_id, cases, editor, compare, equipment, layouts }
 }
 
 export interface ReadinessState extends SolarReadinessExtra { stale: { caseId: string; caseName: string } | null }

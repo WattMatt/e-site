@@ -3,14 +3,15 @@ import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 import { defaultCaseConfig, defaultFinanceConfig } from '@esite/shared/solar-cases'
 import { solarOrgSettingDefaults } from '@esite/shared'
 
-const h = vi.hoisted(() => ({ createClient: vi.fn(), svc: { current: null as unknown }, lvl: vi.fn(), audit: vi.fn(async () => {}), emit: vi.fn(async () => {}), reval: vi.fn(), exec: vi.fn() }))
+const h = vi.hoisted(() => ({ createClient: vi.fn(), svc: { current: null as unknown }, lvl: vi.fn(), audit: vi.fn(async () => {}), emit: vi.fn(async () => {}), reval: vi.fn(), exec: vi.fn(), design: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createServiceClient: () => h.svc.current }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.lvl }))
 vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
 vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: h.emit }))
 vi.mock('next/cache', () => ({ revalidatePath: h.reval }))
 vi.mock('@/lib/solar/cases/financials', () => ({ executeFinancialsRun: h.exec }))
-import { saveSolarFinancialsAction, applySolarRateCardAction, runSolarFinancialsAction } from './solar-financials.actions'
+vi.mock('@/lib/solar/cases/layout-design', () => ({ loadLayoutDesign: h.design }))
+import { saveSolarFinancialsAction, applySolarRateCardAction, runSolarFinancialsAction, importLayoutBomAction } from './solar-financials.actions'
 
 const P = 'p1', C = 'c1', ORG = 'o1', U = 'u1'
 const s = solarOrgSettingDefaults()
@@ -81,5 +82,29 @@ describe('solar financials actions', () => {
     h.createClient.mockResolvedValue(u.client)
     expect(await runSolarFinancialsAction({ projectId: P, caseId: C })).toEqual({ error: 'You are not signed in.' })
     expect(h.exec).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('importLayoutBomAction (Import BOM from layout)', () => {
+  const bom = [{ item: 'Module', description: 'Generic 550 W', quantity: 182, unit: 'ea' }, { item: 'DC cable', description: 'Home runs', quantity: 640, unit: 'm' }]
+  it('needs Edit + financials FIRST', async () => {
+    const u = setup()
+    h.lvl.mockRejectedValue(new Error('REDIRECT'))
+    await expect(importLayoutBomAction({ projectId: P, caseId: C, config: fin })).rejects.toThrow('REDIRECT')
+    expect(u.calls).toHaveLength(0)
+    expect(h.design).not.toHaveBeenCalled()
+  })
+  it("returns the config with the case's layout BOM as capex lines (not saved — the user reviews, then Save)", async () => {
+    const u = setup({ 'solar.cases': [{ id: C, project_id: P, pv_source: 'layout', layout_id: 'L1' }] })
+    h.design.mockResolvedValue({ id: 'L1', name: 'Roof A', summary: { moduleCount: 182, dcKwp: 100, acKw: 80 }, bom })
+    const r = await importLayoutBomAction({ projectId: P, caseId: C, config: fin })
+    expect(h.design).toHaveBeenCalledWith(u.client, P, 'L1')
+    expect('ok' in r && r.config.capex.map((l) => [l.category, l.qty, l.unit, l.source])).toEqual([['modules', 182, 'item', 'layout_bom'], ['dc_bos', 640, 'm', 'layout_bom']])
+    expect(callsTo(u.calls, 'solar.case_financials', 'update')).toHaveLength(0)
+  })
+  it('a manual case has no layout to import from', async () => {
+    setup({ 'solar.cases': [{ id: C, project_id: P, pv_source: 'manual', layout_id: null }] })
+    expect(await importLayoutBomAction({ projectId: P, caseId: C, config: fin })).toEqual({ error: 'This case is not built from a layout — choose From layout on Yield & Scenarios first.' })
+    expect(h.design).not.toHaveBeenCalled()
   })
 })

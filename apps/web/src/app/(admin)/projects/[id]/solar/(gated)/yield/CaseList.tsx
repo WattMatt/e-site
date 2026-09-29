@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { deleteSolarCaseAction, duplicateSolarCaseAction, renameSolarCaseAction, setSelectedSolarCaseAction } from '@/actions/solar-cases.actions'
-import type { CaseCardView } from '@/lib/solar/cases/page-data'
+import type { CaseCardView, LayoutChoice } from '@/lib/solar/cases/page-data'
 import { useArmedConfirm } from '../../_components/useArmedConfirm'
 import { mwh, num, rand, sastDateTime } from '@/components/solar/format'
 import { NewCaseDialog } from './NewCaseDialog'
@@ -70,7 +70,7 @@ function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open }: 
   )
 }
 
-export function CaseList({ projectId, level, cases, studyUpdatedAt, openCaseId }: { projectId: string; level: SolarAccessLevel; cases: CaseCardView[]; studyUpdatedAt: string | null; openCaseId: string | null }) {
+export function CaseList({ projectId, level, cases, studyUpdatedAt, openCaseId, layouts = [] }: { projectId: string; level: SolarAccessLevel; cases: CaseCardView[]; studyUpdatedAt: string | null; openCaseId: string | null; layouts?: LayoutChoice[] }) {
   const router = useRouter()
   const canWrite = level !== 'view'
   const [ticked, setTicked] = useState<string[]>([])
@@ -82,7 +82,7 @@ export function CaseList({ projectId, level, cases, studyUpdatedAt, openCaseId }
         <Button type="button" variant="secondary" disabled={ticked.length < 2 || ticked.length > 4}
           title="Tick 2 to 4 cases" onClick={() => router.push(`/projects/${projectId}/solar/yield?compare=${ticked.join(',')}`)}>Compare</Button>
       </div>
-      {adding && <NewCaseDialog projectId={projectId} cases={cases.map((c) => ({ id: c.id, name: c.name }))} onClose={() => setAdding(false)} />}
+      {adding && <NewCaseDialog projectId={projectId} cases={cases.map((c) => ({ id: c.id, name: c.name }))} layouts={layouts} onClose={() => setAdding(false)} />}
       {cases.length === 0
         ? <EmptyState dense title="No cases yet" description="A case is one design option: a system size, losses, battery and export settings." />
         : (

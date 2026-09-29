@@ -8,13 +8,14 @@
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings } from '@esite/shared'
-import { defaultCaseConfig, parseCaseConfig, moduleSnapshot, inverterSnapshot, batterySnapshot, type CaseConfig } from '@esite/shared/solar-cases'
+import { defaultCaseConfig, parseCaseConfig, moduleSnapshot, inverterSnapshot, batterySnapshot, caseSizeFromLayout, type CaseConfig } from '@esite/shared/solar-cases'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
 import { STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 import { emitProductEvent } from '@/lib/analytics/product-events'
 import { getOrFetchWeather } from '@/lib/solar/cases/weather'
+import { loadLayoutDesign } from '@/lib/solar/cases/layout-design'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -38,8 +39,9 @@ async function studyOf(supabase: AnyClient, projectId: string): Promise<Row | nu
   return (data as Row | null) ?? null
 }
 
-async function insertCase(supabase: AnyClient, studyId: string, name: string, config: CaseConfig): Promise<{ id: string } | { error: string } | { fieldErrors: Record<string, string> }> {
-  const { data, error } = await supabase.schema('solar').from('cases').insert({ study_id: studyId, name, pv_source: 'manual', config }).select('id, updated_at')
+async function insertCase(supabase: AnyClient, studyId: string, name: string, config: CaseConfig, layoutId: string | null = null): Promise<{ id: string } | { error: string } | { fieldErrors: Record<string, string> }> {
+  const link = layoutId ? { pv_source: 'layout', layout_id: layoutId } : { pv_source: 'manual' }
+  const { data, error } = await supabase.schema('solar').from('cases').insert({ study_id: studyId, name, ...link, config }).select('id, updated_at')
   if (error) return error.code === '23505' ? { fieldErrors: { name: 'A case with this name already exists' } } : { error: humanSolarError(error) }
   return { id: (Array.isArray(data) ? data[0]?.id : (data as Row | null)?.id) as string }
 }
@@ -53,8 +55,9 @@ export async function createSolarCaseAction(input: { projectId: string; name: st
   if (name.length > 120) return { fieldErrors: { name: 'Keep the name under 120 characters' } }
   const start = input.start
   if (!start || typeof start !== 'object') return { error: 'Choose how to start the case.' }
-  if (start.kind === 'layout') return { error: 'From layout arrives with the Layout tab — use Manual for now.' }
-  if (start.kind === 'manual') {
+  if (start.kind === 'layout') {
+    if (typeof start.layoutId !== 'string' || !start.layoutId) return { error: 'Choose a layout.' }
+  } else if (start.kind === 'manual') {
     if (!(Number(start.dcKwp) > 0)) return { fieldErrors: { dcKwp: 'DC size must be greater than 0 kWp' } }
     if (!(Number(start.acKw) > 0)) return { fieldErrors: { acKw: 'AC size must be greater than 0 kW' } }
   } else if (start.kind !== 'copy') {
@@ -64,17 +67,29 @@ export async function createSolarCaseAction(input: { projectId: string; name: st
   if (!study) return { error: 'Save Site & Supply first.' }
 
   let config: CaseConfig
-  if (start.kind === 'manual') {
+  let layoutId: string | null = null
+  if (start.kind === 'manual' || start.kind === 'layout') {
+    let size = { dcKwp: 0, acKw: 0 }
+    if (start.kind === 'layout') {
+      // Sizes from the layout's OWN objects (server-side), never from the client or stored summary.
+      const design = await loadLayoutDesign(supabase, projectId, start.layoutId)
+      if (!design) return { error: 'That layout no longer exists — reload.' }
+      const sized = caseSizeFromLayout(design.summary)
+      if (!sized.ok) return { error: sized.error }
+      size = { dcKwp: sized.dcKwp, acKw: sized.acKw }
+      layoutId = design.id
+    } else size = { dcKwp: Number(start.dcKwp), acKw: Number(start.acKw) }
     const svc = createServiceClient() as unknown as AnyClient
     const { data: os } = await svc.schema('solar').from('org_settings').select('settings').eq('organisation_id', study.organisation_id as string).maybeSingle()
-    config = defaultCaseConfig(readSolarOrgSettings((os as Row | null)?.settings ?? null), { dcKwp: Number(start.dcKwp), acKw: Number(start.acKw) })
+    const base = defaultCaseConfig(readSolarOrgSettings((os as Row | null)?.settings ?? null), size)
+    config = layoutId ? { ...base, pv: { ...base.pv, source: 'layout' } } : base
   } else {
     const { data: src } = await supabase.schema('solar').from('cases').select('config').eq('id', start.fromCaseId).eq('project_id', projectId).maybeSingle()
     const parsed = parseCaseConfig((src as Row | null)?.config)
     if (!parsed.ok) return { error: 'The case to copy could not be read.' }
     config = parsed.config
   }
-  const ins = await insertCase(supabase, study.id as string, name, config)
+  const ins = await insertCase(supabase, study.id as string, name, config, layoutId)
   if (!('id' in ins)) return ins
   if (start.kind === 'copy') {
     // Financials copy only when the caller can READ them (RLS: solar_can_see_money); otherwise nothing.
@@ -178,11 +193,56 @@ export async function saveSolarCaseAction(input: { projectId: string; caseId: st
     const { data: w } = await svc.schema('solar').from('weather_datasets').select('id').eq('id', config.weather.datasetId).eq('organisation_id', org).maybeSingle()
     if (!w) return { fieldErrors: { 'weather.datasetId': 'Fetch the weather again — that dataset is not available' } }
   }
+  // A layout-linked case takes its size (and its source) from the row, never from the client:
+  // Save cannot resize or unlink it — that is setSolarCasePvSourceAction's job.
+  const { data: cur } = await supabase.schema('solar').from('cases').select('pv_source, config').eq('id', input.caseId).eq('project_id', input.projectId).maybeSingle()
+  const curRow = cur as { pv_source?: string; config?: unknown } | null
+  if (curRow?.pv_source === 'layout') {
+    const stored = parseCaseConfig(curRow.config)
+    if (!stored.ok) return { error: 'The case could not be read — reload.' }
+    config = { ...config, pv: { ...config.pv, source: 'layout', dcKwp: stored.config.pv.dcKwp, acKw: stored.config.pv.acKw } }
+  } else if (config.pv.source === 'layout') {
+    config = { ...config, pv: { ...config.pv, source: 'manual' } }
+  }
   const { data, error } = await supabase.schema('solar').from('cases').update({ config, config_version: config.version })
     .eq('id', input.caseId).eq('project_id', input.projectId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
   if (error) return { error: humanSolarError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
   if (userId) await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'case_saved', objectRef: { caseId: input.caseId } })
+  done(input.projectId)
+  return { ok: true, updatedAt: data[0]!.updated_at as string }
+}
+
+/**
+ * Manual ↔ From layout on an existing case (spec §7.1–7.2). Linking re-derives DC/AC from the
+ * layout's own objects; back to Manual keeps the last sizes as editable inputs. 00218's
+ * cases_layout_fk / cases_layout_bind refuse a layout that is gone or from another project.
+ */
+export async function setSolarCasePvSourceAction(input: {
+  projectId: string; caseId: string; expectedUpdatedAt: string; source: { kind: 'manual' } | { kind: 'layout'; layoutId: string }
+}): Promise<CaseSaveResult> {
+  const { supabase, userId } = await session(input.projectId)
+  const { data: cur } = await supabase.schema('solar').from('cases').select('config').eq('id', input.caseId).eq('project_id', input.projectId).maybeSingle()
+  const parsed = parseCaseConfig((cur as Row | null)?.config)
+  if (!cur || !parsed.ok) return { error: 'Case not found.' }
+  const src = input.source
+  let patch: Row
+  if (src?.kind === 'layout') {
+    const design = typeof src.layoutId === 'string' && src.layoutId ? await loadLayoutDesign(supabase, input.projectId, src.layoutId) : null
+    if (!design) return { error: 'That layout no longer exists — reload.' }
+    const sized = caseSizeFromLayout(design.summary)
+    if (!sized.ok) return { error: sized.error }
+    const config: CaseConfig = { ...parsed.config, pv: { ...parsed.config.pv, source: 'layout', dcKwp: sized.dcKwp, acKw: sized.acKw } }
+    patch = { pv_source: 'layout', layout_id: design.id, config, config_version: config.version }
+  } else if (src?.kind === 'manual') {
+    const config: CaseConfig = { ...parsed.config, pv: { ...parsed.config.pv, source: 'manual' } }
+    patch = { pv_source: 'manual', layout_id: null, config, config_version: config.version }
+  } else return { error: 'Choose Manual or From layout.' }
+  const { data, error } = await supabase.schema('solar').from('cases').update(patch)
+    .eq('id', input.caseId).eq('project_id', input.projectId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+  if (error) return { error: humanSolarError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
+  if (userId) await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'case_saved', objectRef: { caseId: input.caseId, pvSource: patch.pv_source, layoutId: patch.layout_id } })
   done(input.projectId)
   return { ok: true, updatedAt: data[0]!.updated_at as string }
 }

@@ -4,14 +4,14 @@ import { defaultFinanceConfig } from '@esite/shared/solar-cases'
 import { solarOrgSettingDefaults } from '@esite/shared'
 import type { FinancialsPageData } from '@/lib/solar/cases/financials-page-data'
 
-const h = vi.hoisted(() => ({ save: vi.fn(), apply: vi.fn(), run: vi.fn(), refresh: vi.fn(), push: vi.fn() }))
+const h = vi.hoisted(() => ({ save: vi.fn(), apply: vi.fn(), run: vi.fn(), refresh: vi.fn(), push: vi.fn(), bom: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push: h.push }) }))
-vi.mock('@/actions/solar-financials.actions', () => ({ saveSolarFinancialsAction: h.save, applySolarRateCardAction: h.apply, runSolarFinancialsAction: h.run }))
+vi.mock('@/actions/solar-financials.actions', () => ({ saveSolarFinancialsAction: h.save, applySolarRateCardAction: h.apply, runSolarFinancialsAction: h.run, importLayoutBomAction: h.bom }))
 import { FinancialsEditor } from './FinancialsEditor'
 
 const fin = defaultFinanceConfig(solarOrgSettingDefaults())
 const data = (over: Partial<FinancialsPageData> = {}): FinancialsPageData => ({
-  hasStudy: true, cases: [{ id: 'c1', name: 'Base', hasRun: true }, { id: 'c2', name: 'Big', hasRun: false }], caseId: 'c1', caseName: 'Base',
+  hasStudy: true, cases: [{ id: 'c1', name: 'Base', hasRun: true }, { id: 'c2', name: 'Big', hasRun: false }], caseId: 'c1', caseName: 'Base', caseFromLayout: false,
   config: fin, configUpdatedAt: 'F1', isDefault: false, runSize: { dcKwp: 100, acKw: 80, batteryKwh: null }, caseLoadSheddingEnabled: false,
   runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: 0.15, ...over,
 })
@@ -29,12 +29,12 @@ describe('FinancialsEditor', () => {
     expect(screen.getByText('Total incl. VAT R 1 380 000')).toBeTruthy()
     expect(screen.getByText('R 12.00/Wp (capex ÷ DC Wp)')).toBeTruthy()
   })
-  it('Import BOM from layout is disabled with its reason; Apply org rate card fills lines or names missing rates', async () => {
+  it('Import BOM from layout is disabled with its reason on a manual case; Apply org rate card fills lines or names missing rates', async () => {
     h.apply.mockResolvedValueOnce({ error: 'Set these on Settings → Solar → Rate card first: PV system, up to 100 kWp (R/Wp).' })
     render(<FinancialsEditor projectId="p1" data={data()} />)
     const bom = screen.getByRole('button', { name: 'Import BOM from layout' }) as HTMLButtonElement
     expect(bom.disabled).toBe(true)
-    expect(bom.title).toBe('Arrives with the Layout tab')
+    expect(bom.title).toBe('This case is not built from a layout — choose From layout on Yield & Scenarios')
     fireEvent.click(screen.getByRole('button', { name: 'Apply org rate card' }))
     await screen.findByText('Set these on Settings → Solar → Rate card first: PV system, up to 100 kWp (R/Wp).')
     expect(h.apply).toHaveBeenCalledWith({ projectId: 'p1', caseId: 'c1', config: fin })
@@ -101,5 +101,16 @@ describe('FinancialsEditor', () => {
     expect(screen.queryByLabelText('Value of load-shedding avoided (R/kWh)')).toBeNull()
     rerender(<FinancialsEditor projectId="p1" data={data({ caseLoadSheddingEnabled: true })} />)
     expect(screen.getByLabelText('Value of load-shedding avoided (R/kWh)')).toBeTruthy()
+  })
+  it('Import BOM from layout fills the BOM lines into the draft (the user prices them, then Save)', async () => {
+    const line = { id: 'bom-0', category: 'modules' as const, description: 'Generic 550 W', qty: 182, unit: 'item' as const, rateZar: 0, qualifies12b: true, source: 'layout_bom' as const }
+    h.bom.mockResolvedValueOnce({ ok: true, config: { ...fin, capex: [line] } })
+    render(<FinancialsEditor projectId="p1" data={data({ caseFromLayout: true })} />)
+    const bom = screen.getByRole('button', { name: 'Import BOM from layout' }) as HTMLButtonElement
+    expect(bom.disabled).toBe(false)
+    fireEvent.click(bom)
+    await waitFor(() => expect(h.bom).toHaveBeenCalledWith({ projectId: 'p1', caseId: 'c1', config: fin }))
+    expect(await screen.findByDisplayValue('Generic 550 W')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Run financials' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })

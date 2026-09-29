@@ -9,8 +9,8 @@ import { useRouter } from 'next/navigation'
 import type { SolarAccessLevel } from '@esite/shared'
 import type { CaseConfig } from '@esite/shared/solar-cases'
 import { Button } from '@/components/ui/Button'
-import { saveSolarCaseAction, fetchSolarWeatherAction } from '@/actions/solar-cases.actions'
-import type { CaseEditorData, EquipmentOptions } from '@/lib/solar/cases/page-data'
+import { saveSolarCaseAction, fetchSolarWeatherAction, setSolarCasePvSourceAction } from '@/actions/solar-cases.actions'
+import type { CaseEditorData, EquipmentOptions, LayoutChoice } from '@/lib/solar/cases/page-data'
 import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
 import { useArmedConfirm } from '../../_components/useArmedConfirm'
 import { postCancel, postRun } from '../../_components/runCase'
@@ -37,7 +37,7 @@ function inheritedExport(study: CaseEditorData['studyExport']): Partial<CaseConf
   }
 }
 
-export function CaseEditor({ projectId, level, data, equipment }: { projectId: string; level: SolarAccessLevel; data: CaseEditorData; equipment: EquipmentOptions }) {
+export function CaseEditor({ projectId, level, data, equipment, layouts = [] }: { projectId: string; level: SolarAccessLevel; data: CaseEditorData; equipment: EquipmentOptions; layouts?: LayoutChoice[] }) {
   const router = useRouter()
   const ro = level === 'view'
   const [cfg, setCfg] = useState<CaseConfig>(data.config)
@@ -46,7 +46,7 @@ export function CaseEditor({ projectId, level, data, equipment }: { projectId: s
   const [updatedAt, setUpdatedAt] = useState(data.updatedAt)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'save' | 'run' | 'weather' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'run' | 'weather' | 'source' | null>(null)
   const discard = useArmedConfirm()
   const dirty = useMemo(() => JSON.stringify(cfg) !== JSON.stringify(saved), [cfg, saved])
   useSolarDirtyGuard(dirty)
@@ -86,6 +86,20 @@ export function CaseEditor({ projectId, level, data, equipment }: { projectId: s
     } else setMessage(r.error)
   }
 
+  // Manual ↔ From layout is its own server action (it re-derives DC/AC from the layout); it
+  // writes immediately, so an unsaved draft must be saved or discarded first.
+  const fromLayout = data.pvSource === 'layout'
+  const usableLayouts = layouts.filter((x) => (x.moduleCount ?? 0) > 0 || x.id === data.layoutId)
+  const linkedName = layouts.find((x) => x.id === data.layoutId)?.name ?? 'the linked layout'
+  const setSource = async (source: { kind: 'manual' } | { kind: 'layout'; layoutId: string }) => {
+    if (dirty) { setMessage('Save or discard your changes first.'); return }
+    setBusy('source'); setMessage(null)
+    const r = await setSolarCasePvSourceAction({ projectId, caseId: data.caseId, expectedUpdatedAt: updatedAt, source })
+    setBusy(null)
+    if ('ok' in r) router.refresh()
+    else setMessage('error' in r ? r.error : 'Could not change the PV source.')
+  }
+
   const b = cfg.battery, l = cfg.losses, g = cfg.grid
   const live = <T extends { id: string; retired: boolean }>(opts: T[], current: string | undefined) => opts.filter((m) => !m.retired || m.id === current)
   const pickModule = (id: string) => {
@@ -111,12 +125,20 @@ export function CaseEditor({ projectId, level, data, equipment }: { projectId: s
     <>
       <Section title="PV system">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <label><input type="radio" aria-label="Manual" checked readOnly disabled={ro} /> Manual</label>
-          <label><input type="radio" aria-label="From layout" disabled /> From layout <span style={dim}>(arrives with the Layout tab)</span></label>
+          <label><input type="radio" name="pv-source" aria-label="Manual" checked={!fromLayout} disabled={ro || busy !== null} onChange={() => void setSource({ kind: 'manual' })} /> Manual</label>
+          <label><input type="radio" name="pv-source" aria-label="From layout" checked={fromLayout} disabled={ro || busy !== null || usableLayouts.length === 0}
+            onChange={() => usableLayouts[0] && void setSource({ kind: 'layout', layoutId: usableLayouts[0].id })} /> From layout
+            {usableLayouts.length === 0 && !fromLayout && <span style={dim}> — draw a layout with modules on the Layout tab first</span>}</label>
+          {fromLayout && (
+            <select aria-label="Layout" disabled={ro || busy !== null} value={data.layoutId ?? ''} onChange={(e) => void setSource({ kind: 'layout', layoutId: e.target.value })}>
+              {usableLayouts.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          )}
         </div>
+        {fromLayout && <p style={dim}>{`DC and AC size come from ${linkedName}. Change the layout on the Layout tab, then choose it again here to refresh the sizes.`}</p>}
         <div style={grid}>
-          <NumField label="DC size" unit="kWp" value={cfg.pv.dcKwp} disabled={ro} error={err('pv.dcKwp')} onChange={(v) => set('pv', { dcKwp: n(v) })} />
-          <NumField label="AC size" unit="kW" value={cfg.pv.acKw} disabled={ro} error={err('pv.acKw')} onChange={(v) => set('pv', { acKw: n(v) })} />
+          <NumField label="DC size" unit="kWp" value={cfg.pv.dcKwp} disabled={ro || fromLayout} error={err('pv.dcKwp')} onChange={(v) => set('pv', { dcKwp: n(v) })} />
+          <NumField label="AC size" unit="kW" value={cfg.pv.acKw} disabled={ro || fromLayout} error={err('pv.acKw')} onChange={(v) => set('pv', { acKw: n(v) })} />
           <NumField label="Tilt" unit="°" value={cfg.pv.tiltDeg} disabled={ro} error={err('pv.tiltDeg')} onChange={(v) => set('pv', { tiltDeg: n(v) })} />
           <NumField label="Azimuth (0 = north)" unit="°" value={cfg.pv.azimuthDeg} disabled={ro} error={err('pv.azimuthDeg')} onChange={(v) => set('pv', { azimuthDeg: n(v) })} />
           <label style={{ display: 'grid', gap: 2 }}><span style={{ fontSize: 12 }}>Mounting</span><select aria-label="Mounting" disabled={ro} value={cfg.pv.mounting} onChange={(e) => set('pv', { mounting: e.target.value as 'racked' | 'flush' })}><option value="racked">Racked</option><option value="flush">Flush</option></select></label>

@@ -5,7 +5,7 @@ import { solarOrgSettingDefaults } from '@esite/shared'
 
 const h = vi.hoisted(() => ({
   createClient: vi.fn(), svc: { current: null as unknown }, requireSolarLevel: vi.fn(), audit: vi.fn(async () => {}),
-  emit: vi.fn(async () => {}), revalidate: vi.fn(), weather: vi.fn(),
+  emit: vi.fn(async () => {}), revalidate: vi.fn(), weather: vi.fn(), design: vi.fn(),
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createServiceClient: () => h.svc.current }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
@@ -13,9 +13,10 @@ vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
 vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: h.emit }))
 vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
 vi.mock('@/lib/solar/cases/weather', () => ({ getOrFetchWeather: h.weather }))
+vi.mock('@/lib/solar/cases/layout-design', () => ({ loadLayoutDesign: h.design }))
 import {
   createSolarCaseAction, duplicateSolarCaseAction, renameSolarCaseAction, deleteSolarCaseAction,
-  setSelectedSolarCaseAction, saveSolarCaseAction, fetchSolarWeatherAction,
+  setSelectedSolarCaseAction, saveSolarCaseAction, fetchSolarWeatherAction, setSolarCasePvSourceAction,
 } from './solar-cases.actions'
 
 const P = 'p1', S = 's1', ORG = 'o1', U = 'u1', C = 'c1'
@@ -65,9 +66,23 @@ describe('createSolarCaseAction', () => {
     expect(h.emit).toHaveBeenCalledWith({ actorId: U, projectId: P, event: 'solar_case_created' })
     expect(h.revalidate).toHaveBeenCalledWith(`/projects/${P}/solar`, 'layout')
   })
-  it('From layout is refused until the Layout tab ships', async () => {
-    setup()
-    await expect(createSolarCaseAction({ projectId: P, name: 'L', start: { kind: 'layout', layoutId: 'x' } })).resolves.toEqual({ error: 'From layout arrives with the Layout tab — use Manual for now.' })
+  it('From layout: sizes come from the layout computed server-side; the row links pv_source + layout_id', async () => {
+    const { u } = setup({ writes: { 'solar.cases:insert': { data: [{ id: C, updated_at: 'T1' }] } } })
+    h.design.mockResolvedValue({ id: 'L1', name: 'Roof A', summary: { moduleCount: 182, dcKwp: 100.1, acKw: 80 }, bom: [] })
+    const r = await createSolarCaseAction({ projectId: P, name: 'Roof A case', start: { kind: 'layout', layoutId: 'L1' } })
+    expect(r).toEqual({ ok: true, caseId: C })
+    expect(h.design).toHaveBeenCalledWith(u.client, P, 'L1')
+    const ins = callsTo(u.calls, 'solar.cases', 'insert')[0]!.payload as { pv_source: string; layout_id: string; config: typeof cfg }
+    expect(ins).toMatchObject({ pv_source: 'layout', layout_id: 'L1' })
+    expect(ins.config.pv).toMatchObject({ source: 'layout', dcKwp: 100.1, acKw: 80 })
+  })
+  it('From layout: an unknown layout, or one with nothing placed, is refused with a sentence and nothing is written', async () => {
+    const { u } = setup()
+    h.design.mockResolvedValue(null)
+    expect(await createSolarCaseAction({ projectId: P, name: 'L', start: { kind: 'layout', layoutId: 'x' } })).toEqual({ error: 'That layout no longer exists — reload.' })
+    h.design.mockResolvedValue({ id: 'L1', name: 'Roof A', summary: { moduleCount: 0, dcKwp: 0, acKw: 0 }, bom: [] })
+    expect(await createSolarCaseAction({ projectId: P, name: 'L', start: { kind: 'layout', layoutId: 'L1' } })).toEqual({ error: 'This layout has no modules yet — place modules on it first.' })
+    expect(callsTo(u.calls, 'solar.cases', 'insert')).toHaveLength(0)
   })
   it('blank name, bad size, duplicate name, no study → sentences', async () => {
     setup()
@@ -208,5 +223,41 @@ describe('fetchSolarWeatherAction', () => {
     setup({ tables: { 'solar.studies': [{ ...study, latitude: null }] } })
     expect(await fetchSolarWeatherAction({ projectId: P })).toEqual({ error: 'Set the site coordinates on Site & Supply first.' })
     expect(h.weather).not.toHaveBeenCalled()
+  })
+})
+
+describe('setSolarCasePvSourceAction (Manual ↔ From layout on an existing case)', () => {
+  const row = { id: C, project_id: P, study_id: S, pv_source: 'manual', layout_id: null, config: cfg, updated_at: 'T0' }
+  it('links a layout: re-derives the sizes server-side, stale-guarded, audited', async () => {
+    const { u } = setup({ tables: { 'solar.cases': [row] }, writes: { 'solar.cases:update': { data: [{ updated_at: 'T2' }] } } })
+    h.design.mockResolvedValue({ id: 'L1', name: 'Roof A', summary: { moduleCount: 10, dcKwp: 5.5, acKw: 5 }, bom: [] })
+    const r = await setSolarCasePvSourceAction({ projectId: P, caseId: C, expectedUpdatedAt: 'T0', source: { kind: 'layout', layoutId: 'L1' } })
+    expect(r).toEqual({ ok: true, updatedAt: 'T2' })
+    const up = callsTo(u.calls, 'solar.cases', 'update')[0]!
+    expect(up.payload).toMatchObject({ pv_source: 'layout', layout_id: 'L1', config: { pv: { source: 'layout', dcKwp: 5.5, acKw: 5 } } })
+    expect(up.filters).toEqual(expect.arrayContaining([['eq', 'updated_at', 'T0'], ['eq', 'project_id', P]]))
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: U, verb: 'case_saved', objectRef: { caseId: C, pvSource: 'layout', layoutId: 'L1' } })
+  })
+  it('back to Manual keeps the last sizes and clears the link', async () => {
+    const linked = { ...row, pv_source: 'layout', layout_id: 'L1', config: { ...cfg, pv: { ...cfg.pv, source: 'layout', dcKwp: 5.5, acKw: 5 } } }
+    const { u } = setup({ tables: { 'solar.cases': [linked] }, writes: { 'solar.cases:update': { data: [{ updated_at: 'T2' }] } } })
+    expect(await setSolarCasePvSourceAction({ projectId: P, caseId: C, expectedUpdatedAt: 'T0', source: { kind: 'manual' } })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(u.calls, 'solar.cases', 'update')[0]!.payload).toMatchObject({ pv_source: 'manual', layout_id: null, config: { pv: { source: 'manual', dcKwp: 5.5, acKw: 5 } } })
+    expect(h.design).not.toHaveBeenCalled()
+  })
+  it('a stale write is refused', async () => {
+    setup({ tables: { 'solar.cases': [row] }, writes: { 'solar.cases:update': { data: [] } } })
+    h.design.mockResolvedValue({ id: 'L1', name: 'Roof A', summary: { moduleCount: 10, dcKwp: 5.5, acKw: 5 }, bom: [] })
+    expect(await setSolarCasePvSourceAction({ projectId: P, caseId: C, expectedUpdatedAt: 'T0', source: { kind: 'layout', layoutId: 'L1' } })).toEqual({ error: STALE })
+  })
+})
+
+describe('saveSolarCaseAction on a layout-linked case', () => {
+  it('keeps the layout-derived size: a client cannot edit DC/AC or unlink through Save', async () => {
+    const linkedCfg = { ...cfg, pv: { ...cfg.pv, source: 'layout' as const, dcKwp: 5.5, acKw: 5 } }
+    const { u } = setup({ tables: { 'solar.cases': [{ id: C, project_id: P, pv_source: 'layout', layout_id: 'L1', config: linkedCfg }] }, writes: { 'solar.cases:update': { data: [{ updated_at: 'T2' }] } } })
+    const sent = { ...linkedCfg, pv: { ...linkedCfg.pv, source: 'manual' as const, dcKwp: 999, acKw: 888, tiltDeg: 20 } }
+    expect(await saveSolarCaseAction({ projectId: P, caseId: C, config: sent, expectedUpdatedAt: 'T0' })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(u.calls, 'solar.cases', 'update')[0]!.payload).toMatchObject({ config: { pv: { source: 'layout', dcKwp: 5.5, acKw: 5, tiltDeg: 20 } } })
   })
 })

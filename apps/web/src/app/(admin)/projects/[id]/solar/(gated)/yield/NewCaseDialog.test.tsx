@@ -7,12 +7,12 @@ import { NewCaseDialog } from './NewCaseDialog'
 
 beforeEach(() => vi.clearAllMocks())
 describe('NewCaseDialog', () => {
-  it('From layout is disabled with the reason; Manual creates and opens the case', async () => {
+  it('From layout is disabled with the reason when no layout has modules; Manual creates and opens the case', async () => {
     h.create.mockResolvedValue({ ok: true, caseId: 'c9' })
-    render(<NewCaseDialog projectId="p1" cases={[{ id: 'c1', name: 'Base' }]} onClose={() => {}} />)
+    render(<NewCaseDialog projectId="p1" cases={[{ id: 'c1', name: 'Base' }]} layouts={[{ id: 'L0', name: 'Empty roof', moduleCount: 0, dcKwp: 0 }]} onClose={() => {}} />)
     const layout = screen.getByLabelText('From layout') as HTMLInputElement
     expect(layout.disabled).toBe(true)
-    expect(screen.getByText('Arrives with the Layout tab')).toBeTruthy()
+    expect(screen.getByText(/draw a layout with modules on the Layout tab first/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Option B' } })
     fireEvent.change(screen.getByLabelText('DC size (kWp)'), { target: { value: '600' } })
     fireEvent.change(screen.getByLabelText('AC size (kW)'), { target: { value: '500' } })
@@ -36,5 +36,16 @@ describe('NewCaseDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
     await screen.findByText('A case with this name already exists')
     expect(h.push).not.toHaveBeenCalled()
+  })
+  it('From layout sends the chosen layout (only layouts with modules are offered)', async () => {
+    h.create.mockResolvedValue({ ok: true, caseId: 'c9' })
+    render(<NewCaseDialog projectId="p1" cases={[]} layouts={[{ id: 'L0', name: 'Empty', moduleCount: 0, dcKwp: 0 }, { id: 'L1', name: 'Roof A', moduleCount: 182, dcKwp: 100.1 }, { id: 'L2', name: 'Roof B', moduleCount: 20, dcKwp: 11 }]} onClose={() => {}} />)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Roof B case' } })
+    fireEvent.click(screen.getByLabelText('From layout'))
+    const pick = screen.getByLabelText('Layout') as HTMLSelectElement
+    expect([...pick.options].map((o) => o.textContent)).toEqual(['Roof A — 100.1 kWp', 'Roof B — 11 kWp'])
+    fireEvent.change(pick, { target: { value: 'L2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith({ projectId: 'p1', name: 'Roof B case', start: { kind: 'layout', layoutId: 'L2' } }))
   })
 })

@@ -4,15 +4,15 @@ import { defaultCaseConfig } from '@esite/shared/solar-cases'
 import { solarOrgSettingDefaults } from '@esite/shared'
 import type { CaseEditorData } from '@/lib/solar/cases/page-data'
 
-const h = vi.hoisted(() => ({ save: vi.fn(), weather: vi.fn(), run: vi.fn(), cancel: vi.fn(), refresh: vi.fn() }))
+const h = vi.hoisted(() => ({ save: vi.fn(), weather: vi.fn(), run: vi.fn(), cancel: vi.fn(), refresh: vi.fn(), source: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push: vi.fn() }) }))
-vi.mock('@/actions/solar-cases.actions', () => ({ saveSolarCaseAction: h.save, fetchSolarWeatherAction: h.weather }))
+vi.mock('@/actions/solar-cases.actions', () => ({ saveSolarCaseAction: h.save, fetchSolarWeatherAction: h.weather, setSolarCasePvSourceAction: h.source }))
 vi.mock('../../_components/runCase', () => ({ postRun: h.run, postCancel: h.cancel }))
 import { CaseEditor } from './CaseEditor'
 
 const cfg = defaultCaseConfig(solarOrgSettingDefaults(), { dcKwp: 500, acKw: 400 })
 const data = (over: Partial<CaseEditorData> = {}): CaseEditorData => ({
-  caseId: 'c1', name: 'Base', updatedAt: 'T1', config: cfg, buildReasons: [], status: 'done', statusLabel: 'Done', running: false,
+  caseId: 'c1', name: 'Base', updatedAt: 'T1', config: cfg, buildReasons: [], pvSource: 'manual', layoutId: null, status: 'done', statusLabel: 'Done', running: false,
   weather: { id: 'w1', latRound: -26.2, lngRound: 28.05, fetchedAt: '2026-09-28T10:00:00Z', radiationDb: 'PVGIS-SARAH2', gsaPvoutKwhPerKwp: 1712 },
   studyExport: { mode: 'net_billing', limitKw: 100 },
   siteLoad: { basis: 'S1', referenceYear: 2025, annualKwh: 876_000, peakKw: 180 },
@@ -23,7 +23,7 @@ const equipment = { modules: [{ id: MOD, make: 'Generic', model: 'M', retired: f
 beforeEach(() => vi.clearAllMocks())
 
 describe('CaseEditor', () => {
-  it('renders every §7.2 section; From layout disabled; DC/AC shown as derived', () => {
+  it('renders every §7.2 section; From layout disabled with no usable layout; DC/AC shown as derived', () => {
     render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} />)
     for (const s of ['PV system', 'Losses', 'Degradation', 'Weather', 'Battery', 'Grid / export', 'Load', 'Load-shedding value']) expect(screen.getByRole('group', { name: s })).toBeTruthy()
     expect((screen.getByLabelText('From layout') as HTMLInputElement).disabled).toBe(true)
@@ -158,5 +158,25 @@ describe('CaseEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
     fireEvent.click(screen.getByRole('button', { name: 'Discard all changes?' }))
     expect((within(screen.getByRole('group', { name: 'Battery' })).getByLabelText('Battery enabled') as HTMLInputElement).checked).toBe(false)
+  })
+  it('From layout links the case through its own action and refreshes; the sizes are then locked to the layout', async () => {
+    h.source.mockResolvedValue({ ok: true, updatedAt: 'T2' })
+    const layouts = [{ id: 'L1', name: 'Roof A', moduleCount: 182, dcKwp: 100.1 }]
+    const { unmount } = render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} layouts={layouts} />)
+    fireEvent.click(screen.getByLabelText('From layout'))
+    await waitFor(() => expect(h.source).toHaveBeenCalledWith({ projectId: 'p1', caseId: 'c1', expectedUpdatedAt: 'T1', source: { kind: 'layout', layoutId: 'L1' } }))
+    expect(h.refresh).toHaveBeenCalled()
+    unmount()
+    render(<CaseEditor projectId="p1" level="edit" data={data({ pvSource: 'layout', layoutId: 'L1' })} equipment={equipment} layouts={layouts} />)
+    expect((screen.getByLabelText('DC size (kWp)') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText('AC size (kW)') as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getByText(/DC and AC size come from Roof A/)).toBeTruthy()
+  })
+  it('switching the PV source is refused while the draft has unsaved changes', async () => {
+    render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} layouts={[{ id: 'L1', name: 'Roof A', moduleCount: 1, dcKwp: 1 }]} />)
+    fireEvent.change(screen.getByLabelText('Tilt (°)'), { target: { value: '20' } })
+    fireEvent.click(screen.getByLabelText('From layout'))
+    await screen.findByText('Save or discard your changes first.')
+    expect(h.source).not.toHaveBeenCalled()
   })
 })
