@@ -21,6 +21,12 @@
 --   * public.user_can_read_report_kind(): Solar kinds read on the Solar level (layout sheet and
 --     technical on View; feasibility and proposal on Edit + financials).
 --   * projects.project_settings.notify_solar_email; two notification types; six product events.
+--   * Solar PDFs in bucket 'reports' (<org>/<project>/solar-reports/ and /solar-proposals/) are
+--     SERVICE-ONLY: per-verb RESTRICTIVE storage.objects policies refuse them to every session
+--     role (00117's bucket policies admit any org member). The solar_proposal report row cannot
+--     be inserted, updated or deleted through a session (00117 reports_write is FOR ALL).
+--   * A study or case that an issued proposal depends on cannot be deleted directly; a project
+--     delete (an FK cascade, trigger depth > 1) still removes everything.
 -- RULES
 --   * 00207's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
 --     policy in schema solar, every SECURITY DEFINER function revoked from anon.
@@ -61,6 +67,17 @@
 -- trigger: proposals_guard ON solar.proposals
 -- trigger: proposal_events_bind ON solar.proposal_events
 -- trigger: proposal_events_append_only ON solar.proposal_events
+-- function: solar.studies_keep_issued_proposals()
+-- function: solar.cases_keep_issued_proposals()
+-- trigger: studies_keep_issued_proposals ON solar.studies
+-- trigger: cases_keep_issued_proposals ON solar.cases
+-- policy: solar_pdfs_service_only_select ON storage.objects RESTRICTIVE
+-- policy: solar_pdfs_service_only_insert ON storage.objects RESTRICTIVE
+-- policy: solar_pdfs_service_only_update ON storage.objects RESTRICTIVE
+-- policy: solar_pdfs_service_only_delete ON storage.objects RESTRICTIVE
+-- policy: reports_solar_proposal_insert_authz ON projects.reports RESTRICTIVE
+-- policy: reports_solar_proposal_update_authz ON projects.reports RESTRICTIVE
+-- policy: reports_solar_proposal_delete_authz ON projects.reports RESTRICTIVE
 -- policy: proposal_templates_select ON solar.proposal_templates PERMISSIVE
 -- policy: proposal_templates_insert ON solar.proposal_templates PERMISSIVE
 -- policy: proposal_templates_update ON solar.proposal_templates PERMISSIVE
@@ -111,6 +128,10 @@
 -- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_proposal%' AND prosrc LIKE '%solar_layout_sheet%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_proposal_accepted%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_declined%' AND pg_get_constraintdef(oid) LIKE '%solar_access_declined%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%' FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check')
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%solar_narrative_drafted%' AND pg_get_constraintdef(oid) LIKE '%solar_equipment_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
+-- sql: (SELECT count(DISTINCT cmd) = 4 AND count(*) = 4 AND bool_and(strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar-(reports|proposals)') > 0) FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'solar_pdfs_service_only_%' AND permissive = 'RESTRICTIVE' AND cmd <> 'ALL')
+-- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'public.solar_issue_proposal(uuid, timestamptz, uuid, jsonb, text, text, text, timestamptz, uuid, uuid)'::regprocedure)
+-- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'solar.proposal_record_response(uuid, text, uuid, text, text, text, boolean, text, text, text, text)'::regprocedure)
+-- sql: (SELECT prosrc LIKE '%uo.organisation_id%' FROM pg_proc WHERE oid = 'solar.is_portal_member(uuid, uuid)'::regprocedure)
 -- behaviour: scripts/db/assert-solar-proposals-roles.sql, every row ok
 -- @verify:end
 
@@ -317,6 +338,37 @@ CREATE POLICY proposals_update_authz ON solar.proposals AS RESTRICTIVE FOR UPDAT
 CREATE POLICY proposals_delete_authz ON solar.proposals AS RESTRICTIVE FOR DELETE TO authenticated
     USING (public.solar_can_see_money(project_id));
 
+-- An issued proposal's study and case are its provenance. Deleting either directly would cascade the
+-- evidence away (study) or null its case reference (case) through the depth > 1 bypass above, so both
+-- are refused while a non-draft proposal depends on them. Depth > 1 (a project-delete cascade) passes.
+CREATE OR REPLACE FUNCTION solar.studies_keep_issued_proposals()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;
+    IF EXISTS (SELECT 1 FROM solar.proposals p WHERE p.study_id = OLD.id AND p.status <> 'draft') THEN
+        RAISE EXCEPTION 'solar.studies: an issued proposal depends on this study and is kept as evidence' USING ERRCODE = '42501';
+    END IF;
+    RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION solar.studies_keep_issued_proposals() FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.studies_keep_issued_proposals() FROM anon;
+CREATE TRIGGER studies_keep_issued_proposals BEFORE DELETE ON solar.studies
+    FOR EACH ROW EXECUTE FUNCTION solar.studies_keep_issued_proposals();
+
+CREATE OR REPLACE FUNCTION solar.cases_keep_issued_proposals()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;
+    IF EXISTS (SELECT 1 FROM solar.proposals p WHERE p.case_id = OLD.id AND p.status <> 'draft') THEN
+        RAISE EXCEPTION 'solar.cases: an issued proposal depends on this case and is kept as evidence' USING ERRCODE = '42501';
+    END IF;
+    RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION solar.cases_keep_issued_proposals() FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.cases_keep_issued_proposals() FROM anon;
+CREATE TRIGGER cases_keep_issued_proposals BEFORE DELETE ON solar.cases
+    FOR EACH ROW EXECUTE FUNCTION solar.cases_keep_issued_proposals();
+
 -- ── 3. Proposal events (append-only evidence) ───────────────────────────────
 CREATE TABLE IF NOT EXISTS solar.proposal_events (
     id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -447,6 +499,9 @@ BEGIN
     IF v_eff NOT IN ('issued', 'viewed') THEN
         RETURN jsonb_build_object('ok', false, 'error', v_eff);
     END IF;
+    IF EXISTS (SELECT 1 FROM solar.proposals x WHERE x.family_id = p.family_id AND x.id <> p.id AND x.status = 'accepted') THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'family_accepted');
+    END IF;
     IF length(v_name) < 2 OR length(v_name) > 200 THEN
         RETURN jsonb_build_object('ok', false, 'error', 'invalid_name');
     END IF;
@@ -477,15 +532,18 @@ REVOKE ALL ON FUNCTION solar.proposal_record_response(UUID, TEXT, UUID, TEXT, TE
 REVOKE ALL ON FUNCTION solar.proposal_record_response(UUID, TEXT, UUID, TEXT, TEXT, TEXT, BOOLEAN, TEXT, TEXT, TEXT, TEXT) FROM anon;
 REVOKE ALL ON FUNCTION solar.proposal_record_response(UUID, TEXT, UUID, TEXT, TEXT, TEXT, BOOLEAN, TEXT, TEXT, TEXT, TEXT) FROM authenticated;
 
--- A portal user: an active project member who is a client viewer (project role or org role).
+-- A portal user: an active project member who is a client viewer (project role, or org role IN
+-- THE PROJECT'S ORGANISATION; a client viewer of some other org is not this project's client).
 CREATE OR REPLACE FUNCTION solar.is_portal_member(p_project_id UUID, p_user_id UUID)
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT EXISTS (
         SELECT 1 FROM projects.project_members pm
+          JOIN projects.projects pr ON pr.id = pm.project_id
          WHERE pm.project_id = p_project_id AND pm.user_id = p_user_id AND pm.is_active
            AND (pm.role = 'client_viewer'
                 OR EXISTS (SELECT 1 FROM public.user_organisations uo
-                            WHERE uo.user_id = p_user_id AND uo.is_active AND uo.role = 'client_viewer')));
+                            WHERE uo.user_id = p_user_id AND uo.organisation_id = pr.organisation_id
+                              AND uo.is_active AND uo.role = 'client_viewer')));
 $$;
 REVOKE ALL ON FUNCTION solar.is_portal_member(UUID, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.is_portal_member(UUID, UUID) FROM anon;
@@ -597,6 +655,10 @@ BEGIN
     SELECT * INTO p FROM solar.proposals WHERE id = p_proposal_id FOR UPDATE;
     IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'error', 'not_found'); END IF;
     IF p.status <> 'draft' THEN RETURN jsonb_build_object('ok', false, 'error', 'not_draft'); END IF;
+    -- One acceptance per family: a draft revision made before v1 was accepted can never be issued.
+    IF EXISTS (SELECT 1 FROM solar.proposals x WHERE x.family_id = p.family_id AND x.status = 'accepted') THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'family_accepted');
+    END IF;
     IF p.updated_at IS DISTINCT FROM p_expected_updated_at THEN
         RETURN jsonb_build_object('ok', false, 'error', 'stale');
     END IF;
@@ -746,6 +808,35 @@ REVOKE ALL ON FUNCTION public.report_kind_is_sensitive(TEXT) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.report_kind_is_sensitive(TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
+
+-- ── 8b. Solar PDFs are service-only (bucket 'reports', 00117) ───────────────
+-- 00117's bucket policies admit ANY active org member to read, upload, overwrite and delete every
+-- object under <org>/. Solar feasibility and proposal PDFs are money, and an accepted proposal's PDF
+-- is the evidence its hash is stamped against. Every app read, sign, upload and remove of these paths
+-- goes through the service client after the Solar gate, so a session role needs none of them.
+-- Per verb (never RESTRICTIVE FOR ALL); every other bucket and path is untouched.
+DROP POLICY IF EXISTS solar_pdfs_service_only_select ON storage.objects;
+CREATE POLICY solar_pdfs_service_only_select ON storage.objects AS RESTRICTIVE FOR SELECT TO authenticated, anon
+    USING (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/');
+DROP POLICY IF EXISTS solar_pdfs_service_only_insert ON storage.objects;
+CREATE POLICY solar_pdfs_service_only_insert ON storage.objects AS RESTRICTIVE FOR INSERT TO authenticated, anon
+    WITH CHECK (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/');
+DROP POLICY IF EXISTS solar_pdfs_service_only_update ON storage.objects;
+CREATE POLICY solar_pdfs_service_only_update ON storage.objects AS RESTRICTIVE FOR UPDATE TO authenticated, anon
+    USING (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/')
+    WITH CHECK (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/');
+DROP POLICY IF EXISTS solar_pdfs_service_only_delete ON storage.objects;
+CREATE POLICY solar_pdfs_service_only_delete ON storage.objects AS RESTRICTIVE FOR DELETE TO authenticated, anon
+    USING (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/');
+
+-- The solar_proposal report row is written only by the service-role issue path; 00117's reports_write
+-- (FOR ALL, owner/admin/PM) would otherwise let a session forge, rewrite or delete it.
+CREATE POLICY reports_solar_proposal_insert_authz ON projects.reports AS RESTRICTIVE FOR INSERT TO authenticated
+    WITH CHECK (kind IS DISTINCT FROM 'solar_proposal');
+CREATE POLICY reports_solar_proposal_update_authz ON projects.reports AS RESTRICTIVE FOR UPDATE TO authenticated
+    USING (kind IS DISTINCT FROM 'solar_proposal') WITH CHECK (kind IS DISTINCT FROM 'solar_proposal');
+CREATE POLICY reports_solar_proposal_delete_authz ON projects.reports AS RESTRICTIVE FOR DELETE TO authenticated
+    USING (kind IS DISTINCT FROM 'solar_proposal');
 
 -- ── 9. Project email toggle ─────────────────────────────────────────────────
 ALTER TABLE projects.project_settings

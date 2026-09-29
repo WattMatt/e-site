@@ -20,6 +20,7 @@ DECLARE
   v_nogrant UUID := gen_random_uuid();   -- contractor member, no grant
   v_client  UUID := gen_random_uuid();   -- client_viewer on v_p (FORGED edit_financials grant)
   v_foreign UUID := gen_random_uuid();   -- admin of v_org2
+  v_cvx     UUID := gen_random_uuid();   -- client_viewer of v_org2 ONLY; contractor member of v_p (review M1)
   v_study   UUID;
   v_study2  UUID;
   v_w       UUID;
@@ -29,6 +30,7 @@ DECLARE
   v_prop_b  UUID;   -- family B (expires)
   v_c1      UUID;   -- family C v1
   v_c2      UUID;   -- family C v2
+  v_a2      UUID;   -- family A v2 draft, created before v1 is accepted (review I2)
   v_tmp     UUID;
   v_upd     TIMESTAMPTZ;
   v_j       JSONB;
@@ -42,11 +44,12 @@ DECLARE
   v_tok_c1  CONSTANT TEXT := rpad('tokC1', 43, 'z');
   v_tok_c2  CONSTANT TEXT := rpad('tokC2', 43, 'w');
   v_tok_c2b CONSTANT TEXT := rpad('tokC2b', 43, 'v');
+  v_tok_a2  CONSTANT TEXT := rpad('tokA2', 43, 'u');
   v_snap    CONSTANT JSONB := '{"version":1,"issuer":{"orgName":"Probe","proposerName":"Pat Proposer","proposerEmail":"pat@example.invalid"},"system":{"dcKwp":100},"price":{"offerExclVatZar":1150000}}';
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-6-probe'), (v_org2, 'solar-6-probe-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_edit, v_money, v_view, v_nogrant, v_client, v_foreign] LOOP
+  FOREACH u IN ARRAY ARRAY[v_admin, v_edit, v_money, v_view, v_nogrant, v_client, v_foreign, v_cvx] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -55,13 +58,15 @@ BEGIN
   INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES
     (v_admin, v_org, 'admin', TRUE), (v_edit, v_org, 'contractor', TRUE), (v_money, v_org, 'contractor', TRUE),
     (v_view, v_org, 'contractor', TRUE), (v_nogrant, v_org, 'contractor', TRUE),
-    (v_client, v_org, 'client_viewer', TRUE), (v_foreign, v_org2, 'admin', TRUE);
+    (v_client, v_org, 'client_viewer', TRUE), (v_foreign, v_org2, 'admin', TRUE),
+    (v_cvx, v_org2, 'client_viewer', TRUE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
     (v_p, v_org, 'solar-6-probe-p', v_admin), (v_p2, v_org2, 'solar-6-probe-p2', v_foreign);
   INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES
     (v_p, v_edit, v_org, 'contractor', TRUE), (v_p, v_money, v_org, 'contractor', TRUE),
     (v_p, v_view, v_org, 'contractor', TRUE), (v_p, v_nogrant, v_org, 'contractor', TRUE),
-    (v_p, v_client, v_org, 'client_viewer', TRUE);
+    (v_p, v_client, v_org, 'client_viewer', TRUE),
+    (v_p, v_cvx, v_org2, 'contractor', TRUE);
   INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo, current_period_end) VALUES
     (v_org, 'solar', 'active', 199900, now() + interval '30 days'),
     (v_org2, 'solar', 'active', 199900, now() + interval '30 days');
@@ -83,6 +88,11 @@ BEGIN
     (v_org, v_p, 'solar_technical', 't', 'x/t.pdf', 'issued', 1),
     (v_org, v_p, 'solar_feasibility', 'f', 'x/f.pdf', 'issued', 1),
     (v_org, v_p, 'solar_proposal', 'p', 'x/p.pdf', 'issued', 1);
+  -- Objects in bucket 'reports' (review C1): two Solar money PDFs and one non-Solar control.
+  INSERT INTO storage.objects (bucket_id, name) VALUES
+    ('reports', v_org || '/' || v_p || '/solar-proposals/probe-v1.pdf'),
+    ('reports', v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-probe.pdf'),
+    ('reports', v_org || '/' || v_p || '/tenant-schedule/probe-control.pdf');
 
   -- ── 1. Money user: drafts only ────────────────────────────────────────────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_money::text, 'role', 'authenticated')::text, true);
@@ -182,6 +192,76 @@ BEGIN
   END;
   RESET ROLE;
 
+  -- ── 3b. Solar PDFs in bucket 'reports' are service-only (review C1) ───────
+  FOREACH u IN ARRAY ARRAY[v_nogrant, v_client, v_money] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', u::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    INSERT INTO _r VALUES ('storage_solar_pdfs_hidden_' || CASE u WHEN v_nogrant THEN 'nogrant' WHEN v_client THEN 'client' ELSE 'money' END,
+      (SELECT count(*) FROM storage.objects WHERE bucket_id = 'reports' AND name LIKE v_org || '/' || v_p || '/solar-%') = 0);
+    RESET ROLE;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('storage_control_object_readable',
+    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'reports' AND name = v_org || '/' || v_p || '/tenant-schedule/probe-control.pdf') = 1);
+  BEGIN
+    UPDATE storage.objects SET metadata = '{"forged":true}'::jsonb WHERE bucket_id = 'reports' AND name LIKE v_org || '/' || v_p || '/solar-%';
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('storage_solar_update_REFUSED', v_n = 0);
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('storage_solar_update_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('storage_solar_update_REFUSED', false);
+  END;
+  -- storage.protect_delete() refuses EVERY direct delete unless storage.allow_delete_query is set;
+  -- the Storage API sets it and then runs the DELETE under the caller's role, so set it here too
+  -- (without it this check could not fail).
+  PERFORM set_config('storage.allow_delete_query', 'true', true);
+  BEGIN
+    DELETE FROM storage.objects WHERE bucket_id = 'reports' AND name LIKE v_org || '/' || v_p || '/solar-%';
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('storage_solar_delete_REFUSED', v_n = 0);
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('storage_solar_delete_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('storage_solar_delete_REFUSED', false);
+  END;
+  PERFORM set_config('storage.allow_delete_query', 'false', true);
+  BEGIN
+    INSERT INTO storage.objects (bucket_id, name) VALUES ('reports', v_org || '/' || v_p || '/solar-proposals/forged-v9.pdf');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('storage_solar_insert_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('storage_solar_insert_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO _r VALUES ('storage_solar_objects_intact',
+    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'reports' AND name LIKE v_org || '/' || v_p || '/solar-%'
+       AND metadata IS DISTINCT FROM '{"forged":true}'::jsonb) = 2);
+  -- An org admin (reports_write, and a Solar grantor) cannot rewrite or delete the proposal report row.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  UPDATE projects.reports SET title = 'forged' WHERE project_id = v_p AND kind = 'solar_proposal';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('admin_update_proposal_report_REFUSED', v_n = 0);
+  DELETE FROM projects.reports WHERE project_id = v_p AND kind = 'solar_proposal';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('admin_delete_proposal_report_REFUSED', v_n = 0);
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'solar_proposal', 'forged', 'x/forged.pdf', 'issued', 9);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_insert_proposal_report_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_insert_proposal_report_REFUSED', false);
+  END;
+  UPDATE projects.reports SET title = 't2' WHERE project_id = v_p AND kind = 'solar_technical';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('admin_updates_technical_report_control', v_n = 1);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO _r VALUES ('proposal_report_row_intact',
+    (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_proposal' AND title = 'p') = 1);
+
   -- ── 4. Issue family A (service path) ──────────────────────────────────────
   SELECT updated_at INTO v_upd FROM solar.proposals WHERE id = v_prop;
   v_j := public.solar_issue_proposal(v_prop, v_upd - interval '1 second', v_run, v_snap, 'o/p/a.pdf', v_pdfsha,
@@ -224,6 +304,8 @@ BEGIN
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('issued_delete_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('issued_delete_REFUSED', false);
   END;
+  -- Family A v2 draft, created while v1 is still live (review I2).
+  INSERT INTO solar.proposals (study_id, family_id, case_id) VALUES (v_study, v_prop, v_case) RETURNING id INTO v_a2;
   -- Tamper: change the case and its money AFTER issue.
   UPDATE solar.cases SET config = config || '{"tampered":true}' WHERE id = v_case;
   INSERT INTO solar.case_financials (case_id, config) VALUES (v_case, '{"tampered":true}');
@@ -291,6 +373,28 @@ BEGIN
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);
 
+  -- Review I2: v1 is accepted, so its pre-existing draft v2 cannot be issued.
+  SELECT updated_at INTO v_upd FROM solar.proposals WHERE id = v_a2;
+  v_j := public.solar_issue_proposal(v_a2, v_upd, v_run, v_snap, 'o/p/a2.pdf', v_pdfsha,
+           solar.proposal_hash_token(v_tok_a2), now() + interval '30 days', NULL, v_money);
+  INSERT INTO _r VALUES ('issue_after_family_accept_REFUSED', v_j ->> 'error' = 'family_accepted'
+    AND (SELECT status = 'draft' FROM solar.proposals WHERE id = v_a2)
+    AND (SELECT status = 'accepted' FROM solar.proposals WHERE id = v_prop));
+  -- ...and if a live sibling exists anyway (older data), a response to it is refused.
+  SET LOCAL session_replication_role = replica;
+  UPDATE solar.proposals SET status = 'issued', snapshot = v_snap, pdf_path = 'o/p/a2.pdf', pdf_sha256 = v_pdfsha,
+         share_token_hash = solar.proposal_hash_token(v_tok_a2), expires_at = now() + interval '30 days', issued_at = now()
+   WHERE id = v_a2;
+  SET LOCAL session_replication_role = origin;
+  v_j := public.solar_proposal_respond_by_token(v_tok_a2, 'accepted', 'Client Name', 'c@example.invalid', TRUE, NULL, NULL, NULL, NULL);
+  INSERT INTO _r VALUES ('respond_after_family_accept_REFUSED', v_j ->> 'error' = 'family_accepted'
+    AND (SELECT status = 'issued' FROM solar.proposals WHERE id = v_a2));
+  SET LOCAL session_replication_role = replica;
+  UPDATE solar.proposals SET status = 'draft', snapshot = NULL, pdf_path = NULL, pdf_sha256 = NULL,
+         share_token_hash = NULL, expires_at = NULL, issued_at = NULL, responded_at = NULL
+   WHERE id = v_a2;
+  SET LOCAL session_replication_role = origin;
+
   -- ── 7. Expired (family B) ─────────────────────────────────────────────────
   SELECT updated_at INTO v_upd FROM solar.proposals WHERE id = v_prop_b;
   v_j := public.solar_issue_proposal(v_prop_b, v_upd, v_run, v_snap, 'o/p/b.pdf', v_pdfsha,
@@ -347,6 +451,8 @@ BEGIN
     AND NOT (v_j::text LIKE '%"snapshot"%'));
   INSERT INTO _r VALUES ('portal_refuses_non_client', public.solar_portal_proposals(v_p, v_edit) = '[]'::jsonb
     AND public.solar_portal_proposal(v_p, v_edit, v_c2, NULL, NULL) ->> 'state' = 'not_found');
+  INSERT INTO _r VALUES ('portal_refuses_foreign_org_client_viewer', public.solar_portal_proposals(v_p, v_cvx) = '[]'::jsonb
+    AND public.solar_portal_proposal(v_p, v_cvx, v_c2, NULL, NULL) ->> 'state' = 'not_found');
   INSERT INTO _r VALUES ('portal_refuses_foreign_project', public.solar_portal_proposal(v_p2, v_client, v_c2, NULL, NULL) ->> 'state' = 'not_found');
   v_j := public.solar_portal_respond(v_p, v_client, v_c2, 'declined', 'Client Viewer', 'cv@example.invalid', NULL, NULL, 'Too expensive', '198.51.100.9', 'portal-agent');
   INSERT INTO _r VALUES ('portal_decline_stamps_user', (v_j ->> 'ok')::boolean
@@ -401,6 +507,32 @@ BEGIN
   INSERT INTO _r VALUES ('notify_solar_email_defaults_true', (SELECT column_default = 'true' AND is_nullable = 'NO'
     FROM information_schema.columns WHERE table_schema = 'projects' AND table_name = 'project_settings' AND column_name = 'notify_solar_email'));
 
+  -- ── 12b. Issued evidence survives a case or study delete (review M2, I1) ──
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_edit::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    DELETE FROM solar.cases WHERE id = v_case;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('case_delete_with_issued_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('case_delete_with_issued_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_money::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    DELETE FROM solar.studies WHERE id = v_study;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('study_delete_with_issued_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('study_delete_with_issued_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO _r VALUES ('issued_evidence_intact_after_deletes',
+    (SELECT count(*) FROM solar.proposals WHERE project_id = v_p AND status <> 'draft' AND case_id = v_case) = 4
+    AND (SELECT count(*) FROM solar.proposal_events WHERE project_id = v_p AND kind = 'accepted') = 1);
+
   -- ── 13. Lapsed subscription: staff read nothing, rows kept, issued link still works ──
   UPDATE billing.org_addon_subscriptions SET status = 'cancelled', current_period_end = now() - interval '1 day' WHERE organisation_id = v_org;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_money::text, 'role', 'authenticated')::text, true);
@@ -408,16 +540,17 @@ BEGIN
   INSERT INTO _r VALUES ('lapsed_money_user_reads_nothing', (SELECT count(*) FROM solar.proposals WHERE project_id = v_p) = 0);
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);
-  INSERT INTO _r VALUES ('lapsed_rows_kept', (SELECT count(*) FROM solar.proposals WHERE project_id = v_p) = 4);
+  INSERT INTO _r VALUES ('lapsed_rows_kept', (SELECT count(*) FROM solar.proposals WHERE project_id = v_p) = 5);
   INSERT INTO _r VALUES ('lapsed_token_still_works', public.solar_proposal_by_token(v_tok_a, NULL, NULL) ->> 'state' = 'accepted');
 
-  -- ── 14. A study delete cascades issued proposals and their evidence ──────
+  -- ── 14. A PROJECT delete still cascades the study, proposals and evidence ─
   BEGIN
-    DELETE FROM solar.studies WHERE id = v_study;
-    INSERT INTO _r VALUES ('study_delete_cascades_issued', (SELECT count(*) FROM solar.proposals WHERE project_id = v_p) = 0
+    DELETE FROM projects.projects WHERE id = v_p;
+    INSERT INTO _r VALUES ('project_delete_cascades_proposals', (SELECT count(*) FROM solar.studies WHERE project_id = v_p) = 0
+      AND (SELECT count(*) FROM solar.proposals WHERE project_id = v_p) = 0
       AND (SELECT count(*) FROM solar.proposal_events WHERE project_id = v_p) = 0);
   EXCEPTION WHEN OTHERS THEN
-    INSERT INTO _r VALUES ('study_delete_cascades_issued', false);
+    INSERT INTO _r VALUES ('project_delete_cascades_proposals:' || left(SQLERRM, 120), false);
   END;
 END $$;
 
