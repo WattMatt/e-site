@@ -27,3 +27,13 @@ describe('pricing has one source', () => {
     })
   }
 })
+
+describe('the screens no longer say Yield & Financials ignore these inputs', () => {
+  const APP = join(__dirname, '../../../app/(admin)/projects/[id]/solar/(gated)')
+  for (const f of ['tariff/page.tsx', 'load/_components/SiteProfilePanel.tsx']) {
+    it(f, () => {
+      const src = readFileSync(join(APP, f), 'utf8')
+      expect(src).not.toMatch(/open item I-1|Not yet used by Yield|not yet read by Financials/)
+    })
+  }
+})

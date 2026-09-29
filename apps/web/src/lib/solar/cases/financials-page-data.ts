@@ -53,6 +53,13 @@ export interface FinancialsPageData {
   energyStale: boolean; financialsStale: boolean
   results: FinancialResultsView | null
   vatRate: number
+  /** What Financials prices from the study (I-1): the Tariff tab escalation path and the Load tab growth. Null without a resolved tariff. */
+  studyPricing: { loadGrowthPct: number; escalationYear2Pct: number | null; escalationYear10Pct: number | null } | null
+}
+
+function studyPricingView(p: { loadGrowthPct: number; escalationRows?: Array<{ year: number; pct: number }> }): NonNullable<FinancialsPageData['studyPricing']> {
+  const at = (y: number) => p.escalationRows?.find((r) => r.year === y)?.pct ?? null
+  return { loadGrowthPct: p.loadGrowthPct, escalationYear2Pct: at(2), escalationYear10Pct: at(10) }
 }
 
 /** Stored case_run_financials row → display view. Year-1 bill saving = stored bill before − stored bill after. */
@@ -92,7 +99,7 @@ export function resultsView(row: Row): FinancialResultsView {
 export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, projectId: string, caseIdParam: string | undefined): Promise<FinancialsPageData> {
   const empty: FinancialsPageData = {
     hasStudy: false, cases: [], caseId: null, caseName: '', caseFromLayout: false, config: defaultFinanceConfig(solarOrgSettingDefaults()), configUpdatedAt: null, isDefault: true,
-    runSize: null, caseLoadSheddingEnabled: false, runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: VAT_RATE,
+    runSize: null, caseLoadSheddingEnabled: false, runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: VAT_RATE, studyPricing: null,
   }
   const shared = await loadStudyInputs(svc, projectId)
   if (!shared) return empty
@@ -158,5 +165,6 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
     energyStale, financialsStale,
     results: res ? resultsView(res) : null,
     vatRate: VAT_RATE,
+    studyPricing: shared.tariff.ok ? studyPricingView(shared.tariff.pricing) : null,
   }
 }

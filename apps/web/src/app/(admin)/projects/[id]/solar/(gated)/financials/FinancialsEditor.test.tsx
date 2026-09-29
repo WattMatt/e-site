@@ -13,7 +13,7 @@ const fin = defaultFinanceConfig(solarOrgSettingDefaults())
 const data = (over: Partial<FinancialsPageData> = {}): FinancialsPageData => ({
   hasStudy: true, cases: [{ id: 'c1', name: 'Base', hasRun: true }, { id: 'c2', name: 'Big', hasRun: false }], caseId: 'c1', caseName: 'Base', caseFromLayout: false,
   config: fin, configUpdatedAt: 'F1', isDefault: false, runSize: { dcKwp: 100, acKw: 80, batteryKwh: null }, caseLoadSheddingEnabled: false,
-  runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: 0.15, ...over,
+  runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: 0.15, studyPricing: null, ...over,
 })
 beforeEach(() => vi.clearAllMocks())
 
@@ -112,5 +112,18 @@ describe('FinancialsEditor', () => {
     await waitFor(() => expect(h.bom).toHaveBeenCalledWith({ projectId: 'p1', caseId: 'c1', config: fin }))
     expect(await screen.findByDisplayValue('Generic 550 W')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Run financials' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('I-1: tariff escalation and load growth are read-only here — they come from the Tariff and Load tabs', () => {
+    render(<FinancialsEditor projectId="p1" data={data({ studyPricing: { loadGrowthPct: 3, escalationYear2Pct: 10.1, escalationYear10Pct: 7 } })} />)
+    for (const label of ['Tariff escalation, year 1', 'Tariff escalation, year 10', 'Tariff escalation after year 10 (CPI plus)', 'Load growth']) {
+      expect(screen.queryByLabelText(label)).toBeNull()
+    }
+    expect(screen.getByText('Tariff escalation: year 2 10.1 %, year 10 7 % — from the Tariff tab')).toBeTruthy()
+    expect(screen.getByText('Load growth: 3 %/yr — from the Load tab')).toBeTruthy()
+  })
+  it('without a resolved tariff it says where escalation will come from', () => {
+    render(<FinancialsEditor projectId="p1" data={data()} />)
+    expect(screen.getByText('Tariff escalation and load growth come from the Tariff and Load tabs once a tariff is pinned.')).toBeTruthy()
   })
 })

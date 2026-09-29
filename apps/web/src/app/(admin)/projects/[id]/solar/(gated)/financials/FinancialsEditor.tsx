@@ -22,6 +22,9 @@ const CATEGORIES: Array<[CapexLine['category'], string]> = [
 const UNITS: CapexLine['unit'][] = ['Wp', 'kWp', 'kW', 'kWh', 'item', 'lot', 'm']
 const SAVE_FIRST = 'Save the financials first.'
 
+/** 10.1 → "10.1 %", 7 → "7 %" (at most 3 decimals); no row → an em dash. */
+const pctText = (v: number | null): string => (v === null ? '—' : `${Number(v.toFixed(3))} %`)
+
 export function FinancialsEditor({ projectId, data }: { projectId: string; data: FinancialsPageData }) {
   const router = useRouter()
   const [cfg, setCfg] = useState<CaseFinanceConfig>(data.config)
@@ -161,15 +164,17 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
           <NumField label="Analysis period" unit="years" value={a.years} error={err('analysis.years')} onChange={(v) => setGroup('analysis', { years: nn(v) })} />
           <NumField label="Discount rate" unit="%" value={a.discountRatePct} error={err('analysis.discountRatePct')} onChange={(v) => setGroup('analysis', { discountRatePct: nn(v) })} />
           <NumField label="CPI" unit="%" value={a.cpiPct} error={err('analysis.cpiPct')} onChange={(v) => setGroup('analysis', { cpiPct: nn(v) })} />
-          <NumField label="Tariff escalation, year 1" unit="%" value={a.escalationStartPct} error={err('analysis.escalationStartPct')} onChange={(v) => setGroup('analysis', { escalationStartPct: nn(v) })} />
-          <NumField label="Tariff escalation, year 10" unit="%" value={a.escalationYear10Pct} error={err('analysis.escalationYear10Pct')} onChange={(v) => setGroup('analysis', { escalationYear10Pct: nn(v) })} />
-          <NumField label="Tariff escalation after year 10 (CPI plus)" unit="%" value={a.escalationAfterCpiPlusPct} error={err('analysis.escalationAfterCpiPlusPct')} onChange={(v) => setGroup('analysis', { escalationAfterCpiPlusPct: nn(v) })} />
-          <NumField label="Load growth" unit="%/yr" value={a.loadGrowthPct} error={err('analysis.loadGrowthPct')} onChange={(v) => setGroup('analysis', { loadGrowthPct: nn(v) })} />
         </div>
         <Check label="Apply company tax" checked={a.taxEnabled} onChange={(v) => setGroup('analysis', { taxEnabled: v, section12b: v ? a.section12b : false })} />
         <NumField label="Company tax rate" unit="%" value={a.companyTaxRatePct} disabled={!a.taxEnabled} error={err('analysis.companyTaxRatePct')} onChange={(v) => setGroup('analysis', { companyTaxRatePct: nn(v) })} />
         <Check label="Section 12B accelerated allowance" checked={a.section12b} disabled={!a.taxEnabled} onChange={(v) => setGroup('analysis', { section12b: v })} />
-        <span style={{ fontSize: 12 }}>Escalation beyond the published tariff years; the published approved increases arrive with the Tariff tab.</span>
+        {/* I-1: priced from the study, one source with the Tariff tab bill check (resolveStudyPricing). */}
+        {data.studyPricing ? (
+          <>
+            <span style={{ fontSize: 12 }}>{`Tariff escalation: year 2 ${pctText(data.studyPricing.escalationYear2Pct)}, year 10 ${pctText(data.studyPricing.escalationYear10Pct)} — from the Tariff tab`}</span>
+            <span style={{ fontSize: 12 }}>{`Load growth: ${Number(data.studyPricing.loadGrowthPct.toFixed(3))} %/yr — from the Load tab`}</span>
+          </>
+        ) : <span style={{ fontSize: 12 }}>Tariff escalation and load growth come from the Tariff and Load tabs once a tariff is pinned.</span>}
       </Section>
 
       {data.caseLoadSheddingEnabled && (

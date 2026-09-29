@@ -22,7 +22,8 @@ const results = {
   tornado: { model: 'cash', view: 'owner', baseNpvZar: 900_000, swing: 0.2, bars: [{ variable: 'capex', lowNpvZar: 1_140_000, highNpvZar: 660_000, spreadZar: 480_000 }] },
   engineVersion: '0.1.0',
 }
-const PRICING = { escalationPath: { published: [0.101, 0.09], startRate: 0.09, endRate: 0.07, linearToYear: 10, cpiMargin: 0.01 }, loadGrowthPct: 2, exportCredited: true }
+const PRICING = { escalationPath: { published: [0.101, 0.09], startRate: 0.09, endRate: 0.07, linearToYear: 10, cpiMargin: 0.01 }, loadGrowthPct: 2, exportCredited: true,
+  escalationRows: [{ year: 2, pct: 10.1, source: 'published', financialYear: '2026/27' }, { year: 10, pct: 7, source: 'default', financialYear: null }] }
 const PH = 'p'.repeat(64)
 const built = buildFinanceInput(fin, cfg, { dcKwp: 100, acKw: 80 }, PRICING)
 const tables = (over: Record<string, unknown[]> = {}) => ({
@@ -49,6 +50,7 @@ describe('loadFinancialsPageData', () => {
     expect(d.isDefault).toBe(false)
     expect(d.runReasons).toEqual([])
     expect(d.tariffReason).toBeNull()
+    expect(d.studyPricing).toEqual({ loadGrowthPct: 2, escalationYear2Pct: 10.1, escalationYear10Pct: 7 })
     expect(d.financialsStale).toBe(false)
     expect(d.energyStale).toBe(false)
     expect(d.runSize).toEqual({ dcKwp: 100, acKw: 80, batteryKwh: null })
