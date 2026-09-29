@@ -140,10 +140,11 @@ describe('OneDriveProvider', () => {
       const fetchSpy = vi.fn()
       globalThis.fetch = fetchSpy as unknown as typeof fetch
       for (const bad of [
-        'https://attacker.example/x',
+        'https://evil.example/x',
         'http://graph.microsoft.com/v1.0/me/drive/items/F1/children',
-        'https://graph.microsoft.com.attacker.example/v1.0/x',
-        'https://evil@graph.microsoft.com.attacker.example/x',
+        'https://graph.microsoft.com.evil.example/v1.0/x',
+        'https://evil@graph.microsoft.com.evil.example/x',
+        'https://user:pass@graph.microsoft.com/v1.0/x',
         'https://graph.microsoft.com:8443/v1.0/x',
         'not a url',
         '/v1.0/me/drive/root/children',
@@ -151,6 +152,20 @@ describe('OneDriveProvider', () => {
         await expect(provider.listFolder({ folderId: 'F1', accessToken: 'AT', pageToken: bad }), bad).rejects.toThrow(/page token/i)
       }
       expect(fetchSpy).not.toHaveBeenCalled()
+    })
+
+    it('still follows a genuine https://graph.microsoft.com/v1.0 nextLink with the bearer', async () => {
+      const next = 'https://graph.microsoft.com/v1.0/me/drive/items/F1/children?$skiptoken=XYZ'
+      const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ value: [{ id: 'Y', name: 'y', folder: {} }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }))
+      globalThis.fetch = fetchSpy as unknown as typeof fetch
+      const r = await provider.listFolder({ folderId: 'F1', accessToken: 'AT', pageToken: next })
+      expect(r.items).toHaveLength(1)
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
+      expect(url).toBe(next)
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer AT')
     })
   })
 

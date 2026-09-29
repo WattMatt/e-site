@@ -104,9 +104,10 @@ export class OneDriveProvider implements CloudStorageProvider {
 
   async listFolder(opts: ListFolderOptions): Promise<ListFolderResult> {
     if (opts.pageToken) {
-      // Graph returns @odata.nextLink as a complete URL. It is fetched WITH the bearer token, so a
-      // token that did not come from Graph would send the org's credential to any host: refuse
-      // anything whose origin is not exactly Graph's, before any request is made.
+      // Graph returns @odata.nextLink as a complete URL. It is fetched WITH the org's bearer
+      // token, and the web picker forwards a client-supplied pageToken — so a token that did not
+      // come from Graph would send the credential to any host. Refuse anything whose origin is not
+      // exactly Graph's (https, default port, no userinfo) before any request is made.
       let next: URL
       try { next = new URL(opts.pageToken) } catch { throw new Error('onedrive: invalid page token') }
       if (next.origin !== GRAPH_ORIGIN || next.username || next.password) {
