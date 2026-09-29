@@ -20,8 +20,15 @@ export interface ProposalControlInput {
   familyHasDraft: boolean
   familyHasAccepted: boolean
 }
+/** Why a draft cannot be issued: another version of its family was accepted (00216 'family_accepted'). */
+export const PROPOSAL_FAMILY_ACCEPTED =
+  'Another version of this proposal was accepted — it cannot be issued. Start a new proposal instead.'
+
 export interface ProposalControls {
-  canEdit: boolean; canIssue: boolean; canDelete: boolean
+  canEdit: boolean; canIssue: boolean
+  /** The sentence shown on a disabled Issue control; null when issue is not blocked by the family. */
+  issueBlockedReason: string | null
+  canDelete: boolean
   canWithdraw: boolean; canRotate: boolean; canRevise: boolean
 }
 
@@ -29,7 +36,9 @@ export function proposalControls(p: ProposalControlInput, now: number): Proposal
   const eff = effectiveProposalStatus(p.status, p.expiresAt, now)
   const draft = p.status === 'draft'
   return {
-    canEdit: draft, canIssue: draft, canDelete: draft,
+    canEdit: draft, canIssue: draft && !p.familyHasAccepted,
+    issueBlockedReason: draft && p.familyHasAccepted ? PROPOSAL_FAMILY_ACCEPTED : null,
+    canDelete: draft,
     canWithdraw: p.status === 'issued' || p.status === 'viewed',
     canRotate: eff === 'issued' || eff === 'viewed',
     canRevise: !draft && p.status !== 'accepted' && p.isLatest && !p.familyHasDraft && !p.familyHasAccepted,

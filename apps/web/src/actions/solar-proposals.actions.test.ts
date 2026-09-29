@@ -202,6 +202,12 @@ describe('issueSolarProposalAction', () => {
     expect(svc.bucket.remove).toHaveBeenCalledWith([`o1/${P}/solar-proposals/${PR}-v2.pdf`])
     expect(callsTo(svc.calls, 'projects.reports', 'delete')[0]!.filters).toContainEqual(['eq', 'id', 'rep-new'])
   })
+  it('words family_accepted (another version was accepted) and rolls back (review I2)', async () => {
+    const { svc } = issueSetup({ data: { ok: false, error: 'family_accepted' }, error: null })
+    await expect(issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: [] }))
+      .resolves.toEqual({ error: 'Another version of this proposal was accepted — it cannot be issued. Start a new proposal instead.' })
+    expect(svc.bucket.remove).toHaveBeenCalledWith([`o1/${P}/solar-proposals/${PR}-v2.pdf`])
+  })
   it('refuses a stale expectedUpdatedAt before rendering', async () => {
     issueSetup()
     await expect(issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T-old', emailClientUserIds: [] })).resolves.toEqual({ error: 'Someone else changed this — reload to see their version.' })

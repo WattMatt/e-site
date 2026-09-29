@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseFinanceConfig } from '@esite/shared/solar-cases'
 import { readSolarOrgSettings } from '@esite/shared'
-import { FINANCE_OPTION_LABELS, defaultProposalDraft, parseProposalDraft, readProposalDraft, zar, zarCents, type FinanceOptionKind } from '@esite/shared/solar-reports'
+import { FINANCE_OPTION_LABELS, PROPOSAL_FAMILY_ACCEPTED, defaultProposalDraft, parseProposalDraft, readProposalDraft, zar, zarCents, type FinanceOptionKind } from '@esite/shared/solar-reports'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
@@ -145,6 +145,7 @@ const ISSUE_ERRORS: Record<string, string> = {
   not_draft: 'This proposal has already been issued — reload.',
   run_mismatch: 'The selected case’s run changed — preview the proposal again, then issue it.',
   invalid_expiry: 'Set a validity between 1 and 365 days.',
+  family_accepted: PROPOSAL_FAMILY_ACCEPTED,
   not_found: NOT_FOUND,
 }
 const EMAIL_OFF = 'Solar emails are off for this project (Project settings, Integrations), so no email was sent.'
