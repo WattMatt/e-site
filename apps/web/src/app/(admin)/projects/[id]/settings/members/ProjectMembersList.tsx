@@ -16,6 +16,7 @@ import {
   type OrgMemberOption,
 } from '@/actions/project-members.actions'
 import { BulkAddMembersModal } from './BulkAddMembersModal'
+import { AddByWhatsAppModal } from './AddByWhatsAppModal'
 import { AddFromSubOrgModal } from './AddFromSubOrgModal'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ export function ProjectMembersList({
   const [addUserId, setAddUserId] = useState('')
   const [addRole, setAddRole] = useState<string>('contractor')
   const [showBulkModal, setShowBulkModal] = useState(false)
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
   const [showFromSubOrgModal, setShowFromSubOrgModal] = useState(false)
 
   // Edit state: memberId being edited
@@ -191,6 +193,9 @@ export function ProjectMembersList({
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => setShowFromSubOrgModal(true)}>
                   + Add from sub-org
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setShowWhatsAppModal(true)}>
+                  + Add by WhatsApp
                 </Button>
               </div>
             )}
@@ -388,6 +393,7 @@ export function ProjectMembersList({
         </CardBody>
       </Card>
 
+      <AddByWhatsAppModal projectId={projectId} open={showWhatsAppModal} onClose={() => setShowWhatsAppModal(false)} />
       <BulkAddMembersModal
         projectId={projectId}
         open={showBulkModal}

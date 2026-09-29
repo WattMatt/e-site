@@ -4209,7 +4209,7 @@ beforeEach(() => {
   gateMock.mockResolvedValue({ ok: true, role: 'project_manager' })
 })
 
-function svcWith(responses: Record<string, Array<{ data?: unknown; error?: unknown }>>, createUser = vi.fn(async () => ({ data: { user: { id: NEW_USER } }, error: null }))) {
+function svcWith(responses: Record<string, Array<{ data?: unknown; error?: unknown }>>, createUser = vi.fn(async (_args: Record<string, unknown>) => ({ data: { user: { id: NEW_USER } }, error: null }))) {
   const svc = fakeSupabase(responses) as ReturnType<typeof fakeSupabase> & { auth: unknown }
   svc.auth = { admin: { createUser, deleteUser: vi.fn(async () => ({})) } }
   createServiceClientMock.mockReturnValue(svc)
@@ -4237,7 +4237,7 @@ describe('inviteWhatsAppExternalAction', () => {
     })
     const r = await inviteWhatsAppExternalAction(input)
     expect(r).toEqual({ ok: true, userId: NEW_USER })
-    const cu = createUser.mock.calls[0][0]
+    const cu = createUser.mock.calls[0]![0] as Record<string, any>
     expect(cu.email).toMatch(/^wa-[0-9a-f-]{36}@wa\.e-site\.live$/)
     expect(cu).not.toHaveProperty('password')
     expect(cu.app_metadata).toMatchObject({ provisioned_via: 'whatsapp', invited_by: PM })
