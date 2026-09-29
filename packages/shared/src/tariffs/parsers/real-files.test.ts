@@ -75,4 +75,26 @@ describe.skipIf(!DIR)('real source books', () => {
       expect(createHash('sha256').update(JSON.stringify(parsed)).digest('hex'), d.file).toBe(d.digest)
     }
   }, 300_000)
+
+  // Every 2026/27 RfD that yielded a tariff before the extended pass (164: the 33 above plus the
+  // column reader's 131; all loaded to production). Digests taken on main at 84677997 with
+  // scripts/tariffs/rfd-coverage.ts --digests. The extended pass must never change any of them.
+  // The 6 files only the extended pass reads are pinned too, so a later change to them is deliberate.
+  it.each([
+    ['164 files parsed before the extended pass', 'all-readers-before-extended.digests.json', 164],
+    ['6 files only the extended pass reads', 'extended-pass.digests.json', 6],
+  ])('parses the %s exactly as pinned', (_what, fixtureFile, count) => {
+    const digests = JSON.parse(readFileSync(new URL(`../__fixtures__/rfd-2026-27/${fixtureFile}`, import.meta.url), 'utf8')) as { file: string; sha256: string; digest: string }[]
+    expect(digests).toHaveLength(count)
+    const differ: string[] = []
+    for (const d of digests) {
+      const path = join(DIR as string, '2026-27', 'MUNICIPAL', d.file)
+      const bytes = readFileSync(path)
+      expect(createHash('sha256').update(bytes).digest('hex'), d.file).toBe(d.sha256)
+      const text = execFileSync('pdftotext', ['-layout', path, '-'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      const parsed = parseRfdText(text, { fileSha256: d.sha256 })
+      if (createHash('sha256').update(JSON.stringify(parsed)).digest('hex') !== d.digest) differ.push(d.file)
+    }
+    expect(differ).toEqual([])
+  }, 900_000)
 })

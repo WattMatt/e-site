@@ -359,3 +359,198 @@ describe('Damplaas: a page footer between rows, the season under the numbers', (
     expect(codes(r.issues).filter((c) => c === 'rfd_row_unverified')).toHaveLength(2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The extended pass: only for a file the City Power and column readers both leave empty.
+
+const strictOnly = (name: string) => parseRfdColumns(fixture(name), { fileSha256: name })
+const withCode = (issues: { code: string; severity: string; tariff?: string }[], code: string, tariffName?: string) =>
+  issues.filter((i) => i.code === code && (tariffName === undefined || i.tariff === tariffName))
+
+describe('extended pass: only for files every other reader leaves empty', () => {
+  it('never runs where the column reader already finds a tariff (Makana + a Khai-Ma table)', () => {
+    const text = `${fixture('makana')}\n\n${fixture('khai-ma')}`
+    const r = parseRfdText(text, { fileSha256: 'mix' })
+    expect(r).toEqual(parseRfdColumns(text, { fileSha256: 'mix' }))
+    // The Khai-Ma tables' "2026/27FY" headers are extended vocabulary: not read here.
+    expect(r.tariffs.map((t) => t.name)).not.toContain('Commercial single-phase')
+  })
+  it('keeps the strict result (and its issues) when the extended pass finds nothing either', () => {
+    expect(parse('nala')).toEqual(strictOnly('nala'))
+  })
+})
+
+describe('Tokologo: Summer and Winter columns side by side (APAPA × 2), header printed off its columns', () => {
+  const r = parse('tokologo')
+  it('is left empty by the strict reader', () => {
+    expect(strictOnly('tokologo').tariffs).toEqual([])
+  })
+  it('reads each season from its own Recommended column: summer = low, winter (June to Aug) = high', () => {
+    expect(rows(tariff(r.tariffs, 'Pre-paid (E009)'))).toEqual([
+      ['energy', 'low', 'all', 0, 50, 2.6782, 'R_per_kWh'],
+      ['energy', 'high', 'all', 0, 50, 2.7468, 'R_per_kWh'],
+      ['energy', 'low', 'all', 50, 350, 3.4436, 'R_per_kWh'],
+      ['energy', 'high', 'all', 50, 350, 3.532, 'R_per_kWh'],
+      ['energy', 'low', 'all', 350, 600, 4.3816, 'R_per_kWh'],
+      ['energy', 'high', 'all', 350, 600, 4.9682, 'R_per_kWh'],
+      ['energy', 'low', 'all', 600, null, 4.7088, 'R_per_kWh'],
+      ['energy', 'high', 'all', 600, null, 5.4939, 'R_per_kWh'],
+    ])
+    const c = tariff(r.tariffs, 'Pre-paid (E009)').charges[1]
+    expect(c.sourceLocator.raw_text).toContain('winter/high season column')
+  })
+  it('stores a figure printed the same for both seasons once, for the whole year', () => {
+    expect(rows(tariff(r.tariffs, 'Domestic (E001)')).at(-1)).toEqual(['basic', 'all', 'all', null, null, 375.73, 'R_per_month'])
+  })
+  it('names tariffs by their coded lines, not by the section headings above them', () => {
+    expect(r.tariffs.map((t) => t.name)).toContain('Churches & Old Age Homes ( E006 & E011 )')
+    expect(r.tariffs.map((t) => t.name).some((n) => /Commercial Tariffs/.test(n))).toBe(false)
+  })
+  it('reads the rows on the next page, printed at other positions, in column order', () => {
+    expect(rows(tariff(r.tariffs, 'Industrial supply (E012 & E013)')).slice(0, 2)).toEqual([
+      ['energy', 'low', 'all', null, null, 1.7648, 'R_per_kWh'],
+      ['energy', 'high', 'all', null, null, 1.908, 'R_per_kWh'],
+    ])
+  })
+  it('blocks what it cannot represent: a basic charge that differs by season, a demand charge with no stated period', () => {
+    expect(withCode(r.issues, 'rfd_duplicate_charge', 'Industrial - Bulk ( E007 & E008)').map((i) => i.severity)).toEqual(['block'])
+    expect(withCode(r.issues, 'rfd_row_dropped', 'Industrial supply (E012 & E013)').map((i) => i.severity)).toEqual(['block', 'block'])
+  })
+  it('says the header was read by order and checks every row per season', () => {
+    expect(withCode(r.issues, 'rfd_header_inferred')).toHaveLength(r.tariffs.length)
+    expect(codes(r.issues)).not.toContain('rfd_row_increase_mismatch')
+  })
+})
+
+describe('Kgetleng River: "Recommended % Increase" printed across the Recommended and % columns', () => {
+  const r = parse('kgetleng-river')
+  it('is left empty by the strict reader', () => {
+    expect(strictOnly('kgetleng-river').tariffs).toEqual([])
+  })
+  it('takes the column that says Recommended and holds amounts, checked by the % beside it', () => {
+    expect(rows(tariff(r.tariffs, 'Domestic Prepaid: Lifeline')).map((x) => x[5])).toEqual([205.44, 258.83, 342.4, 372.63])
+    expect(withCode(r.issues, 'rfd_header_inferred')).toHaveLength(2)
+  })
+  it('blocks the row whose printed figure breaks the arithmetic the header was settled by (317.06 -> 248.76 at 10 %)', () => {
+    const m = withCode(r.issues, 'rfd_row_increase_mismatch', 'Domestic Conventional: Lifeline')
+    expect(m.map((i) => i.severity)).toEqual(['block'])
+  })
+})
+
+describe('Gamagara: "2026/27 Proposed" printed twice, no column named Recommended', () => {
+  const r = parse('gamagara')
+  it('is left empty by the strict reader', () => {
+    expect(strictOnly('gamagara').tariffs).toEqual([])
+  })
+  it('takes the duplicated column beside "Recommended % Increase" only because every row verifies', () => {
+    expect(rows(tariff(r.tariffs, 'Domestic Conventional')).map((x) => x[5])).toEqual([192.51, 246.01, 351.05, 412.88, 242.55])
+    expect(withCode(r.issues, 'rfd_header_inferred')[0]?.message).toContain('printed twice')
+    expect(codes(r.issues, 'block')).toEqual([])
+  })
+})
+
+describe('Khai-Ma: "2026/27FY" headers and "30 A" / "60 A" in the name column', () => {
+  const r = parse('khai-ma')
+  it('reads two amperage tariffs, not one merged under the same words', () => {
+    expect(r.tariffs.map((t) => t.name)).toEqual(['Domestic low single-phase tariff: 30 A', 'Domestic low single-phase tariff: 60 A', 'Commercial single-phase'])
+    expect(rows(tariff(r.tariffs, 'Domestic low single-phase tariff: 60 A'))).toEqual([
+      ['basic', 'all', 'all', null, null, 177.71, 'R_per_month'],
+      ['energy', 'all', 'all', null, null, 435.73, 'c_per_kWh'],
+    ])
+    expect(codes(r.issues, 'block')).toEqual([])
+  })
+})
+
+describe('Siyancuma: two columns say Recommended; seasonal and TOU sub-tariffs under IBT rows', () => {
+  const r = parse('siyancuma')
+  it('is left empty by the strict reader', () => {
+    expect(strictOnly('siyancuma').tariffs).toEqual([])
+  })
+  it('takes "Recommended Tariffs" (Approved × 1.096), never "2026/27 Recommended" (Approved × 1.125, the proposal)', () => {
+    expect(rows(tariff(r.tariffs, 'DOMESTIC PRE-PAID — For household Pre-paid metering')).map((x) => x[5])).toEqual([3.21, 3.82])
+    expect(rows(tariff(r.tariffs, 'DOMESTIC CONVENTIONAL — For household conventional metering')).map((x) => x[5])).toEqual([3.37, 3.81])
+    expect(rows(tariff(r.tariffs, 'COMMERCIAL CONVENTIONAL — For business conventional metering')).map((x) => x[5])).toEqual([3.66, 4.25, 4.42])
+    expect(withCode(r.issues, 'rfd_header_inferred')[0]?.message).toContain('two columns say Recommended')
+  })
+  it('keeps the seasonal blocks and the TOU rates out of the IBT tariff a bill would otherwise sum them into', () => {
+    expect(rows(tariff(r.tariffs, 'DOMESTIC PRE-PAID — For household Pre-paid metering (seasonal)'))).toEqual([
+      ['energy', 'low', 'all', 0, 350, 2.78, 'R_per_kWh'],
+      ['energy', 'low', 'all', 350, null, 3.3, 'R_per_kWh'],
+      ['energy', 'high', 'all', 0, 350, 3.15, 'R_per_kWh'],
+      ['energy', 'high', 'all', 350, null, 3.76, 'R_per_kWh'],
+    ])
+    expect(rows(tariff(r.tariffs, 'DOMESTIC CONVENTIONAL — Time of Use (seasonal)'))).toEqual([
+      ['energy', 'low', 'off_peak', null, null, 2.53, 'R_per_kWh'],
+      ['energy', 'low', 'standard', null, null, 3.22, 'R_per_kWh'],
+      ['energy', 'low', 'peak', null, null, 5.12, 'R_per_kWh'],
+      ['energy', 'high', 'off_peak', null, null, 2.53, 'R_per_kWh'],
+      ['energy', 'high', 'standard', null, null, 3.33, 'R_per_kWh'],
+      ['energy', 'high', 'peak', null, null, 8.77, 'R_per_kWh'],
+    ])
+    // The "new" rows have no 2025/26 figure: stored, and said to be unchecked.
+    expect(withCode(r.issues, 'rfd_row_unverified', 'DOMESTIC CONVENTIONAL — Time of Use (seasonal)')).toHaveLength(6)
+  })
+})
+
+describe('Sol Plaatje: tariff code | description | Season | Period label columns, "APPROVED TARIFFS 2026/2027"', () => {
+  const r = parse('sol-plaatje')
+  it('is left empty by the strict reader', () => {
+    expect(strictOnly('sol-plaatje').tariffs).toEqual([])
+  })
+  it('names each tariff from the description column, keeps "= 20" and "> 20 Amps" apart', () => {
+    expect(r.tariffs.map((t) => t.name)).toEqual([
+      'Indigents Tariff (Prepaid) 20 Amps',
+      'Domestic Tariff (Conventional and Prepaid) 20 Amps',
+      'Domestic Tariff (Conventional and Prepaid) over 20 Amps',
+      'Public Benefit and Schools: Conventional and Prepayment',
+      'Business Tariff: Small Power Users (Conventional and prepaid)',
+      'Time of Use: NPO, NGO, SCHOOLS: LV under 200 KVA',
+    ])
+  })
+  it('reads the Season cell ("High" / "Demand:") down the rows and the Period cell as the TOU period', () => {
+    expect(rows(tariff(r.tariffs, 'Time of Use: NPO, NGO, SCHOOLS: LV under 200 KVA'))).toEqual([
+      ['network_demand', 'all', 'all', null, null, 206.9077, 'R_per_kVA_month'],
+      ['network_capacity', 'all', 'all', null, null, 98.406, 'R_per_kVA_month'],
+      ['energy', 'high', 'peak', null, null, 7.1673, 'R_per_kWh'],
+      ['energy', 'high', 'standard', null, null, 2.8759, 'R_per_kWh'],
+      ['energy', 'high', 'off_peak', null, null, 1.9995, 'R_per_kWh'],
+      ['energy', 'low', 'peak', null, null, 3.0721, 'R_per_kWh'],
+      ['energy', 'low', 'standard', null, null, 2.3565, 'R_per_kWh'],
+      ['energy', 'low', 'off_peak', null, null, 1.8399, 'R_per_kWh'],
+    ])
+    // Tariff codes ("EL1255 PBA & SCHOOLS PEAK <75") never reach a label.
+    expect(r.tariffs.flatMap((t) => t.charges.map((c) => c.label)).some((l) => /EL1\d{3}|SCHOOLS/.test(l))).toBe(false)
+  })
+  it('says a tariff is missing the charge its header names with no value', () => {
+    expect(withCode(r.issues, 'rfd_row_dropped', 'Time of Use: NPO, NGO, SCHOOLS: LV under 200 KVA').map((i) => i.message)).toEqual([
+      expect.stringContaining('"Basic charge per month" not read: charge named in the table header with no value'),
+    ])
+  })
+})
+
+describe('Sol Plaatje SSEG: export credits are export credits; a TOU tariff "compulsory for SSEG" is not', () => {
+  const r = parse('sol-plaatje-sseg')
+  it('reads "Energy credit" under "Electricity Export Credits" as export_credit', () => {
+    const t = tariff(r.tariffs, 'Electricity Export Credits - Small Scale Embedded Generation (Photovoltaic Policy)')
+    expect(t.charges.filter((c) => c.component === 'export_credit').map((c) => [c.season, c.tou, c.amountExclVat])).toEqual([
+      ['high', 'peak', 5.7268], ['high', 'standard', 1.6039], ['high', 'off_peak', 1.1458],
+      ['low', 'peak', 2.5109], ['low', 'standard', 1.5122], ['low', 'off_peak', 1.1458],
+    ])
+  })
+  it('keeps the SSEG customers\' import rates as energy', () => {
+    const t = tariff(r.tariffs, 'SMALL CONSUMER: TOU under 70 KVA: Domestic & Commercial (compulsory for SSEG customers.)')
+    expect(t.charges.filter((c) => c.tou === 'peak').map((c) => [c.component, c.season, c.amountExclVat])).toEqual([
+      ['energy', 'high', 9.7509], ['energy', 'low', 3.1809],
+    ])
+    // "11,7647 … 4,51 … 4,5098" at 8 %: printed, not verified: blocked.
+    expect(withCode(r.issues, 'rfd_row_increase_mismatch').map((i) => i.severity)).toEqual(['block'])
+  })
+})
+
+describe('Nala: both the % and the amount column are headed "Recommended % Increase"', () => {
+  it('stays unread: the header contradicts its numbers and only position could choose', () => {
+    const r = parse('nala')
+    expect(r.tariffs).toEqual([])
+    expect(codes(r.issues)).toEqual(['rfd_table_skipped', 'rfd_table_skipped', 'rfd_table_skipped'])
+  })
+})
