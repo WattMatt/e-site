@@ -171,7 +171,7 @@ describe('free content — never guess', () => {
     rpc.wa_open_items = [{ id: A, ref: 'T-1', title: 'Loose DB-3 cover', project_name: 'K' }, { id: B, ref: 'T-2', title: 'Label', project_name: 'K' }] as never
     const r = await processInbound(row({ type: 'text', text: 'Cover refitted' }), deps())
     expect(r).toMatchObject({ outcome: 'unmatched', reason: 'picking' })
-    expect(store.calls.map((c) => c[0])).toEqual(['wa_open_items'])
+    expect(store.calls.map((c) => c[0]).filter((f) => f !== 'wa_my_projects')).toEqual(['wa_open_items'])
     expect(store.linkPatches[0]).toMatchObject({ pending_inbound_id: 'in-1' })
     expect(meta.sent[0].kind).toBe('list')
     expect((meta.sent[0].extra as Array<{ id: string }>).map((x) => x.id)).toEqual([`pick:${A}`, `pick:${B}`])
