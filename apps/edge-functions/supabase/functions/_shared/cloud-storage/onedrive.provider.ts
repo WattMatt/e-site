@@ -26,7 +26,8 @@ import { asProviderError, getProviderCredentials, postForm, sortCloudItems } fro
 // company directory, change /common/ to the tenant ID.
 const AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
+const GRAPH_ORIGIN = 'https://graph.microsoft.com'
+const GRAPH_BASE = `${GRAPH_ORIGIN}/v1.0`
 // offline_access produces a refresh token. Files.ReadWrite.All covers both
 // personal OneDrive and SharePoint document libraries the user has access to,
 // for read AND write. Read-only Files.Read.All was sufficient for Phase 1
@@ -110,8 +111,16 @@ export class OneDriveProvider implements CloudStorageProvider {
 
   async listFolder(opts: ListFolderOptions): Promise<ListFolderResult> {
     if (opts.pageToken) {
-      // Graph returns @odata.nextLink as a complete URL — use as-is.
-      const res = await fetch(opts.pageToken, {
+      // Graph returns @odata.nextLink as a complete URL. It is fetched WITH the org's bearer
+      // token, and the web picker forwards a client-supplied pageToken — so a token that did not
+      // come from Graph would send the credential to any host. Refuse anything whose origin is not
+      // exactly Graph's (https, default port, no userinfo) before any request is made.
+      let next: URL
+      try { next = new URL(opts.pageToken) } catch { throw new Error('onedrive: invalid page token') }
+      if (next.origin !== GRAPH_ORIGIN || next.username || next.password) {
+        throw new Error('onedrive: refusing a page token that is not a Microsoft Graph URL')
+      }
+      const res = await fetch(next.toString(), {
         headers: { Authorization: `Bearer ${opts.accessToken}` },
       })
       if (!res.ok) throw await asProviderError(res, 'onedrive', 'list folder (continue)')
