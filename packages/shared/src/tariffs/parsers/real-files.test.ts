@@ -3,12 +3,15 @@
  * set (CI never has the drive); run it by hand on the ingestion Mac:
  *   TARIFF_SOURCE_DIR="…/005. NERSA TARIFFS" pnpm --filter @esite/shared exec vitest run src/tariffs/parsers/real-files.test.ts
  */
+import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { validateTariff } from '../validators'
 import { parseEskomWorkbook } from './eskom-xlsm'
 import { parseProvinceWorkbook } from './province-xlsx'
+import { parseRfdText } from './rfd-text'
 import { loadWorkbookGrids } from './xlsx-load'
 
 const DIR = process.env.TARIFF_SOURCE_DIR
@@ -56,4 +59,20 @@ describe.skipIf(!DIR)('real source books', () => {
     const vat = parsed.tariffs.flatMap((t) => validateTariff(t)).filter((i) => i.code === 'vat_pair')
     expect(vat).toEqual([])
   }, 120_000)
+
+  // The 33 municipal 2026/27 RfDs the City Power reader parsed were loaded to production from it. The
+  // column reader (rfd-columns.ts) must never change what they produce: digests taken on the commit
+  // before it (scripts/tariffs/rfd-coverage.ts --digests) must still match.
+  it('parses the 33 already-loaded 2026/27 RfDs exactly as before the column reader', () => {
+    const digests = JSON.parse(readFileSync(new URL('../__fixtures__/rfd-2026-27/city-power-reader.digests.json', import.meta.url), 'utf8')) as { file: string; sha256: string; digest: string }[]
+    expect(digests).toHaveLength(33)
+    for (const d of digests) {
+      const path = join(DIR as string, '2026-27', 'MUNICIPAL', d.file)
+      const bytes = readFileSync(path)
+      expect(createHash('sha256').update(bytes).digest('hex'), d.file).toBe(d.sha256)
+      const text = execFileSync('pdftotext', ['-layout', path, '-'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      const parsed = parseRfdText(text, { fileSha256: d.sha256 })
+      expect(createHash('sha256').update(JSON.stringify(parsed)).digest('hex'), d.file).toBe(d.digest)
+    }
+  }, 300_000)
 })
