@@ -263,6 +263,21 @@ describe('deleteProjectReportAction', () => {
     log.mockRestore()
   })
 
+  it('a delete that removed no row returns a fixed sentence and keeps the file (review round 3)', async () => {
+    const { client, delSelect } = makeSupabase({ reportRow: REPORT_ROW, deletedRows: [] })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { deleteProjectReportAction } = await import('./project-reports.actions')
+    const result = await deleteProjectReportAction(PROJECT_ID, REPORT_ID)
+
+    expect(delSelect).toHaveBeenCalledWith('id')
+    expect(result).toEqual({ error: 'Nothing was deleted — the report may already be gone, or you may not be allowed to delete it.' })
+    expect(service.remove).not.toHaveBeenCalled()
+  })
+
   it('deletes a row whose path is forged but never removes the object it names (review round 3)', async () => {
     for (const storage_path of [
       `${ORG_ID}/${PROJECT_ID}/../../00000000-0000-0000-0000-0000000000cc/00000000-0000-0000-0000-0000000000dd/valuation-x-v1.pdf`,

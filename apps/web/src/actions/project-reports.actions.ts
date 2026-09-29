@@ -291,16 +291,23 @@ export async function deleteProjectReportAction(
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: deleteErr } = await (supabase as any)
+  const { data: deleted, error: deleteErr } = await (supabase as any)
     .schema('projects').from('reports')
     .delete()
     .eq('id', reportId)
     .eq('project_id', projectId)
+    .select('id')
 
   if (deleteErr) {
     // The raw database message can name tables, policies and triggers — log it, show a sentence.
     console.error('deleteProjectReportAction: delete failed', { projectId, reportId, kind: report.kind, error: deleteErr.message ?? deleteErr })
     return { error: 'The report could not be deleted — try again.' }
+  }
+
+  // RLS answers a refused delete with zero rows, not an error: only remove the file when exactly
+  // this one row went (review round 3), or a caller who may not delete the row still removes its file.
+  if (!Array.isArray(deleted) || deleted.length !== 1) {
+    return { error: 'Nothing was deleted — the report may already be gone, or you may not be allowed to delete it.' }
   }
 
   // The object is removed with the SERVICE client, so its path is trusted only when it is canonical
