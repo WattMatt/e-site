@@ -119,7 +119,7 @@ export async function renameSolarCaseAction(input: { projectId: string; caseId: 
 
 export async function deleteSolarCaseAction(input: { projectId: string; caseId: string }): Promise<{ ok: true } | { error: string }> {
   const { supabase, userId } = await session(input.projectId)
-  // Proposals (Phase 6) will add "referenced by an issued proposal" here and as a DB guard.
+  // 00216 cases_keep_issued_proposals refuses a case an issued proposal was made from (humanSolarError words it).
   const { data, error } = await supabase.schema('solar').from('cases').delete().eq('id', input.caseId).eq('project_id', input.projectId).select('id')
   if (error) return { error: error.code === '23503' ? 'This is the selected case — choose another selected case first.' : humanSolarError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: 'Nothing was deleted — reload to see the current cases.' }

@@ -30,6 +30,12 @@ describe('humanSolarError', () => {
     expect(humanSolarError({ code: '42501', message: 'solar.equipment: the platform catalogue is maintained by E-Site' }))
       .toBe('You do not have permission to do that.')
   })
+  it('words the 00216 issued-proposal delete guards (review I1, M2)', () => {
+    expect(humanSolarError({ code: '42501', message: 'solar.cases: an issued proposal depends on this case and is kept as evidence' }))
+      .toBe('An issued proposal was made from this case — it is kept as evidence and cannot be deleted.')
+    expect(humanSolarError({ code: '42501', message: 'solar.studies: an issued proposal depends on this study and is kept as evidence' }))
+      .toBe('This study has an issued proposal — it is kept as evidence and cannot be deleted.')
+  })
   it('never leaks a raw message', () => {
     expect(humanSolarError({ code: 'XX000', message: 'internal error at pg_foo.c:12' })).toBe('Something went wrong — try again.')
     expect(humanSolarError({ code: '42501', message: 'new row violates row-level security policy' })).toBe('You do not have permission to do that.')
