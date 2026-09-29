@@ -15,6 +15,7 @@ with every gap in it fixed; tariffs from the NERSA source folder; load profiles 
 | `04-gap-register.md` | What the web app gets wrong or lacks (security, maths, broken features, data) and where each is fixed |
 | `05-development-plan.md` | Phases P0–P8 with deliverables, verification, effort |
 | `06-open-decisions.md` | Owner decisions with proposed defaults |
+| `07-release-runbook.md` | Release assembly (phases 1–7): final migration numbers and apply order, PostgREST PATCH, env vars, edge functions, cron, tariff bootstrap, signed-in walks owed |
 | `as-is/` | The exhaustive as-built review of the WM Solar web app, NERSA folder, meter folder and E-Site integration points, with `file:line` citations |
 
 ## Executive summary
