@@ -65,6 +65,18 @@ describe('runIngest', () => {
     expect([...store.state.years.values()][0]).toMatchObject({ validationBlocking: 1, state: 'in_review' })
   })
 
+  it('loads a backwards block without tripping the database CHECK: bounds cleared, year blocked', async () => {
+    const store = createMemoryTariffStore()
+    const bad = makeTariff({ name: 'Commercial', structure: 'ibt', charges: [
+      makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 200, blockMinKwh: 701, blockMaxKwh: 600, blockBasis: 'monthly' }),
+    ] })
+    const r = await runIngest(plan([draft({ tariffs: [bad] })]), store, { apply: true, createMissingLicensees: true })
+    expect(r.years[0].blocking).toBeGreaterThanOrEqual(1)
+    const y = [...store.state.years.values()][0]
+    expect(y).toMatchObject({ state: 'in_review' })
+    const stored = [...store.state.tariffsByYear.values()].flat()[0].charges[0]
+    expect([stored.blockMinKwh, stored.blockMaxKwh]).toEqual([null, null])
+  })
   it('is idempotent on sha256', async () => {
     const store = createMemoryTariffStore()
     await runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: true })

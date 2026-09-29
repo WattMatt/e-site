@@ -25,6 +25,11 @@ describe('validateTariff', () => {
     expect(codes(t)).not.toContain('tou_incomplete')
   })
 
+  it('blocks a block whose range runs backwards (the database refuses max <= min)', () => {
+    // Northern Cape 2025/26 source typo: "Block 3 (>701 -600kWh)".
+    const t = makeTariff({ name: 'Commercial', structure: 'ibt', charges: [e({ blockMinKwh: 701, blockMaxKwh: 600, blockBasis: 'monthly' })] })
+    expect(validateTariff(t).find((i) => i.code === 'block_range_inverted')?.severity).toBe('block')
+  })
   it('blocks non-contiguous inclining blocks and a bounded top block', () => {
     const gap = makeTariff({ name: 'ibt', structure: 'ibt', charges: [
       e({ blockMinKwh: 0, blockMaxKwh: 50, blockBasis: 'monthly' }), e({ blockMinKwh: 2000, blockMaxKwh: null, blockBasis: 'monthly' }),

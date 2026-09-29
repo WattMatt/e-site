@@ -16,7 +16,7 @@ export type TariffIssueCode =
   | 'yoy_out_of_band' | 'yoy_unit_changed' | 'legacy_tariff_skipped' | 'unit_unknown'
   | 'orphan_charge' | 'block_unit_typo' | 'sseg_semantics_unknown' | 'eskom_shared_energy_row'
   | 'eskom_duplicate_column' | 'rfd_row_increase_mismatch' | 'increase_missing' | 'sheet_skipped'
-  | 'vat_basis_conflict' | 'duplicate_licensee_year'
+  | 'vat_basis_conflict' | 'duplicate_licensee_year' | 'block_range_inverted'
 
 export interface TariffIssue {
   code: TariffIssueCode
@@ -51,6 +51,9 @@ export function validateTariff(t: Tariff): TariffIssue[] {
 
   const energyAmounts = new Set(t.charges.filter((c) => c.component === 'energy').map((c) => c.amountExclVat))
   t.charges.forEach((c, i) => {
+    if (c.blockMaxKwh !== null && (c.blockMinKwh === null || c.blockMaxKwh <= c.blockMinKwh)) {
+      flag('block_range_inverted', 'block', `block runs ${c.blockMinKwh ?? 'unbounded'} to ${c.blockMaxKwh} kWh: the upper bound must exceed the lower (bounds cleared on load; correct from the source)`, i)
+    }
     if (!Number.isFinite(c.amountExclVat)) {
       flag('non_numeric', 'block', `amount is not a number: ${String(c.amountExclVat)}`, i)
       return

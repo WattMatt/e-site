@@ -11,7 +11,9 @@ const n = (s: string): number => Number(s.replace(/\s/g, ''))
 
 /** Half-open [min, max) kWh per month from a block label. "0-500 / 501-1000" is repaired later. */
 export function parseBlockRange(text: string): BlockRange | null {
-  const t = text.replace(/[‒-―−]/g, '-').replace(/\s/g, ' ').toLowerCase()
+  // A block number directly followed by the range, bracket missing ("Block 3 351 – 600) kWh",
+  // Northern Cape 2025/26), would otherwise read "3 351" as the grouped number 3351.
+  const t = text.replace(/[‒-―−]/g, '-').replace(/\s/g, ' ').toLowerCase().replace(/^\s*block\s*\d{1,2}\s+(?=\d)/, '')
   const typo = /\d\s*wh\b/.test(t) && !/\d\s*kwh/.test(t)
   // A number is plain digits or space-grouped thousands ("1 001"): a lone "2 51" is the
   // block number followed by the range, never the number 251.
