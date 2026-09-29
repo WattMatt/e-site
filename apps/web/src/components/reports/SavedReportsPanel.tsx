@@ -59,6 +59,11 @@ const SUMMARY_LABELS: Record<string, string> = {
   saving: 'year-1 saving',
   irrPct: '% IRR',
   offer: 'offer excl. VAT',
+  // Solar monthly reports (Phase 7).
+  period: '^period',
+  actualKwh: 'kWh generated',
+  guaranteeKwh: 'kWh guaranteed',
+  variancePct: '% variance',
 }
 
 /** Identifiers a kind stores in `summary` for its own lookups; never printed. */

@@ -79,6 +79,8 @@ export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>>
   solar_feasibility: 'edit_financials',
   // The issued client offer. Clients read it through the token page / portal only.
   solar_proposal: 'edit_financials',
+  // The client's monthly performance report: lost revenue at the pinned tariff — commercial.
+  solar_monthly: 'edit_financials',
 }
 
 /** The Solar level required to read this kind, or null when it is not a Solar kind. */

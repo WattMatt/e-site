@@ -36,6 +36,7 @@ const SOLAR_PDF_PATH = /\/solar-(reports|proposals)\//
 function solarKindForPath(path: string): string {
   if (path.includes('/solar-proposals/')) return 'solar_proposal'
   const file = path.slice(path.indexOf('/solar-reports/') + '/solar-reports/'.length)
+  if (file.startsWith('solar_monthly-')) return 'solar_monthly'
   return file.startsWith('solar_technical-') ? 'solar_technical' : 'solar_feasibility'
 }
 
@@ -280,6 +281,10 @@ export async function deleteProjectReportAction(
   // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00216).
   if (report.kind === 'solar_proposal') {
     return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
+  }
+  // A generated monthly report is the record of what the client received (00217 keeps its snapshot).
+  if (report.kind === 'solar_monthly') {
+    return { error: 'A monthly report is kept as the record of what the client received — generate a new version instead.' }
   }
   // A Solar kind is removed by OWNER_ADMIN only (spec §9.2) and on the Solar EDIT level.
   if (solarLevelForKind(report.kind)) {
