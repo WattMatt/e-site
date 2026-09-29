@@ -31,10 +31,13 @@ head; they are not this chain's concern unless their owners renumber them into `
 2. Then this release branch. It supersedes #216, #217 and #219 (and the phase PRs #203–#214 they
    contain): close those as superseded once it lands.
 
-## 2. PostgREST `db_schema` PATCH — BEFORE the migrations merge
+## 2. PostgREST `db_schema` PATCH — IMMEDIATELY AFTER the migrations apply
 
-`00208` creates schema `solar`, `00210` creates schema `tariffs`. A schema-creating migration needs
-the exposed-schema list PATCHed, or REST answers `PGRST002` indefinitely (no auto-recovery).
+`00208` creates schema `solar`, `00210` creates schema `tariffs`. They must be added to the exposed
+list, but **only once they exist**: `docs/auth-pitfalls-playbook.md` §7 — a `db_schema` list naming a
+schema that does not exist strands PostgREST in the `PGRST002` cache loop for the WHOLE API. So:
+merge → wait for the deploy workflow to apply `00208`–`00221` → PATCH at once (recovery ≈ 8 s).
+Between apply and PATCH only the new schemas are unreachable (`PGRST106`); nothing existing breaks.
 
 ```
 GET   /v1/projects/cbskbnvvgcybmfikxgky/postgrest          # read the current db_schema list
