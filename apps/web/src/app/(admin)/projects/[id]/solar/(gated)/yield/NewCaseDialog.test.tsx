@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({ create: vi.fn(), push: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: h.push, refresh: vi.fn() }) }))
 vi.mock('@/actions/solar-cases.actions', () => ({ createSolarCaseAction: h.create }))
 import { NewCaseDialog } from './NewCaseDialog'
+import { setSolarDirty } from '@/lib/solar/dirty-store'
 
 beforeEach(() => vi.clearAllMocks())
 describe('NewCaseDialog', () => {
@@ -47,5 +48,20 @@ describe('NewCaseDialog', () => {
     fireEvent.change(pick, { target: { value: 'L2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
     await waitFor(() => expect(h.create).toHaveBeenCalledWith({ projectId: 'p1', name: 'Roof B case', start: { kind: 'layout', layoutId: 'L2' } }))
+  })
+  it('YF-08: with unsaved case edits, Create asks first and creates nothing until Discard', async () => {
+    setSolarDirty(true)
+    try {
+      h.create.mockResolvedValue({ ok: true, caseId: 'c9' })
+      render(<NewCaseDialog projectId="p1" cases={[]} onClose={() => {}} />)
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Option B' } })
+      fireEvent.change(screen.getByLabelText('DC size (kWp)'), { target: { value: '600' } })
+      fireEvent.change(screen.getByLabelText('AC size (kW)'), { target: { value: '500' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+      expect(screen.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy()
+      expect(h.create).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+      await waitFor(() => expect(h.push).toHaveBeenCalledWith('/projects/p1/solar/yield?case=c9'))
+    } finally { setSolarDirty(false) }
   })
 })

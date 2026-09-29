@@ -10,7 +10,8 @@ import type { CaseFinanceConfig, CapexLine } from '@esite/shared/solar-cases'
 import { Button } from '@/components/ui/Button'
 import { saveSolarFinancialsAction, applySolarRateCardAction, runSolarFinancialsAction, importLayoutBomAction } from '@/actions/solar-financials.actions'
 import type { FinancialsPageData } from '@/lib/solar/cases/financials-page-data'
-import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
+import { useSolarDirtyGuard, useSolarDiscardGuard } from '@/lib/solar/dirty-store'
+import { DiscardChangesPrompt } from '../../_components/DiscardChangesPrompt'
 import { num, rand } from '@/components/solar/format'
 import { Check, NumField, Section } from '../yield/editor-fields'
 
@@ -79,12 +80,15 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
   const reasons = [...data.runReasons.filter((r) => !(r === SAVE_FIRST && !dirty)), ...(data.tariffReason ? [data.tariffReason] : [])]
   const runTitle = reasons[0] ?? (dirty ? SAVE_FIRST : undefined)
   const m = cfg.models, o = cfg.opex, a = cfg.analysis
+  // YF-08: switching case discards the draft (the editor remounts on the new key) — ask first.
+  const nav = useSolarDiscardGuard()
 
   return (
     <form onSubmit={(e) => e.preventDefault()} style={{ display: 'grid', gap: 12 }}>
-      <label>Case <select aria-label="Case" value={data.caseId ?? ''} onChange={(e) => router.push(`/projects/${projectId}/solar/financials?case=${e.target.value}`)}>
+      <label>Case <select aria-label="Case" value={data.caseId ?? ''} onChange={(e) => { const href = `/projects/${projectId}/solar/financials?case=${e.target.value}`; nav.guard(() => router.push(href)) }}>
         {data.cases.map((c) => <option key={c.id} value={c.id}>{c.name}{c.hasRun ? '' : ' (not run)'}</option>)}
       </select></label>
+      {nav.pending && <DiscardChangesPrompt onDiscard={nav.discard} onStay={nav.stay} />}
       {data.isDefault && <span>Using org defaults — review, then Save.</span>}
 
       <Section title="Capex">

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { createSolarCaseAction } from '@/actions/solar-cases.actions'
 import type { LayoutChoice } from '@/lib/solar/cases/page-data'
+import { useSolarDiscardGuard } from '@/lib/solar/dirty-store'
+import { DiscardChangesPrompt } from '../../_components/DiscardChangesPrompt'
 
 type Start = 'manual' | 'copy' | 'layout'
 const alert = { color: 'var(--c-red, #dc2626)', fontSize: 12 }
@@ -21,6 +23,8 @@ export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { pro
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
+  // YF-08: creating opens the new case, discarding an unsaved draft in the open one — ask first.
+  const nav = useSolarDiscardGuard()
   const submit = async () => {
     setBusy(true); setErrors({}); setError(null)
     const r = await createSolarCaseAction({
@@ -63,9 +67,10 @@ export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { pro
       </fieldset>
       {error && <span role="alert" style={alert}>{error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button type="button" disabled={busy} onClick={submit}>{busy ? 'Creating…' : 'Create case'}</Button>
+        <Button type="button" disabled={busy} onClick={() => nav.guard(() => void submit())}>{busy ? 'Creating…' : 'Create case'}</Button>
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
       </div>
+      {nav.pending && <DiscardChangesPrompt onDiscard={nav.discard} onStay={nav.stay} />}
     </div>
   )
 }

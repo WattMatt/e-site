@@ -1,6 +1,6 @@
 'use client'
 /** Case list (functional spec §7.1). Controls above the caller's level are hidden, not disabled. */
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { SolarAccessLevel } from '@esite/shared'
@@ -12,11 +12,13 @@ import type { CaseCardView, LayoutChoice } from '@/lib/solar/cases/page-data'
 import { useArmedConfirm } from '../../_components/useArmedConfirm'
 import { mwh, num, rand, sastDateTime } from '@/components/solar/format'
 import { NewCaseDialog } from './NewCaseDialog'
+import { isSolarDirty, useSolarDiscardGuard } from '@/lib/solar/dirty-store'
+import { DiscardChangesPrompt } from '../../_components/DiscardChangesPrompt'
 
 const STATUS_VARIANT = { not_run: 'ghost', running: 'info', done: 'success', failed: 'danger', stale: 'warning', pricing_changed: 'warning' } as const
 type ActionOutcome = { error?: string; fieldErrors?: Record<string, string> }
 
-function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open }: { c: CaseCardView; projectId: string; canWrite: boolean; studyUpdatedAt: string | null; ticked: boolean; onTick: () => void; open: boolean }) {
+function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open, onOpen }: { c: CaseCardView; projectId: string; canWrite: boolean; studyUpdatedAt: string | null; ticked: boolean; onTick: () => void; open: boolean; onOpen: (e: MouseEvent, href: string) => void }) {
   const router = useRouter()
   const del = useArmedConfirm()
   const [renaming, setRenaming] = useState(false)
@@ -37,7 +39,8 @@ function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open }: 
         <input type="checkbox" aria-label={`Compare ${c.name}`} checked={ticked} onChange={onTick} />
         {renaming
           ? <input aria-label="New name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
-          : <Link href={`/projects/${projectId}/solar/yield?case=${c.id}`} style={{ fontWeight: 600 }}>{c.name}</Link>}
+          : <Link href={`/projects/${projectId}/solar/yield?case=${c.id}`} style={{ fontWeight: 600 }}
+              onClick={(e) => { if (!open) onOpen(e, `/projects/${projectId}/solar/yield?case=${c.id}`) }}>{c.name}</Link>}
         <Badge variant={STATUS_VARIANT[c.status]}>{c.statusLabel}</Badge>
         {c.selected && <Badge variant="info">Selected</Badge>}
       </div>
@@ -75,20 +78,29 @@ export function CaseList({ projectId, level, cases, studyUpdatedAt, openCaseId, 
   const canWrite = level !== 'view'
   const [ticked, setTicked] = useState<string[]>([])
   const [adding, setAdding] = useState(false)
+  // YF-08: opening another case or Compare remounts the editor and discards its draft — ask first,
+  // exactly as the tab bar does.
+  const nav = useSolarDiscardGuard()
+  const openCase = (e: MouseEvent, href: string) => {
+    if (!isSolarDirty()) return
+    e.preventDefault()
+    nav.guard(() => router.push(href))
+  }
   return (
     <section aria-label="Cases" style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', gap: 8 }}>
         {canWrite && <Button type="button" onClick={() => setAdding(true)}>New case</Button>}
         <Button type="button" variant="secondary" disabled={ticked.length < 2 || ticked.length > 4}
-          title="Tick 2 to 4 cases" onClick={() => router.push(`/projects/${projectId}/solar/yield?compare=${ticked.join(',')}`)}>Compare</Button>
+          title="Tick 2 to 4 cases" onClick={() => { const href = `/projects/${projectId}/solar/yield?compare=${ticked.join(',')}`; nav.guard(() => router.push(href)) }}>Compare</Button>
       </div>
+      {nav.pending && <DiscardChangesPrompt onDiscard={nav.discard} onStay={nav.stay} />}
       {adding && <NewCaseDialog projectId={projectId} cases={cases.map((c) => ({ id: c.id, name: c.name }))} layouts={layouts} onClose={() => setAdding(false)} />}
       {cases.length === 0
         ? <EmptyState dense title="No cases yet" description="A case is one design option: a system size, losses, battery and export settings." />
         : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
             {cases.map((c) => (
-              <Card key={c.id} c={c} projectId={projectId} canWrite={canWrite} studyUpdatedAt={studyUpdatedAt} open={c.id === openCaseId}
+              <Card key={c.id} c={c} projectId={projectId} canWrite={canWrite} studyUpdatedAt={studyUpdatedAt} open={c.id === openCaseId} onOpen={openCase}
                 ticked={ticked.includes(c.id)} onTick={() => setTicked((t) => (t.includes(c.id) ? t.filter((x) => x !== c.id) : [...t, c.id]))} />
             ))}
           </ul>
