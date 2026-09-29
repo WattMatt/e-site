@@ -454,7 +454,12 @@ CREATE OR REPLACE FUNCTION solar.downtime_history_record()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
     -- A cascade (installation, study or project delete) removes the whole record set; no history.
-    IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+    -- NOT a pg_trigger_depth() test: an FK cascade queues the cascaded rows' AFTER triggers to the
+    -- end of the OUTER statement, so this fires at depth 1 with the parent rows already gone (and a
+    -- history row would then violate its project FK). The installation being gone IS the cascade.
+    IF NOT EXISTS (SELECT 1 FROM solar.installations i WHERE i.id = OLD.installation_id) THEN
+        RETURN NULL;
+    END IF;
     INSERT INTO solar.downtime_history (downtime_id, installation_id, project_id, organisation_id, op, old_row, actor_id)
     VALUES (OLD.id, OLD.installation_id, OLD.project_id, OLD.organisation_id, lower(TG_OP), to_jsonb(OLD), auth.uid());
     RETURN NULL;

@@ -112,13 +112,17 @@ BEGIN
   INSERT INTO solar.meter_files (project_id, sha256, size_bytes, storage_path, original_name, status)
   VALUES (v_p, v_sha3, 10, v_org || '/' || v_p || '/' || v_sha3 || '.csv', 'may.csv', 'accepted') RETURNING id INTO v_f3;
   -- c1 (older file) and c2 (newer file) both feed PV main with the SAME timestamp.
+  -- Distinct source_column: 00210's meter_channels_source_key is UNIQUE NULLS NOT DISTINCT on
+  -- (meter_id, file_id, source_column) and file_id is ON DELETE SET NULL, so two same-named
+  -- channels of one meter collide when the project delete in section 11 nulls both file ids
+  -- (a 00210 trap, reported separately; the dedupe under test does not depend on the name).
   INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
                                     interval_min, tz_convention, is_primary, parser_version, created_at)
   VALUES (v_msolar, v_f1, 'kW', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now() - interval '1 day')
   RETURNING id INTO v_c1;
   INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
                                     interval_min, tz_convention, is_primary, parser_version, created_at)
-  VALUES (v_msolar, v_f2, 'kW', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now())
+  VALUES (v_msolar, v_f2, 'PV kW', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now())
   RETURNING id INTO v_c2;
   INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
                                     interval_min, tz_convention, is_primary, parser_version)
@@ -537,16 +541,22 @@ BEGIN
   INSERT INTO _r VALUES ('lapsed_rows_kept', (SELECT count(*) FROM solar.installations WHERE project_id = v_p) = 1
     AND (SELECT count(*) FROM solar.monthly_reports WHERE project_id = v_p) = 2);
 
-  -- ── 11. A study delete cascades every operations row (no history FK trap) ─
+  -- ── 11. A project delete cascades every operations row (no history FK trap) ─
+  -- A DIRECT study delete is refused by 00216 (solar.studies_keep_issued_proposals) while the
+  -- accepted proposal exists, and an installation cannot exist without one. The project-delete
+  -- cascade passes that guard at depth > 1 and must take every operations row with it: the
+  -- installation/study cascades reach the 00217 triggers at depth > 1 (no history row, no guard).
   BEGIN
     INSERT INTO solar.downtime (installation_id, starts_at, ends_at, cause) VALUES (v_inst, '2026-03-12 10:00+02', '2026-03-12 12:00+02', 'other');
-    DELETE FROM solar.studies WHERE id = v_study;
-    INSERT INTO _r VALUES ('study_delete_cascades_operations', (SELECT count(*) FROM solar.installations WHERE project_id = v_p) = 0
+    DELETE FROM projects.projects WHERE id = v_p;
+    INSERT INTO _r VALUES ('project_delete_cascades_operations', (SELECT count(*) FROM solar.installations WHERE project_id = v_p) = 0
       AND (SELECT count(*) FROM solar.monthly_reports WHERE project_id = v_p) = 0
       AND (SELECT count(*) FROM solar.downtime WHERE project_id = v_p) = 0
-      AND (SELECT count(*) FROM solar.handover_items WHERE project_id = v_p) = 0);
+      AND (SELECT count(*) FROM solar.downtime_history WHERE project_id = v_p) = 0
+      AND (SELECT count(*) FROM solar.handover_items WHERE project_id = v_p) = 0
+      AND (SELECT count(*) FROM solar.studies WHERE id = v_study) = 0);
   EXCEPTION WHEN OTHERS THEN
-    INSERT INTO _r VALUES ('study_delete_cascades_operations', false);
+    INSERT INTO _r VALUES ('project_delete_cascades_operations', false);
   END;
 END $$;
 
