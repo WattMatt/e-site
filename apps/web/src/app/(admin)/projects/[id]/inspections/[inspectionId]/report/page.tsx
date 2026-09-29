@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { reportPathBelongsTo } from '@/lib/reports/report-path'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import RegenerateButton from './RegenerateButton'
@@ -37,7 +38,8 @@ export default async function ReportPage({ params }: Props) {
   const { data: report } = await supabase
     .schema('projects')
     .from('reports')
-    .select('id, storage_path, version, created_at')
+    .select('id, storage_path, version, created_at, organisation_id')
+    .eq('project_id', projectId)
     .eq('source_table', 'inspections')
     .eq('source_id', inspectionId)
     .eq('status', 'issued')
@@ -45,8 +47,12 @@ export default async function ReportPage({ params }: Props) {
     .limit(1)
     .maybeSingle()
 
-  const signed = report
-    ? (await supabase.storage.from('reports').createSignedUrl(report.storage_path, 3600)).data
+  // The `reports` bucket is service-only (00207): no session role may read it directly. The row above
+  // was read through the caller's session, so RLS (project access + the report-kind gate) has already
+  // decided they may see this report; the service client only signs a path inside that row's own
+  // <org>/<project>/ folder.
+  const signed = report && reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)
+    ? (await (createServiceClient() as AnyClient).storage.from('reports').createSignedUrl(report.storage_path, 3600)).data
     : null
 
   const isCertified = insp.status === 'certified'

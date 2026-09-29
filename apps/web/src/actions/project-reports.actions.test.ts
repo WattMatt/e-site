@@ -18,6 +18,7 @@ const PROJECT_ID = '00000000-0000-0000-0000-000000000011'
 const ORG_ID     = '00000000-0000-0000-0000-000000000001'
 const REPORT_ID  = '00000000-0000-0000-0000-000000000055'
 const USER_ID    = '00000000-0000-0000-0000-000000000077'
+const OTHER_ID   = '00000000-0000-0000-0000-0000000000ff'
 
 const REPORT_ROW = {
   id: REPORT_ID,
@@ -202,6 +203,42 @@ describe('getProjectReportUrlAction', () => {
     expect(service.storageFrom).toHaveBeenCalledWith('qc-reports')
     expect(service.storageFrom).not.toHaveBeenCalledWith('reports')
   })
+
+  // 00207: a row's path is trusted by the SERVICE client only when it belongs to the row.
+  it.each([
+    ['another project in the same org', `${ORG_ID}/${OTHER_ID}/equipment-materials-v1.pdf`],
+    ['another org', `${OTHER_ID}/${PROJECT_ID}/tenant-schedule-v1.pdf`],
+    ['a traversal the URL parser would resolve', `${ORG_ID}/${PROJECT_ID}/../../${OTHER_ID}/${OTHER_ID}/valuation-x.pdf`],
+    ['a backslash the URL parser would turn into a slash', `${ORG_ID}/${PROJECT_ID}/x\\y.pdf`],
+  ])('refuses to sign a path in %s', async (_label, path) => {
+    const { client } = makeSupabase({ reportRow: { ...REPORT_ROW, storage_path: path } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { getProjectReportUrlAction } = await import('./project-reports.actions')
+    const result = await getProjectReportUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be verified/) })
+    expect(service.createSignedUrl).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
+
+  it('refuses a row whose organisation_id is missing', async () => {
+    const { client } = makeSupabase({ reportRow: { ...REPORT_ROW, organisation_id: null } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { getProjectReportUrlAction } = await import('./project-reports.actions')
+    const result = await getProjectReportUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect('error' in result).toBe(true)
+    expect(service.createSignedUrl).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
 })
 
 describe('deleteProjectReportAction', () => {
@@ -381,5 +418,35 @@ describe('sensitive report kinds are gated on read', () => {
 
     expect(result).toEqual([REPORT_ROW])
     expect(requireEffectiveRoleMock).not.toHaveBeenCalled()
+  })
+
+  it('does not remove the file when RLS deleted no row', async () => {
+    const { client } = makeSupabase({ reportRow: REPORT_ROW, deletedRows: [] })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { deleteProjectReportAction } = await import('./project-reports.actions')
+    const result = await deleteProjectReportAction(PROJECT_ID, REPORT_ID)
+
+    expect('error' in result).toBe(true)
+    expect(service.remove).not.toHaveBeenCalled()
+  })
+
+  it('deletes the row but never removes a file outside the row’s own org/project', async () => {
+    const { client } = makeSupabase({ reportRow: { ...REPORT_ROW, storage_path: `${OTHER_ID}/${OTHER_ID}/valuation-x-v1.pdf` } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { deleteProjectReportAction } = await import('./project-reports.actions')
+    const result = await deleteProjectReportAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ ok: true })
+    expect(service.remove).not.toHaveBeenCalled()
+    err.mockRestore()
   })
 })

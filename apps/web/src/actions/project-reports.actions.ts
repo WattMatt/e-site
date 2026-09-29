@@ -6,7 +6,7 @@ import { ORG_WRITE_ROLES, OWNER_ADMIN } from '@esite/shared'
 import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
 import { getSolarAccessLevel } from '@/lib/solar/access'
 import { solarLevelAllows } from '@esite/shared'
-import { isCanonicalReportPath } from '@/lib/reports/report-path'
+import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const REPORTS_BUCKET = 'reports'
@@ -25,7 +25,6 @@ async function solarReadDenied(supabase: unknown, projectId: string, kind: strin
   return solarLevelAllows(level, need) ? null : NO_SOLAR_ACCESS
 }
 
-const REPORT_PATH_REFUSED = 'This report’s file could not be verified, so it cannot be opened.'
 const SOLAR_PDF_PATH = /\/solar-(reports|proposals)\//
 
 /**
@@ -51,8 +50,7 @@ async function reportPathDenied(
 ): Promise<string | null> {
   // FIRST: every check below reads the raw string, and the URL parser rewrites a non-canonical one
   // into a different object before it is signed (review round 3). See lib/reports/report-path.ts.
-  if (!isCanonicalReportPath(report.storage_path)) return REPORT_PATH_REFUSED
-  if (!report.organisation_id || !report.storage_path.startsWith(`${report.organisation_id}/${projectId}/`)) return REPORT_PATH_REFUSED
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) return REPORT_PATH_REFUSED
   if (!SOLAR_PDF_PATH.test(report.storage_path)) return null
   if (!solarLevelForKind(report.kind)) return REPORT_PATH_REFUSED
   const need = solarLevelForKind(solarKindForPath(report.storage_path))
@@ -237,6 +235,14 @@ export async function getProjectReportUrlAction(
   }
   const solarDenied = await solarReadDenied(supabase, projectId, report.kind)
   if (solarDenied) return { error: solarDenied }
+  // The path is signed with the SERVICE client, which bypasses storage RLS, so it is trusted only when
+  // it is canonical and under the row's own <org>/<project>/ (00207 refuses writing any other; this also
+  // holds for a row that predates it). See lib/reports/report-path.ts.
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) {
+    console.error('getProjectReportUrlAction: refused a report path outside its row', { projectId, reportId })
+    return { error: REPORT_PATH_REFUSED }
+  }
+  // Then the Solar rule: a Solar PDF path is signed only for a Solar kind the caller's level can read.
   const pathDenied = await reportPathDenied(supabase, projectId, report)
   if (pathDenied) return { error: pathDenied }
 
@@ -315,10 +321,11 @@ export async function deleteProjectReportAction(
     return { error: 'Nothing was deleted — the report may already be gone, or you may not be allowed to delete it.' }
   }
 
-  // The object is removed with the SERVICE client, so its path is trusted only when it is canonical
-  // and under the row's own <org>/<project>/ (a forged row could otherwise name another org's file).
-  // The row is already gone; an orphaned private object is harmless.
-  if (!isCanonicalReportPath(report.storage_path) || !report.storage_path.startsWith(`${report.organisation_id}/${projectId}/`)) {
+  // The object is removed with the SERVICE client, so its path is trusted only when it belongs to the
+  // row (a forged row could otherwise name another org's file). The row is already gone; an orphaned
+  // private object is harmless.
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) {
+    console.error('deleteProjectReportAction: kept an object outside its row', { projectId, reportId })
     return { ok: true }
   }
 

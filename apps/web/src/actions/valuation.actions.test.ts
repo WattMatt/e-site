@@ -84,6 +84,7 @@ import {
   setSectionPercentAction,
   certifyValuationAction,
   deleteValuationAction,
+  getValuationReportUrlAction,
 } from './valuation.actions'
 
 // ─── Chainable + awaitable query-builder stub ───────────────────────────────
@@ -792,5 +793,50 @@ describe('getValuationAction', () => {
     const res = await getValuationAction(PROJECT, VAL)
 
     expect('error' in res && res.error).toBe('Not found')
+  })
+})
+
+// ─── getValuationReportUrlAction — the signed path (00207) ──────────────────
+describe('getValuationReportUrlAction — path belongs to the row', () => {
+  const ORG = '44444444-4444-4444-4444-444444444444'
+  const OTHER = '55555555-5555-5555-5555-555555555555'
+
+  function service(row: unknown) {
+    const createSignedUrl = vi.fn().mockResolvedValue({ data: { signedUrl: 'https://signed.example/v.pdf' }, error: null })
+    const reports = qb({ data: row, error: null })
+    const valuation = qb({ data: { id: VAL, project_id: PROJECT, status: 'certified', valuation_no: 3 }, error: null })
+    const client = {
+      schema: () => ({ from: (t: string) => (t === 'valuations' ? valuation : reports) }),
+      storage: { from: vi.fn(() => ({ createSignedUrl })) },
+    }
+    return { client, createSignedUrl }
+  }
+
+  it('signs a path inside the row’s own org/project folder', async () => {
+    createClientMock.mockResolvedValue({})
+    const svc = service({ storage_path: `${ORG}/${PROJECT}/valuation-${VAL}-v2.pdf`, organisation_id: ORG })
+    createServiceClientMock.mockReturnValue(svc.client)
+
+    const result = await getValuationReportUrlAction(PROJECT, VAL)
+
+    expect(result).toEqual({ data: { url: 'https://signed.example/v.pdf' } })
+    expect(svc.createSignedUrl).toHaveBeenCalledWith(`${ORG}/${PROJECT}/valuation-${VAL}-v2.pdf`, 3600)
+  })
+
+  it.each([
+    ['another project', `${ORG}/${OTHER}/equipment-materials-v1.pdf`],
+    ['another org', `${OTHER}/${PROJECT}/valuation-x-v1.pdf`],
+    ['a traversal', `${ORG}/${PROJECT}/../../${OTHER}/${OTHER}/x.pdf`],
+  ])('refuses to sign a path in %s', async (_label, path) => {
+    createClientMock.mockResolvedValue({})
+    const svc = service({ storage_path: path, organisation_id: ORG })
+    createServiceClientMock.mockReturnValue(svc.client)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const result = await getValuationReportUrlAction(PROJECT, VAL)
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be verified/) })
+    expect(svc.createSignedUrl).not.toHaveBeenCalled()
+    err.mockRestore()
   })
 })
