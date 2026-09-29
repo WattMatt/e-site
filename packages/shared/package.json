@@ -14,7 +14,8 @@
     "lint": "eslint . --ext .ts",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:ci": "vitest run --coverage --passWithNoTests"
+    "test:ci": "vitest run --coverage --passWithNoTests",
+    "sync:whatsapp": "node scripts/sync-whatsapp-core.mjs"
   },
   "dependencies": {
     "@esite/db": "workspace:*",
