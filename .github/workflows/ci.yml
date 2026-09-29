@@ -123,6 +123,18 @@ jobs:
           find "$MIGRATION_DIR" -name "*.sql" -empty -exec echo "ERROR: Empty migration file: {}" \; -exec exit 1 \;
           echo "All migration files are non-empty. OK."
 
+      # scripts/db/probes/17-full-rehearsal.sql is assembled from the individual
+      # probes. --check regenerates it in memory and diffs, so a probe edited
+      # without re-assembling fails here instead of leaving a stale artefact
+      # reading as authoritative. No database, no dependencies — node builtins
+      # only. Node 22 for --experimental-strip-types (as deploy-migrations.yml).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check the full rehearsal is in sync with its probes
+        run: node --experimental-strip-types scripts/db/build-full-rehearsal.ts --check
+
   # -----------------------------------------------------------------------
   # Integration tests — RLS benchmark (Sprint 0 exit gate)
   # Requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY secrets.

@@ -1,12 +1,12 @@
 # Source Mirrors and the Backfill Implementation Plan
 
-> **Reconciled 2026-09-13 against item 2 as shipped (PR #186, `00195` + `00196`, applied 2026-09-12).** The plan was written on 2026-09-10 against item 2's *spec*; item 2 as *built* differs in twenty places (`scratchpad/item3-reconciliation.md`, §1). Every amendment in that reconciliation's numbered list is applied **in place** below — #1 (the guard exemption is item 3's to ship, `> 1`), #2 (project moves ride the exemption; §11 records no event for a move), #3 (`void` is terminal for the mirror too), #4 (historical `opened_at` / `closed_at` / `closed_by` / `void_reason` on every projection INSERT), #5 (item 2's resolvers stay; item 3 adds `resolve_mirror_assignee`), #6 (`suppress_all_outbound` does not exist — owner decision), #7 + #8 (no bells, no GUC consumer yet — assertions kept but marked vacuous), #9 (`product_events.event = 'backfill_completed'`), #10 (`seed_work_item_watchers` deleted — §11 already seeds), #11 + #12 (migration is **`00198`**; real identifiers in `@verify` from the first commit; `-- trigger:` already parses), #13 (impersonated guard probe; claim-clearing rule; `WITH_EXTRA`), #14 (four item-2 fixtures retargeted), #15 (`rfi` registry `gatekeeper_rule` → `'creator'` — owner decision), #16–#20 (stale comment, matrix/CONFORMANCE/A(f) anchors, allocator timing caveat + `ORDER BY`, re-measured counts, the two grant mutations that could no longer fail). Two items are marked `⚠ OWNER DECISION` and are **not** decided here. Line references of the form `00196:1540` are into item 2's migration files as merged at `13ea0c2`.
+> **Reconciled 2026-09-13 against item 2 as shipped (PR #186, `00195` + `00196`, applied 2026-09-12).** The plan was written on 2026-09-10 against item 2's *spec*; item 2 as *built* differs in twenty places (`scratchpad/item3-reconciliation.md`, §1). Every amendment in that reconciliation's numbered list is applied **in place** below — #1 (the guard exemption is item 3's to ship, `> 1`), #2 (project moves ride the exemption; §11 records no event for a move), #3 (`void` is terminal for the mirror too), #4 (historical `opened_at` / `closed_at` / `closed_by` / `void_reason` on every projection INSERT), #5 (item 2's resolvers stay; item 3 adds `resolve_mirror_assignee`), #6 (`suppress_all_outbound` does not exist — owner decision), #7 + #8 (no bells, no GUC consumer yet — assertions kept but marked vacuous), #9 (`product_events.event = 'backfill_completed'`), #10 (`seed_work_item_watchers` deleted — §11 already seeds), #11 + #12 (migration is **`00202`**; real identifiers in `@verify` from the first commit; `-- trigger:` already parses), #13 (impersonated guard probe; claim-clearing rule; `WITH_EXTRA`), #14 (four item-2 fixtures retargeted), #15 (`rfi` registry `gatekeeper_rule` → `'creator'` — owner decision), #16–#20 (stale comment, matrix/CONFORMANCE/A(f) anchors, allocator timing caveat + `ORDER BY`, re-measured counts, the two grant mutations that could no longer fail). Two items are marked `⚠ OWNER DECISION` and are **not** decided here. Line references of the form `00196:1540` are into item 2's migration files as merged at `13ea0c2`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Project six existing module sources into `projects.work_items` by database trigger, write assignment and due date back to `projects.rfis` and `field.snags` so every existing reader and PDF keeps working untouched, and back-fill the live estate once — without creating a single work item from `structure.node_orders`, without projecting a diary entry that says "None", and without rewriting `updated_at` on a single live source row.
 
-**Architecture:** One migration (Appendix A(f)'s Q1 **ordinal 9**, file **`00198`**) creates twenty-two functions and twenty-one triggers (thirteen projection, two write-back, six delete-to-void), **`CREATE OR REPLACE`s item 2's `projects.work_items_transition_guard()` with the depth-scoped exemption the mirror needs** (F8), amends one registry row (`rfi` → `gatekeeper_rule = 'creator'`, owner decision), then runs the data backfill in the same transaction under `SET LOCAL esite.suppress_notifications = 'on'`, and records its own completion into `public.product_events` as `event = 'backfill_completed'`. Each source has **two** functions: a plain `projects.project_<type>(uuid)` that does the projection, and a thin trigger wrapper that carries the recursion guard and calls it — so the backfill invokes the projection **directly** and never touches a source row. Source tables stay the system of record for their own content and status; the spine owns assignment, gatekeeper, due date, ball-in-court and the five universal states. Projection is idempotent through item 2's seven partial `UNIQUE` indexes (`work_items_src_rfi_uidx`, `_snag_`, `_qc_`, `_diary_`, `_form_`, `_order_`, `_inspection_uidx`, `00196:371–377`), so triggers land before the backfill and a retry is free. Item 2's resolvers (`00195`'s `resolve_project_pm`, `00196`'s caller-guarded `resolve_work_item_assignee`) are **read, never replaced**; the mirror calls a new `projects.resolve_mirror_assignee(uuid,text,uuid)` that carries no caller guard and excludes `client_viewer`.
+**Architecture:** One migration (Appendix A(f)'s Q1 **ordinal 9**, file **`00202`**) creates twenty-two functions and twenty-one triggers (thirteen projection, two write-back, six delete-to-void), **`CREATE OR REPLACE`s item 2's `projects.work_items_transition_guard()` with the depth-scoped exemption the mirror needs** (F8), amends one registry row (`rfi` → `gatekeeper_rule = 'creator'`, owner decision), then runs the data backfill in the same transaction under `SET LOCAL esite.suppress_notifications = 'on'`, and records its own completion into `public.product_events` as `event = 'backfill_completed'`. Each source has **two** functions: a plain `projects.project_<type>(uuid)` that does the projection, and a thin trigger wrapper that carries the recursion guard and calls it — so the backfill invokes the projection **directly** and never touches a source row. Source tables stay the system of record for their own content and status; the spine owns assignment, gatekeeper, due date, ball-in-court and the five universal states. Projection is idempotent through item 2's seven partial `UNIQUE` indexes (`work_items_src_rfi_uidx`, `_snag_`, `_qc_`, `_diary_`, `_form_`, `_order_`, `_inspection_uidx`, `00196:371–377`), so triggers land before the backfill and a retry is free. Item 2's resolvers (`00195`'s `resolve_project_pm`, `00196`'s caller-guarded `resolve_work_item_assignee`) are **read, never replaced**; the mirror calls a new `projects.resolve_mirror_assignee(uuid,text,uuid)` that carries no caller guard and excludes `client_viewer`.
 
 **Tech Stack:** PostgreSQL 17 (Supabase project `cbskbnvvgcybmfikxgky`), plpgsql triggers, Supabase Management API `/database/query` for rolled-back rehearsals, vitest contract tests parsing SQL text (the `apps/web/src/lib/snag-photo-type.contract.test.ts` pattern), `tsx` for scripts.
 
@@ -42,7 +42,7 @@
 
 Task 2 Step 2 is the gate that measures this. If it fails, stop: write the blocker down (the likeliest cause is a rollback or a diverged branch, not an unapplied item), do not "work around it" by stubbing the spine, and do not proceed to Task 3.
 
-The harness's `--with` flag is **repeatable** (Task 1) so that this migration — and, for the guard mutation in Task 5½, a scratch copy of part of `00196` — can be stacked ahead of a probe. That is a development convenience only. **Acceptance — every mutation verification, the full rehearsal, the scale run — is against production with item 2 really applied.** Item 2's own regression suite (`scripts/db/assertions/*.sql`, ten files, run by `scripts/db/try-work-item-spine.sh`) must also stay green with `00198` stacked (Task 5½ Step 7, Task 15 Step 6) and after apply (Task 20 Step 8).
+The harness's `--with` flag is **repeatable** (Task 1) so that this migration — and, for the guard mutation in Task 5½, a scratch copy of part of `00196` — can be stacked ahead of a probe. That is a development convenience only. **Acceptance — every mutation verification, the full rehearsal, the scale run — is against production with item 2 really applied.** Item 2's own regression suite (`scripts/db/assertions/*.sql`, ten files, run by `scripts/db/try-work-item-spine.sh`) must also stay green with `00202` stacked (Task 5½ Step 7, Task 15 Step 6) and after apply (Task 20 Step 8).
 
 ---
 
@@ -109,17 +109,17 @@ Each has a task that implements it and a test that fails when it is undone. Do n
 
 | File | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql` | **Create.** The whole item, in one file, in ten lettered sections: (A) `-- @verify:` header and pre-flight assertions, (B) the mirror resolver + helpers, (C) status mapping, due-date and diary-delay helpers, **(C′) amendments to item 2's objects — the `CREATE OR REPLACE` of `projects.work_items_transition_guard()` with the depth-scoped exemption, the `rfi` registry `gatekeeper_rule` update (owner decision), and the `suppress_all_outbound` column if the owner takes option (a) (owner decision)**, (D) the six `project_<source>()` bodies plus seven trigger wrappers and thirteen triggers, (E) the assignment + due-date write-back, (F) the six `BEFORE DELETE` void triggers, (G) grants and `anon` revokes, (H) the pre-migration snapshot and the backfill under notification suppression, (I) the backfill-completion `product_events` row(s) and post-conditions. **The number is `00198`, claimed at Task 2** (ledger max `00196`; open PR #185 holds `00197`) and **re-checked at Task 20** against the ledger, `origin/main` and open PRs. Twenty-two functions created, one replaced. ⚠ Every identifier in the `@verify` block must be a bare identifier from the first commit — `parseVerifyBlock` throws "is not a bare identifier" on `<NNNNN>` (`verify-header.ts:90,103`), and the hygiene test scans every file `>= '00185'` (`migration-verify-block.contract.test.ts:30–34`), so a placeholder name makes `pnpm --filter web test` red from Task 2 onward. The snapshot table is `projects.backup_00198_source_assignees` from the start. (The reconciliation suggested placing the guard replacement "between F and G"; it is placed between C and D instead so Task 5½ can insert it before Task 6 without splitting section D.) |
+| `apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql` | **Create.** The whole item, in one file, in ten lettered sections: (A) `-- @verify:` header and pre-flight assertions, (B) the mirror resolver + helpers, (C) status mapping, due-date and diary-delay helpers, **(C′) amendments to item 2's objects — the `CREATE OR REPLACE` of `projects.work_items_transition_guard()` with the depth-scoped exemption, the `rfi` registry `gatekeeper_rule` update (owner decision), and the `suppress_all_outbound` column if the owner takes option (a) (owner decision)**, (D) the six `project_<source>()` bodies plus seven trigger wrappers and thirteen triggers, (E) the assignment + due-date write-back, (F) the six `BEFORE DELETE` void triggers, (G) grants and `anon` revokes, (H) the pre-migration snapshot and the backfill under notification suppression, (I) the backfill-completion `product_events` row(s) and post-conditions. **The number is `00202`, and it has moved twice** — a worked example of why A(f) says claim it at APPLY time, not at plan time. `00198` was claimed at Task 2; on 2026-09-14 another session applied its own `00198_floor_plan_calibration_geometry`, so this became `00199`; by 2026-09-18 that same session had applied `00199_cable_route_history_and_page_scales` and `00200_route_history_write_authz` too (all three are PR #190), and `00201` is claimed by PR #191. `00197` remains reserved by open PR #185, which is why the ledger skips it — and PR #185 is now stranded, because `00197` sorts below the ledger head and `supabase db push` refuses a local migration that does. **Re-check the number one final time at Task 20 against the ledger, `origin/main` AND open PRs' migration filenames** — three collisions in four days, all from the same neighbouring session, and pre-claiming did not help once. |
 | `scripts/db/rehearse-sql.ts` | **Create.** The harness every probe in this plan runs through: concatenates `BEGIN;` + one or more `--with` files + a probe file + `ROLLBACK;` into one Management-API request, prints the assertion rows, refuses any input containing `COMMIT`, and **fails when no assertion rows come back**. Reads `SUPABASE_PAT`, falling back to `SUPABASE_ACCESS_TOKEN` (the name `scripts/db/mgmt-api.sh` uses). |
-| `scripts/db/try-work-item-spine.sh` | **Modify.** Item 2's harness for its ten assertion files (stacks `00195` + `00196` + one RAISE-style file, returns no rows). Gains `WITH_EXTRA=<file>[:<file>…]`, stacked after `00196` and before the assertion file, so item 2's suite runs with `00198` on top (Task 5½ Step 7, Task 15 Step 6). Note `. scripts/db/mgmt-api.sh` turns `set -euo pipefail` on in the sourcing shell and `mgmt_query` exits **5** on an API error. |
-| `scripts/db/assertions/work-item-ddl.sql`, `work-item-events.sql`, `work-item-transition.sql` | **Modify.** Four fixtures (`ddl:119,123`, `events:111`, `transition:155,183`) insert `origin='mirror'` rows against **live** `projects.rfis` ids. After `00198` applies every non-demo RFI carries a backfilled mirror and `work_items_src_rfi_uidx` allows one, so the suite goes red with `23505` on the day item 3 lands. Retargeted to a throwaway RFI the fixture creates itself (Task 15 Step 6). |
+| `scripts/db/try-work-item-spine.sh` | **Modify.** Item 2's harness for its ten assertion files (stacks `00195` + `00196` + one RAISE-style file, returns no rows). Gains `WITH_EXTRA=<file>[:<file>…]`, stacked after `00196` and before the assertion file, so item 2's suite runs with `00202` on top (Task 5½ Step 7, Task 15 Step 6). Note `. scripts/db/mgmt-api.sh` turns `set -euo pipefail` on in the sourcing shell and `mgmt_query` exits **5** on an API error. |
+| `scripts/db/assertions/work-item-ddl.sql`, `work-item-events.sql`, `work-item-transition.sql` | **Modify.** Four fixtures (`ddl:119,123`, `events:111`, `transition:155,183`) insert `origin='mirror'` rows against **live** `projects.rfis` ids. After `00202` applies every non-demo RFI carries a backfilled mirror and `work_items_src_rfi_uidx` allows one, so the suite goes red with `23505` on the day item 3 lands. Retargeted to a throwaway RFI the fixture creates itself (Task 15 Step 6). |
 | `scripts/db/probes/*.sql` | **Create.** One assertion file per task — the executable tests. Committed, because they are the regression suite for a layer vitest cannot reach. Every probe has exactly **one** row-producing statement, and it is the last one; every probe that impersonates ends by clearing the claim and asserting `auth.uid() IS NULL` (Task 1). |
 | `packages/shared/src/work-items/types.ts` | **Modify (owner decision, Task 5½).** `WORK_ITEM_TYPES`'s `rfi` entry `gatekeeperRule: 'project_pm'` → `'creator'`, in the same commit as the registry `UPDATE`, or `work-item-types.contract.test.ts` (item 2's per-key registry-equality test) fails. |
 | `apps/web/src/lib/work-items/source-status-map.contract.test.ts` | **Create.** Parses each source table's own status `CHECK` out of its migration — anchored on `CREATE TABLE <schema>.<table>`, never on the first CHECK in the file — and asserts `projects.map_source_status` carries an arm for every value; asserts every non-null result is a member of the `work_items` status `CHECK`. |
 | `apps/web/src/lib/work-items/mirror-triggers.contract.test.ts` | **Create.** Asserts F1 (every void trigger is `BEFORE DELETE`), F2 (every `project_<source>` wrapper carries the depth guard; the write-back does not), F7 (every source has an `_ins` and an `_upd` trigger and the `_upd` carries a `WHEN`), that the diary stop-list exists, and that no trigger anywhere names `structure.node_orders`. |
 | `docs/rbac-matrix.md` | **Modify.** New subsection **after `### Work items (\`work-items.actions.ts\`)` (~L496) and before `## Public / unauthenticated` (~L530)** — item 2 added the Work items subsection, so the 2026-09-10 anchor ("after Site forms") is stale — recording that a work-item reassign or re-date now writes source columns through a `SECURITY DEFINER` trigger that bypasses those tables' RLS, that the mirror's resolver excludes `client_viewer` while item 2's picker resolver admits them, and that the guard's exemption is depth-scoped. |
 | `CONFORMANCE.md` | **Modify.** New row under `## C. Provisioning & database`, per the file's own same-PR rule. Item 1 took **C11** and item 2 took **E9** (`CONFORMANCE.md:86`); the next C id is expected to be **C12** but is **re-read at Task 18**, never assumed. |
-| `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/16-appendix-registries.md` | **Modify.** A(f)'s Q1 row **already lists** `resolve_project_pm()`, `resolve_work_item_assignee()`, `user_can_*` and item 2's trigger functions (`:331`, `:350`); it gains **only the new names** — the twenty-two functions, `resolve_mirror_assignee()` among them, and `backup_00198_source_assignees`; A(f)'s ordinal-9 sentence gains `qc_reports` and loses `auth_events.session_id`; A(b)'s `rfi` gatekeeper cell changes to the raiser (owner decision, with the registry `UPDATE`). |
+| `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/16-appendix-registries.md` | **Modify.** A(f)'s Q1 row **already lists** `resolve_project_pm()`, `resolve_work_item_assignee()`, `user_can_*` and item 2's trigger functions (`:331`, `:350`); it gains **only the new names** — the twenty-two functions, `resolve_mirror_assignee()` among them, and `backup_00202_source_assignees`; A(f)'s ordinal-9 sentence gains `qc_reports` and loses `auth_events.session_id`; A(b)'s `rfi` gatekeeper cell changes to the raiser (owner decision, with the registry `UPDATE`). |
 | `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/03-work-items.md` | **Modify.** §1.2 corrected: `BEFORE DELETE`, and the two-trigger declaration that PostgreSQL actually accepts. |
 | `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/12-data-model-and-migrations.md` | **Modify.** §(c) hard dependency 5 gains the `qc_reports` entry point; §(d)'s RFI chain gains `default_rfi_assignee_id`'s real position. |
 
@@ -136,7 +136,7 @@ There is no local Postgres in this repository's test loop and no pgTAP. The hous
 
 The Management API returns rows from the **last row-producing statement only**. Measured: `SELECT 1 AS first_sel; SELECT 2 AS second_sel;` returns `[{"second_sel":2}]`. A probe that ends in a `DO` block, or that concatenates two assertion `SELECT`s, silently discards assertions — which is why the harness fails on zero rows and on rows without the three columns.
 
-**Two harnesses, two contracts, both valid.** Item 2's `scripts/db/try-work-item-spine.sh` stacks `00195` + `00196` + one RAISE-style assertion file and expects **no rows** (a failure is a `RAISE`); this plan's `rehearse-sql.ts` expects `(probe, ok, detail)` rows. Do not merge the two; Task 5½ extends item 2's with `WITH_EXTRA` so its ten files can run with `00198` stacked.
+**Two harnesses, two contracts, both valid.** Item 2's `scripts/db/try-work-item-spine.sh` stacks `00195` + `00196` + one RAISE-style assertion file and expects **no rows** (a failure is a `RAISE`); this plan's `rehearse-sql.ts` expects `(probe, ok, detail)` rows. Do not merge the two; Task 5½ extends item 2's with `WITH_EXTRA` so its ten files can run with `00202` stacked.
 
 **Files:**
 - Create: `scripts/db/rehearse-sql.ts`
@@ -313,10 +313,10 @@ otherwise print 0/0 and exit 0."
 
 The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a rollback or a diverged branch, it does not gate the feature. There is no fallback arm anywhere in this migration. It asserts the things this plan reads from item 2 as built: `projects.work_items`, `00195`'s four `project_settings` columns, the six registered types, the watchers PK, `public.product_events` with `'backfill_completed'` in its `event` vocabulary (F11), and that `projects.work_items_transition_guard()` **exists** — section C′ `CREATE OR REPLACE`s it, and a replace of a missing function would silently *create* a guard with no trigger behind it.
 
-**The number is claimed here, not at Task 20.** Ledger `max(version) = '00196'` (item 2, applied 2026-09-12); open PR #185 (the spun-off `user_has_project_access` `is_active` fix) already holds **`00197`**. This migration is **`00198`**. Task 20 Step 1 re-checks the ledger, `origin/main` and every open PR at merge; if `00198` has been taken by then, take the next free number and rename in one pass (Task 20 Step 4). ⚠ Placeholders are not an option: `parseVerifyBlock` requires bare identifiers (`/^[a-z0-9_]+$/i`, `verify-header.ts:90,103`) and the hygiene contract test scans every migration `>= '00185'` — a `<NNNNN>` or a `99999_` file makes `pnpm --filter web test` red from this task's Step 5 onward.
+**The number is claimed here, not at Task 20.** Ledger `max(version) = '00196'` (item 2, applied 2026-09-12); open PR #185 (the spun-off `user_has_project_access` `is_active` fix) already holds **`00197`**. This migration is **`00202`**. Task 20 Step 1 re-checks the ledger, `origin/main` and every open PR at merge; if `00202` has been taken by then, take the next free number and rename in one pass (Task 20 Step 4). ⚠ Placeholders are not an option: `parseVerifyBlock` requires bare identifiers (`/^[a-z0-9_]+$/i`, `verify-header.ts:90,103`) and the hygiene contract test scans every migration `>= '00185'` — a `<NNNNN>` or a `99999_` file makes `pnpm --filter web test` red from this task's Step 5 onward.
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql`
+- Create: `apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql`
 - Test: `scripts/db/probes/01-preflight.sql`
 
 - [ ] **Step 1: Write the probe first.** Create `scripts/db/probes/01-preflight.sql`:
@@ -369,10 +369,10 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
 
   ⚠ There is no "run it and watch it fail" pair for this probe. It is a precondition check, not a unit under test, and the plan does not pretend otherwise.
 
-- [ ] **Step 3: Create the migration file with its header and section A.** Create `apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql`:
+- [ ] **Step 3: Create the migration file with its header and section A.** Create `apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql`:
   ```sql
   -- =============================================================================
-  -- Migration: 00198_work_item_source_mirrors_and_backfill.sql
+  -- Migration: 00202_work_item_source_mirrors_and_backfill.sql
   -- Appendix A(f) Q1 ordinal 9. Depends on 00194 (ordinal 1), 00195 (ordinal 6,
   --   item 2's slice) and 00196 (ordinal 7) being APPLIED — all three since 2026-09-12.
   -- Description: Six projection entry points push module status into
@@ -406,10 +406,10 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
   --             WHERE origin = 'mirror' AND created_at <= <apply timestamp>;
   --            UPDATE projects.rfis r SET assigned_to = b.assigned_to, due_date = b.due_date,
   --                   updated_at = b.updated_at
-  --              FROM projects.backup_00198_source_assignees b
+  --              FROM projects.backup_00202_source_assignees b
   --             WHERE b.kind = 'rfi' AND b.id = r.id;
   --            UPDATE field.snags s SET assigned_to = b.assigned_to, updated_at = b.updated_at
-  --              FROM projects.backup_00198_source_assignees b
+  --              FROM projects.backup_00202_source_assignees b
   --             WHERE b.kind = 'snag' AND b.id = s.id;
   --            UPDATE projects.work_item_types SET gatekeeper_rule = 'project_pm' WHERE key = 'rfi';
   --            -- and re-run 00196 §12's CREATE OR REPLACE FUNCTION projects.work_items_transition_guard()
@@ -423,7 +423,7 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
   --          the spine side only); the snapshot's due_date column restores it.
   --
   -- @verify:begin
-  -- table: projects.backup_00198_source_assignees
+  -- table: projects.backup_00202_source_assignees
   -- function: projects.work_item_person_eligible(uuid,uuid)
   -- function: projects.resolve_mirror_assignee(uuid,text,uuid)
   -- function: projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -470,7 +470,7 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
   -- trigger: qc_entries_void_work_item ON projects.qc_entries
   -- trigger: site_diary_entries_void_work_item ON projects.site_diary_entries
   -- trigger: site_forms_void_work_item ON field.site_forms
-  -- grant_absent: anon SELECT ON projects.backup_00198_source_assignees
+  -- grant_absent: anon SELECT ON projects.backup_00202_source_assignees
   -- grant_absent: anon EXECUTE ON projects.work_item_person_eligible(uuid,uuid)
   -- grant_absent: anon EXECUTE ON projects.resolve_mirror_assignee(uuid,text,uuid)
   -- grant_absent: anon EXECUTE ON projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -570,7 +570,7 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
 - [ ] **Step 4: Prove the pre-flight can fail.** Temporarily change `<> 6` to `<> 7` and run:
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/01-preflight.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected:
   ```
@@ -584,9 +584,9 @@ The pre-flight block is a check **expected to pass** (§12 §(d)): it catches a 
 
 - [ ] **Step 5: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/01-preflight.sql
-  git commit -m "feat(work-items): 00198 skeleton, @verify header and pre-flight assertions for source mirrors
+  git commit -m "feat(work-items): 00202 skeleton, @verify header and pre-flight assertions for source mirrors
 
 Number claimed against ledger max 00196 and open PR #185 (00197). Every
 identifier in the @verify block is real from this commit: parseVerifyBlock
@@ -713,7 +713,7 @@ Every candidate is filtered through one helper, `projects.work_item_person_eligi
 - [ ] **Step 2: Run it and watch it fail.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/02-resolvers.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected: `FAIL (HTTP 400) … ERROR: 42883: function projects.resolve_mirror_assignee(uuid, unknown, unknown) does not exist` — the DO block reaches the orphan fixture's `PERFORM` before the assertion `SELECT` runs. (`resolve_project_pm` exists already; it is item 2's.)
 
@@ -847,7 +847,7 @@ Every candidate is filtered through one helper, `projects.work_item_person_eligi
 - [ ] **Step 4: Run the probe and watch all nine assertions pass.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/02-resolvers.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected:
   ```
@@ -880,7 +880,7 @@ Every candidate is filtered through one helper, `projects.work_item_person_eligi
 
 - [ ] **Step 7: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/02-resolvers.sql
   git commit -m "feat(work-items): resolve_mirror_assignee — the mirror's chain, no caller guard, no client viewers
 
@@ -1127,7 +1127,7 @@ The status reconciliation matters because A(b) maps `inspection.assigned → ope
 - [ ] **Step 4: Run the probe and watch 25/25 pass.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/03-status-map.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   (Eleven `cases` rows plus fourteen `UNION ALL` rows. If the printed `assertions seen:` list is shorter than twenty-five, an arm was dropped — read the list, not the total.)
 
@@ -1277,7 +1277,7 @@ The status reconciliation matters because A(b) maps `inspection.assigned → ope
 
 - [ ] **Step 9: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           apps/web/src/lib/work-items/source-status-map.contract.test.ts \
           scripts/db/probes/03-status-map.sql
   git commit -m "feat(work-items): status mapping, non-overdue due dates, and the diary negation stop-list
@@ -1483,7 +1483,7 @@ so §03 §1.2's single declaration is split into `_ins` (`AFTER INSERT`, no `WHE
 - [ ] **Step 2: Run it and watch it fail.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/04-rfi-mirror.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected: `FAIL  item_created  one mirror item per RFI` and `0/14` — no trigger exists, so the RFIs produce nothing and every recorded observation is NULL.
 
@@ -1712,7 +1712,7 @@ so §03 §1.2's single declaration is split into `_ins` (`AFTER INSERT`, no `WHE
 
 - [ ] **Step 10: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/04-rfi-mirror.sql
   git commit -m "feat(work-items): RFI projection — project_rfi() + guarded wrapper + ins/upd triggers
 
@@ -1868,7 +1868,7 @@ the source's own opened_at/closed_at/closed_by so the backfill does not date
 - [ ] **Step 2: Run it against item 2's guard and record the production failure F8 predicts.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/05b-guard-exemption.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected — section C′ does not exist yet, so item 2's guard is live:
   ```
@@ -1950,10 +1950,10 @@ the source's own opened_at/closed_at/closed_by so the backfill does not date
 
 - [ ] **Step 6: Mutation-verify the `source_status` clause.** Delete the `OR NEW.source_status IS DISTINCT FROM OLD.source_status` line. Re-run: `FAIL direct_source_status_edit_refused … Got: <no error>`. Restore.
 
-- [ ] **Step 7: Extend item 2's harness and run its ten assertion files with `00198` stacked.** In `scripts/db/try-work-item-spine.sh`, after the `PRELUDE` block and before `SQL=$(printf …)`, add:
+- [ ] **Step 7: Extend item 2's harness and run its ten assertion files with `00202` stacked.** In `scripts/db/try-work-item-spine.sh`, after the `PRELUDE` block and before `SQL=$(printf …)`, add:
   ```bash
   # WITH_EXTRA=<file>[:<file>…]: later migrations stacked after 00196 and before
-  # the assertion file, so this suite can run against item 3's 00198 (and later)
+  # the assertion file, so this suite can run against item 3's 00202 (and later)
   # before they merge. Colon-separated, applied in order.
   EXTRA=""
   if [[ -n "${WITH_EXTRA:-}" ]]; then
@@ -1967,7 +1967,7 @@ the source's own opened_at/closed_at/closed_by so the backfill does not date
   and change the `printf` to five `%s` slots with `"$EXTRA"` between `"$(cat "$MIG2")"` and `"$(cat "$ASSERT")"`. Then:
   ```bash
   for f in scripts/db/assertions/work-item-*.sql; do
-    WITH_EXTRA=apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    WITH_EXTRA=apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
       scripts/db/try-work-item-spine.sh "$f"
   done
   ```
@@ -1981,7 +1981,7 @@ the source's own opened_at/closed_at/closed_by so the backfill does not date
 
 - [ ] **Step 9: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/05b-guard-exemption.sql \
           scripts/db/try-work-item-spine.sh \
           packages/shared/src/work-items/types.ts
@@ -1994,7 +1994,7 @@ under impersonation). The early return is now v_actor IS NULL OR
 pg_trigger_depth() > 1, as 00196's own comment prescribes; > 0 would exempt every
 client write and is pinned by a direct-edit assertion. source_status joins
 clause (a). The rfi registry row and its TS mirror say 'creator', which is what
-the mirror does. Item 2's ten assertion files pass with 00198 stacked."
+the mirror does. Item 2's ten assertion files pass with 00202 stacked."
   ```
 
 ---
@@ -2196,7 +2196,7 @@ Three rules, each measured:
 
 - [ ] **Step 9: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/05-writeback.sql
   git commit -m "feat(work-items): assignment + due-date write-back, deliberately without a depth guard
 
@@ -2448,7 +2448,7 @@ Same shape as Task 5. Four differences that matter:
 
 - [ ] **Step 7: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/06-snag-mirror.sql
   git commit -m "feat(work-items): snag projection — gatekeeper is the PM, title carries the location
 
@@ -2726,7 +2726,7 @@ the 07:00 recap."
 
 - [ ] **Step 8: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/07-inspection-mirror.sql
   git commit -m "feat(work-items): inspection projection — reads assignment forward, never writes it back
 
@@ -2988,7 +2988,7 @@ non-overdue filter rather than straight into due_date."
 
 - [ ] **Step 8: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/08-qc-mirror.sql
   git commit -m "feat(work-items): qc_defect projection on both the report-issue and entry-edit paths
 
@@ -3206,7 +3206,7 @@ and its own titles are checklist lines."
 
 - [ ] **Step 6: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/09-diary-mirror.sql
   git commit -m "feat(work-items): diary_action projection, gated on a real delay and not a filled-in box
 
@@ -3413,7 +3413,7 @@ measures whether the box was filled in, not whether a delay occurred."
 
 - [ ] **Step 6: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/10-form-mirror.sql
   git commit -m "feat(work-items): form_action projection, born open on its author
 
@@ -3515,7 +3515,7 @@ One function serves all six, keyed on `TG_ARGV[0]`. `format('%I')` quotes the id
 - [ ] **Step 2: Run it and watch it fail.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/11-delete-to-void.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected — with no void trigger at all, the constraint fires exactly as it would with `AFTER DELETE`:
   ```
@@ -3775,7 +3775,7 @@ One function serves all six, keyed on `TG_ARGV[0]`. `format('%I')` quotes the id
 
 - [ ] **Step 9: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           apps/web/src/lib/work-items/mirror-triggers.contract.test.ts \
           scripts/db/probes/11-delete-to-void.sql
   git commit -m "feat(work-items): BEFORE DELETE void triggers + structural contract test
@@ -3863,15 +3863,15 @@ Two obligations, routinely confused (§12 §(b) rule 5), and **this migration ha
     FROM fns
   UNION ALL
   SELECT 'snapshot_table_not_anon_readable',
-         NOT has_table_privilege('anon', 'projects.backup_00198_source_assignees', 'SELECT'),
+         NOT has_table_privilege('anon', 'projects.backup_00202_source_assignees', 'SELECT'),
          'holds every RFI and snag assignee; explicitly revoked (00196:1310 already made new projects tables non-anon-readable — belt and braces)'
   UNION ALL
   SELECT 'snapshot_table_has_rls',
          (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname='projects' AND c.relname='backup_00198_source_assignees'),
+           WHERE n.nspname='projects' AND c.relname='backup_00202_source_assignees'),
          'RLS on with no policy: service-role only';
   ```
-  The snapshot table is named `backup_00198_source_assignees` from the start (A(f)'s R52 convention `backup_<version>_<object>`; `00198` was claimed at Task 2). If Task 20 Step 1 forces a different number, the rename touches this probe in the same commit.
+  The snapshot table is named `backup_00202_source_assignees` from the start (A(f)'s R52 convention `backup_<version>_<object>`; renamed with the migration on 2026-09-15). If Task 20 Step 1 forces a different number, the rename touches this probe in the same commit.
 
 - [ ] **Step 2: Run it and watch `anon_cannot_execute_any` fail,** naming every one of the twenty-two functions — because a new `projects` function inherits Postgres's built-in PUBLIC EXECUTE (there is no function default ACL in `projects`) and nothing has revoked it. This is the whole point of the task; read the list. (`snapshot_table_*` will fail too until section H exists — Task 14 adds it. `replaced_guard_still_revoked` passes already: `CREATE OR REPLACE` kept item 2's ACL and C′ re-revoked.)
 
@@ -3954,7 +3954,7 @@ Two obligations, routinely confused (§12 §(b) rule 5), and **this migration ha
 
 - [ ] **Step 7: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/12-grants.sql
   git commit -m "feat(work-items): revoke EXECUTE from PUBLIC and anon on all twenty-two functions
 
@@ -4125,7 +4125,7 @@ forgotten function fails the apply rather than shipping open."
 - [ ] **Step 2: Run it and watch every count fail at 0.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/13-backfill.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected: `rfi_count`, `inspection_count`, `form_count`, `total_live_items`, `writeback_filled_open_rfis`, `at_least_three_distinct_holders`, `completion_event_written`, `opened_at_is_historical` and `created_event_dated_at_opened_at` all FAIL. `writeback_skipped_closed_rfis` FAILs too — it currently reads 15, not 6. (`no_non_member_watchers_on_mirrors` passes vacuously — zero mirrors, zero watchers — and becomes real at Step 4.)
 
@@ -4138,7 +4138,7 @@ forgotten function fails the apply rather than shipping open."
   -- write-back fires rfis_updated_at (00002:100) and snags_updated_at (00004:33)
   -- on the rows it touches. due_date is included because the floor UPDATE below
   -- reaches projects.rfis.due_date through the write-back on the open RFIs.
-  CREATE TABLE IF NOT EXISTS projects.backup_00198_source_assignees AS
+  CREATE TABLE IF NOT EXISTS projects.backup_00202_source_assignees AS
     SELECT 'rfi'::text AS kind, id, assigned_to, due_date, updated_at
       FROM projects.rfis
     UNION ALL
@@ -4150,8 +4150,8 @@ forgotten function fails the apply rather than shipping open."
   -- default no longer applies in this schema). Revoked explicitly anyway: it
   -- holds the assignee of every RFI and snag on the platform, and the revoke is
   -- true whichever default a later migration re-establishes.
-  REVOKE SELECT ON projects.backup_00198_source_assignees FROM anon;
-  ALTER TABLE projects.backup_00198_source_assignees ENABLE ROW LEVEL SECURITY;
+  REVOKE SELECT ON projects.backup_00202_source_assignees FROM anon;
+  ALTER TABLE projects.backup_00202_source_assignees ENABLE ROW LEVEL SECURITY;
   -- No policy, deliberately: RLS with no policy is deny-all for every role except
   -- the table owner and service_role. Nothing in the app reads this table.
 
@@ -4347,9 +4347,9 @@ forgotten function fails the apply rather than shipping open."
 - [ ] **Step 5: Confirm Task 13's two deferred assertions now pass, and prove the revoke bites the way this schema allows (#20).**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/12-grants.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
-  Expected: `8/8`, with `snapshot_table_not_anon_readable` and `snapshot_table_has_rls` both PASS. ⚠ Deleting the `REVOKE SELECT … FROM anon` line does **not** turn the assertion red in this schema — `00196:1310` already stopped new `projects` tables being born anon-readable, so there is nothing for the revoke to remove — which is why the 2026-09-10 mutation could never fail. Instead, insert `GRANT SELECT ON projects.backup_00198_source_assignees TO anon;` immediately **before** the `REVOKE` and confirm `8/8` still (the revoke removed the grant); then move the `GRANT` to immediately **after** the `REVOKE` and confirm `FAIL snapshot_table_not_anon_readable`. Remove the `GRANT`. Record both readings.
+  Expected: `8/8`, with `snapshot_table_not_anon_readable` and `snapshot_table_has_rls` both PASS. ⚠ Deleting the `REVOKE SELECT … FROM anon` line does **not** turn the assertion red in this schema — `00196:1310` already stopped new `projects` tables being born anon-readable, so there is nothing for the revoke to remove — which is why the 2026-09-10 mutation could never fail. Instead, insert `GRANT SELECT ON projects.backup_00202_source_assignees TO anon;` immediately **before** the `REVOKE` and confirm `8/8` still (the revoke removed the grant); then move the `GRANT` to immediately **after** the `REVOKE` and confirm `FAIL snapshot_table_not_anon_readable`. Remove the `GRANT`. Record both readings.
 
 - [ ] **Step 6: Make the QC arm non-vacuous with a synthetic fixture (F4).** Prepend to `13-backfill.sql`, before the assertion `SELECT`:
   ```sql
@@ -4443,7 +4443,7 @@ forgotten function fails the apply rather than shipping open."
 
 - [ ] **Step 10: Commit.**
   ```bash
-  git add apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+  git add apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
           scripts/db/probes/13-backfill.sql
   git commit -m "feat(work-items): backfill 34 items with historical stamps, then record backfill_completed
 
@@ -4542,7 +4542,7 @@ event='backfill_completed' — product_events.event is a fixed vocabulary."
 - [ ] **Step 2: Run it and watch 4/4.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/14-idempotency.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
 
 - [ ] **Step 3: Prove idempotency can fail, and confirm the REAL index names.** Item 2 named them (`00196:371–377`): `work_items_src_rfi_uidx`, `work_items_src_snag_uidx`, `work_items_src_qc_uidx`, `work_items_src_diary_uidx`, `work_items_src_form_uidx`, `work_items_src_order_uidx`, `work_items_src_inspection_uidx` — write those seven into the PR body directly. This query only confirms production agrees with the file:
@@ -4625,7 +4625,7 @@ event='backfill_completed' — product_events.event is a fixed vocabulary."
   # 2. The scale run. Holds locks on projects.rfis and projects.work_items for its
   #    duration — run it outside working hours.
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/15-scale.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 
   # 3. AFTER + restore. setval is a committed write; the harness refuses COMMIT, so
   #    this one goes through the Management API directly.
@@ -4651,28 +4651,28 @@ event='backfill_completed' — product_events.event is a fixed vocabulary."
 
 - [ ] **Step 6: Read `refs_are_unique` first and act on what it says.** Item 2's `ref` allocator reads `MAX(...) + 1` under a per-(project,type) advisory lock: `refs_are_unique` should hold (the lock serialises) and `completed_under_five_minutes` is the one expected to go red at 50k (#18). **If `refs_are_unique` fails, that is item 2's defect, not this plan's — report it against item 2 and stop, rather than working around it in the mirror.** Record the measured timing (50k and 5k) and `refs_are_unique`'s result explicitly whichever way it went.
 
-- [ ] **Step 6b: Retarget the four item-2 fixtures that will collide with the backfill (#14), and run item 2's suite with `00198` stacked.** `scripts/db/assertions/work-item-ddl.sql:119,123`, `work-item-events.sql:111` and `work-item-transition.sql:155,183` insert `origin='mirror'` rows against **live** `projects.rfis` ids. After section H, every non-demo RFI already carries a mirror and `work_items_src_rfi_uidx` allows one — the four files go red with `23505` on the day item 3 lands. First reproduce that:
+- [ ] **Step 6b: Retarget the four item-2 fixtures that will collide with the backfill (#14), and run item 2's suite with `00202` stacked.** `scripts/db/assertions/work-item-ddl.sql:119,123`, `work-item-events.sql:111` and `work-item-transition.sql:155,183` insert `origin='mirror'` rows against **live** `projects.rfis` ids. After section H, every non-demo RFI already carries a mirror and `work_items_src_rfi_uidx` allows one — the four files go red with `23505` on the day item 3 lands. First reproduce that:
   ```bash
   for f in scripts/db/assertions/work-item-{ddl,events,transition}.sql; do
-    WITH_EXTRA=apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    WITH_EXTRA=apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
       scripts/db/try-work-item-spine.sh "$f" || true
   done
   ```
   Expected: `✗ … transaction aborted: … 23505 … "work_items_src_rfi_uidx"` for all three. **Record it.** Then, in each fixture, replace the live-id lookup (`SELECT id FROM projects.rfis … LIMIT 1` or equivalent) with a throwaway RFI the fixture creates itself on its own throwaway project, followed immediately by
   ```sql
-  -- 00198's live trigger mirrors this RFI on insert; the fixture owns the mirror it
-  -- asserts on, so it removes the trigger-made row first (0 rows before 00198
+  -- 00202's live trigger mirrors this RFI on insert; the fixture owns the mirror it
+  -- asserts on, so it removes the trigger-made row first (0 rows before 00202
   -- applies, 1 after — correct in every window).
   DELETE FROM projects.work_items WHERE rfi_id = v_rfi AND origin = 'mirror';
   ```
   so the fixture's own `INSERT … origin='mirror'` (and the second one that must fail `23505`) keep their meaning. Do not weaken the uniqueness assertions and do not switch to a demo-org RFI (the demo org may hold none). Re-run **all ten** files stacked:
   ```bash
   for f in scripts/db/assertions/work-item-*.sql; do
-    WITH_EXTRA=apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    WITH_EXTRA=apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
       scripts/db/try-work-item-spine.sh "$f"
   done
   ```
-  Expected: `✓` for all ten. Then run them **unstacked** (`scripts/db/try-work-item-spine.sh "$f"` with no `WITH_EXTRA`) and confirm all ten still pass — the retargeted fixtures must be correct both before and after `00198` applies, because item 2's suite is also the post-apply regression check (Task 20 Step 8).
+  Expected: `✓` for all ten. Then run them **unstacked** (`scripts/db/try-work-item-spine.sh "$f"` with no `WITH_EXTRA`) and confirm all ten still pass — the retargeted fixtures must be correct both before and after `00202` applies, because item 2's suite is also the post-apply regression check (Task 20 Step 8).
 
 - [ ] **Step 7: Commit.**
   ```bash
@@ -4686,7 +4686,7 @@ so the runbook captures and restores projects.rfis_rfi_number_seq around it.
 Four item-2 fixtures inserted origin='mirror' rows against live RFI ids; after
 the backfill every non-demo RFI carries a mirror and work_items_src_rfi_uidx
 allows one, so they now create their own RFI and own its mirror. Item 2's ten
-assertion files pass with 00198 stacked and unstacked."
+assertion files pass with 00202 stacked and unstacked."
   ```
 
 ---
@@ -4788,7 +4788,7 @@ The identity is the permanent production fixture `rbac-test@e-site.live` (`018f2
 - [ ] **Step 2: Run it and watch 6/6 pass.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/16-as-a-real-user.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
 
 - [ ] **Step 3: Mutation-verify F9 — this is the acceptance step, and it is the only place `SECURITY DEFINER` is actually tested.** Remove `SECURITY DEFINER` from `projects.project_rfi` (making it `SECURITY INVOKER`, the default). Re-run. Expected:
@@ -4862,20 +4862,20 @@ Everything above rehearsed one section. This runs the migration end to end again
 - [ ] **Step 3: Run the full rehearsal, and the four stateless probes beside it.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/17-full-rehearsal.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 
   # 01, 02, 03 and 12 assert on pg_catalog and pure functions rather than on
   # fixtures, so they stay separate files and are run alongside, not merged in.
   for p in 01-preflight 02-resolvers 03-status-map 12-grants; do
     echo "── $p"
     pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/$p.sql \
-      --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+      --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   done
 
-  # Item 2's own regression suite, with 00198 stacked (Task 15 Step 6b retargeted
+  # Item 2's own regression suite, with 00202 stacked (Task 15 Step 6b retargeted
   # the four fixtures that would otherwise collide with the backfill).
   for f in scripts/db/assertions/work-item-*.sql; do
-    WITH_EXTRA=apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    WITH_EXTRA=apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
       scripts/db/try-work-item-spine.sh "$f"
   done
   ```
@@ -4928,7 +4928,7 @@ Everything above rehearsed one section. This runs the migration end to end again
 - [ ] **Step 7: Run it and read all 34 lines.**
   ```bash
   pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/18-day-one-list.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
     | tee /tmp/day-one-list.txt
   ```
   **Paste the whole output into the PR body.** Read it before you do anything else, and specifically look for:
@@ -4938,7 +4938,7 @@ Everything above rehearsed one section. This runs the migration end to end again
 - [ ] **Step 8: Confirm no mail could have been sent by the migration itself.**
   ```bash
   grep -c "send-email\|net.http_post\|pg_net\|fetch(" \
-    apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+    apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   ```
   Expected: `0`. The migration is pure SQL and issues no outbound call. **This is not the whole outbound-mail story** — §12 §(d) requires an outbound gate on every project touched by a write-back; the column it names does not exist (`00195` added four columns and not that one), and how the gate is provided is the owner decision in Task 20 Step 5.
 
@@ -5025,13 +5025,13 @@ Appendix A(f)'s Q1 row must gain the twenty-two new functions **and the snapshot
 
 - [ ] **Step 3: Add the CONFORMANCE row — re-read the last C id first.** Item 1 took **C11** and item 2 took **E9** (`CONFORMANCE.md:86`), so the next id under `## C. Provisioning & database` is expected to be **C12** — but read the table's last row before claiming it; another session may have landed a C row since. Append to the `## C. Provisioning & database` table (substituting the id you read):
   ```markdown
-  | C12 | Work-item mirrors write source columns through SECURITY DEFINER triggers; the transition guard's exemption is depth-scoped | MUST | ✓ | `00198_work_item_source_mirrors_and_backfill.sql` sections C′–G. Twenty-two new functions, all with `SET search_path`; the eighteen stateful ones `SECURITY DEFINER … SET row_security TO 'off'`, the four pure mappers `IMMUTABLE`/`STABLE` invoker. None uses `current_user` for authorisation (asserted in-migration and by probe, comment-stripped). All revoked from PUBLIC **and** `anon` and granted to nobody — trigger functions fire without EXECUTE, verified with `has_function_privilege`. Item 2's `work_items_transition_guard()` is `CREATE OR REPLACE`d with `IF v_actor IS NULL OR pg_trigger_depth() > 1` (never `> 0`) and `source_status` in clause (a); proved under impersonation (probe 05b) and pinned by a `sql:` directive + a contract test. The pre-migration snapshot table is `REVOKE SELECT … FROM anon` + RLS-enabled with no policy. Authority is checked once, on the `projects.work_items` UPDATE, by item 2's `user_can_write_work_item` + RESTRICTIVE policy; the mirror's own resolver (`resolve_mirror_assignee`) has no caller guard and excludes `client_viewer`. |
+  | C12 | Work-item mirrors write source columns through SECURITY DEFINER triggers; the transition guard's exemption is depth-scoped | MUST | ✓ | `00202_work_item_source_mirrors_and_backfill.sql` sections C′–G. Twenty-two new functions, all with `SET search_path`; the eighteen stateful ones `SECURITY DEFINER … SET row_security TO 'off'`, the four pure mappers `IMMUTABLE`/`STABLE` invoker. None uses `current_user` for authorisation (asserted in-migration and by probe, comment-stripped). All revoked from PUBLIC **and** `anon` and granted to nobody — trigger functions fire without EXECUTE, verified with `has_function_privilege`. Item 2's `work_items_transition_guard()` is `CREATE OR REPLACE`d with `IF v_actor IS NULL OR pg_trigger_depth() > 1` (never `> 0`) and `source_status` in clause (a); proved under impersonation (probe 05b) and pinned by a `sql:` directive + a contract test. The pre-migration snapshot table is `REVOKE SELECT … FROM anon` + RLS-enabled with no policy. Authority is checked once, on the `projects.work_items` UPDATE, by item 2's `user_can_write_work_item` + RESTRICTIVE policy; the mirror's own resolver (`resolve_mirror_assignee`) has no caller guard and excludes `client_viewer`. |
   ```
   Then update the file's `Last updated:` line to today's date and this branch name.
 
 - [ ] **Step 4: Extend Appendix A(f)'s Q1 row — new names only.** In `16-appendix-registries.md`, the A(f) table's **Q1 / `projects`** cell already lists `resolve_project_pm()`, `resolve_work_item_assignee()`, `user_can_*` and item 2's trigger functions (`:331`, `:350`). **Do not repeat them.** Append after the last existing entry:
   ```
-  , backup_00198_source_assignees, work_item_person_eligible(), resolve_mirror_assignee(),
+  , backup_00202_source_assignees, work_item_person_eligible(), resolve_mirror_assignee(),
   resolve_work_item_gatekeeper(), map_source_status(), work_item_status_for_mirror(),
   work_item_mirror_due_date(), diary_delay_text(), project_rfi(), project_snag(),
   project_inspection(), project_qc_entry(), project_diary_action(), project_form_action(),
@@ -5040,7 +5040,7 @@ Appendix A(f)'s Q1 row must gain the twenty-two new functions **and the snapshot
   mirror_diary_action_work_item(), mirror_form_action_work_item(),
   work_item_assignment_writeback(), void_work_item_on_source_delete()
   ```
-  and beside item 2's `work_items_transition_guard()` entry add "(replaced by 00198: depth-scoped exemption)". If the owner takes option (a) in Task 20 Step 5, `project_settings.suppress_all_outbound` is booked under ordinal 6's column list with "(added by 00198)".
+  and beside item 2's `work_items_transition_guard()` entry add "(replaced by 00202: depth-scoped exemption)". If the owner takes option (a) in Task 20 Step 5, `project_settings.suppress_all_outbound` is booked under ordinal 6's column list with "(added by 00202)".
 
 - [ ] **Step 5: Correct A(f)'s ordinal-9 sentence — three changes.** Replace it with:
   > Projection triggers on the **six automatic** Q1 sources of A(b) — `rfis`, `snags`, `qc_entries`, `inspections`, `site_diary_entries`, `site_forms` — **plus a report-level entry point on `projects.qc_reports`, because the `qc_defect` scope predicate spans two tables and an entry does not cross it on its own (measured 2026-09-10: an entry is authored while its report is `draft` and enters scope when the report is issued)** — with assignment and due-date write-back; then the entity backfill under `SET LOCAL esite.suppress_notifications = 'on'`; then the backfill-completion `product_events` row. **`auth_events.session_id` rides with migration 1, per §12 §(c) line 121, and is not part of this migration.**
@@ -5118,7 +5118,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
    ORDER BY p.name;
   SQL
   pnpm tsx scripts/db/rehearse-sql.ts /tmp/owners.sql \
-    --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql \
+    --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql \
     | tee /tmp/triage-owners.txt
   ```
   Columns: project · `triage_owner_id` as set by item 6 · what `resolve_project_pm` returns · how many active PM rows exist · how many items that project contributes. **A project with `PM rows` ≥ 2 is one where the answer was chosen by creation order.**
@@ -5159,7 +5159,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
 **Everything about this task is a rule that was written in blood.** PRs #162 and #163 both shipped a `00183`; `db push` keys on the version **prefix**, so a number already in `schema_migrations` makes it print "Remote database is up to date", exit 0 and **skip the file**. The workflow went green and production served the old code. Then both fixes independently renumbered to `00184` and broke the deploy workflow twice more.
 
 **Files:**
-- Rename: the migration file — **only if** Step 1 finds `00198` taken
+- Rename: the migration file — **only if** Step 1 finds `00202` taken
 - Modify: the migration header's `go_live` and floor literals; the snapshot table name and probe 12/13 only if renamed
 
 - [ ] **Step 1: Re-read `max(version)` from production AND `origin/main`, at merge time, not now.**
@@ -5172,7 +5172,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
   git fetch origin main
   git ls-tree --name-only origin/main apps/edge-functions/supabase/migrations/ | sort | tail -3
   ```
-  As of 2026-09-13 the ledger reads **`00196`** (item 2, applied 2026-09-12), `origin/main`'s tail is `00196`, and open PR #185 holds **`00197`** — which is why this file has been `00198` since Task 2. **Re-read all three.** If #185 has merged and applied, `max(version)` reads `00197` and `00198` is still right; if something else has taken `00198`, take the next free number and do the rename in Step 4. ⚠ Merge-order: if #185 has **not** applied by the time this merges, `00198` landing first makes `db push` refuse #185's `00197` ("local migration files to be inserted before the last migration on remote" — the PR #163/#165 lesson). Tell the owner which order the two must apply in; do not silently take `00197`.
+  As of 2026-09-13 the ledger reads **`00196`** (item 2, applied 2026-09-12), `origin/main`'s tail is `00196`, and open PR #185 holds **`00197`** — which is why this file has been `00202` since Task 2. **Re-read all three.** If #185 has merged and applied, `max(version)` reads `00197` and `00202` is still right; if something else has taken `00202`, take the next free number and do the rename in Step 4. ⚠ Merge-order: if #185 has **not** applied by the time this merges, `00202` landing first makes `db push` refuse #185's `00197` ("local migration files to be inserted before the last migration on remote" — the PR #163/#165 lesson). Tell the owner which order the two must apply in; do not silently take `00197`.
 
 - [ ] **Step 2: Check every open PR for the same number.** `≤ max(version)` only catches a number the ledger has absorbed; the failure that actually happened was two sessions each picking the same *free* number and each passing that check.
   ```bash
@@ -5187,16 +5187,16 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
 
 - [ ] **Step 3: Announce the number to peer sessions before writing the file.** This is a shared checkout with concurrent agent sessions; the announcement is the only signal available before either merges.
 
-- [ ] **Step 4: Re-derive the literals; rename only if the number moved.** The file, the snapshot table (`backup_00198_source_assignees`), the `@verify` block, probes 12 and 13 and the header have carried `00198` since Task 2 (placeholders do not parse — Task 2). In one edit pass:
+- [ ] **Step 4: Re-derive the literals; rename only if the number moved.** The file, the snapshot table (`backup_00202_source_assignees`), the `@verify` block, probes 12 and 13 and the header have carried `00202` since Task 2 (placeholders do not parse — Task 2). In one edit pass:
   1. `v_go_live` and `v_floor` in section H, **recomputed from the actual release date**. `2026-11-10` assumes a Tuesday 2026-11-03 go-live and five office working days with no SA public holiday in the window; re-derive from `listHolidays(<year>)` (`packages/shared/src/lib/jbcc/sa-public-holidays.ts:43`) if the date moves, and update the header comment with the new derivation;
   2. `DATE '2026-11-10'` in `scripts/db/probes/13-backfill.sql`, twice;
-  3. **only if Step 1 found `00198` taken:** `git mv` the file to the new number and change every `00198` in the header, the `table:`/`grant_absent:` lines, sections H's four snapshot-table references, the two restore statements, probes 12 and 13, CONFORMANCE and A(f) — one `grep -rn 00198` over the branch is the checklist.
+  3. **only if Step 1 found `00202` taken:** `git mv` the file to the new number and change every `00202` in the header, the `table:`/`grant_absent:` lines, sections H's four snapshot-table references, the two restore statements, probes 12 and 13, CONFORMANCE and A(f) — one `grep -rn 00202` over the branch is the checklist.
 
   Then re-run probes 12, 13 and 17 to confirm the edit broke nothing:
   ```bash
   for p in 12-grants 13-backfill 17-full-rehearsal; do
     pnpm tsx scripts/db/rehearse-sql.ts scripts/db/probes/$p.sql \
-      --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+      --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
   done
   ```
 
@@ -5204,7 +5204,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
 
   > ⚠ **OWNER DECISION (default: (a) — item 3 adds the column).** Two ways to satisfy §12 §(d)'s gate; the reconciliation leaned (b) and the controller recorded (a) as the default, so both are written out and the owner picks.
   >
-  > **(a) Item 3 adds `projects.project_settings.suppress_all_outbound boolean NOT NULL DEFAULT false`** in section C′ (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`), books it in A(f) ordinal 6 as "added by 00198", and declares `-- column: projects.project_settings.suppress_all_outbound` in the `@verify` block. Because the column is born in the same transaction as the backfill, the flag cannot be set *before* merge; section H sets it **inside the migration, before the first `PERFORM`** — `UPDATE projects.project_settings SET suppress_all_outbound = true WHERE project_id IN (<the scope below>)` — and Step 9 clears it after the send log is read. Nothing in the application reads the column yet (items 4–6 will honour it), so today it is bookkeeping that the later readers inherit already-true on the right projects; say so in the PR body rather than implying it silenced anything. Task 20 Step 8 gains `suppress_flag_set_on_touched_projects`; Step 9's clear is re-read with a `SELECT`.
+  > **(a) Item 3 adds `projects.project_settings.suppress_all_outbound boolean NOT NULL DEFAULT false`** in section C′ (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`), books it in A(f) ordinal 6 as "added by 00202", and declares `-- column: projects.project_settings.suppress_all_outbound` in the `@verify` block. Because the column is born in the same transaction as the backfill, the flag cannot be set *before* merge; section H sets it **inside the migration, before the first `PERFORM`** — `UPDATE projects.project_settings SET suppress_all_outbound = true WHERE project_id IN (<the scope below>)` — and Step 9 clears it after the send log is read. Nothing in the application reads the column yet (items 4–6 will honour it), so today it is bookkeeping that the later readers inherit already-true on the right projects; say so in the PR body rather than implying it silenced anything. Task 20 Step 8 gains `suppress_flag_set_on_touched_projects`; Step 9's clear is re-read with a `SELECT`.
   >
   > **(b) Substitute the existing per-project toggles** `notify_rfi_email` (`00101:43`) and `notify_snag_email` (`00147:9`): set both `false` on the touched projects **before merge** by plain SQL through the Management API and **re-read them with a `SELECT`** (the Prefer-header lesson, PR #159), run the apply, read the send log, restore them (re-read again). The migration then adds no column and section A stays as written; A(f) ordinal 6's `suppress_all_outbound` remains booked for whichever of items 5/6 first needs it. The migration is pure SQL inside one `db push` transaction and no application path observes the apply, so (b) satisfies §12 §(d)'s *intent*; it does not satisfy its *letter*, which is the reason the column is the default.
   >
@@ -5248,9 +5248,9 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
 
 - [ ] **Step 7: A green workflow is not evidence. Read the objects back.**
   ```bash
-  node --experimental-strip-types scripts/verify-migration-applied.ts --since 00197   # > 00197 ⇒ 00198 only
+  node --experimental-strip-types scripts/verify-migration-applied.ts --since 00197   # > 00197 ⇒ 00202 only
   ```
-  (`--since` keeps files whose 5-digit prefix is **greater** than the value — `scripts/verify-migration-applied.ts:94`; `--file 00198_work_item_source_mirrors_and_backfill.sql` is the other form.) It parses the `-- @verify:` block and evaluates every directive — `table`, `function`, `trigger`, `grant_absent`, and the two `sql:` predicates (the guard's exemption text; the `rfi` registry rule) — one read-only request per predicate, exiting non-zero on any absence, any surviving `anon` privilege, or a false predicate. The deploy workflow already runs this after `db push`; run it again by hand and paste the directive count into the PR body.
+  (`--since` keeps files whose 5-digit prefix is **greater** than the value — `scripts/verify-migration-applied.ts:94`; `--file 00202_work_item_source_mirrors_and_backfill.sql` is the other form.) It parses the `-- @verify:` block and evaluates every directive — `table`, `function`, `trigger`, `grant_absent`, and the two `sql:` predicates (the guard's exemption text; the `rfi` registry rule) — one read-only request per predicate, exiting non-zero on any absence, any surviving `anon` privilege, or a false predicate. The deploy workflow already runs this after `db push`; run it again by hand and paste the directive count into the PR body.
 
 - [ ] **Step 8: Independently read the data back, which is the check `db push` cannot fake.**
   ```bash
@@ -5259,7 +5259,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
     SELECT w.* FROM projects.work_items w JOIN projects.projects p ON p.id = w.project_id
      WHERE p.name NOT LIKE '\_probe\_%')
   SELECT 'version_in_ledger' AS probe,
-         EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '00198') AS ok,
+         EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '00202') AS ok,
          'the file must be in the ledger AND its effect present' AS detail
   UNION ALL
   SELECT 'items_projected', (SELECT count(*) FROM live WHERE origin='mirror') = 34,
@@ -5336,7 +5336,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
          'never read proacl — a NULL proacl looks empty but IS the PUBLIC grant'
   UNION ALL
   SELECT 'anon_cannot_read_the_snapshot',
-         NOT has_table_privilege('anon', 'projects.backup_00198_source_assignees', 'SELECT'),
+         NOT has_table_privilege('anon', 'projects.backup_00202_source_assignees', 'SELECT'),
          'explicitly revoked (00196:1310 already made new projects tables non-anon-readable)';
   SQL
   pnpm tsx scripts/db/rehearse-sql.ts /tmp/postapply.sql
@@ -5346,7 +5346,7 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
   Then run item 2's two post-apply checks alongside, as the regression baseline for the spine this migration sits on:
   ```bash
   scripts/db/smoke-test-work-item-spine.sh                     # item 2's 12-section smoke test
-  for f in scripts/db/assertions/work-item-*.sql; do           # item 2's suite, UNSTACKED — 00198 is live now
+  for f in scripts/db/assertions/work-item-*.sql; do           # item 2's suite, UNSTACKED — 00202 is live now
     scripts/db/try-work-item-spine.sh "$f"
   done
   ```
@@ -5379,11 +5379,11 @@ them; the transition guard's exemption is depth-scoped (> 1, never > 0)."
   Then tear the project down and confirm zero residue. ⚠ Steps 5, 6 and 8 are the three that would have been silently broken by F8 (the respond and the close, refused on the source edit under item 2's guard) and F1 respectively, and none is reachable from a deep link into seeded data.
 
 - [ ] **Step 11: Write the PR body.** It must carry, at minimum:
-  - the claimed number (`00198`) and the `max(version)` + `origin/main` + open-PR readings that justified it, and the apply order agreed with #185;
+  - the claimed number (`00202`) and the `max(version)` + `origin/main` + open-PR readings that justified it, and the apply order agreed with #185;
   - **the two owner decisions** (Task 5½: `rfi` `gatekeeper_rule = 'creator'`; Task 20 Step 5: `suppress_all_outbound` option (a) or (b)) with the option taken and who took it;
   - the guard replacement: the `P0001` sentence item 2's guard produced on the contractor's RFI respond (Task 5½ Step 2), the `> 0` mutation reading, and the `diff` of section C′ against `00196:1509–1759` showing exactly two hunks;
   - the mutation-verification counts from Tasks 3, 4, 5, 5½, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 and 16;
-  - the full rehearsal output from Task 17 Step 3 with its 109-name `assertions seen:` line, the four stateless probes' 49, item 2's ten `✓` lines with `00198` stacked, plus the deliberate single-arm break from Step 4;
+  - the full rehearsal output from Task 17 Step 3 with its 109-name `assertions seen:` line, the four stateless probes' 49, item 2's ten `✓` lines with `00202` stacked, plus the deliberate single-arm break from Step 4;
   - the four item-2 fixtures retargeted in Task 15 Step 6b and the `23505` they produced before it;
   - the seven partial-unique index names (`work_items_src_*_uidx`) confirmed against production;
   - **the day-one list from Task 17 Step 7, all 34 lines**, and the duplicate-title finding raised against item 4;

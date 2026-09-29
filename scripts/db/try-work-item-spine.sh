@@ -47,11 +47,69 @@ if [[ "${WITH_ITEM1:-0}" == "1" ]]; then
   PRELUDE=$(cat "$ITEM1")
 fi
 
-SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
+# WITH_EXTRA=<file>[:<file>…]: later migrations stacked after 00196 and before
+# the assertion file, so this suite can run against item 3's 00202 (and later)
+# before they merge. Colon-separated, applied in order.
+EXTRA=""
+if [[ -n "${WITH_EXTRA:-}" ]]; then
+  IFS=':' read -r -a _extra_files <<< "$WITH_EXTRA"
+  for f in "${_extra_files[@]}"; do
+    [[ -f "$f" ]] || { echo "ERROR: WITH_EXTRA file not found: $f" >&2; exit 1; }
+    EXTRA+=$'\n'"$(cat "$f")"
+  done
+fi
+
+# RFI-number sequence guard — the same one scripts/db/rehearse-sql.ts carries,
+# for the same reason. projects.rfis.rfi_number is GENERATED ALWAYS AS IDENTITY
+# (00002:83) and sequences are NOT transactional, so every fixture RFI an
+# assertion file raises permanently consumes a number the ROLLBACK does not
+# return (measured drift from these two suites: last_value 736 against
+# max(rfi_number) 16 on 2026-09-15). Five of these files now create their own
+# source rows — Task 15 Step 6b, because after item 3's backfill they can no
+# longer share a live RFI — so this harness consumes them too.
+#   * the capture reads BOTH operands right after BEGIN, before any migration or
+#     assertion has run: reading max(rfi_number) at restore time instead would
+#     read this transaction's own uncommitted fixture rows;
+#   * the restore is a setval, which is non-transactional and therefore survives
+#     the ROLLBACK while every fixture row vanishes with it;
+#   * RESET ROLE first, because an assertion file may end impersonating and
+#     `authenticated` cannot setval the sequence;
+#   * a DO block returns no rows, so the "assertion files return nothing" shape
+#     this harness relies on is unchanged.
+# A file that RAISEs aborts the transaction before the restore and leaks its
+# numbers. That is the COMMON path while an assertion file is being written, so
+# restore by hand afterwards, outside any rehearsal transaction, where max()
+# sees only committed rows and is therefore exact:
+#   source scripts/db/mgmt-api.sh
+#   mgmt_query "SELECT setval('projects.rfis_rfi_number_seq', (SELECT max(rfi_number) FROM projects.rfis), true)"
+# Rehearsal against rehearsal is safe (every capture is >= the committed
+# high-water mark at its own BEGIN, so the sequence can only ratchet up). The
+# one case the guard cannot see is an RFI COMMITTED DURING the window: the
+# restore lowers past its number and the next RFI re-uses it silently, since
+# rfi_number carries no unique constraint. Rehearse outside SA working hours.
+SEQ_CAPTURE="CREATE TEMP TABLE _rehearse_seq_guard AS
+SELECT s.last_value, s.is_called,
+       (SELECT pg_catalog.max(r.rfi_number) FROM projects.rfis r) AS max_rfi_number
+  FROM projects.rfis_rfi_number_seq s;"
+SEQ_RESTORE="RESET ROLE;
+DO \$_rehearse_seq_restore\$
+BEGIN
+  PERFORM pg_catalog.setval(
+    'projects.rfis_rfi_number_seq',
+    GREATEST((SELECT g.last_value FROM _rehearse_seq_guard g),
+             COALESCE((SELECT g.max_rfi_number FROM _rehearse_seq_guard g), 0)),
+    true);
+END
+\$_rehearse_seq_restore\$;"
+
+SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
+  "$SEQ_CAPTURE" \
   "$PRELUDE" \
   "$(cat "$MIG1")" \
   "$(cat "$MIG2")" \
-  "$(cat "$ASSERT")")
+  "$EXTRA" \
+  "$(cat "$ASSERT")" \
+  "$SEQ_RESTORE")
 
 rc=0
 RESULT="$(mgmt_query "$SQL" 2>&1)" || rc=$?

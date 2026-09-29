@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { moduleOwnedRefusal, type ModuleOwnedField } from '@/lib/work-items/module-owned'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES, WORK_ITEM_PRIORITIES, WORK_ITEM_TYPES, type OrgRole } from '@esite/shared'
 
@@ -231,6 +232,11 @@ const reassignSchema = z.object({
  * change while `answered`. A contractor with the type write role therefore
  * hands the ASSIGNEE on in triage/open and gets the guard's governance
  * sentence, verbatim, if they try the gatekeeper seat.
+ *
+ * REFUSES `item_type = 'inspection'` outright, in BOTH arms — see
+ * MODULE_OWNED_EDITS. The Inspections module owns assigned_to_id and
+ * verifier_id and 00202's projection forward-reads both on every projection,
+ * so the edit would be silently reverted rather than refused.
  */
 export async function reassignWorkItemAction(
   input: z.infer<typeof reassignSchema>,
@@ -256,8 +262,22 @@ export async function reassignWorkItemAction(
   if (!column) {
     // The guard's clause (b) sentence, so the copy is the same whichever layer
     // says it. Short-circuited only because there is no column to write.
+    //
+    // This is checked BEFORE the module-owned refusal deliberately: on a closed
+    // or void item, "reopen it first" is the actionable thing to say, and
+    // sending someone to the Inspections module to change an assignment they
+    // could not change here anyway would be a wild goose chase.
     return { error: `${item.ref} is ${item.status}. Reopen it before changing who it belongs to.` }
   }
+
+  // Both arms: the assignee while triage/open AND the gatekeeper while
+  // answered. 00202's inspection projection forward-reads assigned_to_id and
+  // verifier_id on every projection, so either edit is reverted by the next
+  // source write — including the inspector pressing start. Refuse with the
+  // sentence that names where the edit belongs rather than let the control
+  // undo itself.
+  const moduleOwned = moduleOwnedRefusal(item.item_type, 'people')
+  if (moduleOwned) return { error: moduleOwned }
 
   const failure = await updateItem(supabase, workItemId, item.status, { [column]: userId })
   if (failure) return { error: failure }
