@@ -36,9 +36,10 @@ const tables = (study: Record<string, unknown> = {}) => ({
 
 describe('loadStudyPricing', () => {
   it('reads the four pricing inputs the Tariff and Load tabs store', async () => {
-    const r = await loadStudyPricing(fakeSupabase({ tables: tables() as never }).client as never, P)
+    const r = await loadStudyPricing(fakeSupabase({ tables: tables() as never }).client as never, P, { todayIso: '2026-03-15' })
     if (!r.ok) throw new Error(r.code)
     const p = r.pricing
+    expect(p.yearOneCatchUp).toBeUndefined() // 2025/26 covers year 1
     expect(p.provenance.overrideId).toBe('ov1')
     expect(p.tariff.charges.find((c) => c.component === 'energy')!.amountExclVat).toBe(300)
     expect(p.exportMethod).toBe('manual')
@@ -71,7 +72,7 @@ describe('(b) the Tariff tab bill check and the case run price the SAME tariff',
     const eff = await loadEffectiveTariff(fakeSupabase({ tables: tables() as never }).client as never, P, '2025-03-15')
     if ('error' in eff) throw new Error(eff.error)
     const build = vi.fn(() => ({ monthlyBills: () => [], withExportRateScaled: () => { throw new Error('unused') } }))
-    const run = await resolveStudyTariff(fakeSupabase({ tables: tables() as never }).client as never, P, { year: 2025, build })
+    const run = await resolveStudyTariff(fakeSupabase({ tables: tables() as never }).client as never, P, { year: 2025, build, todayIso: '2026-03-15' })
     if (!run.ok) throw new Error(run.reason)
     const [runTariff, opts] = build.mock.calls[0] as unknown as [typeof eff.tariff, { exportTariff: unknown; sseg: { crediting: string } }]
     expect(runTariff).toEqual(eff.tariff)
@@ -81,5 +82,31 @@ describe('(b) the Tariff tab bill check and the case run price the SAME tariff',
       { highSeasonMonths: null, nmdKva: null }).modelledTotalExclVat
     expect(bill(eff.tariff)).toBe(2732)
     expect(bill(runTariff)).toBe(2732)
+  })
+})
+
+describe('year 1 is brought forward when the pin is from an earlier financial year (TARIFF-12)', () => {
+  const lagging = () => tables({ tariff_override_id: null, export_rule: null, escalation: null })
+  it('a 2025/26 pin priced in 2026/27: the run prices 2025/26 rates + the 2026/27 approved increase; the bill check keeps the published rates', async () => {
+    const r = await loadStudyPricing(fakeSupabase({ tables: lagging() as never }).client as never, P, { todayIso: '2026-08-01' })
+    if (!r.ok) throw new Error(r.code)
+    expect(r.pricing.yearOneCatchUp).toEqual({
+      fromFinancialYear: '2025/26', toFinancialYear: '2026/27', pct: 10.1, steps: [{ financialYear: '2026/27', pct: 10.1, source: 'published' }],
+    })
+    // Year 2 is 2027/28 (not published): the org default, not the 2026/27 increase a second time.
+    expect(r.pricing.escalationRows[0]).toMatchObject({ year: 2, source: 'default', financialYear: null })
+
+    const build = vi.fn(() => ({ monthlyBills: () => [], withExportRateScaled: () => { throw new Error('unused') } }))
+    const run = await resolveStudyTariff(fakeSupabase({ tables: lagging() as never }).client as never, P, { year: 2025, build, todayIso: '2026-08-01' })
+    if (!run.ok) throw new Error(run.reason)
+    const [runTariff] = build.mock.calls[0] as unknown as [{ charges: Array<{ component: string; amountExclVat: number }> }]
+    expect(runTariff.charges.find((c) => c.component === 'energy')!.amountExclVat).toBeCloseTo(250 * 1.101, 9)
+    expect(runTariff.charges.find((c) => c.component === 'basic')!.amountExclVat).toBeCloseTo(500 * 1.101, 9)
+    expect(run.pricing.tariff.charges.find((c) => c.component === 'energy')!.amountExclVat).toBe(250)
+
+    // The same study priced before 1 July 2026 (year 1 = 2025/26) hashes differently: runs go "Pricing changed".
+    const before = await resolveStudyTariff(fakeSupabase({ tables: lagging() as never }).client as never, P, { year: 2025, build, todayIso: '2026-03-15' })
+    if (!before.ok) throw new Error(before.reason)
+    expect(before.pricingHash).not.toBe(run.pricingHash)
   })
 })

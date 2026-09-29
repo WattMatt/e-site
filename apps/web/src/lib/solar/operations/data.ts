@@ -242,7 +242,9 @@ export async function loadOperationsView(a: {
       if (!eq.ok) generateReason = eq.reason
     }
     if (!generateReason && selectedMonth) {
-      const t = await resolveStudyTariff(a.svc, a.projectId, { year: monthParts(selectedMonth).year })
+      const mp = monthParts(selectedMonth)
+      // The report month's financial year, as valueLostEnergy prices it (TARIFF-12).
+      const t = await resolveStudyTariff(a.svc, a.projectId, { year: mp.year, todayIso: `${mp.year}-${String(mp.month).padStart(2, '0')}-01` })
       if (!t.ok) generateReason = t.reason
       else tariffName = `${t.tariffRef.tariffName} (${t.tariffRef.licenseeName}, ${t.tariffRef.financialYear})`
     }

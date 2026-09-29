@@ -7,7 +7,7 @@ import { tariffBillCalculator } from '../../services/solar/finance/tariff-bill-c
 import { runBillCheck } from './bill-check'
 import { buildEscalationRows, escalationPathFromRows, escalationSettingsFrom } from './escalation'
 import type { OverrideChargeRow } from './override'
-import { resolveStudyPricing, studyPricingHash, type StudyPricingInput } from './pricing'
+import { resolveStudyPricing, studyPricingHash, yearOneExportTariff, yearOneTariff, type StudyPricingInput } from './pricing'
 
 const flat = (energyCents: number, extra: Tariff['charges'] = []): Tariff => makeTariff({ name: 'Business Flat', structure: 'flat', charges: [
   makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: energyCents }),
@@ -215,5 +215,64 @@ describe('a season-specific manual export rate wins over an all-season one for t
       expect(credit(7, 'high')).toBeCloseTo(100 * highAmt, 6)
       expect(credit(3, 'low')).toBeCloseTo(100 * allAmt, 6)
     }
+  })
+})
+
+describe('year 1 is brought forward when the pinned tariff is an earlier financial year than the study’s (TARIFF-12)', () => {
+  const pctCharge = makeCharge({ component: 'energy', unit: 'pct', amountExclVat: 5 })
+  const lagging = (studyFinancialYear: string | null, years = input().published.years) => input({
+    studyFinancialYear,
+    published: { ...input().published, tariff: flat(250, [pctCharge]), years },
+  })
+
+  it('pinned 2025/26, study year 1 in 2026/27: 2025/26 rates + the 2026/27 approved increase', () => {
+    const p = resolveStudyPricing(lagging('2026/27'))
+    expect(p.yearOneCatchUp).toEqual({
+      fromFinancialYear: '2025/26', toFinancialYear: '2026/27', pct: 10.1,
+      steps: [{ financialYear: '2026/27', pct: 10.1, source: 'published' }],
+    })
+    const y1 = yearOneTariff(p)
+    const amt = (t: Tariff, u: string) => t.charges.find((c) => c.unit === u)!.amountExclVat
+    expect(amt(y1, 'c_per_kWh')).toBeCloseTo(250 * 1.101, 9)
+    expect(amt(y1, 'R_per_month')).toBeCloseTo(500 * 1.101, 9)
+    expect(amt(y1, 'pct')).toBe(5) // a percentage is not a price
+    // The published tariff (Tariff tab, bill check) keeps the published rates.
+    expect(amt(p.tariff, 'c_per_kWh')).toBe(250)
+    // Year 2 is the year AFTER 2026/27 — the 2026/27 increase is not applied twice.
+    expect(p.escalationRows[0]).toMatchObject({ year: 2, source: 'default', financialYear: null })
+  })
+
+  it('without an approved increase for the gap year the org default start rate is used', () => {
+    const p = resolveStudyPricing(lagging('2026/27', [{ financialYear: '2025/26', approvedIncreasePct: 12.7 }]))
+    expect(p.yearOneCatchUp?.steps).toEqual([{ financialYear: '2026/27', pct: 9, source: 'default' }])
+    expect(yearOneTariff(p).charges.find((c) => c.unit === 'c_per_kWh')!.amountExclVat).toBeCloseTo(250 * 1.09, 9)
+  })
+
+  it('a linked export tariff is brought forward with the import; a manual rate is not', () => {
+    const exportTariff = makeTariff({ name: 'Gen-offset', structure: 'flat', charges: [makeCharge({ component: 'export_credit', unit: 'R_per_kWh', amountExclVat: 0.8 })] })
+    const linked = resolveStudyPricing({ ...lagging('2026/27'), published: { ...lagging('2026/27').published, exportTariff },
+      study: { ...input().study, exportRule: { version: 1, method: 'linked_tariff' } } })
+    expect(linked.exportMethod).toBe('linked_tariff')
+    expect(yearOneExportTariff(linked)!.charges[0]!.amountExclVat).toBeCloseTo(0.8 * 1.101, 9)
+    const manual = resolveStudyPricing({ ...lagging('2026/27'), study: { ...input().study, exportRule: { version: 1, method: 'manual' } },
+      exportRates: [{ id: 'r', season: 'all', tou: 'all', unit: 'R_per_kWh', amountExclVat: 0.9, sourceNote: 'n' }] })
+    expect(yearOneExportTariff(manual)).toBe(manual.exportTariff)
+  })
+
+  it('two years behind compounds both steps', () => {
+    const p = resolveStudyPricing(lagging('2027/28'))
+    expect(p.yearOneCatchUp?.steps.map((s) => [s.financialYear, s.pct, s.source])).toEqual([['2026/27', 10.1, 'published'], ['2027/28', 9, 'default']])
+    expect(p.yearOneCatchUp?.pct).toBe(Math.round((1.101 * 1.09 - 1) * 100 * 1000) / 1000)
+  })
+
+  it('a pin covering (or after) year 1 prices at the published rates, and its hash does not move', () => {
+    const same = resolveStudyPricing(lagging('2025/26'))
+    expect(same.yearOneCatchUp).toBeUndefined()
+    expect(yearOneTariff(same)).toBe(same.tariff)
+    expect(studyPricingHash(same)).toBe(studyPricingHash(resolveStudyPricing(lagging(null))))
+  })
+
+  it('the pricing hash changes, so runs priced on the old basis go stale ("Pricing changed")', () => {
+    expect(studyPricingHash(resolveStudyPricing(lagging('2026/27')))).not.toBe(studyPricingHash(resolveStudyPricing(lagging('2025/26'))))
   })
 })

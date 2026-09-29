@@ -12,7 +12,7 @@ import 'server-only'
  * The hash that marks cases Stale is keyed server-side (pricing-hash.ts), in the run path only.
  */
 import {
-  overrideChargeFromDb, parseExportRule, readSolarOrgSettings, resolveStudyPricing,
+  financialYearOn, overrideChargeFromDb, parseExportRule, readSolarOrgSettings, regimeForLicenseeKind, resolveStudyPricing,
   LICENSEE_KINDS, type LicenseeKind, type ResolvedStudyPricing, type SsegRule, type Tariff,
 } from '@esite/shared'
 import { tariffFromRows } from '@esite/shared/tariffs/ingest'
@@ -63,7 +63,13 @@ async function tariffWithCharges(t: ReturnType<AnyClient['schema']>, id: string)
   return { row: row as Row, tariff: tariffFromRows(row as Row, (charges ?? []) as Row[]) }
 }
 
-export async function loadStudyPricing(client: AnyClient, projectId: string): Promise<StudyPricingLoad> {
+/**
+ * `todayIso` fixes the study's year-1 financial year (`financialYearOn(today, regime)`, the same year
+ * the Tariff tab note names): a pin from an earlier year is brought forward to it (TARIFF-12). It
+ * defaults to now, so the pricing — and its hash — moves when a new financial year starts under a
+ * pin that no longer covers year 1, and the case shows "Pricing changed".
+ */
+export async function loadStudyPricing(client: AnyClient, projectId: string, opts: { todayIso?: string } = {}): Promise<StudyPricingLoad> {
   const solar = client.schema('solar')
   const t = client.schema('tariffs')
   const { data: s, error: se } = await solar.from('studies').select(STUDY_PRICING_COLUMNS).eq('project_id', projectId).maybeSingle()
@@ -104,6 +110,7 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
   if (parseExportRule(study.export_rule)?.method === 'manual' && rateRows.length === 0) return unreadable(projectId, 'study_export_rates (none visible)', null)
   const licRow = lic.data as Row | null
   const kind = String(licRow?.kind ?? '')
+  const licenseeKind = ((LICENSEE_KINDS as readonly string[]).includes(kind) ? kind : 'municipal') as LicenseeKind
 
   let pricing: ResolvedStudyPricing
   try {
@@ -118,7 +125,7 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
         tariffId,
         tariff: main.tariff,
         financialYear: String(year.financial_year ?? ''),
-        licenseeKind: ((LICENSEE_KINDS as readonly string[]).includes(kind) ? kind : 'municipal') as LicenseeKind,
+        licenseeKind,
         exportTariff: linked && linked !== 'missing' ? linked.tariff : null,
         sseg: sseg.data ? ssegFromRow(sseg.data as Row) : null,
         years: ((years.data ?? []) as Row[]).map((r) => ({
@@ -129,6 +136,7 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
       override: overrideId ? { id: overrideId, rows: ovRows.map(overrideChargeFromDb) } : null,
       exportRates: rateRows.map((r) => ({ ...exportRateFromRow(r), sourceNote: (r.source_note ?? null) as string | null })),
       orgSettings: readSolarOrgSettings((os.data as { settings?: unknown } | null)?.settings ?? null),
+      studyFinancialYear: financialYearOn(opts.todayIso ?? new Date().toISOString(), regimeForLicenseeKind(licenseeKind)),
     })
   } catch (e) {
     // A corrupt row (e.g. a non-finite amount the canonical ordering refuses) is unreadable, not a crash.

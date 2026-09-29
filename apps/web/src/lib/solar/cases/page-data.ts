@@ -66,7 +66,8 @@ const emptyEquipment = (): EquipmentOptions => ({ modules: [], inverters: [], ba
  */
 export async function runsByCase(user: AnyClient, projectId: string) {
   const { data } = await user.schema('solar').from('case_runs')
-    .select('id, case_id, status, inputs_hash, started_at, finished_at, run_by, energy_hash:outputs->provenance->>inputsHash')
+    // snap_*: the finance-only inputs the run was taken with, for resolveCaseStatus (YF-01).
+    .select('id, case_id, status, inputs_hash, started_at, finished_at, run_by, energy_hash:outputs->provenance->>inputsHash, snap_degradation:config_snapshot->degradation, snap_load_shedding:config_snapshot->loadShedding')
     .eq('project_id', projectId).order('started_at', { ascending: false })
   const latest = new Map<string, Row>(), ok = new Map<string, Row>()
   for (const r of (data ?? []) as Row[]) {

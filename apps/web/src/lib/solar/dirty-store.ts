@@ -6,7 +6,7 @@
  * "Discard unsaved changes?" inline (never window.confirm). The guard also
  * arms the browser's beforeunload prompt for tab-close / reload.
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 let dirty = false
 
@@ -31,4 +31,28 @@ export function useSolarDirtyGuard(isDirty: boolean): void {
   }, [isDirty])
 
   useEffect(() => () => setSolarDirty(false), [])
+}
+
+/**
+ * The same guard for in-page navigation (YF-08): opening another case, Compare, New case → Create
+ * and the Financials case picker. `guard(proceed)` runs `proceed` at once when nothing is unsaved;
+ * otherwise it holds it until the user presses Discard (render <DiscardChangesPrompt> while
+ * `pending`). The flag is NOT cleared on Discard: the navigation remounts the editor, whose unmount
+ * clears it — and a step that does not navigate (a refused create) must leave the draft guarded.
+ */
+export function useSolarDiscardGuard(): { pending: boolean; guard: (proceed: () => void) => void; discard: () => void; stay: () => void } {
+  const [pending, setPending] = useState<(() => void) | null>(null)
+  return {
+    pending: pending !== null,
+    guard: (proceed) => {
+      if (isSolarDirty()) setPending(() => proceed)
+      else proceed()
+    },
+    discard: () => {
+      const p = pending
+      setPending(null)
+      p?.()
+    },
+    stay: () => setPending(null),
+  }
 }

@@ -53,3 +53,28 @@ describe('resolveCaseStatus — Pricing changed vs Stale', () => {
     await expect(resolveCaseStatus(svcWith(null), shared, 'c1', latest, latest, ctx(E))).resolves.toEqual({ status: 'stale', label: 'Stale' })
   })
 })
+
+describe('resolveCaseStatus — degradation / load shedding edited after the run (YF-01)', () => {
+  const edited = { ...cfg, degradation: { firstYearPct: 0.5, annualPct: 0.2 } }
+  // The run's inputs hash still matches (these inputs are not in the energy), so caseStatus alone says Done.
+  const doneCtx = (config: typeof cfg): RunContextResult => ({ ok: true, ctx: { currentHash: OLD_CASE_HASH, energyHash: E, config } } as unknown as RunContextResult)
+  const okRow = { ...lastOk, snap_degradation: cfg.degradation, snap_load_shedding: cfg.loadShedding }
+  const finHashFor = (config: typeof cfg) => {
+    const built = buildFinanceInput(fin as never, config, kpis, pricing as never)
+    if (!built.ok) throw new Error('fixture does not build')
+    return finInputsHash(built.input, tariffRef, 'r1', 'p'.repeat(64))
+  }
+  it('an edit the financials have not priced: Pricing changed', async () => {
+    await expect(resolveCaseStatus(svcWith(finHashFor(cfg)), shared, 'c1', latest, okRow, doneCtx(edited)))
+      .resolves.toEqual({ status: 'pricing_changed', label: 'Pricing changed' })
+  })
+  it('financials re-run on the edited values: Done', async () => {
+    await expect(resolveCaseStatus(svcWith(finHashFor(edited)), shared, 'c1', latest, okRow, doneCtx(edited))).resolves.toEqual({ status: 'done', label: 'Done' })
+  })
+  it('an edit on a case with no financials for this run: Done (nothing priced is out of date)', async () => {
+    await expect(resolveCaseStatus(svcWith(null), shared, 'c1', latest, okRow, doneCtx(edited))).resolves.toEqual({ status: 'done', label: 'Done' })
+  })
+  it('no edit: Done', async () => {
+    await expect(resolveCaseStatus(svcWith(null), shared, 'c1', latest, okRow, doneCtx(cfg))).resolves.toEqual({ status: 'done', label: 'Done' })
+  })
+})

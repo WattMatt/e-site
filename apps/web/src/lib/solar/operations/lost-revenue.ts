@@ -27,7 +27,8 @@ const r2 = (x: number) => Math.round(x * 100) / 100
 export async function valueLostEnergy(svc: AnyClient, projectId: string, month: MonthKey, events: readonly Float64Array[]):
   Promise<{ ok: true; tariffName: string; perEventZar: number[]; totalZar: number } | { ok: false; reason: string }> {
   const { year, month: m } = monthParts(month)
-  const t = await resolveStudyTariff(svc, projectId, { year, build: energyOnlyBuild })
+  // Priced in the financial year the month falls in (TARIFF-12's catch-up is relative to that date, not today).
+  const t = await resolveStudyTariff(svc, projectId, { year, build: energyOnlyBuild, todayIso: `${year}-${String(m).padStart(2, '0')}-01` })
   if (!t.ok) return { ok: false, reason: t.reason }
   const zeros = new Float64Array(8760)
   const bill = (imp: Float64Array) => t.calc.monthlyBills({ importKwh: imp, exportKwh: zeros })[m - 1]!.totalZar

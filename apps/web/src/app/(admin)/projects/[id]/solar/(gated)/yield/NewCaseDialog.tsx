@@ -1,10 +1,12 @@
 'use client'
 /** New case (functional spec §7.1): Manual size, a copy of an existing case, or From layout (sizes from the layout, re-derived server-side). */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { createSolarCaseAction } from '@/actions/solar-cases.actions'
 import type { LayoutChoice } from '@/lib/solar/cases/page-data'
+import { useSolarDiscardGuard } from '@/lib/solar/dirty-store'
+import { DiscardChangesPrompt } from '../../_components/DiscardChangesPrompt'
 
 type Start = 'manual' | 'copy' | 'layout'
 const alert = { color: 'var(--c-red, #dc2626)', fontSize: 12 }
@@ -21,6 +23,8 @@ export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { pro
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
+  // YF-08: creating opens the new case, discarding an unsaved draft in the open one — ask first.
+  const nav = useSolarDiscardGuard()
   const submit = async () => {
     setBusy(true); setErrors({}); setError(null)
     const r = await createSolarCaseAction({
@@ -32,6 +36,9 @@ export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { pro
     else if ('fieldErrors' in r) setErrors(r.fieldErrors)
     else setError(r.error)
   }
+  // Discard runs the LATEST submit, so a field edited while the prompt is showing is the one sent.
+  const submitRef = useRef(submit)
+  submitRef.current = submit
   return (
     <div role="dialog" aria-label="New case" style={{ border: '1px solid var(--c-border, #e5e7eb)', borderRadius: 8, padding: 16, display: 'grid', gap: 10 }}>
       <label style={{ display: 'grid', gap: 2 }}>Name <input aria-label="Name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} /></label>
@@ -63,9 +70,10 @@ export function NewCaseDialog({ projectId, cases, layouts = [], onClose }: { pro
       </fieldset>
       {error && <span role="alert" style={alert}>{error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button type="button" disabled={busy} onClick={submit}>{busy ? 'Creating…' : 'Create case'}</Button>
+        <Button type="button" disabled={busy} onClick={() => nav.guard(() => void submitRef.current())}>{busy ? 'Creating…' : 'Create case'}</Button>
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
       </div>
+      {nav.pending && <DiscardChangesPrompt onDiscard={nav.discard} onStay={nav.stay} />}
     </div>
   )
 }

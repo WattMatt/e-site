@@ -11,7 +11,9 @@
  *   sseg rule     the library row, else the Net-Billing Rules default for the licensee kind — the
  *                 rule the Tariff tab shows as in force.
  *   escalation    the Tariff tab path (D-07): approved increases of the next published years,
- *                 stored per-year overrides, the org default path.
+ *                 stored per-year overrides, the org default path; and, when the pin is from an
+ *                 earlier financial year than year 1's, the catch-up that brings year 1 forward
+ *                 (`yearOneCatchUp`, TARIFF-12) — `yearOneTariff` is the tariff a run prices.
  *   load growth   studies.load_growth_pct (Load tab, 3b), NULL -> 0.
  *
  * `studyPricingHash` (canonical; every charge list in one total order, so row order never moves it)
@@ -23,7 +25,10 @@ import { netBillingRule } from '../../tariffs/net-billing-rules'
 import type { LicenseeKind, SsegRule, Tariff } from '../../tariffs/types'
 import type { EscalationPath } from '../../services/solar/finance/factors'
 import { canonicalJson, inputsHash } from '../../services/solar/hash'
-import { buildEscalationRows, escalationPathFromRows, escalationSettingsFrom, parseStoredEscalation, type EscalationRow, type EscalationSettings } from './escalation'
+import {
+  buildEscalationRows, escalationPathFromRows, escalationSettingsFrom, parseStoredEscalation, yearOneCatchUp,
+  type EscalationRow, type EscalationSettings, type YearOneCatchUp,
+} from './escalation'
 import { defaultExportRule, manualExportTariff, parseExportRule, type ExportMethod, type ExportRateRow } from './export-rule'
 import { regimeForLicenseeKind } from './financial-years'
 import { overrideToTariff, type OverrideChargeRow } from './override'
@@ -53,6 +58,11 @@ export interface StudyPricingInput {
   exportRates: ReadonlyArray<ExportRateRow & { id: string; sourceNote: string | null }>
   /** readSolarOrgSettings() values (D-07 defaults fill the gaps). */
   orgSettings: Record<string, number | boolean | null | undefined>
+  /**
+   * The financial year analysis year 1 falls in — `financialYearOn(today, regime)` (the loader
+   * supplies it). Later than the pin's year = year 1 is brought forward (TARIFF-12). Absent = none.
+   */
+  studyFinancialYear?: string | null
 }
 
 export interface ResolvedStudyPricing {
@@ -69,6 +79,11 @@ export interface ResolvedStudyPricing {
   escalationRows: EscalationRow[]
   escalationPath: EscalationPath
   escalationSettings: EscalationSettings
+  /**
+   * Present only when the pin's year is before year 1's: the increase applied to year 1. Absent
+   * (not null) otherwise, so the hash of every study it does not apply to is unchanged.
+   */
+  yearOneCatchUp?: YearOneCatchUp
   loadGrowthPct: number
   provenance: {
     tariffId: string
@@ -119,11 +134,16 @@ export function resolveStudyPricing(i: StudyPricingInput): ResolvedStudyPricing 
   const ssegRule: SsegRule = exportCredited ? baseRule : { ...baseRule, crediting: 'none' }
 
   const escalationSettings = escalationSettingsFrom(i.orgSettings)
+  const years = pub.years.map((y) => ({ financialYear: y.financialYear, approvedIncreasePct: y.approvedIncreasePct }))
   const escalationRows = buildEscalationRows({
     pinnedFinancialYear: pub.financialYear || null,
-    published: pub.years.map((y) => ({ financialYear: y.financialYear, approvedIncreasePct: y.approvedIncreasePct })),
+    studyFinancialYear: i.studyFinancialYear ?? null,
+    published: years,
     settings: escalationSettings,
     stored: parseStoredEscalation(i.study.escalation),
+  })
+  const catchUp = yearOneCatchUp({
+    pinnedFinancialYear: pub.financialYear || null, studyFinancialYear: i.studyFinancialYear ?? null, published: years, settings: escalationSettings,
   })
 
   return {
@@ -137,6 +157,7 @@ export function resolveStudyPricing(i: StudyPricingInput): ResolvedStudyPricing 
     escalationRows,
     escalationPath: escalationPathFromRows(escalationRows, escalationSettings),
     escalationSettings,
+    ...(catchUp ? { yearOneCatchUp: catchUp } : {}),
     loadGrowthPct: num(i.study.loadGrowthPct),
     provenance: {
       tariffId: pub.tariffId,
@@ -149,6 +170,32 @@ export function resolveStudyPricing(i: StudyPricingInput): ResolvedStudyPricing 
       loadGrowthFrom: 'study',
     },
   }
+}
+
+/** Every rate × k; a `pct` charge is a percentage, not a price, and is left alone. */
+function scaledRates(t: Tariff, k: number): Tariff {
+  return { ...t, charges: t.charges.map((ch) => (ch.unit === 'pct' ? ch : { ...ch, amountExclVat: ch.amountExclVat * k })) }
+}
+
+/**
+ * The tariff a run prices year 1 on: the resolved tariff (override applied) with every rate brought
+ * forward by the year-1 catch-up. Without a catch-up it IS `p.tariff`. The Tariff tab and its bill
+ * check keep the published rates.
+ */
+export function yearOneTariff(p: ResolvedStudyPricing): Tariff {
+  const c = p.yearOneCatchUp
+  return c ? scaledRates(p.tariff, 1 + c.pct / 100) : p.tariff
+}
+
+/**
+ * The export tariff a run prices year 1 on. A LINKED export tariff (the pinned tariff's own
+ * export_tariff_id, the same library year) is brought forward with the import tariff, so export
+ * credit keeps its ratio to the import it offsets. A MANUAL rate is the user's own figure and is
+ * never scaled.
+ */
+export function yearOneExportTariff(p: ResolvedStudyPricing): Tariff | null {
+  const c = p.yearOneCatchUp
+  return c && p.exportTariff && p.exportMethod === 'linked_tariff' ? scaledRates(p.exportTariff, 1 + c.pct / 100) : p.exportTariff
 }
 
 /** Canonical SHA-256 of the whole resolved pricing (engine spec §1.3 canonical JSON). */

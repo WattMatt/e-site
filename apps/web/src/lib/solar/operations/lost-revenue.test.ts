@@ -26,7 +26,8 @@ describe('valueLostEnergy', () => {
   it('values each event and the month as the marginal energy cost at the pinned tariff, fixed charges cancelling', async () => {
     const r = await valueLostEnergy({} as never, 'p1', '2026-03', [series(1600, 10), series(1601, 5)])
     expect(r).toEqual({ ok: true, tariffName: 'Business 1 (City of Tshwane, 2026/27)', perEventZar: [20, 10], totalZar: 30 })
-    expect(h.tariff).toHaveBeenCalledWith({}, 'p1', { year: 2026, build: energyOnlyBuild })
+    // Priced in the report month's financial year, not today's (TARIFF-12).
+    expect(h.tariff).toHaveBeenCalledWith({}, 'p1', { year: 2026, build: energyOnlyBuild, todayIso: '2026-03-01' })
   })
   it('no events → zero, still naming the tariff', async () => {
     await expect(valueLostEnergy({} as never, 'p1', '2026-03', [])).resolves.toEqual({ ok: true, tariffName: 'Business 1 (City of Tshwane, 2026/27)', perEventZar: [], totalZar: 0 })

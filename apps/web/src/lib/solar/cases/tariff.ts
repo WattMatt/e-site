@@ -12,7 +12,7 @@ import 'server-only'
  * SA public holidays of that same year (`referenceYearHolidays`).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { DEFAULT_REFERENCE_YEAR, studyPricingHash, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
+import { DEFAULT_REFERENCE_YEAR, studyPricingHash, yearOneExportTariff, yearOneTariff, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
 import {
   SOLAR_ENGINE_DEFAULTS, referenceYearHolidays, tariffBillCalculator,
   type BillCalculator, type TariffBillCalculatorOptions,
@@ -68,10 +68,12 @@ export function calendarFromRows(cal: Row, windows: Row[], rule: Row | null): To
 
 export type BuildBillCalculator = (t: Tariff, o: TariffBillCalculatorOptions) => BillCalculator
 
-export async function resolveStudyTariff(svc: AnyClient, projectId: string, opts: { year?: number; build?: BuildBillCalculator } = {}): Promise<StudyTariff> {
+export async function resolveStudyTariff(
+  svc: AnyClient, projectId: string, opts: { year?: number; build?: BuildBillCalculator; todayIso?: string } = {},
+): Promise<StudyTariff> {
   const year = opts.year ?? DEFAULT_REFERENCE_YEAR
   // The ONE pricing loader (I-1): override, export rule + rates, SSEG rule, escalation, load growth.
-  const loaded = await loadStudyPricing(svc, projectId)
+  const loaded = await loadStudyPricing(svc, projectId, { todayIso: opts.todayIso })
   if (!loaded.ok) {
     if (loaded.code === 'studyReadFailed') {
       if (isMissingTariffColumn(loaded.error)) return { ok: false, reason: TARIFF_REASONS.notPinned }
@@ -96,9 +98,12 @@ export async function resolveStudyTariff(svc: AnyClient, projectId: string, opts
   const { pricing } = loaded
   const nmd = loaded.study.nmdKva
   const build: BuildBillCalculator = opts.build ?? tariffBillCalculator
-  const calc = build(pricing.tariff, {
+  // Year 1 is priced in the financial year it falls in: a pin from an earlier year is brought
+  // forward by the resolver's catch-up (TARIFF-12), a linked export tariff with it. Without one
+  // these ARE pricing.tariff / pricing.exportTariff.
+  const calc = build(yearOneTariff(pricing), {
     calendar, referenceYear: year, holidays,
-    sseg: pricing.ssegRule, exportTariff: pricing.exportTariff,
+    sseg: pricing.ssegRule, exportTariff: yearOneExportTariff(pricing),
     powerFactor: SOLAR_ENGINE_DEFAULTS.load.powerFactor,
     ...(nmd !== null ? { demandForMonth: () => ({ nmdKva: nmd }) } : {}),
   })

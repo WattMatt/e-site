@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { solarOrgSettingDefaults } from '../org-settings'
 import { defaultCaseConfig } from './config'
 import { defaultFinanceConfig, type CaseFinanceConfig } from './finance-config'
-import { buildFinanceInput, FINANCE_REASONS, type FinancePricing } from './finance-input'
+import { buildFinanceInput, financeCaseConfig, financeCaseInputsKey, FINANCE_REASONS, type FinancePricing } from './finance-input'
 import { runFinance } from '../../services/solar/finance/cashflow'
 import { DEFAULT_ESCALATION } from '../../services/solar/finance/factors'
 
@@ -82,5 +82,28 @@ describe('buildFinanceInput', () => {
     if (!other.ok || !base.ok) throw new Error('unreachable')
     const npv = (i: typeof base.input) => runFinance(i, energy).models[0]!.views[0]!.npvZar
     expect(npv(other.input)).toBeGreaterThan(npv(base.input))
+  })
+})
+
+describe('finance-only case inputs come from the CURRENT case (YF-01)', () => {
+  const snapshot = cfg
+  const current = { ...cfg, degradation: { firstYearPct: 0.5, annualPct: 0.2 }, loadShedding: { enabled: true, stage: 4, hoursPerYear: 300, backedLoadKw: 20 },
+    pv: { ...cfg.pv, dcKwp: 999 } }
+  it('takes degradation and load shedding from the current case, everything else from the run', () => {
+    const merged = financeCaseConfig(snapshot, current)
+    expect(merged.degradation).toEqual(current.degradation)
+    expect(merged.loadShedding).toEqual(current.loadShedding)
+    expect(merged.pv).toEqual(snapshot.pv) // energy inputs stay the run's
+    const r = buildFinanceInput({ ...withCapex(), loadShedding: { valueZarPerKwh: 5 } } as CaseFinanceConfig, merged, { dcKwp: 500, acKw: 400 }, PRICING)
+    if (!r.ok) throw new Error('fixture')
+    expect(r.input.degradation).toMatchObject({ firstYear: 0.005, annual: 0.002 })
+    expect(r.input.loadShedding).toEqual({ hoursPerYear: 300, backedLoadKw: 20, valueZarPerKwh: 5 })
+  })
+  it('the comparison key moves on a priced value, not on the unpriced stage, and is null for an unreadable snapshot', () => {
+    const k = financeCaseInputsKey(snapshot)
+    expect(financeCaseInputsKey({ ...snapshot, degradation: { ...snapshot.degradation, firstYearPct: 0.5 } })).not.toBe(k)
+    expect(financeCaseInputsKey({ ...snapshot, loadShedding: { ...snapshot.loadShedding, backedLoadKw: 7 } })).not.toBe(k)
+    expect(financeCaseInputsKey({ ...snapshot, loadShedding: { ...snapshot.loadShedding, stage: 7 } })).toBe(k)
+    expect(financeCaseInputsKey({ degradation: null, loadShedding: undefined })).toBeNull()
   })
 })

@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 const h = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), dup: vi.fn(), del: vi.fn(), sel: vi.fn(), ren: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: h.push, refresh: h.refresh }) }))
 vi.mock('@/actions/solar-cases.actions', () => ({ duplicateSolarCaseAction: h.dup, deleteSolarCaseAction: h.del, setSelectedSolarCaseAction: h.sel, renameSolarCaseAction: h.ren, createSolarCaseAction: vi.fn() }))
 import { CaseList } from './CaseList'
+import { setSolarDirty } from '@/lib/solar/dirty-store'
 import type { CaseCardView } from '@/lib/solar/cases/page-data'
 
 const card = (over: Partial<CaseCardView>): CaseCardView => ({ id: 'c1', name: 'Base', pvSource: 'manual', dcKwp: 500, acKw: 400, batteryKwh: null, updatedAt: 'T', status: 'done', statusLabel: 'Done', lastRunAt: '2026-09-28T09:00:05Z', annualPvKwh: 800_000, year1SavingZar: 400_000, selected: true, canSelect: true, ...over })
@@ -65,5 +66,31 @@ describe('CaseList', () => {
     render(<CaseList projectId="p1" level="edit" cases={[]} studyUpdatedAt="T0" openCaseId={null} />)
     expect(screen.getByText('No cases yet')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: 'New case' }).length).toBeGreaterThan(0)
+  })
+
+  describe('YF-08: in-page navigation with unsaved case edits asks first', () => {
+    beforeEach(() => setSolarDirty(true))
+    afterEach(() => setSolarDirty(false))
+    it('opening another case: Discard? — Stay keeps the draft, Discard navigates', () => {
+      render(<CaseList projectId="p1" level="edit" cases={[card({}), big()]} studyUpdatedAt="T0" openCaseId="c1" />)
+      fireEvent.click(screen.getByRole('link', { name: 'Big' }))
+      expect(screen.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy()
+      expect(h.push).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(h.push).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('link', { name: 'Big' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+      expect(h.push).toHaveBeenCalledWith('/projects/p1/solar/yield?case=c2')
+    })
+    it('Compare asks too', () => {
+      render(<CaseList projectId="p1" level="view" cases={[card({}), big()]} studyUpdatedAt="T0" openCaseId="c1" />)
+      fireEvent.click(screen.getByLabelText('Compare Base'))
+      fireEvent.click(screen.getByLabelText('Compare Big'))
+      fireEvent.click(screen.getByRole('button', { name: 'Compare' }))
+      expect(h.push).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+      expect(h.push).toHaveBeenCalledWith('/projects/p1/solar/yield?compare=c1,c2')
+    })
   })
 })

@@ -22,7 +22,8 @@ const calc: BillCalculator = {
   monthlyBills: (f) => Array.from({ length: 12 }, (_, i) => ({ month: i + 1, totalZar: f.importKwh.reduce((a, v) => a + v, 0) * 2 / 12, exportCreditUsedZar: 0 })),
   withExportRateScaled: () => calc,
 }
-const tables = { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: fin }] }
+// The case as it stands now: its degradation / load shedding are what Financials prices (YF-01).
+const tables = { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: fin }], 'solar.cases': [{ id: C, project_id: P, config: cfg }] }
 // The study pricing (resolveStudyPricing): the Tariff tab escalation path and the Load tab growth.
 const PRICING = { escalationPath: { published: [0.101, 0.045], startRate: 0.09, endRate: 0.07, linearToYear: 10, cpiMargin: 0.01 }, loadGrowthPct: 3, exportCredited: true }
 const PH = 'a'.repeat(64)
@@ -157,5 +158,22 @@ describe('executeFinancialsRun', () => {
     const f = fakeSupabase()
     await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: f.client as never, projectId: P, caseId: C, userId: U })
     expect((callsTo(f.calls, 'solar.case_run_financials', 'insert')[0]!.payload as { results: { year1Bills: { exportCreditUsedZar: number } } }).results.year1Bills.exportCreditUsedZar).toBe(0)
+  })
+
+  it('YF-01: degradation and load shedding are the CURRENT case’s, not the run snapshot’s', async () => {
+    const current = { ...cfg, degradation: { firstYearPct: 0.5, annualPct: 0.2 }, loadShedding: { enabled: true, stage: 2, hoursPerYear: 300, backedLoadKw: 20 } }
+    const svcFake = fakeSupabase()
+    const withValue = { ...fin, loadShedding: { valueZarPerKwh: 5 } }
+    const user = fakeSupabase({ tables: { ...tables, 'solar.case_financials': [{ case_id: C, project_id: P, config: withValue }], 'solar.cases': [{ id: C, project_id: P, config: current }] } })
+    await executeFinancialsRun({ user: user.client as never, svc: svcFake.client as never, projectId: P, caseId: C, userId: U })
+    const ins = callsTo(svcFake.calls, 'solar.case_run_financials', 'insert')[0]!.payload as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(ins.fin_inputs.finance.degradation).toMatchObject({ firstYear: 0.005, annual: 0.002 })
+    expect(ins.fin_inputs.finance.loadShedding).toEqual({ hoursPerYear: 300, backedLoadKw: 20, valueZarPerKwh: 5 })
+    expect(callsTo(user.calls, 'solar.cases', 'select')[0]!.filters).toEqual(expect.arrayContaining([['eq', 'project_id', P]]))
+  })
+  it('YF-01: an unreadable current case config is a sentence, never a silent fall-back to the run snapshot', async () => {
+    const user = fakeSupabase({ tables: { ...tables, 'solar.cases': [{ id: C, project_id: P, config: { version: 99 } }] } })
+    await expect(executeFinancialsRun({ user: user.client as never, svc: fakeSupabase().client as never, projectId: P, caseId: C, userId: U }))
+      .resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.badCase })
   })
 })

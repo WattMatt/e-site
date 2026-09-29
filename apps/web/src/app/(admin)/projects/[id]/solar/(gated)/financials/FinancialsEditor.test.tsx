@@ -127,4 +127,13 @@ describe('FinancialsEditor', () => {
     render(<FinancialsEditor projectId="p1" data={data()} />)
     expect(screen.getByText('Tariff escalation and load growth come from the Tariff and Load tabs once a tariff is pinned.')).toBeTruthy()
   })
+  it('YF-08: switching case with unsaved financials asks first', () => {
+    render(<FinancialsEditor projectId="p1" data={data()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add line' })) // an unsaved edit
+    fireEvent.change(screen.getByLabelText('Case'), { target: { value: 'c2' } })
+    expect(screen.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy()
+    expect(h.push).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+    expect(h.push).toHaveBeenCalledWith('/projects/p1/solar/financials?case=c2')
+  })
 })

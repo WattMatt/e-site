@@ -1,7 +1,8 @@
 'use client'
 /**
  * "Pricing changed" — the sibling of the Stale banner. The study pricing (tariff override, export rule,
- * escalation, load growth) moved since the selected case's financials, but its ENERGY inputs did not,
+ * escalation, load growth) or the case's money-only inputs (degradation, load shedding — YF-01) moved
+ * since the selected case's financials, but its ENERGY inputs did not,
  * so the energy results still hold and only the financials need re-running on the stored run. The
  * decision is made server-side (pricing-state.ts); this only shows it and offers the financials-only
  * re-run to a caller who may run financials (Edit + financials).
@@ -21,7 +22,7 @@ export function PricingChangedBanner({ projectId, caseId, caseName, canRunFinanc
     <div role="status" style={{ border: '1px solid var(--c-amber)', borderRadius: 8, padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
       <span>
         <strong>Pricing changed — Re-run financials.</strong>{' '}
-        The tariff pricing for “{caseName}” changed since its financials were computed. Its energy results still hold
+        The pricing inputs for “{caseName}” (tariff, escalation, degradation or load shedding) changed since its financials were computed. Its energy results still hold
         {canRunFinancials ? '.' : '; someone with Edit + financials access needs to re-run the financials.'}
       </span>
       {canRunFinancials && (
