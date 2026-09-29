@@ -19,8 +19,8 @@ export default function DataRequestPage() {
       </P>
       <P>
         Prefer email? Write to{' '}
-        <a href="mailto:arno@watsonmattheus.com" style={{ color: 'var(--c-text-mid)' }}>
-          arno@watsonmattheus.com
+        <a href="mailto:support@e-site.live" style={{ color: 'var(--c-text-mid)' }}>
+          support@e-site.live
         </a>
         {' '}— our appointed Information Officer is Arno Mattheus.
       </P>

@@ -51,7 +51,7 @@ const MARGIN = 32
 // Brand accent: payload.accent (project → org precedence, resolved by
 // getRevisionExportPayload) through the shared accentColor chokepoint.
 // When no custom accent is set this yields exactly the historical
-// Watson Mattheus amber rgb(0.902, 0.584, 0) — output unchanged.
+// E-Site amber rgb(0.902, 0.584, 0) — output unchanged.
 const TEXT_DARK = rgb(0.05, 0.05, 0.05)
 const TEXT_MID = rgb(0.4, 0.4, 0.4)
 const TEXT_DIM = rgb(0.6, 0.6, 0.6)
@@ -112,7 +112,7 @@ function drawCoverPage(
     color: AMBER,
   })
 
-  drawTextSafe(page, 'WATSON MATTHEUS', {
+  drawTextSafe(page, 'E-SITE', {
     x: MARGIN,
     y: A4_H - 30,
     size: 9,
@@ -538,7 +538,7 @@ function drawLandscapeHeader(
     height: 3,
     color: AMBER,
   })
-  drawTextSafe(page, 'WATSON MATTHEUS · CABLE SCHEDULE', {
+  drawTextSafe(page, 'E-SITE · CABLE SCHEDULE', {
     x: MARGIN,
     y: LAND_H - 22,
     size: 9,
@@ -882,7 +882,7 @@ function drawPortraitHeader(
     height: 3,
     color: AMBER,
   })
-  drawTextSafe(page, 'WATSON MATTHEUS', {
+  drawTextSafe(page, 'E-SITE', {
     x: MARGIN,
     y: A4_H - 24,
     size: 9,

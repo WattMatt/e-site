@@ -30,8 +30,8 @@ export default function AccountDeletedPage() {
           </p>
           <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0, lineHeight: 1.6 }}>
             Questions about your erasure request? Email{' '}
-            <a href="mailto:arno@watsonmattheus.com" style={{ color: 'var(--c-amber)' }}>
-              arno@watsonmattheus.com
+            <a href="mailto:support@e-site.live" style={{ color: 'var(--c-amber)' }}>
+              support@e-site.live
             </a>
             .
           </p>

@@ -211,7 +211,7 @@ async function isVerifiedServiceRoleCaller(authHeader: string | null): Promise<b
 // the wire — see the hardened handler below.
 const PUBLIC_TYPES = new Set(['data-subject-request'])
 
-const INFO_OFFICER_EMAIL = 'arno@watsonmattheus.com'
+const INFO_OFFICER_EMAIL = 'support@e-site.live'
 
 /** The five request types the public form offers. Mirrors the zod enum in
  *  apps/web/src/actions/data-request.actions.ts — a caller cannot invent one. */

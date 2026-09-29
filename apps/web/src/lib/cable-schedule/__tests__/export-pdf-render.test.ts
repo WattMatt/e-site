@@ -165,7 +165,7 @@ async function contentStreamText(bytes: Uint8Array): Promise<string> {
   return text
 }
 
-/** Historical hard-coded Watson Mattheus amber — rgb(0.902, 0.584, 0). */
+/** Historical hard-coded E-Site amber — rgb(0.902, 0.584, 0). */
 const AMBER_FILL_OP = '0.902 0.584 0 rg'
 /** #336699 → rgb(0.2, 0.4, 0.6) through the accentColor chokepoint. */
 const CUSTOM_ACCENT = '#336699'

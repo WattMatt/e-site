@@ -46,7 +46,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             ))}
           </ul>
 
-          <p className="auth-legal">© 2026 E-Site. Watson Mattheus Engineering.</p>
+          <p className="auth-legal">© 2026 E-Site.</p>
         </div>
       </aside>
 

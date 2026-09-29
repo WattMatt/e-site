@@ -28,7 +28,7 @@ export function reengagement30d(vars: {
         <p style="margin:0 0 12px">Reply with a couple of times that suit you and I'll call — it comes straight to me (Arno, founder), not a support desk.</p>
       `,
       ctaLabel: 'Send me a time',
-      ctaHref: `mailto:arno@watsonmattheus.com?subject=15%20minutes%20-%20E-Site`,
+      ctaHref: `mailto:support@e-site.live?subject=15%20minutes%20-%20E-Site`,
       siteUrl: vars.siteUrl,
       unsubscribeUrl: vars.unsubscribeUrl,
     }),

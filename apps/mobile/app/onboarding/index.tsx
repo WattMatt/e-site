@@ -48,7 +48,7 @@ export default function OnboardingScreen() {
           style={styles.input}
           value={name}
           onChangeText={setName}
-          placeholder="Watson Mattheus Consulting"
+          placeholder="Acme Electrical (Pty) Ltd"
           placeholderTextColor={colors.textDim}
           autoFocus
         />
