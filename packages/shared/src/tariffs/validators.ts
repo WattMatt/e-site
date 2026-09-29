@@ -18,6 +18,7 @@ export type TariffIssueCode =
   | 'eskom_duplicate_column' | 'rfd_row_increase_mismatch' | 'increase_missing' | 'sheet_skipped'
   | 'vat_basis_conflict' | 'duplicate_licensee_year' | 'block_range_inverted'
   | 'rfd_row_unverified' | 'rfd_table_skipped' | 'rfd_duplicate_charge' | 'rfd_row_dropped' | 'rfd_season_incomplete'
+  | 'rfd_header_inferred'
 
 export interface TariffIssue {
   code: TariffIssueCode

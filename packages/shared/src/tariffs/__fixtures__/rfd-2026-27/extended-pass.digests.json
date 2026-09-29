@@ -1,0 +1,32 @@
+[
+ {
+  "file": "Free State/TOKOLOGO - NERSA RfD 2026-27 - Tokologo-ReasonsforDecisionontariffFY2026-27Final.pdf",
+  "sha256": "b0d9125d0c91a3b326f26022087a75c49cd906e3ad448bdae082ff8fe8338ac5",
+  "digest": "904a1e87d6127518d57c596729c27759b2ce8c136e8e9c48ce532427a6102a5c"
+ },
+ {
+  "file": "North West/KGETLENG RIVER - NERSA RfD 2026-27 - KgetlengRivierReasonsforDecisionontariffapplicationprocessforFY2026-27.pdf",
+  "sha256": "2e02711ae1cfe20a28285caa09fd38774986934bcd7d92112e42733ba4202f0b",
+  "digest": "96196efbfc23e996c2af3fee193e99b587779015cfb433473c9539d456b2d579"
+ },
+ {
+  "file": "Northern Cape/GAMAGARA - NERSA RfD 2026-27 - GamagaraMunicipalityReasonsforDecisionforthe2026_27FY.pdf",
+  "sha256": "9af7907effef464bd19ba95a9cd874979e1e9e9963089319f991777593a8c0eb",
+  "digest": "239c21d35b5f8d094a0c3a361fbaa6d75547977424e6215058bd434a67861a7d"
+ },
+ {
+  "file": "Northern Cape/KHAIMA - NERSA RfD 2026-27 - KhaiMaLocalMunicipality-ReasonsforDecisionontariffapplicationprocessfor2026-27FY.pdf",
+  "sha256": "2c43c8802b19e381a9c2aebbc1acbb860d5dd90b3c905285dae5ba914a2382b0",
+  "digest": "39550029b34286388a53ec2343018345d5ef6749334dec4d532227376e89eccb"
+ },
+ {
+  "file": "Northern Cape/SIYANCUMA - NERSA RfD 2026-27 - SiyancumaReasonsforDecisionforthe2026_27FY.pdf",
+  "sha256": "4bbb40b46dd5e79338dc603d1e42ecdf8ff7b6f6938edbf2479283a58c264663",
+  "digest": "23857e944da4473ec368b6a56ea2292571108b1bae6e0eb6a9530eff8f042ca9"
+ },
+ {
+  "file": "Northern Cape/SOL PLAAITJE - NERSA RfD 2026-27 - SolPlaatjeReasonsforDecisionforthe2026_27_FINAL.pdf",
+  "sha256": "97109fe49240018434046d9ba3356a2137d416c088b0682945b5aa518ae0e196",
+  "digest": "9340ea5f5501470f41092b72051062311cb6fcffc13bf0f8fbb108430d44eb1a"
+ }
+]

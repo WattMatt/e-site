@@ -53,10 +53,21 @@ function mode(xs: number[]): number | null {
  * handles were loaded from it, and must keep parsing byte-for-byte the same.
  * When it finds nothing, its own issues (rows it could not attach to a header in
  * a layout it does not read) are noise and are not carried over.
+ *
+ * The column reader's extended rules (season-paired columns, headers resolved by
+ * the numbers under them, label sub-columns) run only for a file that both readers
+ * above leave empty. The 164 files they parse were loaded to production and keep
+ * their output byte for byte; a template shared with one of them is read the
+ * extended way only in the files that needed it, and re-reading a loaded file is
+ * a deliberate re-ingest, never a side effect of a parser change.
  */
 export function parseRfdText(text: string, opts: { fileSha256: string }): ParsedRfd {
   const first = parseRfdCityPower(text, opts)
-  return first.tariffs.length > 0 ? first : parseRfdColumns(text, opts)
+  if (first.tariffs.length > 0) return first
+  const columns = parseRfdColumns(text, opts)
+  if (columns.tariffs.length > 0) return columns
+  const extended = parseRfdColumns(text, opts, { extended: true })
+  return extended.tariffs.length > 0 ? extended : columns
 }
 
 function parseRfdCityPower(text: string, opts: { fileSha256: string }): ParsedRfd {

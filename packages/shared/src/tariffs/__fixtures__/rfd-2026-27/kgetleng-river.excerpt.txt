@@ -1,0 +1,20 @@
+7.   TARIFF ANALYSIS:
+                                        Proposed
+ Domestic Prepaid:          2025/26     %           2026/27      2026/27     Recommended
+ Lifeline                   Approved    Increase    Proposed     Recommended % Increase
+ Tariff Blocks              c/kWh          10.00%                                   10.00%
+ Block 1 (0 - 50kWh)        186.77         10.00%     205.44         205.44         10.00%
+ Block 2 (51 - 350 kWh)     235.30         10.00%     258.83         258.83         10.00%
+ Block 3 (351 -600kWh)      311.28         10.00%     342.40         342.40         10.00%
+ Block 4 (>600 kWh)         338.76         10.00%     372.63         372.63         10.00%
+                                        Proposed
+ Domestic Conventional:     2025/26     %           2026/27      2026/27     Recommended
+ Lifeline                   Approved    Increase    Proposed     Recommended % Increase
+ Tariff Blocks              c/kWh          10.00%                                   10.00%
+ Block 1 (0 - 50kWh)        184.75         10.00%     203.22         203.22         10.00%
+ Block 2 (51 - 350 kWh)     237.48         10.00%     261.22         261.22         10.00%
+ Block 3 (351 -600kWh)      294.97         10.00%     324.46         324.46         10.00%
+ Block 4 (>600 kWh)         317.06         10.00%     248.76         248.76         10.00%
+ Basic Charge (R/month)     397.09         10.00%     436.79         436.79         10.00%
+
+                                        Proposed

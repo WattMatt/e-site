@@ -20,6 +20,17 @@
  *    way to check is `review` too (rfd_row_unverified);
  *  - two charges a bill cannot tell apart (same component/season/TOU/block/unit)
  *    with different amounts block; an exact repeat is dropped with a warning.
+ *
+ * The EXTENDED pass (parseRfdColumns(…, { extended: true }), run by parseRfdText only for a file
+ * every other pass leaves empty) adds, all under the same rules above:
+ *  - season-paired columns (Tokologo: Summer and Winter side by side), each season checked on its
+ *    own Approved and %; summer = low, winter = high (labels.ts detectSeason);
+ *  - a header that does not name exactly one Recommended column resolved from the numbers under it
+ *    and the row arithmetic (Kgetleng River, Gamagara, Siyancuma), always with an
+ *    rfd_header_inferred review issue, and a disagreeing row then blocks;
+ *  - a label area split into tariff code / description / Season / Period columns (Sol Plaatje);
+ *  - names from coded lines ("Pre-paid; (E009)"), sub-tariffs inside a table ("Time of Use -
+ *    Summer"), rows on the next page at other x positions read in column order.
  */
 import type { Charge, TariffSeason, TariffUnit } from '../types'
 import { normaliseTariffName, type TariffIssue } from '../validators'
@@ -103,9 +114,22 @@ const VOCAB = new RegExp(
   ].join('|') + ')$', 'i',
 )
 
+/**
+ * Header words read only on the extended pass (parseRfdText): "2026/27FY" (Khai-Ma), "2026/2027"
+ * (Sol Plaatje), and the season each column of a season-paired table is for (Tokologo:
+ * "Summer" / "Winter" / "June to Aug", "Application" for its proposed tariff).
+ */
+const VOCAB_EXTENDED = /^(?:\d{4}\/\d{2}fy|\d{4}\/\d{4}|summer|winter|june|to|aug|application)$/i
+
+/**
+ * Set for the duration of one parseRfdColumns call (synchronous, so never observed by another):
+ * whether the extended rules apply. See parseRfdText for why they are a separate pass.
+ */
+let EXTENDED = false
+
 /** Every word of the run is header vocabulary ("2026/27 Recommended", "% Increase"). */
 function isVocabSeg(text: string): boolean {
-  return text.split(/\s+/).every((w) => VOCAB.test(w))
+  return text.split(/\s+/).every((w) => VOCAB.test(w) || (EXTENDED && VOCAB_EXTENDED.test(w)))
 }
 
 function unitSeg(text: string): TariffUnit | null {
@@ -121,7 +145,11 @@ interface Column {
   x1: number
   text: string
   kind: ColumnKind
+  /** Extended pass: the season a season-paired column is for. */
+  season?: 'high' | 'low'
 }
+
+const SEASON_WORDS = /\b(?:summer|winter|june|to|aug)\b/gi
 
 export function classifyColumn(text: string): ColumnKind | 'commentary' {
   const t = text.toLowerCase().replace(/\s+/g, ' ')
@@ -129,7 +157,7 @@ export function classifyColumn(text: string): ColumnKind | 'commentary' {
   // "Recomme / nded" and "Recommen / ded" still start with "recom"; "Amended" or "Extended" never do.
   const recommended = /\brecom/.test(t)
   const proposed = /\bpropos/.test(t)
-  const newYear = /2026\/27|2026-27|26\/27/.test(t)
+  const newYear = /2026\/27|2026-27|26\/27|2026\/2027/.test(t)
   const pct = /%/.test(t) || (/increase/.test(t) && !/tariff/.test(t))
   if (pct) {
     if (proposed && !recommended) return 'proposed_pct'
@@ -139,9 +167,9 @@ export function classifyColumn(text: string): ColumnKind | 'commentary' {
   }
   if (recommended && !proposed) return 'recommended'
   if (proposed && !recommended) return 'proposed'
-  if (/approved|nersa/.test(t) && newYear && !/2025\/26|2024\/25/.test(t)) return 'recommended'
+  if (/approved|nersa/.test(t) && newYear && !/2025\/26|2024\/25|2025\/2026/.test(t)) return 'recommended'
   if (/implemented|actual/.test(t)) return 'other'
-  if (/approved|nersa/.test(t) || /^(?:2025\/26|2024\/25)$/.test(t.trim())) return 'prior'
+  if (/approved|nersa/.test(t) || /^(?:2025\/26|2024\/25|2025\/2026)$/.test(t.trim())) return 'prior'
   return 'other'
 }
 
@@ -151,11 +179,37 @@ export function classifyColumn(text: string): ColumnKind | 'commentary' {
 interface Header {
   start: number
   end: number
+  /** The page the header's last line is on. */
+  page: number
+  /** The first line of the tariff name above the header (== start when there is none). */
+  nameFrom: number
   cols: Column[]
   commentX: number
   labelCut: number
   nameParts: string[]
   unit: TariffUnit | null
+  /** Extended pass: one Recommended column per season, each with its own Approved and %. */
+  seasons?: SeasonCols[]
+  /** Extended pass: why the Recommended column was taken from the numbers, not the header words. */
+  inferred?: string
+  /** Extended pass: the label area split into description / Season / Period columns (Sol Plaatje). */
+  labelCols?: LabelCols
+}
+
+interface LabelCols {
+  /** Left edge of the description column; text left of it is the tariff-code column. */
+  descX: number
+  seasonX: number
+  periodX: number
+  /** Charge labels printed inside the header with no numbers ("Basic charge R/m"). */
+  headerRows: { text: string; line: Line }[]
+}
+
+interface SeasonCols {
+  season: 'high' | 'low'
+  rec: number
+  prior: number
+  pct: number
 }
 
 /** "1.1 Prepaid", "7. Tariff…": a heading number at the left margin is not an amount. */
@@ -166,6 +220,9 @@ const vocabSegs = (l: Line): Seg[] => l.segs.filter((s) => isVocabSeg(s.text) &&
 const isBlank = (l: Line | undefined): boolean => !l || l.segs.length === 0
 const isFragment = (t: string): boolean =>
   /^\(/.test(t) || /^[a-z]/.test(t) || /^(?:charge|tariff)?\s*:?\s*\(?\s*(?:c|r)\s*\/\s*[a-z]+\)?\s*:?$/i.test(t)
+  || (EXTENDED && UNIT_ONLY.test(t))
+/** Extended: a label line that is only a unit ("R/kVA/m", "R/Amp/phase/m", Sol Plaatje). */
+const UNIT_ONLY = /^\(?\s*(?:c|r|rand)\s*\/\s*[a-z]+(?:\s*\/\s*[a-z]+)*\s*\)?\s*:?$/i
 const isTariffName = (t: string): boolean =>
   /domestic|residential|commercial|business|industrial|agricultur|farm|prepaid|conventional|indigent|bulk|street|municipal|departmental|sport|church|school|lifeline|\bscale\b|\btariff\s+[a-z0-9]{1,3}\b/i.test(t)
   && !rowLike(t) && !detectSeason(t) && !detectTou(t) && !isFragment(t) && !GENERIC_NAME.test(t.trim())
@@ -187,9 +244,14 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   }
   let end = anchor
   const leftText = (l: Line): string => l.segs.filter((s) => !isVocabSeg(s.text) && s.x0 < 30).map((s) => s.text).join(' ')
+  // Extended: "30 A   tariffs   % increase …" (Khai-Ma) is a header line whose name part carries a
+  // number: numbers only left of the header's first column word do not end the header.
+  const anchorX = (): number => Math.min(...vocabSegs(lines[anchor]).map((s) => s.x0))
+  const nameNumbersOnly = (l: Line): boolean => EXTENDED && vocabSegs(l).length > 0
+    && l.segs.filter((s) => isAmountTok(s.text)).every((s) => s.x1 < anchorX() - 2)
   while (end + 1 < lines.length && end + 1 - anchor <= 6) {
     const l = lines[end + 1]
-    if (isBlank(l) || hasAmount(l)) break
+    if (isBlank(l) || (hasAmount(l) && !nameNumbersOnly(l))) break
     const hasVocab = vocabSegs(l).length > 0 || l.segs.some((s) => unitSeg(s.text) !== null && s.x0 >= 12)
     if (!hasVocab) {
       // A name line wrapping inside the header: never a row label or a season heading, and the
@@ -211,6 +273,10 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   let firstVocabX = Infinity
   for (let i = start; i <= end; i++) {
     for (const s of lines[i].segs) {
+      // Extended: a vocabulary word at the left margin is the tariff's name ("MUNICIPAL",
+      // Siyancuma), not a column header; columns never start where row labels do. A numbered
+      // section title ("7.   TARIFF ANALYSIS") is left as it was.
+      if (EXTENDED && s.x0 <= 12 && !HEADING_NUMBER.test(lines[i].text.trim())) continue
       if (isVocabSeg(s.text) && !isNum(s.text)) firstVocabX = Math.min(firstVocabX, s.x0)
     }
   }
@@ -220,7 +286,7 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
       const u = unitSeg(s.text)
       if (s.x0 >= firstVocabX - 2 && u !== null) unitRuns.push(s)
       else if (s.x0 >= firstVocabX - 2 && isVocabSeg(s.text) && !isNum(s.text)) runs.push(s)
-      else if (s.x0 < firstVocabX - 2 && !isNum(s.text)) nameLine.push(s.text)
+      else if (s.x0 < firstVocabX - 2 && (!isNum(s.text) || nameNumbersOnly(lines[i]))) nameLine.push(s.text)
     }
     if (nameLine.length > 0) nameParts.push(nameLine.join(' '))
   }
@@ -246,9 +312,14 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   type Box = { x0: number; x1: number }
   const multi: Seg[] = []
   const single: Seg[] = []
+  const rowsNums: Seg[][] = []
   for (let k = end + 1; k < Math.min(lines.length, end + 60); k++) {
     if (tableEnds(lines[k])) break
+    // Extended: x positions are per page; a table running onto the next page is printed at
+    // other positions (Tokologo), and its numbers would smear the columns together.
+    if (EXTENDED && lines[k].page !== lines[end].page) break
     const ns = lines[k].segs.filter((x) => isNum(x.text) && x.x0 < commentX - 1 && x.x1 > firstVocabX - 4)
+    rowsNums.push(ns)
     if (ns.length >= 2) multi.push(...ns)
     // A lone number that opens a sentence ("11.8% phased increase…") is findings prose.
     else single.push(...ns.filter((x) => !x.peeled))
@@ -265,7 +336,22 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   // Lines with two or more numbers set the columns. A lone number ("Block 1 (0- 50kWh)   1.87",
   // its row finishing on the next line) adds a column only where it touches none of them: it may
   // never bridge two.
-  const base = merge(multi.map((x) => ({ x0: x.x0, x1: x.x1 })))
+  let base = merge(multi.map((x) => ({ x0: x.x0, x1: x.x1 })))
+  // Extended: rows printed a few characters off the header's alignment (Tokologo's Domestic rows,
+  // "2,8293 9,11% 9,11%" single-spaced) merge neighbouring columns. When the columns found are not
+  // as many as the fullest row has numbers, they are taken from the first run of full rows under
+  // the header instead (contiguous lines, each with every column filled), printed where the header is.
+  const full = Math.max(0, ...rowsNums.map((r) => r.length))
+  if (EXTENDED && full >= 4 && base.length !== full) {
+    const first = rowsNums.findIndex((r) => r.length === full)
+    const run: Seg[][] = []
+    for (let k = first; k < rowsNums.length && rowsNums[k].length === full; k++) run.push(rowsNums[k])
+    const byRun = merge(run.flat().map((x) => ({ x0: x.x0, x1: x.x1 })))
+    if (byRun.length === full) {
+      base = byRun
+      single.length = 0
+    }
+  }
   const touches = (bx: Box): boolean => base.some((c) => bx.x0 < c.x1 && c.x0 < bx.x1)
   // Merged lone numbers can grow to touch a column: check again after merging.
   const extra = merge(single.map((x) => ({ x0: x.x0, x1: x.x1 })).filter((bx) => !touches(bx))).filter((bx) => !touches(bx))
@@ -329,9 +415,13 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   }
   const cols: Column[] = []
   for (const g of groups) {
-    const kind = g.text === '' ? 'other' : classifyColumn(g.text)
+    // Extended: "2026/27 Financial year Recommended Winter June to Aug" is the Recommended column
+    // for the high season (labels.ts detectSeason: winter = high, Jun-Aug; summer = low).
+    const season = EXTENDED ? detectSeason(g.text) : null
+    const words = season === 'high' || season === 'low' ? g.text.replace(SEASON_WORDS, ' ').replace(/\s+/g, ' ').trim() : g.text
+    const kind = words === '' ? 'other' : classifyColumn(words)
     if (kind === 'commentary') continue
-    cols.push({ x0: g.x0, x1: g.x1, text: g.text, kind })
+    cols.push({ x0: g.x0, x1: g.x1, text: g.text, kind, ...(season === 'high' || season === 'low' ? { season } : {}) })
   }
   // "2026/27 Recommended Increase" (Matjhabeng) is the increased TARIFF; "Proposed Increase"
   // (Abaqulusi) is a percentage. Without a "%" in the header, the column's own numbers decide.
@@ -358,12 +448,19 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
     else if (left === 'proposed') c.kind = 'proposed_pct'
   })
   // The tariff name can start on lines above the header, left of its columns (Stellenbosch).
+  let nameFrom = start
   for (let k = start - 1, n = 0; k >= 0 && n < 4 && !HEADING_NUMBER.test(nameParts[0] ?? ''); k--, n++) {
     const l = lines[k]
     if (isBlank(l) || hasAmount(l) || l.segs.some((s) => s.x0 >= firstVocabX - 2)) break
     if (/^\s*table\b|tariff analysis|schedule of tariffs/i.test(l.text)) break
     nameParts.unshift(l.segs.map((s) => s.text).join(' '))
+    nameFrom = k
     if (HEADING_NUMBER.test(nameParts[0])) break
+  }
+  const labelCols = EXTENDED ? readLabelCols(lines, nameFrom, end, firstVocabX) : null
+  if (labelCols) {
+    nameParts.splice(0, nameParts.length, ...labelCols.nameParts)
+    end = labelCols.end
   }
   let recs = cols.filter((c) => c.kind === 'recommended')
   // "FY2026/27 Approved" beside "FY2026/27 Recommended" (Northern Cape template): the column that
@@ -372,6 +469,25 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   if (recs.length > 1 && named.length === 1) {
     for (const c of recs) if (c !== named[0]) c.kind = 'other'
     recs = named
+  }
+  let seasons: SeasonCols[] | undefined
+  let inferred: string | undefined
+  if (EXTENDED) {
+    const nums = tableNumbers(lines, end, cols, commentX)
+    seasons = seasonPairs(cols) ?? undefined
+    const byOrder = seasons || recs.length === 1 ? null : seasonPairsByOrder(lines, start, end, cols, nums)
+    if (byOrder) {
+      seasons = byOrder.seasons
+      inferred = byOrder.why
+    } else if (!seasons && recs.length !== 1) {
+      inferred = resolveByNumbers(cols, nums) ?? undefined
+    }
+    recs = seasons ? [cols[seasons[0].rec]] : cols.filter((c) => c.kind === 'recommended')
+    // A column the header ties to one season, in a table not read as season-paired: whatever it
+    // holds is one season's figure, and nothing here says which season a row would bill.
+    if (!seasons && cols.some((c) => c.season !== undefined)) {
+      return { error: `header names seasons (${cols.filter((c) => c.season).map((c) => `"${c.text}"`).join(', ')}) but its columns do not pair by season`, end, amountCols: 1 }
+    }
   }
   if (recs.length !== 1) {
     const amountCols = cols.filter((c) => c.kind === 'prior' || c.kind === 'proposed' || c.kind === 'recommended').length
@@ -384,7 +500,247 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   const all = new Set(unitRuns.map((s) => unitSeg(s.text)))
   if (under.length > 0 && new Set(under).size === 1) unit = under[0]
   else if (all.size === 1) unit = [...all][0]
-  return { start, end, cols, commentX, labelCut: Math.min(...cols.map((c) => c.x0)), nameParts, unit }
+  const header: Header = { start, end, page: lines[end].page, nameFrom, cols, commentX, labelCut: Math.min(...cols.map((c) => c.x0)), nameParts, unit }
+  if (seasons) header.seasons = seasons
+  if (inferred) header.inferred = inferred
+  if (labelCols) header.labelCols = { descX: labelCols.descX, seasonX: labelCols.seasonX, periodX: labelCols.periodX, headerRows: labelCols.headerRows }
+  return header
+}
+
+/**
+ * Extended: a label area printed as its own columns (Sol Plaatje: tariff code | description |
+ * "Season" | "Period", then the numbers). Found only from a header line naming both "Season" and
+ * "Period" left of the number columns, with description text between the code column and them.
+ * The name is the description column's text; a charge label printed in the header with no numbers
+ * ("Basic charge R/m") is kept aside so the tariff says it is missing, not named after it.
+ */
+function readLabelCols(lines: Line[], from: number, end: number, firstVocabX: number): (LabelCols & { nameParts: string[]; end: number }) | null {
+  let seasonX = -1
+  let periodX = -1
+  for (let i = from; i <= end; i++) {
+    const sx = lines[i].segs.find((sg) => /^season$/i.test(sg.text) && sg.x0 < firstVocabX)
+    const px = lines[i].segs.find((sg) => /^period$/i.test(sg.text) && sg.x0 < firstVocabX)
+    if (sx && px && sx.x0 < px.x0) {
+      seasonX = sx.x0
+      periodX = px.x0
+    }
+  }
+  if (seasonX < 0) return null
+  // Cells are placed by where they START: a description run starting at the description column may
+  // run on past the Season column's left edge, a Season cell never starts that far left.
+  const seasonCut = seasonX - 8
+  const inDesc = (sg: Seg, descX: number): boolean => sg.x0 >= descX - 2 && sg.x0 < seasonCut
+  const candidates = lines.slice(from, end + 1).flatMap((l) => l.segs.filter((sg) => sg.x0 >= 20 && sg.x0 < seasonCut))
+  if (candidates.length === 0) return null
+  const descX = Math.min(...candidates.map((sg) => sg.x0))
+  const descText = (l: Line): string => l.segs.filter((sg) => inDesc(sg, descX) && !/%/.test(sg.text)).map((sg) => sg.text).join(' ')
+  const chargeLike = (t: string): boolean => /\b(?:charge|levy|energy|block)\b/i.test(t)
+  // The name runs on below the header until the first row: "Indigents Tariff (Prepaid) 20" / "Amps".
+  let last = end
+  // Numbers are allowed only inside the name ("Indigents Tariff (Prepaid) 20"), never in the value columns.
+  const nameOnly = (l: Line): boolean => l.segs.every((sg) => !isAmountTok(sg.text) || sg.x0 < seasonCut)
+  while (last + 1 < lines.length && !isBlank(lines[last + 1]) && nameOnly(lines[last + 1])) {
+    if (chargeLike(descText(lines[last + 1]))) break
+    last++
+  }
+  const nameParts: string[] = []
+  const headerRows: { text: string; line: Line }[] = []
+  for (let i = from; i <= last; i++) {
+    const t = descText(lines[i])
+    if (t === '' || /average increase/i.test(t)) continue
+    if (chargeLike(t)) headerRows.push({ text: t, line: lines[i] })
+    else nameParts.push(t)
+  }
+  // The document's title over the first table ("SOL PLAATJE TARIFF" / "SCHEDULE") is not a name.
+  const title = nameParts.findIndex((t) => /^schedule$/i.test(t))
+  if (title > 0 && /\btariffs?$/i.test(nameParts[title - 1])) nameParts.splice(title - 1, 2)
+  return { descX, seasonX: seasonCut, periodX: periodX - 4, headerRows, nameParts, end: last }
+}
+
+/**
+ * Extended: a season-paired table (Tokologo: Approved, Proposed %, Proposed, Recommended %,
+ * Recommended, each once for Summer and once for Winter). Read only when there is exactly one
+ * Recommended column per season, and one Approved and one Recommended % for each: anything less
+ * and a row could not be checked against its own season, so the table is skipped instead.
+ */
+function seasonPairs(cols: Column[]): SeasonCols[] | null {
+  const recs = cols.flatMap((c, k) => (c.kind === 'recommended' ? [k] : []))
+  if (recs.length !== 2 || recs.some((k) => cols[k].season === undefined)) return null
+  const out: SeasonCols[] = []
+  for (const season of ['low', 'high'] as const) {
+    const of = (kind: ColumnKind): number[] => cols.flatMap((c, k) => (c.kind === kind && c.season === season ? [k] : []))
+    const [rec, prior, pct] = [of('recommended'), of('prior'), of('recommended_pct')]
+    if (rec.length !== 1 || prior.length !== 1 || pct.length !== 1) return null
+    out.push({ season, rec: rec[0], prior: prior[0], pct: pct[0] })
+  }
+  return out
+}
+
+/** Extended: the numbers under a header, on the header's page, as the resolvers below read them. */
+interface TableNumbers {
+  /** The numbers of each line under the header, left to right. */
+  rows: Seg[][]
+  style: DecimalStyle
+  content: (c: Column) => 'pct' | 'amount' | 'mixed' | 'none'
+  /** Each checkable row's verdict: `rec` against `prior` × (1 + `pct`). */
+  verdicts: (prior: Column, rec: Column, pct: Column) => RowVerdict['kind'][]
+}
+
+function tableNumbers(lines: Line[], end: number, cols: Column[], commentX: number): TableNumbers {
+  // Only the numbers in the columns: a label's own numbers ("0 - 50 (first 50 units)") are not cells.
+  const left = Math.min(...cols.map((c) => c.x0)) - 4
+  const rows: Seg[][] = []
+  for (let k = end + 1; k < Math.min(lines.length, end + 60); k++) {
+    if (tableEnds(lines[k]) || lines[k].page !== lines[end].page) break
+    rows.push(lines[k].segs.filter((s) => isNum(s.text) && s.x0 < commentX - 1 && s.x1 > left))
+  }
+  const hits = (c: Column, row: Seg[]): Seg[] => row.filter((s) => s.x1 >= c.x0 - 2 && s.x0 <= c.x1 + 2)
+  const under = (c: Column, row: Seg[]): Seg | undefined => {
+    const h = hits(c, row)
+    return h.length === 1 ? h[0] : undefined
+  }
+  const style = decimalStyle(rows.flat().filter((s) => isAmountTok(s.text)).map((s) => s.text))
+  return {
+    rows,
+    style,
+    content: (c) => {
+      const ss = rows.flatMap((row) => hits(c, row))
+      if (ss.length === 0) return 'none'
+      const p = ss.filter((s) => s.text.endsWith('%')).length
+      return p === ss.length ? 'pct' : p === 0 ? 'amount' : 'mixed'
+    },
+    verdicts: (prior, rec, pct) => rows.flatMap((row) => {
+      const [a, r, p] = [under(prior, row), under(rec, row), under(pct, row)]
+      const [av, rv, pv] = [cellValue(a, style), cellValue(r, style), cellValue(p, style)]
+      if (av === null || rv === null || pv === null || r?.text.endsWith('%')) return []
+      return [checkRow(av, rv, pv, { prior: printedDecimals(a, style), recommended: printedDecimals(r, style), pct: printedDecimals(p, style) }).kind]
+    }),
+  }
+}
+
+const allOk = (v: RowVerdict['kind'][]): boolean => v.length >= 2 && v.every((x) => x === 'ok')
+
+/**
+ * Extended: a season-paired header whose words cannot be placed by position (Tokologo: ten
+ * columns, their header printed narrower than the numbers, "Recom Recomm Recommend Recommend" run
+ * across four of them). Read by ORDER, and only when everything agrees:
+ *  - one header line is exactly one season word per column, alternating (Summer Winter …);
+ *  - the numbers under the column pairs read amount, %, amount, %, amount (Approved, Proposed %,
+ *    Proposed, Recommended %, Recommended: the APAPA template);
+ *  - every "proposed"/"application" header word lies left of every "recom…" word, and "approved"
+ *    left of both;
+ *  - for each season, every checkable row verifies Recommended = Approved × (1 + Recommended %).
+ */
+function seasonPairsByOrder(lines: Line[], start: number, end: number, cols: Column[], nums: TableNumbers): { seasons: SeasonCols[]; why: string } | null {
+  const n = cols.length
+  if (n !== 10) return null
+  let order: ('high' | 'low')[] | null = null
+  const words: { x: number; w: string }[] = []
+  for (let i = start; i <= end; i++) {
+    const ws: { x: number; w: string }[] = []
+    for (const sg of lines[i].segs) {
+      const re = /\S+/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(sg.text))) ws.push({ x: sg.x0 + m.index, w: m[0] })
+    }
+    words.push(...ws)
+    const ss = ws.map((w) => (/^summer$/i.test(w.w) ? 'low' : /^winter$/i.test(w.w) ? 'high' : null))
+    if (order === null && ss.length === n && ss.every((x): x is 'high' | 'low' => x !== null)) order = ss as ('high' | 'low')[]
+  }
+  if (!order) return null
+  for (let p = 0; p < 5; p++) if (order[2 * p] !== order[0] || order[2 * p + 1] === order[0]) return null
+  // By index, not by x: only lines that fill every column, the k-th number under the k-th column.
+  const full = nums.rows.filter((r) => r.length === n)
+  if (full.length < 2) return null
+  const want = ['amount', 'pct', 'amount', 'pct', 'amount'] as const
+  for (const r of full) {
+    for (let k = 0; k < n; k++) if (r[k].text.endsWith('%') !== (want[Math.floor(k / 2)] === 'pct')) return null
+  }
+  const xs = (re: RegExp): number[] => words.filter((w) => re.test(w.w)).map((w) => w.x)
+  const [approved, proposed, recom] = [xs(/^approved$/i), xs(/^(?:propos|application)/i), xs(/^recom/i)]
+  if (approved.length === 0 || proposed.length === 0 || recom.length === 0) return null
+  if (!(Math.max(...proposed) < Math.min(...recom) && Math.min(...approved) < Math.min(...proposed))) return null
+  const kinds: ColumnKind[] = ['prior', 'proposed_pct', 'proposed', 'recommended_pct', 'recommended']
+  const seasons: SeasonCols[] = []
+  for (const season of ['low', 'high'] as const) {
+    const at = (p: number): number => 2 * p + (order[2 * p] === season ? 0 : 1)
+    const pick = { season, prior: at(0), pct: at(3), rec: at(4) }
+    const v = full.map((r) => {
+      const [a, rc, pc] = [r[pick.prior], r[pick.rec], r[pick.pct]]
+      const [av, rv, pv] = [cellValue(a, nums.style), cellValue(rc, nums.style), cellValue(pc, nums.style)]
+      if (av === null || rv === null || pv === null) return 'unverified' as const
+      return checkRow(av, rv, pv, { prior: printedDecimals(a, nums.style), recommended: printedDecimals(rc, nums.style), pct: printedDecimals(pc, nums.style) }).kind
+    })
+    if (!allOk(v)) return null
+    seasons.push(pick)
+  }
+  cols.forEach((c, k) => {
+    c.kind = kinds[Math.floor(k / 2)]
+    c.season = order[k]
+  })
+  return { seasons, why: 'season-paired columns read in order (Approved, Proposed %, Proposed, Recommended %, Recommended; summer and winter each), the header words being printed off their columns; every row verifies per season' }
+}
+
+/**
+ * Extended: a header that does not name exactly one Recommended amount column, resolved by the
+ * numbers printed under it and by the table's own arithmetic, never by position alone.
+ *  - The Recommended % column is the one column whose header says Recommended (or is already
+ *    read as the Recommended %) and holds only percentages.
+ *  - The Recommended amount column is the one column whose header says Recommended and holds only
+ *    amounts (Kgetleng River: "2026/27 Recommended %" over amounts, its "%" printed on the header
+ *    line of the next column). Two such columns (Siyancuma: "2026/27 Recommended" over the proposed
+ *    figures): the one every checkable row verifies against Approved × (1 + Recommended %), while
+ *    the other fails on at least one row. None (Gamagara: "2026/27 Proposed" printed twice): the
+ *    duplicated Proposed column right of the other, beside the Recommended %, only if every
+ *    checkable row verifies.
+ * Returns why, or null (the table stays skipped).
+ */
+function resolveByNumbers(cols: Column[], nums: TableNumbers): string | null {
+  const kinds = cols.map(nums.content)
+  const saysRec = (c: Column): boolean => /\brecom/i.test(c.text)
+  const pctCols = cols.flatMap((c, k) => (kinds[k] === 'pct' && (saysRec(c) || c.kind === 'recommended_pct') ? [k] : []))
+  const priors = cols.flatMap((c, k) => (c.kind === 'prior' && kinds[k] === 'amount' ? [k] : []))
+  if (pctCols.length !== 1 || priors.length !== 1) return null
+  const [pctK, priorK] = [pctCols[0], priors[0]]
+  const verdicts = (k: number): RowVerdict['kind'][] => nums.verdicts(cols[priorK], cols[k], cols[pctK])
+  // A column whose own header says "% Increase" in full (Nala: "2026/27 Recommended % Increase"
+  // printed over both the % and the amount column) claims to be a percentage: its amounts contradict
+  // its header, and nothing but position says which of the two is meant, so it is not a candidate.
+  // (Kgetleng's "2026/27 Recommended %" is a run split across two columns: no "Increase".)
+  const named = cols.flatMap((c, k) => (k !== priorK && kinds[k] === 'amount' && saysRec(c) && !/\bincrease\b/i.test(c.text) ? [k] : []))
+  let pick = -1
+  let why = ''
+  if (named.length === 1) {
+    // The header names it; the numbers only settle which column its "%" belonged to.
+    const v = verdicts(named[0])
+    const ok = v.filter((x) => x === 'ok').length
+    if (ok >= 2 && ok * 2 > v.length) {
+      pick = named[0]
+      why = `"${cols[pick].text}" read as the Recommended amount (it holds amounts) and "${cols[pctK].text}" as its % (it holds percentages)`
+    }
+  } else if (named.length === 2) {
+    const ok = named.filter((k) => allOk(verdicts(k)))
+    const failing = named.filter((k) => verdicts(k).some((x) => x !== 'ok'))
+    if (ok.length === 1 && failing.length === 1 && failing[0] !== ok[0]) {
+      pick = ok[0]
+      why = `two columns say Recommended; "${cols[pick].text}" is the one every row verifies against Approved × (1 + "${cols[pctK].text}"), "${cols[failing[0]].text}" is not`
+    }
+  } else if (named.length === 0) {
+    const left = pctK - 1
+    const dup = left > 0 && cols[left].kind === 'proposed' && kinds[left] === 'amount'
+      && cols.some((c, k) => k < left && c.kind === 'proposed' && c.text === cols[left].text)
+    if (dup && allOk(verdicts(left))) {
+      pick = left
+      why = `"${cols[left].text}" is printed twice; the second, beside "${cols[pctK].text}", verifies on every row as the Recommended amount`
+    }
+  }
+  if (pick < 0) return null
+  cols.forEach((c, k) => {
+    if (k === pick) c.kind = 'recommended'
+    else if (k === pctK) c.kind = 'recommended_pct'
+    else if (c.kind === 'recommended' || c.kind === 'recommended_pct') c.kind = 'other'
+  })
+  return why
 }
 
 function lineOf(lines: Line[], s: Seg, start: number, end: number): number {
@@ -401,6 +757,61 @@ function tableEnds(l: Line): boolean {
 
 /** A heading that ends the tariff tables rather than naming a tariff. */
 const SECTION = /conclusion|decision|recommendation|objection|participation|background|introduction|revenue|cost of supply|tariff design|analysis|energy losses|approval|resolution|summary|annexure|appendix|licensee|financial|compliance|bulk purchase|pass[- ]through/i
+
+/** Extended, label sub-columns: the season a Season cell names ("High", "Low", "Winter", "All"). */
+function cellSeason(t: string): TariffSeason | null {
+  if (/^high\b/i.test(t)) return 'high'
+  if (/^low\b/i.test(t)) return 'low'
+  if (/^all\b/i.test(t)) return 'all'
+  return detectSeason(t)
+}
+
+/** Extended: a sub-tariff line inside a table; group 1 is its name without the season part. */
+const SUB_TARIFF = /^(for\s+(?:household|business)\b.*?\bmetering|time of use(?=\s*[-–]\s*(?:summer|winter)\b))\s*(?:[-–]\s*(?:summer|winter)\b.*)?$/i
+
+/** Extended: a tariff whose rates are paid FOR exported energy: never read as import rates. */
+const EXPORT_TARIFF = /\bexport\b|feed[- ]?in/i
+
+/** Extended: the last unit token a label prints that parseUnitToken reads ("Capacity Charge R/Amp/phase/m"). */
+function statedUnit(label: string): TariffUnit | null {
+  const found = [...label.matchAll(/(?:^|[\s(])((?:c|r|rand)\s*\/\s*[a-z]+(?:\s*\/\s*[a-z]+)*)/gi)].map((m) => parseUnitToken(m[1]))
+  return found.filter((u): u is TariffUnit => u !== null).pop() ?? null
+}
+
+/**
+ * Extended names: "> 20 Amps" → "over 20 Amps", "≥ 200 < 500 kVA" → "at least 200 under 500 kVA",
+ * "= 20 Amps" → "20 Amps"; a stray header year is removed.
+ */
+function spellComparisons(name: string): string {
+  return name
+    // A header year caught in a wrapped name ("Commercial Prepaid (Three 2025/26 Phase)", Gamagara).
+    .replace(/\s*\b20\d{2}\/\d{2,4}(?:fy)?\b\s*/gi, ' ')
+    .replace(/\s*(?:≥|>=)\s*/g, ' at least ')
+    .replace(/\s*(?:≤|<=)\s*/g, ' up to ')
+    .replace(/\s*>\s*/g, ' over ')
+    .replace(/\s*<\s*/g, ' under ')
+    .replace(/\s*=\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Extended: a consumption range alone on a row label: "0 - 50 (first 50 units)", or a bare "> 600"
+ * closing a run of such blocks in the same tariff ("units" are kWh). A bare range anywhere else
+ * could as well be amps or kVA, and is left to the ordinary reading.
+ */
+const UNITS_BLOCK = /^\s*(\d+\s*-\s*\d+)\s*\((?:first|next)\s+\d+\s+units\)\s*$/i
+const OPEN_TOP_BLOCK = /^\s*(>\s*\d+)\s*$/
+
+function unitsBlockOf(label: string, draft: TariffDraft): RegExpExecArray | null {
+  const m = UNITS_BLOCK.exec(label)
+  if (m) return m
+  const top = OPEN_TOP_BLOCK.exec(label)
+  return top && draft.charges.some((c) => c.component === 'energy' && c.blockMaxKwh !== null && UNITS_BLOCK.test(c.label ?? '')) ? top : null
+}
+
+/** Extended: a tariff code in brackets on a name line: "(E009)", "( E006 & E011 )". */
+const CODED_NAME = /\(\s*[A-Z]{1,2}\d{3}\b[^)]*\)/
 
 const GENERIC_NAME = /^(?:tariff\s*names?|tariff\s*blocks?|tariffs?|description|tariff description|charges?|units?)$/i
 const HEADING_NUMBER = /^(?:\d{1,2}(?:\.\d{1,2})*\.?|[A-Z]\))\s+/
@@ -453,10 +864,12 @@ interface BodyLine {
   stray: Seg[]
   /** A heading printed over the columns ("Low Season Energy Charges"): never part of a row label. */
   overCols: boolean
+  /** Extended, label sub-columns: the text of the Season column on this line ("High", "Winter"). */
+  seasonCell?: string
 }
 
 /** Place each number of a line into a header column: all of them in order, or by position. */
-function place(nums: Seg[], cols: Column[], learned: ({ x0: number; x1: number } | null)[]): Cells | null {
+function place(nums: Seg[], cols: Column[], learned: ({ x0: number; x1: number } | null)[], laterPage = false): Cells | null {
   const cells: Cells = new Map()
   const near = (s: Seg, k: number): boolean => {
     const box = learned[k] ?? cols[k]
@@ -467,6 +880,17 @@ function place(nums: Seg[], cols: Column[], learned: ({ x0: number; x1: number }
   if (nums.length === cols.length && nums.every((s, k) => near(s, k))) {
     nums.forEach((s, k) => cells.set(k, s))
     return cells
+  }
+  // Extended: a row on a page after its header's is printed at other x positions (Tokologo). It is
+  // read in order only when it fills every column and each number is the kind its column holds (a
+  // percentage under every % column, an amount under every other). Anything short of that on such
+  // a page cannot be placed by the header's positions either: it is left unplaced (a blocking drop).
+  if (laterPage) {
+    if (nums.length === cols.length && nums.every((s, k) => s.text.endsWith('%') === /pct$/.test(cols[k].kind))) {
+      nums.forEach((s, k) => cells.set(k, s))
+      return cells
+    }
+    return null
   }
   let last = -1
   for (const s of nums) {
@@ -532,7 +956,21 @@ function printedDecimals(s: Seg | undefined, style: DecimalStyle): number {
 
 // ---------------------------------------------------------------------------
 
-export function parseRfdColumns(text: string, opts: { fileSha256: string }): ParsedRfd {
+/**
+ * `extended` adds the rules only the files every other pass leaves empty get (see parseRfdText):
+ * season-paired columns, a header resolved by the numbers under it, label sub-columns.
+ */
+export function parseRfdColumns(text: string, opts: { fileSha256: string }, mode: { extended?: boolean } = {}): ParsedRfd {
+  const prev = EXTENDED
+  EXTENDED = mode.extended === true
+  try {
+    return parseColumns(text, opts)
+  } finally {
+    EXTENDED = prev
+  }
+}
+
+function parseColumns(text: string, opts: { fileSha256: string }): ParsedRfd {
   const out: ParsedRfd = { tariffs: [], increasePct: null, issues: [], unresolved: [] }
   const raw = text.split('\n')
   let page = 1
@@ -569,7 +1007,10 @@ export function parseRfdColumns(text: string, opts: { fileSha256: string }): Par
   let draft: TariffDraft | null = null
   let lastHeading: { text: string; idx: number } | null = null
 
-  const openDraft = (name: string, at: Line): TariffDraft => {
+  const openDraft = (printed: string, at: Line): TariffDraft => {
+    // Extended: "= 20 Amps" and "> 20 Amps" (Sol Plaatje) are different tariffs whose names differ
+    // only in symbols every name comparison strips; the symbols are written as words.
+    const name = EXTENDED ? spellComparisons(printed) : printed
     const prev: TariffDraft | null = draft
     if (prev && normaliseTariffName(prev.name) === normaliseTariffName(name)) return prev
     closeDraft()
@@ -621,6 +1062,13 @@ export function parseRfdColumns(text: string, opts: { fileSha256: string }): Par
       j++
     }
     i = j
+    // Extended, label sub-columns: the next table's name is printed above its header (Sol Plaatje
+    // "BULK CONSUMER: LV ≥ 200" / "< 500 kVA (exception 800"); those lines are not this table's rows.
+    if (EXTENDED && h.labelCols && j < lines.length && isAnchor(lines[j])) {
+      const nx = readHeader(lines, j)
+      // body holds lines h.end+1 … j-1 contiguously, so the last (j - nameFrom) entries are the name.
+      if (!('error' in nx) && nx.labelCols && nx.nameFrom > h.end && nx.nameFrom < j) body.splice(body.length - (j - nx.nameFrom))
+    }
 
     const parts: { name: string; at: Line; lines: Line[] }[] = [{ name, at: headerLine, lines: [] }]
     for (const b of body) {
@@ -635,8 +1083,15 @@ export function parseRfdColumns(text: string, opts: { fileSha256: string }): Par
     for (const part of parts) {
       let cur: TariffDraft | null = part.name === '' ? null : openDraft(part.name, part.at)
       const target: DraftTarget = {
+        base: part.name,
         get: () => cur,
         switchTo: (name, at) => (cur = openDraft(name, at)),
+      }
+      // Label sub-columns: a charge the header names with no value leaves the tariff without it.
+      if (part === parts[0] && cur !== null) {
+        for (const hr of h.labelCols?.headerRows ?? []) {
+          dropRow(out, cur, { label: hr.text, raw: '', reason: 'charge named in the table header with no value', locator: { file_sha256: opts.fileSha256, page: hr.line.page, line: hr.line.no } }, 'review')
+        }
       }
       readBody(part.lines, body, h, target, opts.fileSha256, out, pcts)
       if (target.get() === null && part.lines.some(hasAmount)) {
@@ -656,6 +1111,8 @@ export function parseRfdColumns(text: string, opts: { fileSha256: string }): Par
 
 /** The tariff rows are going to; a name line inside a table can move it on. */
 interface DraftTarget {
+  /** The name the table (or the heading inside it) gave. */
+  base: string
   get: () => TariffDraft | null
   switchTo: (name: string, at: Line) => TariffDraft
 }
@@ -669,11 +1126,27 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     const label: string[] = []
     const nums: Seg[] = []
     const inCols: string[] = []
+    // Extended: on a page after the header's the columns sit at other x positions (Tokologo), so
+    // every number after the row's first text run is the row's; place() then reads them in order.
+    const text0 = EXTENDED && line.page !== h.page ? line.segs.find((s) => !isNum(s.text) && !DASH.test(s.text)) : undefined
+    const lc = h.labelCols
+    const seasonCell: string[] = []
+    const period: string[] = []
     for (const s of line.segs) {
       if (s.x0 >= h.commentX - 1) continue
+      // Label sub-columns: the tariff code column is not label text; Season and Period are cells.
+      if (lc && s.x0 < lc.descX - 2) continue
+      if (lc && !isNum(s.text) && s.x0 < firstX - 1) {
+        if (s.x0 >= lc.periodX) period.push(s.text)
+        else if (s.x0 >= lc.seasonX) seasonCell.push(s.text)
+        else label.push(s.text)
+        continue
+      }
       // A number opening a sentence right of the last column is findings prose spilling left.
       if (s.peeled && s.x0 > lastX) continue
-      if ((isNum(s.text) || DASH.test(s.text)) && s.x1 > firstX - 4) nums.push(s)
+      // Extended: a lone "-" right of the last column is a rule mark, not an empty cell.
+      if (EXTENDED && DASH.test(s.text) && s.x0 > lastX) continue
+      if ((isNum(s.text) || DASH.test(s.text)) && (s.x1 > firstX - 4 || (text0 !== undefined && s.x0 > text0.x1))) nums.push(s)
       else if (s.x0 < firstX - 1) label.push(s.text)
       // A season heading can sit over the columns ("Low Season Energy Charges", eThekwini);
       // other text inside the columns ("N/A", commentary spilling left) is ignored.
@@ -681,7 +1154,9 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     }
     const overCols = nums.length === 0 && label.length === 0 && inCols.length > 0
     if (nums.length === 0) label.push(...inCols)
-    return { line, label: label.join(' '), nums, overCols }
+    // "Energy Charges R/kWh" + Period "Peak" is the peak energy charge.
+    if (period.length > 0 && label.length > 0) label.push(...period)
+    return { line, label: label.join(' '), nums, overCols, seasonCell: seasonCell.join(' ') }
   }
   const pre = body.map(split)
   // Column boxes learned from the lines (of the whole table) that fill every column.
@@ -694,9 +1169,10 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     })
   }
   const lines: BodyLine[] = pre.map((p) => {
-    if (p.nums.length === 0) return { line: p.line, label: p.label, cells: null, stray: [], overCols: p.overCols }
-    const cells = place(p.nums, cols, learned)
-    return cells ? { line: p.line, label: p.label, cells, stray: [], overCols: false } : { line: p.line, label: p.label, cells: null, stray: p.nums, overCols: false }
+    const sc = p.seasonCell ? { seasonCell: p.seasonCell } : {}
+    if (p.nums.length === 0) return { line: p.line, label: p.label, cells: null, stray: [], overCols: p.overCols, ...sc }
+    const cells = place(p.nums, cols, learned, EXTENDED && p.line.page !== h.page)
+    return cells ? { line: p.line, label: p.label, cells, stray: [], overCols: false, ...sc } : { line: p.line, label: p.label, cells: null, stray: p.nums, overCols: false, ...sc }
   })
 
   const recIdx = cols.findIndex((c) => c.kind === 'recommended')
@@ -728,7 +1204,12 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     const keep: string[] = []
     // A row whose own label is only a fragment ("(R/kWh):") is named by the line above it.
     const selfNamed = own === null || (!isFragment(own) && rowLike(own))
+    let dropped = false
     for (const [n, t] of ls.entries()) {
+      // Extended: "Capacity Charge" / "R/Amp/phase/m" with no value: the unit line is the dropped
+      // row's own, not a prefix for the next row's label.
+      if (EXTENDED && dropped && UNIT_ONLY.test(t)) continue
+      dropped = false
       heading(t)
       const last = n === ls.length - 1
       // "Block 1 (0-" / "50) kWh  197.00 …": a bracket left open is continued by the row's own label.
@@ -736,6 +1217,7 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
       if (rowLike(t) && !detectSeason(t) && (selfNamed || !last) && !(last && opens)) {
         const tier = parseBlockRange(t) !== null || /^part\s*\d|\bblock\s*\d/i.test(t)
         dropRow(out, target.get(), { label: t, raw: '', reason: 'row without a numeric Recommended value', locator: { file_sha256: sha, page: at.page, line: at.no } }, tier ? 'block' : 'review')
+        dropped = true
       } else {
         keep.push(t)
       }
@@ -746,7 +1228,7 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     const r = open
     open = null
     if (!r) return
-    emitRow(r, { cols, recIdx, draft: target.get(), sha, out, pcts, season, contextUnit, tableUnit: h.unit, style })
+    emitRow(r, { cols, recIdx, draft: target.get(), sha, out, pcts, season, contextUnit, tableUnit: h.unit, style, header: h })
   }
   const nextMeaningful = (k: number): BodyLine | undefined => {
     for (let m = k + 1; m < lines.length; m++) {
@@ -756,7 +1238,16 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     return undefined
   }
 
+  // Label sub-columns: a Season cell ("High" above "Demand:", "Winter") holds for the rows below
+  // it, from the next row that opens (the row before it has already taken its season).
+  let pendingSeason: TariffSeason | null = null
+  const applySeason = (): void => {
+    if (pendingSeason === null) return
+    season = pendingSeason
+    pendingSeason = null
+  }
   lines.forEach((b, k) => {
+    if (b.seasonCell) pendingSeason = cellSeason(b.seasonCell) ?? pendingSeason
     if (b.stray.length > 0) {
       const strayLabel = [...pendingLabel, b.label].join(' ').trim()
       dropRow(out, target.get(), {
@@ -772,9 +1263,11 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
       if (open && !complete(open) && !collides(open, b.cells)) {
         for (const [c, s] of b.cells) open.cells.set(c, s)
         if (b.cells.has(recIdx)) open.recLine = b.line.no
+        applySeason()
         return
       }
       finish()
+      applySeason()
       // The last label line names this row; any above it are headings ("Summer" over "Block 1").
       const labels = consume(pendingLabel.slice(0, -1), b.line, pendingLabel[pendingLabel.length - 1] ?? null)
       if (pendingLabel.length > 0) labels.push(pendingLabel[pendingLabel.length - 1])
@@ -790,9 +1283,11 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
         for (const [c, s] of b.cells) open.cells.set(c, s)
         if (b.cells.has(recIdx)) open.recLine = b.line.no
         open.label.push(b.label)
+        applySeason()
         return
       }
       finish()
+      applySeason()
       open = { label: [...consume(pendingLabel, b.line, b.label), b.label], cells: new Map(b.cells), labelFirst: pendingLabel.length > 0, line: b.line.no, page: b.line.page }
       pendingLabel = []
       return
@@ -800,6 +1295,34 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
 
     // A label with no numbers.
     const t = b.label
+    // Extended: a line naming a tariff by its code ("Pre-paid; (E009)", "Churches & Old Age Homes
+    // ( E006 & E011 )", Tokologo) starts that tariff. Headings waiting above it ("Commercial
+    // Tariffs") are section headings, not part of its rows' labels.
+    // Extended: "For household Pre-paid metering - Summer (September to May)" or "Time of Use -
+    // Winter (June to August)" under a table's IBT rows (Siyancuma) is another tariff of the same
+    // customer class, not a heading over the next rows' labels: summed into the IBT tariff, a bill
+    // would pay both. Its summer and winter halves are one tariff.
+    const sub = EXTENDED && (!open || complete(open)) && !b.overCols ? SUB_TARIFF.exec(t) : null
+    if (sub) {
+      finish()
+      consume(pendingLabel, b.line, null)
+      pendingLabel = []
+      const s = detectSeason(t)
+      const part = `${sub[1].trim()}${s === 'high' || s === 'low' ? ' (seasonal)' : ''}`
+      target.switchTo(target.base ? `${target.base} — ${part}` : part, b.line)
+      season = s ?? 'all'
+      contextUnit = null
+      return
+    }
+    if (EXTENDED && (!open || complete(open)) && CODED_NAME.test(t) && !rowLike(t) && !b.overCols) {
+      finish()
+      consume(pendingLabel, b.line, null)
+      pendingLabel = []
+      target.switchTo(t.replace(/\s*;\s*/g, ' ').replace(/\s+/g, ' ').trim(), b.line)
+      season = 'all'
+      contextUnit = null
+      return
+    }
     // A tariff name inside a table ("Commercial Prepaid" after the "Commercial Conventional"
     // rows, Tsantsabane), or naming a table whose header does not: a customer-class line that is
     // not a charge, followed by a row that names its own charge.
@@ -870,13 +1393,43 @@ interface EmitCtx {
   contextUnit: TariffUnit | null
   tableUnit: TariffUnit | null
   style: DecimalStyle
+  header: Header
 }
 
+/** The columns one charge is read from: the Recommended value, and the Approved and % that check it. */
+interface Pick {
+  rec: number
+  prior: number
+  pct: number
+  /** Season-paired tables: the season the Recommended column is for. */
+  season: 'high' | 'low' | null
+}
+
+/** Tariffs already told their header was inferred, per header (one issue per tariff and table). */
+const toldInferred = new WeakMap<Header, Set<string>>()
+
 function emitRow(r: Row, x: EmitCtx): void {
+  const seasons = x.header.seasons
+  if (!seasons) {
+    emitCharge(r, x, { rec: x.recIdx, prior: checkColumn(x.cols, 'prior', x.recIdx), pct: checkColumn(x.cols, 'recommended_pct', x.recIdx), season: null })
+    return
+  }
+  // The same figure for both seasons ("Basic Charge: Per Month  344,36  344,36 …") is one charge
+  // for the year, checked against each season's own Approved and %. Different figures are one
+  // charge per season.
+  const v = seasons.map((s) => cellValue(r.cells.get(s.rec), x.style))
+  if (v[0] !== null && v[0] === v[1] && r.cells.get(seasons[0].rec)?.text === r.cells.get(seasons[1].rec)?.text) {
+    emitCharge(r, x, { ...seasons[0], season: null }, seasons[1])
+    return
+  }
+  for (const s of seasons) emitCharge(r, x, s)
+}
+
+function emitCharge(r: Row, x: EmitCtx, pk: Pick, alsoCheck?: SeasonCols): void {
   let label = cleanLabel(r.label.join(' ')).replace(/\s*\/\s*/g, '/')
   // "Demand charge: High/Low Demand season" is one charge for both seasons, not a low-season one.
   if (/\bhigh\/low\b|\blow\/high\b|summer\/winter|winter\/summer/i.test(label)) label = `${label} [all seasons]`
-  const recSeg = r.cells.get(x.recIdx)
+  const recSeg = r.cells.get(pk.rec)
   const locator = { file_sha256: x.sha, page: r.page, line: r.recLine ?? r.line }
   if (!recSeg) {
     // Numbers without a Recommended value (a heading row, or a blank Recommended cell).
@@ -885,8 +1438,8 @@ function emitRow(r: Row, x: EmitCtx): void {
     }
     return
   }
-  const priorIdx = checkColumn(x.cols, 'prior', x.recIdx)
-  const pctIdx = checkColumn(x.cols, 'recommended_pct', x.recIdx)
+  const priorIdx = pk.prior
+  const pctIdx = pk.pct
   const priorSeg = priorIdx >= 0 ? r.cells.get(priorIdx) : undefined
   const pctSeg = pctIdx >= 0 ? r.cells.get(pctIdx) : undefined
   const dp = { prior: printedDecimals(priorSeg, x.style), recommended: printedDecimals(recSeg, x.style), pct: printedDecimals(pctSeg, x.style) }
@@ -932,15 +1485,20 @@ function emitRow(r: Row, x: EmitCtx): void {
     return
   }
   const draft = x.draft
+  // Extended: a bare consumption range ("0 - 50 (first 50 units)", "> 600", Tokologo) is an energy
+  // block; "units" are kWh.
+  const unitsBlock = EXTENDED ? unitsBlockOf(label, draft) : null
   const res = normaliseCharge({
     label,
     amount: { value: recommended, unitText: null, randPrefix: /^R/.test(rawValue), raw: rawValue },
-    rawValue, unitColumn: null, contextUnit: x.contextUnit, headerUnit: x.tableUnit,
+    // Extended: the unit the label itself prints ("R/Amp/phase/m", "R/m"), read by parseUnitToken.
+    rawValue, unitColumn: EXTENDED ? statedUnit(label) : null, contextUnit: x.contextUnit, headerUnit: x.tableUnit,
     // "Export Low Season Peak", "SSEG Feed-in Tariff": a rate for energy exported, never an import rate.
-    componentHint: /\bexport\b|feed[- ]?in/i.test(label) ? 'export_credit' : null,
-    seasonState: { energy: x.season, general: 'all' },
-    blockText: null, vatBasis: 'assumed_excl', extractionMethod: 'parser',
-    locator: { ...locator, raw_text: `${label} = ${rawValue} (recommended)` },
+    // Extended: "Energy credit R/kWh" under "Electricity Export Credits" is paid for exported energy.
+    componentHint: /\bexport\b|feed[- ]?in/i.test(label) || (EXTENDED && EXPORT_TARIFF.test(draft.name) && /\bcredit\b/i.test(label)) ? 'export_credit' : unitsBlock ? 'energy' : null,
+    seasonState: pk.season ? { energy: pk.season, general: pk.season } : { energy: x.season, general: 'all' },
+    blockText: unitsBlock ? `${unitsBlock[1]} kWh` : null, vatBasis: 'assumed_excl', extractionMethod: 'parser',
+    locator: { ...locator, raw_text: `${label} = ${rawValue} (recommended${pk.season ? `, ${pk.season === 'high' ? 'winter/high' : 'summer/low'} season column` : ''})` },
   })
   if (!res.ok) {
     dropRow(x.out, draft, res.unresolved, 'block')
@@ -955,14 +1513,30 @@ function emitRow(r: Row, x: EmitCtx): void {
     })
   }
 
+  if (x.header.inferred) {
+    const told = toldInferred.get(x.header) ?? new Set<string>()
+    toldInferred.set(x.header, told)
+    if (!told.has(draft.name)) {
+      told.add(draft.name)
+      x.out.issues.push({ code: 'rfd_header_inferred', severity: 'review', tariff: draft.name, locator: res.charge.sourceLocator, message: `p.${r.page}: ${x.header.inferred}` })
+    }
+  }
+
   // Self-consistency: Recommended ≈ 2025/26 Approved × (1 + Recommended %).
   if (pct !== null) x.pcts.push(pct)
-  const verdict = checkRow(prior, recommended, pct, dp)
-  if (verdict.kind !== 'ok') {
+  const verdicts: { verdict: RowVerdict; season: string }[] = [{ verdict: checkRow(prior, recommended, pct, dp), season: pk.season ?? '' }]
+  if (alsoCheck) {
+    const [a, p] = [r.cells.get(alsoCheck.prior), r.cells.get(alsoCheck.pct)]
+    verdicts.push({ verdict: checkRow(cellValue(a, x.style), recommended, cellValue(p, x.style), { prior: printedDecimals(a, x.style), recommended: dp.recommended, pct: printedDecimals(p, x.style) }), season: alsoCheck.season })
+  }
+  for (const { verdict, season } of verdicts) {
+    if (verdict.kind === 'ok') continue
     x.out.issues.push({
       code: verdict.kind === 'unverified' ? 'rfd_row_unverified' : 'rfd_row_increase_mismatch',
-      severity: verdict.kind === 'gross' ? 'block' : 'review',
-      message: `"${label}": ${verdict.message}`,
+      // A row that disagrees with the arithmetic an inferred header was settled by blocks: its
+      // column's meaning is not proven for that row.
+      severity: verdict.kind === 'gross' || (x.header.inferred && verdict.kind === 'mismatch') ? 'block' : 'review',
+      message: `"${label}"${season ? ` (${season === 'high' ? 'winter/high' : 'summer/low'} season columns)` : ''}: ${verdict.message}`,
       tariff: draft.name,
       locator: res.charge.sourceLocator,
     })
@@ -993,7 +1567,7 @@ function checkColumn(cols: Column[], kind: 'prior' | 'recommended_pct', recIdx: 
   const idx = cols.flatMap((c, k) => (c.kind === kind ? [k] : []))
   if (idx.length <= 1) return idx[0] ?? -1
   const pick = kind === 'prior'
-    ? idx.filter((k) => /2025\/26|2025-26|25\/26/.test(cols[k].text))
+    ? idx.filter((k) => /2025\/26|2025-26|25\/26|2025\/2026/.test(cols[k].text))
     : idx.filter((k) => k === recIdx + 1)
   return pick.length === 1 ? pick[0] : -1
 }

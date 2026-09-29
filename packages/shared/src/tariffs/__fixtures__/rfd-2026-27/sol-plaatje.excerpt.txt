@@ -1,0 +1,113 @@
+
+
+Sol Plaatje Local Municipality: Tariff Applications for the 2026/27 Financial Year
+                                                                                                 Page 23 of 32
+         Table 6: Schedule of Tariffs
+
+
+
+                                     SOL PLAATJE TARIFF
+                                                                              Season   Period                               PROPOSED      APPROVED    APPROVED
+          TARIFF CODE                SCHEDULE
+                                                                                                Approved     PROPOSED       TARIFFS       %           TARIFFS
+                                                                                                2025/2026    % 2026/2027    2026/2027     2026/2027   2026/2027
+                                     Average increase %                                               9,6%                         8,0%
+          (EL1012) DOMESTIC          Indigents Tariff (Prepaid) 20
+          KIM POWER                  Amps
+                                     Block 1 (0 - 50 kWh)
+                                     (subsidised) R/kWh                                             2,5719          8,00%        2,7777       8,00%   2,7777
+
+                                     Block 2 (51 - 350 kWh) R/kWh                                   2,5719          8,00%        2,7777       8,00%   2,7777
+
+                                     Block 3 ( > 351 kWh) R/kWh                                     3,5886          8,00%        3,8757       8,00%   3,8757
+
+
+
+
+                                                                              Season   Period
+                                                                                                                            PROPOSED      APPROVED    APPROVED
+          (EL1010) DOMESTIC          Domestic Tariff (Conventional                              Approved     PROPOSED       TARIFFS       %           TARIFFS
+          IBT KIMLITE                and Prepaid) = 20 Amps                                     2025/2026    % 2026/2027    2026/2027     2026/2027   2026/2027
+
+                                     Block 1 (0 - 350 kWh) R/kWh                                    2,7434          8,00%        2,9628       8,00%   2,9628
+
+                                     Block 2 ( > 350 Whh) R/kWh                                     3,4690          8,00%        3,7465       8,00%   3,7465
+
+
+
+                                                                                                                            PROPOSED      APPROVED    APPROVED
+                                                                              Season   Period
+                                     Domestic Tariff (Conventional                              Approved     PROPOSED       TARIFFS       %           TARIFFS
+                                     and Prepaid) > 20 Amps                                     2025/2026    % 2026/2027    2026/2027     2026/2027   2026/2027
+
+
+
+Sol Plaatje Local Municipality: Tariff Applications for the 2026/27 Financial Year
+                                                                                                                                               Page 24 of 32
+                                     Basic Charge (Rand per month)
+                                     Capacity charge
+                                     (Rand/Amp/phase/month)                                         4,1758          8,00%        4,5099       8,00%   4,5099
+
+                                     Block 1 (0 - 350 kWh) R/kWh                                    2,5595          8,00%        2,7642       8,00%   2,7642
+
+                                     Block 2 ( > 350 kWh) R/kWh                                     2,8983          8,00%        3,1302       8,00%   3,1302
+
+          (EL1044) ELEC
+          SCHOOLS/CHURCHE
+          S/OLD AGE
+          HOME/WELFARE/CO            Public Benefit and Schools:              Season   Period
+                                                                                                                            PROPOSED      APPROVED    APPROVED
+          LLEGE                      Conventional and Prepayment                                Approved     PROPOSED       TARIFFS       %           TARIFFS
+                                     Basic Charge (Rand per month)                              2025/2026    % 2026/2027    2026/2027     2026/2027   2026/2027
+                                     Capacity charge
+                                     (Rand/Amp/phase/month)                                         4,8553          8,00%        5,2437       8,00%   5,2437
+
+                                     Winter (R/kWh)                        Winter                   3,2160          8,00%        3,4732       8,00%   3,4732
+
+                                     Summer (R/kWh)                        Summer                   3,0123          8,00%        3,2533       8,00%   3,2533
+                                                                                                                                                               -
+
+          (EL1020) ELEC              Business Tariff: Small Power
+          SMALL POWER                Users (Conventional and                  Season   Period                               PROPOSED      APPROVED    APPROVED
+                                     prepaid)                                                   Approved     PROPOSED       TARIFFS       %           TARIFFS
+                                     Basic Charge (Rand per month)                              2025/2026    % 2026/2027    2026/2027     2026/2027   2026/2027
+                                     Capacity charge
+                                     (Rand/Amp/phase/month)                                         4,1758          8,00%        4,5098       8,00%   4,5098
+
+                                     Block 1 (0 - 1200 kWh)                Winter                   3,1129          8,00%        3,3619       8,00%   3,3619
+
+                                     Block 2 ( > 1200 kWh)                                          3,1129          8,00%        3,3619       8,00%   3,3619
+
+                                     Block 1 (0 - 1200 kWh)                Summer                   2,9003          8,00%        3,1323       8,00%   3,1323
+
+                                     Block 2 ( > 1200 kWh)                                          2,9003          8,00%        3,1323       8,00%   3,1323
+                                                                                                                                                               -
+
+
+
+Sol Plaatje Local Municipality: Tariff Applications for the 2026/27 Financial Year
+                                                                                                                                               Page 25 of 32
+                                     Time of Use: NPO, NGO,
+                                                                              Season   Period
+                                     SCHOOLS: LV <200 KVA                                                                     PROPOSED       APPROVED    APPROVED
+          EL1258, SERVICE                                                                         Approved     PROPOSED       TARIFFS        %           TARIFFS
+          CHARGE                     Basic charge per month                                       2025/2026    % 2026/2027    2026/2027      2026/2027   2026/2027
+          EL1258, PBA &
+          SCHOOLS TOU <75            Network Demand Charge R/kVA                                    191,5812          8,00%       206,9077       8,00%   206,9077
+
+                                     Network Access Charge R/kVA                                     91,1167          8,00%        98,4060       8,00%   98,4060
+          EL1255 PBA &                                                     High
+          SCHOOLS PEAK <75           Energy Charges R/kWh                  Demand:     Peak           6,6364          8,00%         7,1673       8,00%   7,1673
+          EL1256 PBA &
+          SCHOOLS STD <75            Energy Charges R/kWh                              Standard       2,6629          8,00%         2,8759       8,00%   2,8759
+          EL1257 PBA &
+          SCHOOLS OFF-PEAK
+          <75                        Energy Charges R/kWh                              Off-peak       1,8514          8,00%         1,9995       8,00%   1,9995
+                                                                           Low
+                                     Energy Charges R/kWh                  Demand:     Peak           2,8446          8,00%         3,0721       8,00%   3,0721
+
+                                     Energy Charges R/kWh                              Standard       2,1820          8,00%         2,3565       8,00%   2,3565
+
+                                     Energy Charges R/kWh                              Off-peak       1,7036          8,00%         1,8399       8,00%   1,8399
+                                                                                                                                                                    -
+
