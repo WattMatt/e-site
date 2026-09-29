@@ -13,7 +13,8 @@
 --       save_export_rule deletes and re-inserts the rates and writes the rule last in ONE
 --       transaction; the check runs once, at commit, on the final state. SECURITY DEFINER so the
 --       count is exact whatever the caller can read (the rate rows are money, 00213). The study row is
---       locked (FOR NO KEY UPDATE) so concurrent writers are checked in turn. Existing mismatches are
+--       locked (FOR NO KEY UPDATE) so concurrent writers are checked in turn (this relies on READ
+--       COMMITTED, PostgREST's level: the count after the lock takes a fresh snapshot). Existing mismatches are
 --       backfilled first (manual without rates -> 'none'; stray rates removed): neither was priced.
 --   (b) solar.layouts.module_id REFERENCES solar.equipment(id) ON DELETE RESTRICT (the FK 00211
 --       deferred to the Financials phase). Existing ids that are not a module of the layout's org

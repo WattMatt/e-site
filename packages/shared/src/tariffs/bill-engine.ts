@@ -231,8 +231,11 @@ function exportRateRand(charges: readonly Charge[], season: BillingSeason, perio
       && seasonMatches(c, season)
       && unitClass(c.unit) === 'per_kwh',
   )
-  const exact = pool.find((c) => c.tou === period)
-  const fallback = period === 'all' ? undefined : pool.find((c) => c.tou === 'all')
+  // The most specific row wins, never row order: exact TOU before 'all', then the named season
+  // before 'all' (a manual export schedule may carry an all-year rate AND a high-season one).
+  const bySeason = (xs: Charge[]) => xs.find((c) => c.season !== 'all') ?? xs[0]
+  const exact = bySeason(pool.filter((c) => c.tou === period))
+  const fallback = period === 'all' ? undefined : bySeason(pool.filter((c) => c.tou === 'all'))
   const pick = exact ?? fallback
   return pick ? randPerKwh(pick) : null
 }

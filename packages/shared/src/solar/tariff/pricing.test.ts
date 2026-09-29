@@ -198,3 +198,22 @@ describe('studyPricingHash is independent of the order the database returns rows
     expect(studyPricingHash(resolveStudyPricing(pub(true)))).toBe(studyPricingHash(resolveStudyPricing(pub(false))))
   })
 })
+
+describe('a season-specific manual export rate wins over an all-season one for the same period (re-review I-1)', () => {
+  it('whatever the amounts, and so whatever the canonical order', () => {
+    for (const [allAmt, highAmt] of [[0.85, 1.2], [1.2, 0.85]] as const) {
+      const p = resolveStudyPricing(input({
+        study: { ...input().study, exportRule: { version: 1, method: 'manual' } },
+        exportRates: [
+          { id: 'ra', season: 'all', tou: 'all', unit: 'R_per_kWh', amountExclVat: allAmt, sourceNote: 'n' },
+          { id: 'rh', season: 'high', tou: 'all', unit: 'R_per_kWh', amountExclVat: highAmt, sourceNote: 'n' },
+        ],
+      }))
+      const credit = (month: number, season: 'high' | 'low') => costMonth(p.tariff, { year: 2025, month, days: 30, season,
+        importKwh: { peak: 0, standard: 200, off_peak: 0 }, exportKwh: { peak: 0, standard: 100, off_peak: 0 } },
+        { exportTariff: p.exportTariff, sseg: p.ssegRule }).credit.used
+      expect(credit(7, 'high')).toBeCloseTo(100 * highAmt, 6)
+      expect(credit(3, 'low')).toBeCloseTo(100 * allAmt, 6)
+    }
+  })
+})

@@ -105,29 +105,35 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
   const licRow = lic.data as Row | null
   const kind = String(licRow?.kind ?? '')
 
-  const pricing = resolveStudyPricing({
-    study: {
-      tariffOverrideId: overrideId,
-      exportRule: study.export_rule ?? null,
-      escalation: study.escalation ?? null,
-      loadGrowthPct: (study.load_growth_pct ?? null) as number | string | null,
-    },
-    published: {
-      tariffId,
-      tariff: main.tariff,
-      financialYear: String(year.financial_year ?? ''),
-      licenseeKind: ((LICENSEE_KINDS as readonly string[]).includes(kind) ? kind : 'municipal') as LicenseeKind,
-      exportTariff: linked && linked !== 'missing' ? linked.tariff : null,
-      sseg: sseg.data ? ssegFromRow(sseg.data as Row) : null,
-      years: ((years.data ?? []) as Row[]).map((r) => ({
-        financialYear: String(r.financial_year),
-        approvedIncreasePct: r.approved_increase_pct === null || r.approved_increase_pct === undefined ? null : Number(r.approved_increase_pct),
-      })),
-    },
-    override: overrideId ? { id: overrideId, rows: ovRows.map(overrideChargeFromDb) } : null,
-    exportRates: rateRows.map((r) => ({ ...exportRateFromRow(r), sourceNote: (r.source_note ?? null) as string | null })),
-    orgSettings: readSolarOrgSettings((os.data as { settings?: unknown } | null)?.settings ?? null),
-  })
+  let pricing: ResolvedStudyPricing
+  try {
+    pricing = resolveStudyPricing({
+      study: {
+        tariffOverrideId: overrideId,
+        exportRule: study.export_rule ?? null,
+        escalation: study.escalation ?? null,
+        loadGrowthPct: (study.load_growth_pct ?? null) as number | string | null,
+      },
+      published: {
+        tariffId,
+        tariff: main.tariff,
+        financialYear: String(year.financial_year ?? ''),
+        licenseeKind: ((LICENSEE_KINDS as readonly string[]).includes(kind) ? kind : 'municipal') as LicenseeKind,
+        exportTariff: linked && linked !== 'missing' ? linked.tariff : null,
+        sseg: sseg.data ? ssegFromRow(sseg.data as Row) : null,
+        years: ((years.data ?? []) as Row[]).map((r) => ({
+          financialYear: String(r.financial_year),
+          approvedIncreasePct: r.approved_increase_pct === null || r.approved_increase_pct === undefined ? null : Number(r.approved_increase_pct),
+        })),
+      },
+      override: overrideId ? { id: overrideId, rows: ovRows.map(overrideChargeFromDb) } : null,
+      exportRates: rateRows.map((r) => ({ ...exportRateFromRow(r), sourceNote: (r.source_note ?? null) as string | null })),
+      orgSettings: readSolarOrgSettings((os.data as { settings?: unknown } | null)?.settings ?? null),
+    })
+  } catch (e) {
+    // A corrupt row (e.g. a non-finite amount the canonical ordering refuses) is unreadable, not a crash.
+    return unreadable(projectId, 'resolve', { message: String((e as Error)?.message ?? e) })
+  }
   const nmd = study.nmd_kva
   return {
     ok: true, pricing,
