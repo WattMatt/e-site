@@ -46,8 +46,16 @@ Customers never see the legal name in chats; they see the display name **E-Site*
 
 ## Step 3: Get the number (you)
 
-- Get a **new SIM that has never been registered on WhatsApp** (any SA network), and keep it in a phone that can receive SMS or calls for the verification code.
-- Do **not** use the existing support WhatsApp number. Moving a number that's on the WhatsApp Business app to the API deletes its chat history.
+**It does not need to be a cellphone.** Meta requires a number that you own, with a country and area code, that can receive **one SMS or one voice call** for the verification code and is not already on WhatsApp ([Meta: business phone numbers](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/phone-numbers)). After verification the number lives in Meta's cloud, so no phone or SIM has to stay on.
+
+In order of preference:
+
+1. **Start with Meta's free test number (no number needed).** Finishing the Cloud API "Get started" steps in step 4 creates one automatically. It sends to up to 5 verified recipients, which is enough to build and test everything end to end. Choose the real number later.
+2. **An office landline**, verified by **voice call**: Meta reads the code out once. The line keeps working for normal calls, but it must not already be registered on WhatsApp.
+3. **A virtual (VoIP) number** from an SA provider that can receive a voice call.
+4. A prepaid SIM, used once. Least preferred: SA networks recycle prepaid numbers after long inactivity, and re-registering later needs the number.
+
+Do **not** use the existing support WhatsApp number. Moving a number that's on the WhatsApp Business app to the API deletes its chat history. Whatever you choose, set the two-step PIN in step 4 so the number can be re-registered without the original line.
 
 ## Step 4: Create the WhatsApp Business Account (you)
 
