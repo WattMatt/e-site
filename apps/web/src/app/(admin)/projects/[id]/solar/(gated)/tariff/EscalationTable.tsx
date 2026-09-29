@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import type { EscalationRow } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
 import { saveSolarEscalationAction } from '@/actions/solar-tariff.actions'
+import { useArmedConfirm } from '../../_components/useArmedConfirm'
 
 const TD: CSSProperties = { padding: '4px 8px', fontSize: 13, borderTop: '1px solid var(--c-border)' }
 
@@ -20,9 +21,11 @@ export function EscalationTable({ projectId, updatedAt, rows }: { projectId: str
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const reset = useArmedConfirm()
   if (rows.length === 0) {
     return <p style={{ fontSize: 13, margin: 0 }}>No escalation path yet: set the analysis period in the organisation&apos;s Solar settings.</p>
   }
+  const overrides = rows.filter((r) => r.source === 'override').length
   const kept = Object.fromEntries(rows.filter((r) => r.source === 'override').map((r) => [String(r.year), String(r.pct)]))
   const save = async (f: Record<string, string>) => {
     setBusy(true); setMsg(null); setErrors({})
@@ -52,7 +55,11 @@ export function EscalationTable({ projectId, updatedAt, rows }: { projectId: str
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Button isLoading={busy} onClick={() => save({ ...kept, ...Object.fromEntries(Object.entries(form).filter(([, v]) => v.trim() !== '')) })}>Save escalation</Button>
-        <Button variant="ghost" isLoading={busy} onClick={() => save({})}>Reset to defaults</Button>
+        {overrides > 0 && (
+          <Button variant="ghost" isLoading={busy} onClick={() => { if (!reset.armed) { reset.arm(); return } reset.disarm(); save({}) }}>
+            {reset.armed ? `Confirm reset (drops ${overrides} project value${overrides === 1 ? '' : 's'})` : 'Reset to defaults'}
+          </Button>
+        )}
         {msg && <span role="status" style={{ fontSize: 13 }}>{msg}</span>}
       </div>
     </div>

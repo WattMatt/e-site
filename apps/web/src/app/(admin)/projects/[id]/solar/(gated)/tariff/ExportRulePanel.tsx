@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { saveSolarExportRuleAction } from '@/actions/solar-tariff.actions'
 import type { PinnedCharge } from '@/lib/solar/tariff/rows'
+import { useArmedConfirm } from '../../_components/useArmedConfirm'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 type RateForm = ExportRuleForm['rates'][number]
@@ -51,10 +52,17 @@ export function ExportRulePanel({ projectId, updatedAt, rule, rates, sourceNote,
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const dropRates = useArmedConfirm()
+  const drops = method !== 'manual' ? rates.length : 0
   const setRow = (i: number, p: Partial<RateForm>) => setRows(rows.map((r, k) => (k === i ? { ...r, ...p } : r)))
 
   return (
     <div style={{ display: 'grid', gap: 10, fontSize: 13 }}>
+      {rule?.method === 'linked_tariff' && !hasLinked && (
+        <p role="note" style={{ margin: 0, padding: '6px 10px', background: 'var(--c-amber-dim)', borderRadius: 6 }}>
+          The saved rule credits exports at a linked export tariff, but the pinned tariff has none. Choose another method and save.
+        </p>
+      )}
       {!rule && <p role="note" style={{ margin: 0, padding: '6px 10px', background: 'var(--c-amber-dim)', borderRadius: 6 }}>No export rule saved yet: the Tariff step stays incomplete until you save one.</p>}
       <fieldset style={{ border: 0, padding: 0, display: 'grid', gap: 4 }}>
         <legend>How exported energy is credited</legend>
@@ -102,13 +110,17 @@ export function ExportRulePanel({ projectId, updatedAt, rule, rates, sourceNote,
           const form: ExportRuleForm = { method, sourceNote: note, rates: method === 'manual' ? rows : [] }
           const check = validateExportRuleForm(form, hasLinked)
           if ('errors' in check) return setErrors(check.errors)
-          setErrors({}); setBusy(true)
+          setErrors({})
+          // Leaving a manual rate drops the saved rates (00213 save_export_rule replaces them).
+          if (drops > 0 && !dropRates.armed) return dropRates.arm()
+          dropRates.disarm()
+          setBusy(true)
           const r = await saveSolarExportRuleAction({ projectId, expectedUpdatedAt: updatedAt, form })
           setBusy(false)
           if ('fieldErrors' in r) setErrors(r.fieldErrors)
           else if ('error' in r) setMsg(r.error)
           else { setMsg('Saved.'); router.refresh() }
-        }}>Save export rule</Button>
+        }}>{dropRates.armed ? `Confirm save (drops ${drops} saved rate${drops === 1 ? '' : 's'})` : 'Save export rule'}</Button>
         {msg && <span role="status">{msg}</span>}
       </div>
       <div>

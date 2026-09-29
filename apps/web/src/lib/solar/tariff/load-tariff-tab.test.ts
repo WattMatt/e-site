@@ -38,4 +38,29 @@ describe('loadTariffTab', () => {
     const d = await loadTariffTab(fakeSupabase({}).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
     expect(d.study).toBeNull()
   })
+  it('a pinned tariff selects its year, reports a newer published year, and notes the pinned year when it no longer covers today', async () => {
+    const t = {
+      ...tables,
+      'solar.studies': [{ ...tables['solar.studies'][0], tariff_id: 't0' }],
+      'tariffs.tariff': [...tables['tariffs.tariff'], { id: 't0', tariff_year_id: 'y24', name: 'Commercial', code: null, category: 'commercial', metering: 'conventional', structure: 'flat', export_tariff_id: null }],
+    }
+    const d = await loadTariffTab(fakeSupabase({ tables: t }).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
+    expect(d.selectedYearId).toBe('y24')
+    expect(d.pinned).toMatchObject({ id: 't0', financialYear: '2024/25', yearState: 'superseded', newerYear: '2025/26' })
+    expect(d.yearNote).toBe('2024/25 does not cover today: 2025/26 is published in the library')
+  })
+  it('a pinned tariff in the year covering today: no note, no newer year', async () => {
+    const t = { ...tables, 'solar.studies': [{ ...tables['solar.studies'][0], tariff_id: 't1' }] }
+    const d = await loadTariffTab(fakeSupabase({ tables: t }).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
+    expect(d.selectedYearId).toBe('y25')
+    expect(d.pinned).toMatchObject({ id: 't1', newerYear: null })
+    expect(d.yearNote).toBeNull()
+  })
+  it('the library is a year behind: the escalation note shows whether the year came from the default or ?fy=', async () => {
+    const { client } = fakeSupabase({ tables })
+    expect((await loadTariffTab(client as never, 'p1', { fy: null, todayIso: '2026-08-01' })).yearNote)
+      .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
+    expect((await loadTariffTab(client as never, 'p1', { fy: '2025/26', todayIso: '2026-08-01' })).yearNote)
+      .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
+  })
 })

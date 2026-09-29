@@ -191,7 +191,10 @@ export async function recordSolarBillCheckAction(input: { projectId: string; for
   Promise<{ ok: true; result: BillCheckOutcome } | { error: string } | { fieldErrors: Partial<Record<BillCheckField, string>> }> {
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  const eff = await loadEffectiveTariff(g.supabase, input.projectId, new Date().toISOString().slice(0, 10))
+  // The TOU calendar valid in the BILLING month (its high-season months), not today's.
+  const billMonth = String(input.form?.month ?? '')
+  const onIso = /^\d{4}-(0[1-9]|1[0-2])$/.test(billMonth) ? `${billMonth}-15` : new Date().toISOString().slice(0, 10)
+  const eff = await loadEffectiveTariff(g.supabase, input.projectId, onIso)
   if ('error' in eff) return eff
   const v = validateBillCheckForm(input.form, isTouTariff(eff.tariff.structure, eff.tariff.charges))
   if ('errors' in v) return { fieldErrors: v.errors }

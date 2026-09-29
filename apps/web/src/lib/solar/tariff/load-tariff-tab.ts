@@ -9,7 +9,7 @@ import 'server-only'
  */
 import {
   buildEscalationRows, escalationSettingsFrom, overrideChargeFromDb, parseExportRule, parseStoredEscalation,
-  pickDefaultYear, readSolarOrgSettings, regimeForLicenseeKind, netBillingRule,
+  noteForYear, pickDefaultYear, readSolarOrgSettings, regimeForLicenseeKind, netBillingRule,
   type EscalationRow, type ExportRule, type LicenseeKind, type OverrideChargeRow, type SsegRule, type SupplyFacts,
   type TariffListItem, type TariffYearOption, type TouCalendar, type ExportRateRow,
 } from '@esite/shared'
@@ -212,7 +212,7 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
     },
     supply: { nmdKva: num(st.nmd_kva), supplyVoltageV: num(st.supply_voltage_v) },
     licensee, licenseeOptions, years, selectedYearId,
-    yearNote: fromFy || fromPin ? null : def.note,
+    yearNote: noteForYear(years, selectedYearId, opts.todayIso, regime),
     tariffs: ((ts ?? []) as Row[]).map(tariffListItemFromRow),
     pinned,
     override: overrideId ? { id: overrideId, rows: ((ov.data ?? []) as Row[]).map(overrideChargeFromDb) } : null,

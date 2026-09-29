@@ -41,6 +41,14 @@ describe('runBillCheck', () => {
     expect(r.differencePct).toBe(7.407)
     expect(r.warn).toBe(true)
   })
+  it('the boundary: exactly ±5.00 % is not a warning; 5.01 % is', () => {
+    const ctx = { highSeasonMonths: null, nmdKva: null }
+    const at = (kwh: number) => runBillCheck(flat, { ...input, importKwh: { peak: 0, standard: kwh, off_peak: 0 }, actualTotalExclVat: 2000 }, ctx)
+    expect(at(680)).toMatchObject({ modelledTotalExclVat: 2100, differencePct: 5, warn: false })
+    expect(at(600)).toMatchObject({ modelledTotalExclVat: 1900, differencePct: -5, warn: false })
+    expect(at(680.08)).toMatchObject({ differencePct: 5.01, warn: true })
+    expect(at(599.92)).toMatchObject({ differencePct: -5.01, warn: true })
+  })
   it('a seasonal tariff without a calendar is refused with a sentence, never guessed', () => {
     const seasonal = makeTariff({ name: 'S', structure: 'seasonal', charges: [
       makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 300, season: 'high' }),

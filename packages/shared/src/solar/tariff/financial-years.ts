@@ -49,3 +49,21 @@ export function pickDefaultYear(
   }
   return { yearId: latest.id, note: null }
 }
+
+/**
+ * The amber note for whichever year is SELECTED (the default, a pinned
+ * tariff's year, or ?fy=): says when it does not cover today and whether the
+ * current year exists in the library.
+ */
+export function noteForYear(
+  years: readonly TariffYearOption[], yearId: string | null, todayIso: string, regime: TariffRegime,
+): string | null {
+  const sel = yearId ? years.find((y) => y.id === yearId) : undefined
+  if (!sel) return null
+  const today = todayIso.slice(0, 10)
+  if (sel.effectiveFrom <= today && today <= sel.effectiveTo) return null
+  const want = financialYearOn(today, regime)
+  if (sel.financialYear > want) return `${sel.financialYear} has not started yet`
+  if (years.some((y) => y.financialYear === want && y.state === 'published')) return `${sel.financialYear} does not cover today: ${want} is published in the library`
+  return `${want} not yet published in the library — using ${sel.financialYear} with escalation`
+}

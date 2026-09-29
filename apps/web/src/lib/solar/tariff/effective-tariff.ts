@@ -30,7 +30,8 @@ function readFailed(projectId: string, what: string, err: unknown): { error: str
   return { error: EFFECTIVE_TARIFF_READ_ERROR }
 }
 
-export async function loadEffectiveTariff(supabase: AnyClient, projectId: string, todayIso: string): Promise<EffectiveTariff | { error: string }> {
+/** calendarOnIso: the date whose TOU calendar applies (a bill check passes mid-billing-month). */
+export async function loadEffectiveTariff(supabase: AnyClient, projectId: string, calendarOnIso: string): Promise<EffectiveTariff | { error: string }> {
   const { data: s, error: se } = await supabase.schema('solar').from('studies')
     .select('id, tariff_id, tariff_override_id, nmd_kva, licensee_id').eq('project_id', projectId).maybeSingle()
   if (se) return readFailed(projectId, 'studies', se)
@@ -52,7 +53,7 @@ export async function loadEffectiveTariff(supabase: AnyClient, projectId: string
     if (oe) return readFailed(projectId, 'tariff_override_charges', oe)
     tariff = overrideToTariff(tariff, ((rows ?? []) as Row[]).map(overrideChargeFromDb))
   }
-  const cal = await loadStudyCalendar(supabase, (study.licensee_id ?? null) as string | null, todayIso)
+  const cal = await loadStudyCalendar(supabase, (study.licensee_id ?? null) as string | null, calendarOnIso)
   return {
     studyId: String(study.id), tariff, tariffId: String(study.tariff_id), overrideId,
     nmdKva: study.nmd_kva === null || study.nmd_kva === undefined ? null : Number(study.nmd_kva),

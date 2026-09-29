@@ -49,6 +49,15 @@ describe('TariffPicker', () => {
   })
   it('an empty year says so', () => {
     render(<TariffPicker projectId="p1" years={years} selectedYearId="y25" yearNote={null} tariffs={[]} supply={{ nmdKva: null, supplyVoltageV: null }} pinnedTariffId={null} lockedReason={null} updatedAt="T1" />)
-    expect(screen.getByText(/No tariffs match/)).toBeDefined()
+    expect(screen.getByText('No tariffs match.')).toBeDefined()
+    expect(screen.queryByText(/Tick "Show all"/)).toBeNull()
+  })
+  it('nothing eligible but some hidden: the hint names "Show all", and ticking it reveals them', async () => {
+    const user = userEvent.setup()
+    render(<TariffPicker projectId="p1" years={years} selectedYearId="y25" yearNote={null} tariffs={[tariffs[1]]} supply={{ nmdKva: 500, supplyVoltageV: 400 }} pinnedTariffId={null} lockedReason={null} updatedAt="T1" />)
+    expect(screen.getByText('No tariffs match. Tick "Show all" to see tariffs outside this supply\'s NMD or voltage.')).toBeDefined()
+    await user.click(screen.getByLabelText('Show all'))
+    expect(screen.getByRole('radio', { name: /Megaflex/ })).toBeDefined()
+    expect(screen.queryByText(/No tariffs match/)).toBeNull()
   })
 })

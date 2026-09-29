@@ -85,7 +85,13 @@ export default async function SolarTariffPage({ params, searchParams }: {
             <CardBody>
               {pinned.newerYear && <p style={NOTE}>A newer tariff year ({pinned.newerYear}) is available: choose it above to move this study onto it.</p>}
               {d.override
-                ? <OverridePanel projectId={id} studyUpdatedAt={study.updatedAt} override={d.override} published={published} />
+                ? <div style={{ display: 'grid', gap: 12 }}>
+                    <OverridePanel projectId={id} studyUpdatedAt={study.updatedAt} override={d.override} published={published} />
+                    <details style={{ fontSize: 13 }}>
+                      <summary>Published tariff</summary>
+                      <div style={{ marginTop: 8 }}><ChargesTable projectId={id} charges={pinned.charges} /></div>
+                    </details>
+                  </div>
                 : <div style={{ display: 'grid', gap: 12 }}>
                     <ChargesTable projectId={id} charges={pinned.charges} />
                     <OverridePanel projectId={id} studyUpdatedAt={study.updatedAt} override={null} published={published} />

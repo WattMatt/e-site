@@ -5,7 +5,7 @@
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { EMPTY_BILL_CHECK_FORM, formatRandAmount, type BillCheckForm } from '@esite/shared'
+import { BILL_CHECK_WARN_PCT, EMPTY_BILL_CHECK_FORM, formatRandAmount, type BillCheckForm } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
 import { deleteSolarBillCheckAction, recordSolarBillCheckAction, type BillCheckOutcome } from '@/actions/solar-tariff.actions'
 import type { BillCheckRow } from '@/lib/solar/tariff/rows'
@@ -48,7 +48,7 @@ export function BillCheckPanel({ projectId, isTou, history, canRun }: { projectI
         else { setResult(r.result); router.refresh() }
       }}>Check this bill</Button></div>
       {result && (
-        <div role="status" style={{ padding: '8px 10px', borderRadius: 6, background: result.warn ? 'var(--c-amber-dim)' : 'var(--c-green-dim)' }}>
+        <div role="status" data-tone={result.warn ? 'amber' : 'ok'} style={{ padding: '8px 10px', borderRadius: 6, background: result.warn ? 'var(--c-amber-dim)' : 'var(--c-green-dim)' }}>
           {result.warn && <strong style={{ display: 'block' }}>Model differs from the bill</strong>}
           <span>Modelled {formatRandAmount(result.modelled)} vs actual {formatRandAmount(result.actual)} ({pct(result.differencePct)})</span>
           {result.notModelled.length > 0 && <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{result.notModelled.map((n) => <li key={n}>{n}</li>)}</ul>}
@@ -73,7 +73,7 @@ function HistoryRow({ projectId, row, onError }: { projectId: string; row: BillC
   return (
     <tr>
       <td>{row.month}</td><td align="right">{formatRandAmount(row.actual)}</td><td align="right">{formatRandAmount(row.modelled)}</td>
-      <td align="right" style={{ color: Math.abs(row.differencePct) > 5 ? 'var(--c-amber)' : undefined }}>{pct(row.differencePct)}</td>
+      <td align="right" data-tone={Math.abs(row.differencePct) > BILL_CHECK_WARN_PCT ? 'amber' : 'ok'} style={{ color: Math.abs(row.differencePct) > BILL_CHECK_WARN_PCT ? 'var(--c-amber)' : undefined }}>{pct(row.differencePct)}</td>
       <td>
         <Button variant={confirm.armed ? 'danger' : 'ghost'} size="sm" isLoading={busy}
           aria-label={confirm.armed ? `Confirm delete of the ${row.month} check` : `Delete the ${row.month} check`}

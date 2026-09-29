@@ -3,7 +3,8 @@ import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
-import { computeSolarReadiness, toSiteReadinessInput, toTariffReadinessInput, withTariffReadiness } from '@esite/shared'
+import { computeSolarReadiness, toSiteReadinessInput, withTariffReadiness } from '@esite/shared'
+import { loadTariffReadinessInput } from '@/lib/solar/tariff/readiness-input'
 import { SolarTabBar } from '../_components/SolarTabBar'
 import { ViewOnlyBanner } from '../_components/ViewOnlyBanner'
 
@@ -53,7 +54,7 @@ export default async function SolarGatedLayout({
   // tariff_id / export_rule hold no rand value (the manual export RATE lives in
   // the money table), so this select is safe at View; the tariff step itself
   // exists only at Edit + financials (visibleSolarTabs).
-  const readiness = withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level), toTariffReadinessInput(study))
+  const readiness = withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))
 
   return (
     <div className="animate-fadeup">

@@ -45,7 +45,7 @@ export function OverridePanel({ projectId, studyUpdatedAt, override, published }
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <p role="note" style={{ margin: 0, fontSize: 13, padding: '6px 10px', background: 'var(--c-amber-dim)', borderRadius: 6 }}>
-        Project-specific rates: the engine and the report use these instead of the published tariff.
+        Project-specific rates: the bill check uses these instead of the published tariff.
       </p>
       {override.rows.length === 0
         ? <p style={{ margin: 0, fontSize: 13 }}>This override has no rates. Revert to the published tariff to start again.</p>

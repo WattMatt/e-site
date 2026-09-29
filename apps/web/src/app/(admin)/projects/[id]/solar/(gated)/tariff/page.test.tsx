@@ -52,36 +52,64 @@ describe('Solar Tariff page', () => {
     render(await SolarTariffPage({ params: Promise.resolve({ id: 'p1' }), searchParams: Promise.resolve({}) }))
     expect(screen.getByText("TOU hours assumed equal to Eskom's — confirm against the municipality's by-law")).toBeDefined()
   })
+})
+
+const CLIENT_NAMES = new Set(['TariffPicker', 'ChargesTable', 'OverridePanel', 'ExportRulePanel', 'EscalationTable', 'BillCheckPanel', 'ReportTariffError', 'LinkLicensee'])
+
+/** The client components in a server tree, each prop asserted to be JSON. */
+function clientPropsAreJson(tree: unknown): string[] {
+  const seen: string[] = []
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (!node || typeof node !== 'object' || !('props' in node)) return
+    const el = node as { type: unknown; props: Record<string, unknown> }
+    const name = typeof el.type === 'function' ? (el.type as { name: string }).name : null
+    if (name && CLIENT_NAMES.has(name)) {
+      seen.push(name)
+      for (const [k, v] of Object.entries(el.props)) {
+        expect(typeof v, `${name}.${k}`).not.toBe('function')
+        expect(JSON.parse(JSON.stringify(v ?? null)), `${name}.${k}`).toEqual(v ?? null)
+      }
+    }
+    walk(el.props.children)
+  }
+  walk(tree)
+  return seen.sort()
+}
+
+const PINNED_ID = '11111111-1111-1111-1111-111111111111'
+const pinnedData = () => ({ ...base,
+  study: { id: 's1', updatedAt: 'T1', licenseeName: 'City of Probe', tariffId: PINNED_ID, tariffOverrideId: null, exportRule: null },
+  licensee: { id: 'l1', name: 'City of Probe', kind: 'municipal' },
+  years: [{ id: 'y25', financialYear: '2025/26', state: 'published', effectiveFrom: '2025-07-01', effectiveTo: '2026-06-30', approvedIncreasePct: null }],
+  selectedYearId: 'y25',
+  pinned: { id: PINNED_ID, name: 'Commercial', code: null, structure: 'flat', isTou: false, yearId: 'y25', financialYear: '2025/26',
+    yearState: 'published', charges: [], exportTariff: null, sseg: netBillingRule('municipal'), ssegFromLibrary: false, newerYear: null },
+  escalation: [{ year: 2, pct: 8, source: 'default', financialYear: null }],
+})
+
+describe('Solar Tariff page: the server -> client boundary', () => {
   it('hands every client component JSON only (no function props across the server boundary)', async () => {
     h.requireSolarLevel.mockResolvedValue('edit_financials')
-    const sseg = netBillingRule('municipal')
-    h.load.mockResolvedValue({ ...base,
-      study: { id: 's1', updatedAt: 'T1', licenseeName: 'City of Probe', tariffId: '11111111-1111-1111-1111-111111111111', tariffOverrideId: null, exportRule: null },
-      licensee: { id: 'l1', name: 'City of Probe', kind: 'municipal' },
-      years: [{ id: 'y25', financialYear: '2025/26', state: 'published', effectiveFrom: '2025-07-01', effectiveTo: '2026-06-30', approvedIncreasePct: null }],
-      selectedYearId: 'y25',
-      pinned: { id: '11111111-1111-1111-1111-111111111111', name: 'Commercial', code: null, structure: 'flat', isTou: false, yearId: 'y25', financialYear: '2025/26',
-        yearState: 'published', charges: [], exportTariff: null, sseg, ssegFromLibrary: false, newerYear: null },
-      escalation: [{ year: 2, pct: 8, source: 'default', financialYear: null }],
-    })
+    h.load.mockResolvedValue(pinnedData())
     const tree = await SolarTariffPage({ params: Promise.resolve({ id: 'p1' }), searchParams: Promise.resolve({}) })
-    const clientNames = new Set(['TariffPicker', 'ChargesTable', 'OverridePanel', 'ExportRulePanel', 'EscalationTable', 'BillCheckPanel', 'ReportTariffError', 'LinkLicensee'])
-    const seen: string[] = []
-    const walk = (node: unknown): void => {
-      if (Array.isArray(node)) { node.forEach(walk); return }
-      if (!node || typeof node !== 'object' || !('props' in node)) return
-      const el = node as { type: unknown; props: Record<string, unknown> }
-      const name = typeof el.type === 'function' ? (el.type as { name: string }).name : null
-      if (name && clientNames.has(name)) {
-        seen.push(name)
-        for (const [k, v] of Object.entries(el.props)) {
-          expect(typeof v, `${name}.${k}`).not.toBe('function')
-          expect(JSON.parse(JSON.stringify(v ?? null)), `${name}.${k}`).toEqual(v ?? null)
-        }
-      }
-      walk(el.props.children)
-    }
-    walk(tree)
-    expect(seen.sort()).toEqual(['BillCheckPanel', 'ChargesTable', 'EscalationTable', 'ExportRulePanel', 'OverridePanel', 'ReportTariffError', 'TariffPicker'])
+    expect(clientPropsAreJson(tree)).toEqual(['BillCheckPanel', 'ChargesTable', 'EscalationTable', 'ExportRulePanel', 'OverridePanel', 'ReportTariffError', 'TariffPicker'])
+  })
+  it('the no-licensee state: LinkLicensee gets JSON too', async () => {
+    h.requireSolarLevel.mockResolvedValue('edit_financials')
+    h.load.mockResolvedValue({ ...base, study: { id: 's1', updatedAt: 'T1', licenseeName: 'Unknown Town', tariffId: null, tariffOverrideId: null, exportRule: null },
+      licensee: null, licenseeOptions: [{ id: 'l1', name: 'City of Probe' }] })
+    const tree = await SolarTariffPage({ params: Promise.resolve({ id: 'p1' }), searchParams: Promise.resolve({}) })
+    expect(clientPropsAreJson(tree)).toContain('LinkLicensee')
+  })
+  it('override mode keeps the published rates (with View source) in a collapsed "Published tariff" section', async () => {
+    h.requireSolarLevel.mockResolvedValue('edit_financials')
+    h.load.mockResolvedValue({ ...pinnedData(), override: { id: 'o1', rows: [] } })
+    const tree = await SolarTariffPage({ params: Promise.resolve({ id: 'p1' }), searchParams: Promise.resolve({}) })
+    expect(clientPropsAreJson(tree)).toContain('ChargesTable')
+    render(tree)
+    const details = screen.getByText('Published tariff').closest('details')!
+    expect(details).not.toBeNull()
+    expect(details.open).toBe(false)
   })
 })

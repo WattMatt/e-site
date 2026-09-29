@@ -12,8 +12,9 @@ vi.mock('@/lib/solar/tariff/effective-tariff', () => ({ loadEffectiveTariff: h.e
 import {
   selectSolarTariffAction, saveSolarExportRuleAction, createSolarTariffOverrideAction, revertSolarTariffOverrideAction,
   editSolarOverrideChargeAction, recordSolarBillCheckAction, reportTariffErrorAction, saveSolarEscalationAction,
-  deleteSolarBillCheckAction, getSolarTariffSourceUrlAction, setStudyLicenseeAction,
+  deleteSolarBillCheckAction, setStudyLicenseeAction,
 } from './solar-tariff.actions'
+import * as actions from './solar-tariff.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 import { EMPTY_BILL_CHECK_FORM, makeCharge, makeTariff } from '@esite/shared'
 
@@ -31,13 +32,19 @@ function setup(o: FakeOptions = {}, rpc?: ReturnType<typeof vi.fn>) {
 beforeEach(() => { vi.clearAllMocks(); h.requireSolarLevel.mockResolvedValue('edit_financials') })
 
 describe('solar tariff actions', () => {
-  it('every action demands Edit + financials (the gate redirects lower levels)', async () => {
-    setup()
+  it('every exported action demands Edit + financials before it reads or writes anything (the gate redirects lower levels)', async () => {
+    const f = setup()
     h.requireSolarLevel.mockRejectedValue(new Error('REDIRECT:/projects/p1/solar/locked'))
-    await expect(selectSolarTariffAction({ projectId: P, tariffId: T, expectedUpdatedAt: 'T1' })).rejects.toThrow('REDIRECT')
-    await expect(reportTariffErrorAction({ projectId: P, tariffId: T, note: 'x' })).rejects.toThrow('REDIRECT')
-    await expect(getSolarTariffSourceUrlAction({ projectId: P, sourceDocumentId: 'd1' })).rejects.toThrow('REDIRECT')
-    expect(h.requireSolarLevel).toHaveBeenCalledWith(P, 'edit_financials', expect.anything())
+    const exported = Object.entries(actions).filter(([, v]) => typeof v === 'function') as Array<[string, (i: unknown) => Promise<unknown>]>
+    // A new action must join this loop: the count is pinned so the loop cannot silently shrink.
+    expect(exported.map(([k]) => k).sort()).toHaveLength(11)
+    const input = { projectId: P, tariffId: T, expectedUpdatedAt: 'T1', note: 'x', sourceDocumentId: 'd1', billCheckId: 'b1', form: EMPTY_BILL_CHECK_FORM }
+    for (const [name, fn] of exported) {
+      await expect(fn(input), name).rejects.toThrow('REDIRECT')
+    }
+    expect(h.requireSolarLevel).toHaveBeenCalledTimes(exported.length)
+    for (const c of h.requireSolarLevel.mock.calls) expect(c.slice(0, 2)).toEqual([P, 'edit_financials'])
+    expect(f.calls).toHaveLength(0)
     expect(h.svc).not.toHaveBeenCalled()
   })
 
@@ -133,6 +140,8 @@ describe('solar tariff actions', () => {
       actual_total_excl_vat: 2700, modelled_total_excl_vat: 2900, difference_pct: 7.407,
     })
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'bill_check_recorded', objectRef: { billingMonth: '2026-03' } })
+    // The TOU calendar (high-season months) is the one valid in the BILLING month, not today's.
+    expect(h.effective).toHaveBeenCalledWith(expect.anything(), P, '2026-03-15')
   })
 
   it('bill check: a tariff or override change while the bill was checked is refused as stale, not recorded', async () => {

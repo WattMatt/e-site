@@ -2,7 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { loadSolarActivity } from '@/lib/solar/activity'
-import { computeSolarReadiness, toSiteReadinessInput, toTariffReadinessInput, withTariffReadiness } from '@esite/shared'
+import { computeSolarReadiness, toSiteReadinessInput, withTariffReadiness } from '@esite/shared'
+import { loadTariffReadinessInput } from '@/lib/solar/tariff/readiness-input'
 import { ReadinessChecklist } from '../../_components/ReadinessChecklist'
 import { StudyHeader } from '../../_components/StudyHeader'
 import { OverviewKpis } from '../../_components/OverviewKpis'
@@ -32,7 +33,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <StudyHeader projectName={p.name ?? ''} address={address} supplyAuthority={licensee} />
-      <ReadinessChecklist projectId={id} steps={withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level), toTariffReadinessInput(study))} />
+      <ReadinessChecklist projectId={id} steps={withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))} />
       <OverviewKpis projectId={id} level={level} />
       <ActivityList projectId={id} items={activity} isGrantor={isGrantor === true} />
     </div>

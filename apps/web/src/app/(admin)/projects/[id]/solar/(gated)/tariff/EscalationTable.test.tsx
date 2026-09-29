@@ -23,11 +23,20 @@ describe('EscalationTable', () => {
     await user.click(screen.getByRole('button', { name: 'Save escalation' }))
     expect(h.save).toHaveBeenCalledWith({ projectId: 'p1', expectedUpdatedAt: 'T1', form: { '3': '10' } })
   })
-  it('Reset to defaults clears every override', async () => {
+  it('Reset to defaults arms first, names what it drops, then clears every override', async () => {
     const user = userEvent.setup()
-    render(<EscalationTable projectId="p1" updatedAt="T1" rows={[{ year: 2, pct: 20, source: 'override', financialYear: null }]} />)
+    render(<EscalationTable projectId="p1" updatedAt="T1" rows={[
+      { year: 2, pct: 20, source: 'override', financialYear: null },
+      { year: 3, pct: 9, source: 'override', financialYear: null },
+    ]} />)
     await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+    expect(h.save).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm reset (drops 2 project values)' }))
     expect(h.save).toHaveBeenCalledWith({ projectId: 'p1', expectedUpdatedAt: 'T1', form: {} })
+  })
+  it('Reset to defaults is not offered when nothing is set for this project', () => {
+    render(<EscalationTable projectId="p1" updatedAt="T1" rows={[{ year: 2, pct: 12, source: 'published', financialYear: '2026/27' }]} />)
+    expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull()
   })
   it('no rows: says where the path comes from', () => {
     render(<EscalationTable projectId="p1" updatedAt="T1" rows={[]} />)
