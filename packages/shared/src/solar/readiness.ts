@@ -34,9 +34,9 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'layout',     label: 'Layout',             built: true,  financial: false, hidden: false },
   { slug: 'yield',      label: 'Yield & Scenarios',  built: true,  financial: false, hidden: false },
   { slug: 'financials', label: 'Financials',         built: true,  financial: true,  hidden: false },
-  { slug: 'reports',    label: 'Reports & Proposal', built: false, financial: false, hidden: false },
+  { slug: 'reports',    label: 'Reports & Proposal', built: true,  financial: false, hidden: false },
   { slug: 'schedule',   label: 'Schedule',           built: true,  financial: false, hidden: false },
-  { slug: 'operations', label: 'Operations',         built: false, financial: false, hidden: true },
+  { slug: 'operations', label: 'Operations',         built: true,  financial: false, hidden: false },
 ]
 
 export function visibleSolarTabs(level: SolarAccessLevel): SolarTab[] {
@@ -151,9 +151,27 @@ export function financialsReadiness(f: FinancialsReadinessInput | null): { statu
   return { status: 'green', reason: 'Capex and a finance model are set' }
 }
 
+export function reportsReadiness(r: { hasCurrentFeasibility: boolean } | null): { status: ReadinessStatus; reason: string } {
+  if (!r) return { status: 'grey', reason: 'Feasibility reports need Edit + financials access' }
+  return r.hasCurrentFeasibility
+    ? { status: 'green', reason: 'A feasibility report exists for the selected case’s current run' }
+    : { status: 'grey', reason: 'No feasibility report for the selected case’s current run yet' }
+}
+
+export interface OperationsReadinessInput { installed: boolean; commissioningDate: string | null; monthsWithData: number }
+
+export function operationsReadiness(o: OperationsReadinessInput | null): { status: ReadinessStatus; reason: string } {
+  if (!o || !o.installed) return { status: 'grey', reason: 'Not installed yet — record the installation from the accepted proposal' }
+  if (!o.commissioningDate) return { status: 'amber', reason: 'Installed, but no commissioning date set' }
+  if (o.monthsWithData < 1) return { status: 'amber', reason: 'Installed, but no generation data imported yet' }
+  return { status: 'green', reason: `Commissioned ${o.commissioningDate}; ${o.monthsWithData} month${o.monthsWithData === 1 ? '' : 's'} of generation data` }
+}
+
 export interface SolarReadinessExtra {
   yield?: YieldReadinessInput
   financials?: FinancialsReadinessInput | null
+  /** Null (or absent) for callers below Edit + financials, who cannot see feasibility reports. */
+  reports?: { hasCurrentFeasibility: boolean } | null
   /** The selected case uses a manual system size (§2.3 Layout rule). */
   layoutManual?: boolean
   /** Phase 5: the layout aggregate (undefined = not computed). */
@@ -163,6 +181,8 @@ export interface SolarReadinessExtra {
   /** Phase 3b: computed only when the caller passes the aggregate (undefined = not computed). */
   load?: LoadReadinessInput | null
   schematics?: SchematicsReadinessInput | null
+  /** Null or absent until an installation exists. */
+  operations?: OperationsReadinessInput | null
 }
 
 function num(v: unknown): number | null {
@@ -200,6 +220,8 @@ export function computeSolarReadiness(site: SiteReadinessInput | null, level: So
       if (t.slug === 'site') return { slug: t.slug, label: t.label, live: true, ...siteReadiness(site) }
       if (t.slug === 'yield') return { slug: t.slug, label: t.label, live: true, ...yieldReadiness(extra.yield ?? { caseCount: 0, selectedCaseId: null, selectedStatus: null }) }
       if (t.slug === 'financials') return { slug: t.slug, label: t.label, live: true, ...financialsReadiness(extra.financials ?? null) }
+      if (t.slug === 'reports') return { slug: t.slug, label: t.label, live: true, ...reportsReadiness(extra.reports ?? null) }
+      if (t.slug === 'operations') return { slug: t.slug, label: t.label, live: true, ...operationsReadiness(extra.operations ?? null) }
       if (t.slug === 'layout' && extra.layoutManual) return { slug: t.slug, label: t.label, live: t.built, status: 'green' as const, reason: 'The selected case uses a manual system size' }
       // Load / Schematics are live once their tabs are built (3b-i / 3b-ii flip SOLAR_TABS);
       // their status is computed only when the caller passes the aggregate.

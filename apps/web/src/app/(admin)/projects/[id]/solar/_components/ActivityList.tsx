@@ -8,6 +8,8 @@ export function ActivityList({ projectId, items, isGrantor }: { projectId: strin
   const hrefFor = (target: SolarActivityItem['target']): string | null => {
     if (target === 'site') return `/projects/${projectId}/solar/site`
     if (target === 'schedule') return `/projects/${projectId}/solar/schedule`
+    if (target === 'reports') return `/projects/${projectId}/solar/reports`
+    if (target === 'operations') return `/projects/${projectId}/solar/operations`
     if (target === 'access' && isGrantor) return `/projects/${projectId}/solar/access`
     return null
   }

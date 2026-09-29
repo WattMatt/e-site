@@ -35,6 +35,7 @@ type ToggleField =
   | 'notifyQcEmail'
   | 'notifyDiaryEmail'
   | 'notifyFormEmail'
+  | 'notifySolarEmail'
 
 interface Props {
   projectId: string
@@ -43,6 +44,7 @@ interface Props {
   initialNotifyQcEmail: boolean
   initialNotifyDiaryEmail: boolean
   initialNotifyFormEmail: boolean
+  initialNotifySolarEmail: boolean
 }
 
 export function IntegrationsPanel({
@@ -52,6 +54,7 @@ export function IntegrationsPanel({
   initialNotifyQcEmail,
   initialNotifyDiaryEmail,
   initialNotifyFormEmail,
+  initialNotifySolarEmail,
 }: Props) {
   const [values, setValues] = useState<Record<ToggleField, boolean>>({
     notifyRfiEmail: initialNotifyRfiEmail,
@@ -59,6 +62,7 @@ export function IntegrationsPanel({
     notifyQcEmail: initialNotifyQcEmail,
     notifyDiaryEmail: initialNotifyDiaryEmail,
     notifyFormEmail: initialNotifyFormEmail,
+    notifySolarEmail: initialNotifySolarEmail,
   })
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -102,6 +106,12 @@ export function IntegrationsPanel({
       label: 'Site form email notifications',
       description:
         'Send the branded PDF to the project team when a site form (such as a Termination & Making Safe record) is distributed on this project. Turning this off leaves the in-app notification in place.',
+    },
+    {
+      field: 'notifySolarEmail',
+      label: 'Solar proposal email notifications',
+      description:
+        'Allow emailing an issued Solar proposal link to the client, and email the proposer when the client accepts or declines. Turning this off leaves the in-app notification in place.',
     },
   ]
 

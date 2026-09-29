@@ -32,4 +32,12 @@ describe('ActivityList', () => {
     render(<ActivityList projectId="p1" items={items} isGrantor={false} />)
     expect(screen.getByText('28 Sep 2026 · Ann')).toBeDefined()
   })
+  it('links report and proposal events to the Reports tab', () => {
+    render(<ActivityList projectId="p1" items={[{ id: 3, at: '2026-09-29T09:00:00Z', actorName: 'The client', text: 'Proposal v2 accepted by the client', target: 'reports' as const }]} isGrantor={false} />)
+    expect(screen.getByRole('link', { name: 'Proposal v2 accepted by the client' }).getAttribute('href')).toBe('/projects/p1/solar/reports')
+  })
+  it('links operations activity to the Operations tab', () => {
+    render(<ActivityList projectId="p1" items={[{ id: 4, at: '2026-09-29T09:00:00Z', actorName: 'Ann', text: 'Downtime recorded (2 h)', target: 'operations' as const }]} isGrantor={false} />)
+    expect(screen.getByRole('link', { name: 'Downtime recorded (2 h)' }).getAttribute('href')).toBe('/projects/p1/solar/operations')
+  })
 })

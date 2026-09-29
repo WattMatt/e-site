@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-const h = vi.hoisted(() => ({ sel: vi.fn(), refresh: vi.fn() }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh }) }))
+const h = vi.hoisted(() => ({ sel: vi.fn(), refresh: vi.fn(), push: vi.fn() }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push: h.push }) }))
 vi.mock('@/actions/solar-cases.actions', () => ({ setSelectedSolarCaseAction: h.sel }))
+vi.mock('@/actions/solar-reports.actions', () => ({ generateSolarReportAction: vi.fn() }))
 import { OverviewKpis } from './OverviewKpis'
 import type { HeadlineKpis } from '@/lib/solar/cases/page-data'
 
@@ -71,5 +72,15 @@ describe('OverviewKpis (§2.2, §2.4)', () => {
     const b = screen.getByRole('button', { name: 'Generate feasibility report' }) as HTMLButtonElement
     expect(b.disabled).toBe(true)
     expect(b.title).toBe('The selected case is stale — re-run it first')
+  })
+  it('Generate feasibility report is enabled when current and priced', () => {
+    render(<OverviewKpis projectId="p1" level="edit_financials" kpis={kpis} selectable={selectable} selectedCaseId="c1" studyUpdatedAt="T0" stale={false} />)
+    expect((screen.getByRole('button', { name: 'Generate feasibility report' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+  it('Generate feasibility report is disabled with the reason when the case has no financials yet', () => {
+    render(<OverviewKpis projectId="p1" level="edit_financials" kpis={{ ...kpis, money: null }} selectable={selectable} selectedCaseId="c1" studyUpdatedAt="T0" stale={false} />)
+    const b = screen.getByRole('button', { name: 'Generate feasibility report' }) as HTMLButtonElement
+    expect(b.disabled).toBe(true)
+    expect(b.title).toBe('Run financials for the selected case first')
   })
 })

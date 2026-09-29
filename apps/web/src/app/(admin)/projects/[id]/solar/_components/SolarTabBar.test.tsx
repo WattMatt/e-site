@@ -30,14 +30,15 @@ describe('SolarTabBar', () => {
     expect(screen.queryByRole('link', { name: /Reports/ })).toBeNull()
   })
 
-  it('hides Tariff and Financials below Edit + financials, shows them at it; never Operations', () => {
+  it('hides Tariff and Financials below Edit + financials, shows them at it; links Operations at every level', () => {
     const { rerender } = render(<SolarTabBar projectId="p1" level="edit" readiness={[]} />)
     expect(screen.queryByText('Tariff')).toBeNull()
     expect(screen.queryByText('Financials')).toBeNull()
+    expect(screen.getByRole('link', { name: /Operations/ }).getAttribute('href')).toBe('/projects/p1/solar/operations')
     rerender(<SolarTabBar projectId="p1" level="edit_financials" readiness={[]} />)
     expect(screen.getByText('Tariff')).toBeDefined()
     expect(screen.getByText('Financials')).toBeDefined()
-    expect(screen.queryByText('Operations')).toBeNull()
+    expect(screen.getByRole('link', { name: /Operations/ }).getAttribute('href')).toBe('/projects/p1/solar/operations')
   })
 
   it('puts the rule outcome on the Site & Supply dot', () => {

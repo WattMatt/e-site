@@ -52,6 +52,16 @@ describe('SavedReportsPanel', () => {
     expect(line).not.toContain('revisionId')
   })
 
+  it('a solar monthly report with no variance prints "n/a", never 0 (review B8)', async () => {
+    await renderPanel({
+      kind: 'solar_monthly',
+      reports: [{ ...ROW, kind: 'solar_monthly', title: 'Solar monthly report — March 2026', summary: { period: '2026-03', actualKwh: 900, guaranteeKwh: 0, variancePct: null } } as ProjectReportRow],
+    })
+    const line = screen.getByText(/kWh generated/).textContent ?? ''
+    expect(line).toContain('variance n/a')
+    expect(line).not.toMatch(/\b0% variance/)
+  })
+
   it('renders a row with version label and status', async () => {
     await renderPanel()
     expect(screen.getByText('v3')).toBeDefined()

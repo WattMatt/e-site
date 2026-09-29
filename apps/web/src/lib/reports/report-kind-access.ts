@@ -65,17 +65,25 @@ export const OPEN_READ_REPORT_KINDS: readonly string[] = [
 /**
  * Kinds whose read follows the Solar module's own gate: the caller's per-user
  * Solar level on the project (00207, decision D-04), not an E-Site role. A
- * contractor with a View grant reads a layout sheet; a project manager with no
- * grant does not. Mirrored in public.user_can_read_report_kind() (00211) and
- * pinned by report-kind-access.contract.test.ts against the FINAL definition.
+ * contractor with a View grant reads a layout sheet, a schematic sheet or a
+ * technical report; a project manager with no grant does not. Mirrored in
+ * public.user_can_read_report_kind() and pinned by
+ * report-kind-access.contract.test.ts against the FINAL definition.
  */
 export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>> = {
   // A drawing crop with arrays, strings, a legend and a title block — no rand
   // values, so View is enough (the Layout tab itself is tech-read).
   solar_layout_sheet: 'view',
-  // A single-line diagram with meter cards, supply lines and a legend — no rand
-  // values (00214, which also redefines user_can_read_report_kind() in full).
+  // A single-line diagram with meter cards, supply lines and a legend — no rand values.
   solar_schematic_sheet: 'view',
+  // The feasibility content without any rand value (spec §9.1).
+  solar_technical: 'view',
+  // Capex, bills, cashflow, IRR — commercial.
+  solar_feasibility: 'edit_financials',
+  // The issued client offer. Clients read it through the token page / portal only.
+  solar_proposal: 'edit_financials',
+  // The client's monthly performance report: lost revenue at the pinned tariff — commercial.
+  solar_monthly: 'edit_financials',
 }
 
 /** The Solar level required to read this kind, or null when it is not a Solar kind. */

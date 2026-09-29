@@ -9,9 +9,10 @@ describe('ReadinessChecklist', () => {
     expect(screen.getByRole('link', { name: 'Site & Supply' }).getAttribute('href')).toBe('/projects/p1/solar/site')
     expect(screen.getByRole('link', { name: 'Load' }).getAttribute('href')).toBe('/projects/p1/solar/load')
     expect(screen.getByRole('link', { name: 'Yield & Scenarios' }).getAttribute('href')).toBe('/projects/p1/solar/yield')
-    // Only Reports is still a later phase once phases 1–5b are merged.
-    expect(screen.getAllByText('Not started — available in a later phase').length).toBe(1)
-    expect(screen.queryByRole('link', { name: /Reports/ })).toBeNull()
+    // Every tab is built once phases 1–7 are assembled: no step is a later phase.
+    expect(screen.queryAllByText('Not started — available in a later phase').length).toBe(0)
+    expect(screen.getByRole('link', { name: 'Reports & Proposal' }).getAttribute('href')).toBe('/projects/p1/solar/reports')
     expect(screen.getByRole('link', { name: 'Schedule' }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
+    expect(screen.getByRole('link', { name: 'Operations' }).getAttribute('href')).toBe('/projects/p1/solar/operations')
   })
 })

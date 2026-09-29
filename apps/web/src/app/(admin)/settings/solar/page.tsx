@@ -2,11 +2,14 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { DEFAULT_SOLAR_SCHEDULE_TEMPLATE, OWNER_ADMIN, readScheduleTemplate, readSolarOrgSettings, solarSettingsToForm } from '@esite/shared'
+import { templateFromRow } from '@esite/shared/solar-operations/client'
 import { createClient } from '@/lib/supabase/server'
 import { requireRolePage } from '@/lib/auth/require-role'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { SolarSettingsForm } from './SolarSettingsForm'
 import { ScheduleTemplateEditor } from './ScheduleTemplateEditor'
+import { ProposalTemplatesForm } from './ProposalTemplatesForm'
+import { HandoverTemplateForm } from './HandoverTemplateForm'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Solar defaults' }
@@ -16,10 +19,9 @@ type AnyClient = SupabaseClient<any, any, any>
 
 const LATER = [
   { title: 'Load densities', body: 'W/m² per tenant category and archetype mapping — with the load modelling tab.' },
-  { title: 'Branding for Solar reports', body: 'Solar-specific disclaimer and terms — with feasibility reports and proposals.' },
 ]
 
-/** /settings/solar (spec §11) — org owners/admins. Rate card + finance/opex/loss defaults live; equipment on its own page; two sections later. */
+/** /settings/solar (spec §11) — org owners/admins. Rate card + finance/opex/loss defaults live; equipment on its own page; proposal templates live; load densities later. */
 export default async function SolarSettingsPage() {
   const ctx = await requireRolePage(OWNER_ADMIN)
   const supabase = (await createClient()) as unknown as AnyClient
@@ -34,6 +36,14 @@ export default async function SolarSettingsPage() {
   // An invalid stored template shows the standard programme but keeps the row's
   // updated_at, so saving overwrites it rather than conflicting.
   const orgItems = readScheduleTemplate(tplRow?.content ?? null)
+  // Read through the caller's session (00216 SELECT policy); an unsubscribed org just sees the defaults.
+  const { data: tpl } = await supabase.schema('solar').from('proposal_templates')
+    .select('terms_text, disclaimer_text, validity_days, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
+  const t = tpl as { terms_text?: string; disclaimer_text?: string; validity_days?: number; updated_at?: string } | null
+  // Phase 7: the org's handover checklist template (00217 SELECT policy); none saved → the built-in default.
+  const { data: hoRow } = await supabase.schema('solar').from('handover_templates')
+    .select('name, items, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
+  const ho = hoRow as { name?: unknown; items?: unknown; updated_at?: string } | null
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
@@ -59,6 +69,15 @@ export default async function SolarSettingsPage() {
           updatedAt={tplRow?.updated_at ?? null}
           isDefault={orgItems === null}
         />
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <ProposalTemplatesForm
+          initial={{ termsText: t?.terms_text ?? '', disclaimerText: t?.disclaimer_text ?? '', validityDays: t?.validity_days ?? 30 }}
+          updatedAt={t?.updated_at ?? null}
+        />
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <HandoverTemplateForm initial={templateFromRow(ho ? { name: ho.name, items: ho.items } : null)} updatedAt={ho?.updated_at ?? null} />
       </div>
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
         {LATER.map((s) => (

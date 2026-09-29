@@ -67,7 +67,7 @@ membership.
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
-| `/settings/solar` (includes the org's Solar schedule template, `solar.schedule_templates`) | W | W | — | — | — | — | — |
+| `/settings/solar` (includes the org's Solar schedule template, `solar.schedule_templates`; the Phase 6 **Proposal and report templates** card: terms, disclaimer, default validity — `saveSolarProposalTemplatesAction`; the Phase 7 handover checklist template) | W | W | — | — | — | — | — |
 | `/settings/solar/equipment` | W | W | — | — | — | — | — |
 | `/settings/users` | W | W | — | — | — | — | — |
 | `/settings/branding` | W | W | — | — | — | — | — |
@@ -139,6 +139,15 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `POST /api/projects/[id]/solar/schedule/import/parse` | Solar Edit | Solar Edit | Solar Edit | 403 | 403 | 403 | 403 |
 | `GET /api/projects/[id]/solar/schedule/export/[format]` (`xlsx`, `ics`, `pdf` — no Word, owner decision) | Solar View+ | Solar View+ | Solar View+ | Solar View+ | 403 | 403 | 403 |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
+| `/projects/[id]/solar/reports` | W (all; **Delete** on technical / feasibility saved reports) | W (technical + feasibility + proposals + acceptance record) | W (generate technical; technical list) | R (technical list only; no generate controls) | → locked | → locked | → locked |
+| `/solar` (portfolio, org level — the caller's ACTIVE org) | R + **Manage access** per row | R (rand values) | R (no rand values) | R (no rand values) | R (only projects they hold a level on — usually empty) | R (their own active org only; another org's project never appears) | supplier: R (empty) / client_viewer: → `/portal` |
+| `/proposal/[token]` (public, no login) | — | — | — | — | — | — | anyone holding a live link: R + Accept / Decline / Download |
+
+> **Reports & Proposal is live (Phase 6).** Feasibility reports, proposals and the acceptance record need Edit + financials; generating a technical report needs Edit; the technical list is readable on View. Report reads follow the Solar level in `public.user_can_read_report_kind()` (00216) and `SOLAR_READ_REPORT_KINDS` (`lib/reports/report-kind-access.ts`), not an E-Site role. `solar_proposal` PDFs are never deletable (`deleteProjectReportAction` refuses the kind); other Solar kinds are deleted only by OWNER_ADMIN (`requireRole(org, OWNER_ADMIN)`, `.ok`; a project manager is refused) AND Solar Edit (the UI shows Delete to grantors). At the database (00216): the Solar PDFs in bucket `reports` (`<org>/<project>/solar-reports/`, `/solar-proposals/`) are **service-only** — per-verb RESTRICTIVE `solar_pdfs_service_only_*` policies on `storage.objects` refuse them to every session role, where 00117's bucket policies would admit any org member — and no session inserts or updates a Solar report row (kind `solar_*`), any row whose `storage_path` is a Solar PDF, or any report row of ANY kind whose `storage_path` is not canonical — `<org uuid>/<project uuid>/[dir/]file.pdf` under the row's OWN org and project, no `..` (`reports_solar_service_only_insert` / `_update`, RESTRICTIVE, USING and WITH CHECK; every report writer uses the service client, so a non-canonical session row is always a forgery), while the `solar_proposal` row cannot be deleted through a session either (`reports_solar_proposal_delete_authz`). `getProjectReportUrlAction` signs a row's file only when its path is canonical FIRST (`isCanonicalReportPath`, `lib/reports/report-path.ts`, the same pattern as the policies: storage-js does not encode a path and fetch's URL parser rewrites `\`, TAB/CR/LF, `..` and `%2e%2e`, so a raw-string check is not a check on the signed object), then sits under the row's own `<org>/<project>/` and, for a Solar PDF path, only for a Solar kind whose file the caller's Solar level can read (a fixed refusal otherwise). `deleteProjectReportAction` removes the file only when the row delete returned exactly one row and the path is canonical and under the row's own prefix. A study or case that an issued proposal depends on cannot be deleted directly (`studies_keep_issued_proposals` / `cases_keep_issued_proposals`); a project delete still cascades. The page gates on `requireSolarLevel(project, 'view')` and renders nothing with money below Edit + financials.
+>
+> **`/solar` portfolio** (`app/(admin)/solar/page.tsx`): `getOrgContext()` (signed out → `/login?next=/solar`); client viewers are bounced by `(admin)/layout.tsx`. Unsubscribed org: owner/admin see **Subscribe** (`SubscribeButton` on the org's first project — the route derives the org from the project); everyone else sees "Ask an organisation owner or admin to subscribe". Rows come from `public.solar_portfolio(org)` (00216, `SECURITY DEFINER`, EXECUTE `authenticated` + `service_role`, not `anon`), which returns only projects with a Solar study where `solar_can_view` holds for the caller, and the year-1 saving only where `solar_can_see_money` holds (the loader drops it again when `can_see_money` is false). **Manage access** shows for active-org owners/admins. No map: `apps/web` has no map component; filters are status, province and supply authority.
+>
+> **`/proposal/[token]`** (`app/(proposal)/proposal/[token]/page.tsx`) is in `PUBLIC_PATHS` and `PUBLIC_CONTENT_PREFIXES` (`'/proposal/'`, trailing slash — `/proposals` stays protected). `rateLimit('solar-proposal-view:<ip>', 60, 60 s)`; the page stamps IP/UA from request headers and calls the service-only `solar_proposal_by_token` through the service client; only the client view model reaches the client component.
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
 >
@@ -202,6 +211,12 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `scheduleTemplateCountAction` (`solar-schedule-template.actions.ts`) | Edit | `solar.schedule_org_template` (definer, re-checks Edit); reads only, for the toolbar confirm's task count |
 | `saveOrgScheduleTemplateAction` | `requireRole(active org, OWNER_ADMIN)` (`.ok`); `expectedUpdatedAt` | RLS `schedule_templates_*` (owner/admin of the row's org); no DELETE |
 | `commitScheduleImportAction` (`solar-schedule-import.actions.ts`) | Edit; re-validates the plan; owners matched only against eligible candidates (unmatched → default owner, listed back) | `schedule_create_tasks` (append or replace in ONE transaction) |
+| `generateSolarReportAction` (`solar-reports.actions.ts`) | feasibility: `requireSolarLevel(project, 'edit_financials')`; technical: `'edit'` — FIRST; `rateLimit('solar-report:<user>', 6, 60 s)`; refused while the selected case is Stale / running / failed | Reads the stored run (`case_runs`) and, for feasibility, `case_run_financials` for THAT run under money RLS; writes `projects.reports` (kind `solar_feasibility` / `solar_technical`, source = the run) and the `reports` bucket with the service client after the gate |
+| `createSolarProposalAction` / `saveSolarProposalDraftAction` / `deleteSolarProposalDraftAction` / `reviseSolarProposalAction` (`solar-proposals.actions.ts`) | `requireSolarLevel(project, 'edit_financials')` FIRST; save stale-guarded | `proposals_*` (00216): permissive membership + RESTRICTIVE `solar_can_see_money` per verb; `proposals_guard` forces drafts, versions revisions, refuses revising an accepted family and any user change once issued |
+| `issueSolarProposalAction` / `withdrawSolarProposalAction` / `newSolarProposalLinkAction` | `requireSolarLevel(project, 'edit_financials')` FIRST; the proposal is read through the caller's session (RLS) before any service call; Issue only: `rateLimit('solar-issue:<user>', 5, 60 s)` and stale-guarded (Withdraw and New link are not rate-limited) | Service-only `solar_issue_proposal` / `solar_withdraw_proposal` / `solar_rotate_proposal_link` (EXECUTE: `service_role` only). Issue stores PDF + SHA-256 + snapshot and the token's SHA-256 (the raw 32-byte token is returned once); client email only when ticked AND `notify_solar_email` is on, and only to the project's active `client_viewer` members |
+| `draftSolarProposalNarrativeAction` | `requireSolarLevel(project, 'edit_financials')` FIRST; refused with the stated reason without `ANTHROPIC_API_KEY`; drafts only; `rateLimit('solar-narrative:<org>', 10, 10 min)` | `@anthropic-ai/sdk` called server-side (model `SOLAR_NARRATIVE_MODEL`, default `claude-opus-5-5`; no fallbacks) with the proposal's figures and the project/client names only; any API error or refusal returns "Narrative unavailable — write it yourself"; text saved into the draft (stale-guarded) |
+| `saveSolarProposalTemplatesAction` (`solar-proposal-templates.actions.ts`) | `requireRole(active org, OWNER_ADMIN)` (`.ok`); stale-guarded | `solar.proposal_templates` RESTRICTIVE writes on `solar.library_orgs('admin')`; reads on `library_orgs('edit_financials')`; no DELETE grant |
+| `respondToPortalProposalAction` / `getPortalProposalPdfUrlAction` (`solar-portal-proposals.actions.ts`) | `requirePortalAccess(project)` (client viewer, active member); respond: `rateLimit('solar-portal-respond:<user>', 5, 10 min)`; IP/UA from request headers | Service-only `solar_portal_respond` / `solar_portal_proposal` re-check portal membership in SQL; 7-day signed URL only for viewed / accepted / declined |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — since `00218` authenticated users hold **no** INSERT grant or policy on the table, so an editor cannot forge an activity line; `recordSolarAudit` is the only writer, pinned by `audit-writers.contract.test.ts`) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 >
@@ -260,11 +275,14 @@ above therefore documents legacy per-page gates only; the client's actual surfac
 | `/portal/[projectId]/floor-plans` | R | → `/dashboard` |
 | `/portal/[projectId]/handover` | R | → `/dashboard` |
 | `/portal/[projectId]/tenant-schedule` | R | → `/dashboard` |
+| `/portal/[projectId]/proposals` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
+| `/portal/[projectId]/proposals/[proposalId]` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
 
 ᵃ Explicit project columns only — `contract_value` is never selected ([`lib/portal/data.ts`](../apps/web/src/lib/portal/data.ts)).
 ᵇ Curated service-role read with explicit column allow-lists after the `requirePortalAccess` membership check; the client JWT stays RLS-blocked on these schemas.
 ᶜ Added 2026-07-07 (user decision, reversing the 2026-07-06 "not chosen"): board register + procurement status. Served by a **curated service-role read** (like cables/gcr) — order notes, quote/order-instruction documents and shop drawings are never selected, and migration `00166` now blocks the client JWT from reading `structure.node_orders` / `node_order_documents` / `node_order_shop_drawings` and the `node-order-documents` storage bucket directly (a confirmed pre-existing leak: a client could `GET` a quote PDF via PostgREST/storage).
 ᵈ **Issued QC reports only — enforced at the DB**, not by page logic: migration `00172`'s `qc_reports` SELECT policy hides non-`issued` rows (drafts AND closed) from client viewers, and the page just renders what the user client returns. "Download PDF" goes through `getPortalQcReportPdfUrlAction` (`portal-qc.actions.ts`), which RLS-reads the QC report AND the latest issued `projects.reports` `kind='qc'` row on the **user client** (`reports_select`, 00117 — `user_has_project_access`) before service-signing a 300 s download URL.
+ᵉ **Solar proposals (Phase 6).** Every non-draft version on the project, served by the service-only `solar_portal_proposals` / `solar_portal_proposal` (00216), which re-check active `client_viewer` project membership in SQL after the `requirePortalAccess` layout gate (a project `client_viewer` role, or an org `client_viewer` role in the **project's own** organisation — `solar.is_portal_member`); only the client projection of the snapshot (`toClientSnapshot`: no proposal/family id, case, run id, hash or provenance) reaches the browser; opening one marks it viewed with server-stamped IP/UA. The page renders the frozen snapshot through the same `ProposalClientView` as `/proposal/[token]`. Accept / Decline / Download go through `solar-portal-proposals.actions.ts` (see Solar server actions). No Solar subscription check: an issued offer stays readable until it expires or is withdrawn.
 
 Every `[projectId]` aspect is gated by `requirePortalAccess` in the per-project layout (active
 `client_viewer` + active `project_members` row, else 404). Table writes are independently blocked at
@@ -295,7 +313,7 @@ All 14 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narro
 | `/projects/[id]/settings/contacts`      | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/jbcc-parties`  | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/operational`   | W | W | W | R | R | R | R |
-| `/projects/[id]/settings/integrations`  | W | W | — | — | — | — | — |
+| `/projects/[id]/settings/integrations` (incl. `notify_solar_email` — Solar proposal emails: client link at Issue, issuer on accept/decline; default ON; bell never gated) | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/danger-zone`   | W | — | — | — | — | — | — |
 | `/projects/[id]/settings/history`       | R | R | R | R | R | R | R |
 
@@ -420,6 +438,34 @@ Storage bucket `solar-meter-raw` (private): read needs the path's org in the cal
 | `POST /api/projects/[id]/solar/cases/[caseId]/cancel` | Solar Edit | flips the case's running run to `cancelled`; the running request then discards its CSV and returns 409; 409 "This run has already finished." when nothing is running |
 | `GET /api/projects/[id]/solar/cases/[caseId]/runs/[runId]/export?kind=hourly\|monthly\|slice` | Solar View | the run row is read through the caller's session (404 if not visible / not succeeded); hourly = stored 8760 CSV, monthly = from stored outputs, slice ≤ 31 whole days JSON (range validated before storage is read); a lost stored file is a 404 sentence |
 | `GET /api/projects/[id]/solar/cases/[caseId]/financials/xlsx` | Solar Edit + financials | latest stored `case_run_financials` row under money RLS; 404 "Run financials first." before Run financials |
+
+### Solar reports and proposals API (Phase 6)
+
+| Route | Needs | Notes |
+|---|---|---|
+| `GET /api/projects/[id]/solar/proposals/[proposalId]/preview` | Solar Edit + financials (`requireSolarLevelAPI`, JSON 401/403) | ids UUID-validated first; drafts only (409 once issued); watermarked PDF; nothing stored; `rateLimit('solar-preview:<user>', 20, 60 s)` |
+| `POST /api/solar/proposal-response` | **Public** (exact path in `PUBLIC_API_PATHS`) — the 43-char token in the BODY is the bearer | a non-token-shaped string is 400 before any lookup; `rateLimit('solar-proposal-respond:<ip>', 10, 10 min)` and `rateLimit('solar-proposal-respond-t:<token sha-256>', 5, 10 min)`; IP/UA stamped from headers; `solar_proposal_respond_by_token` hashes the token in SQL and refuses expired / withdrawn / answered; notifies the issuer |
+| `POST /api/solar/proposal-download` | **Public**, token in the body | `rateLimit('solar-proposal-download:<ip>', 20, 60 s)`; non-token-shaped string 400; 7-day signed URL only for viewed / accepted / declined; 410 otherwise |
+
+Nothing is granted to `anon` anywhere: every public path uses the service client to call a service-only definer function.
+
+### Solar operations (Phase 7, 00217)
+
+| Route / action | Needs | Notes |
+|---|---|---|
+| `/projects/[id]/solar/operations` (page) | Solar View (`requireSolarLevel 'view'`) | Technical reads for View; Edit sees write controls; the monthly report panel renders only at Edit + financials. Reads through the caller's session (00217 RLS). |
+| `createInstallationAction` | Solar Edit | Only from the study's ACCEPTED proposal (00217 bind trigger re-checks, and pins `baseline.caseRunId` to that proposal's run and the 12 × 24 shape). The installation INSERT is **service-only**: 00217's RESTRICTIVE `installations_insert_authz` is `WITH CHECK (false)` for every session, so the action inserts with the service client after the Edit gate, naming the caller as `created_by`/`updated_by`. Seeds a P50 guarantee and the handover checklist through the caller's session. |
+| `saveInstallationAction` | Solar Edit | Commissioning date, as-built, notes; stale-guarded. The baseline is immutable (trigger); a commissioning date later than recorded downtime is refused (trigger). |
+| `linkMeterAction` / `unlinkMeterAction` / `setMeterShareAction` | Solar Edit | Generation = meter kind `solar`; consumption = `council`/`bulk` (00217 refuses anything else, and a meter of another organisation). |
+| `saveGuaranteeAction` | Solar Edit | Basis fields mirror the 00217 CHECKs. |
+| `saveIrradiationAction` / `deleteIrradiationAction` | Solar Edit | Monthly POA/GHI with a mandatory source note. |
+| `addDowntimeAction` / `updateDowntimeAction` / `deleteDowntimeAction` | Solar Edit | No overlap, never before commissioning; every direct edit/delete copied to `solar.downtime_history` (append-only, no grant). |
+| `linkHandoverDocumentAction` / `setHandoverNotApplicableAction` / `syncHandoverItemsAction` | Solar Edit | A document must be a `tenants.documents` row of the same project (trigger). |
+| `saveHandoverTemplateAction` | Org owner/admin (`requireRole OWNER_ADMIN`) | `/settings/solar`; 00217 RESTRICTIVE policies use `library_orgs('admin')`. |
+| `generateSolarMonthlyReportAction` | Solar Edit + financials | Writes `projects.reports` (kind `solar_monthly`, PDF under `<org>/<project>/solar-reports/`, inside 00216's service-only report path rules) and `solar.monthly_reports` with the SERVICE role after the gate; `monthly_reports` has no user write policy and no UPDATE/DELETE grant. Disabled with the reason when no tariff is pinned. |
+| `saveMonthlyReportNoteAction` | Solar Edit + financials | `solar.monthly_report_notes` read and write on `solar_can_see_money`. |
+| Saved report kind `solar_monthly` (list / signed URL) | Solar Edit + financials | `SOLAR_READ_REPORT_KINDS` + `user_can_read_report_kind()` (00217). Never deletable: `deleteProjectReportAction` refuses and the RESTRICTIVE `reports_solar_monthly_delete_authz` policy (00217) refuses a direct PostgREST delete. |
+| `public.solar_ops_monthly_kwh` / `public.solar_ops_series` (RPC) | `authenticated`, SECURITY INVOKER | RLS on meters/channels/readings decides; anon has no EXECUTE. |
 
 ## Server actions (`apps/web/src/actions/*`)
 
