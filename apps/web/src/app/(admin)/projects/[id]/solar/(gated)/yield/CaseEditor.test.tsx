@@ -12,7 +12,7 @@ import { CaseEditor } from './CaseEditor'
 
 const cfg = defaultCaseConfig(solarOrgSettingDefaults(), { dcKwp: 500, acKw: 400 })
 const data = (over: Partial<CaseEditorData> = {}): CaseEditorData => ({
-  caseId: 'c1', name: 'Base', updatedAt: 'T1', config: cfg, buildReasons: [], pvSource: 'manual', layoutId: null, status: 'done', statusLabel: 'Done', running: false,
+  caseId: 'c1', name: 'Base', updatedAt: 'T1', config: cfg, buildReasons: [], pvSource: 'manual', layoutId: null, layoutDrift: null, status: 'done', statusLabel: 'Done', running: false,
   weather: { id: 'w1', latRound: -26.2, lngRound: 28.05, fetchedAt: '2026-09-28T10:00:00Z', radiationDb: 'PVGIS-SARAH2', gsaPvoutKwhPerKwp: 1712 },
   studyExport: { mode: 'net_billing', limitKw: 100 },
   siteLoad: { basis: 'S1', referenceYear: 2025, annualKwh: 876_000, peakKw: 180 },
@@ -178,5 +178,12 @@ describe('CaseEditor', () => {
     fireEvent.click(screen.getByLabelText('From layout'))
     await screen.findByText('Save or discard your changes first.')
     expect(h.source).not.toHaveBeenCalled()
+  })
+  it('a linked case says when its layout has changed and Refresh from layout re-sizes it from the same layout', async () => {
+    h.source.mockResolvedValue({ ok: true, updatedAt: 'T2' })
+    render(<CaseEditor projectId="p1" level="edit" data={data({ pvSource: 'layout', layoutId: 'L1', layoutDrift: { dcKwp: 495, acKw: 400 } })} equipment={equipment} layouts={[{ id: 'L1', name: 'Roof A', moduleCount: 900, dcKwp: 495 }]} />)
+    expect(screen.getByText('Roof A has changed since this case was sized from it: it is now 495 kWp DC / 400 kW AC. Refresh to use it.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh from layout' }))
+    await waitFor(() => expect(h.source).toHaveBeenCalledWith({ projectId: 'p1', caseId: 'c1', expectedUpdatedAt: 'T1', source: { kind: 'layout', layoutId: 'L1' } }))
   })
 })

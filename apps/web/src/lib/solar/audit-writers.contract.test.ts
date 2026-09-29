@@ -13,6 +13,7 @@ import { join, relative, resolve } from 'node:path'
  * hand-kept list that a new writer would simply not be on.
  */
 const SRC = resolve(__dirname, '../..')
+const EDGE = resolve(__dirname, '../../../../edge-functions/supabase/functions')
 const ALLOWED = new Set(['lib/solar/audit.ts'])
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -32,6 +33,11 @@ describe('solar.audit_events writers', () => {
       const re = /from\(\s*['"]audit_events['"]\s*\)\s*\.\s*(insert|upsert|update|delete)\b/g
       if (re.test(text) && !ALLOWED.has(relative(SRC, f).split('\\').join('/'))) offenders.push(relative(SRC, f))
     }
+    expect(offenders).toEqual([])
+  })
+  it('no edge function writes audit_events either', () => {
+    const offenders = walk(EDGE).filter((f) => /from\(\s*['"]audit_events['"]\s*\)\s*\.\s*(insert|upsert|update|delete)\b/.test(readFileSync(f, 'utf8')))
+    expect(walk(EDGE).length).toBeGreaterThan(0)
     expect(offenders).toEqual([])
   })
   it('the allowed writer uses the service client', () => {

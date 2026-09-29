@@ -135,7 +135,15 @@ export function CaseEditor({ projectId, level, data, equipment, layouts = [] }: 
             </select>
           )}
         </div>
-        {fromLayout && <p style={dim}>{`DC and AC size come from ${linkedName}. Change the layout on the Layout tab, then choose it again here to refresh the sizes.`}</p>}
+        {fromLayout && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={dim}>{`DC and AC size come from ${linkedName}.`}</span>
+            {!ro && data.layoutId && <Button type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => void setSource({ kind: 'layout', layoutId: data.layoutId! })}>{busy === 'source' ? 'Refreshing…' : 'Refresh from layout'}</Button>}
+          </div>
+        )}
+        {fromLayout && data.layoutDrift && (
+          <p role="status" style={{ ...dim, color: 'var(--c-amber)' }}>{`${linkedName} has changed since this case was sized from it: it is now ${num(data.layoutDrift.dcKwp, 1).replace(/\.0$/, '')} kWp DC / ${num(data.layoutDrift.acKw, 1).replace(/\.0$/, '')} kW AC. Refresh to use it.`}</p>
+        )}
         <div style={grid}>
           <NumField label="DC size" unit="kWp" value={cfg.pv.dcKwp} disabled={ro || fromLayout} error={err('pv.dcKwp')} onChange={(v) => set('pv', { dcKwp: n(v) })} />
           <NumField label="AC size" unit="kW" value={cfg.pv.acKw} disabled={ro || fromLayout} error={err('pv.acKw')} onChange={(v) => set('pv', { acKw: n(v) })} />

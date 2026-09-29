@@ -226,6 +226,20 @@ describe('fetchSolarWeatherAction', () => {
   })
 })
 
+describe('copying a layout-linked case', () => {
+  it('keeps the layout link (pv_source + layout_id) so config and row agree', async () => {
+    const linkedCfg = { ...cfg, pv: { ...cfg.pv, source: 'layout' as const, dcKwp: 5.5, acKw: 5 } }
+    const { u } = setup({ tables: { 'solar.cases': [{ id: C, project_id: P, pv_source: 'layout', layout_id: 'L1', config: linkedCfg }] }, writes: { 'solar.cases:insert': { data: [{ id: 'c2', updated_at: 'T1' }] } } })
+    expect(await createSolarCaseAction({ projectId: P, name: 'Copy', start: { kind: 'copy', fromCaseId: C } })).toEqual({ ok: true, caseId: 'c2' })
+    expect(callsTo(u.calls, 'solar.cases', 'insert')[0]!.payload).toMatchObject({ pv_source: 'layout', layout_id: 'L1', config: { pv: { source: 'layout', dcKwp: 5.5 } } })
+  })
+  it('a manual source whose config claims layout is normalised to manual', async () => {
+    const { u } = setup({ tables: { 'solar.cases': [{ id: C, project_id: P, pv_source: 'manual', layout_id: null, config: { ...cfg, pv: { ...cfg.pv, source: 'layout' } } }] }, writes: { 'solar.cases:insert': { data: [{ id: 'c2', updated_at: 'T1' }] } } })
+    await createSolarCaseAction({ projectId: P, name: 'Copy', start: { kind: 'copy', fromCaseId: C } })
+    expect(callsTo(u.calls, 'solar.cases', 'insert')[0]!.payload).toMatchObject({ pv_source: 'manual', config: { pv: { source: 'manual' } } })
+  })
+})
+
 describe('setSolarCasePvSourceAction (Manual ↔ From layout on an existing case)', () => {
   const row = { id: C, project_id: P, study_id: S, pv_source: 'manual', layout_id: null, config: cfg, updated_at: 'T0' }
   it('links a layout: re-derives the sizes server-side, stale-guarded, audited', async () => {

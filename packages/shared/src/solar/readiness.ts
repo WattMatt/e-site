@@ -1,9 +1,11 @@
 /**
  * Solar tabs and readiness (spec §0.3 status dots, §2.3 readiness rules) —
  * the single source for the tab bar and the Overview checklist. Live rules:
- * Site & Supply (Phase 1), Yield & Scenarios and Financials (Phase 4b), and
- * Layout when the selected case uses a manual system size; every other step
- * is grey "available in a later phase". No statuses are hard-coded per project.
+ * Site & Supply (1), Load and Schematics (3b), Tariff (2b, via withTariffReadiness),
+ * Layout (5; green when the selected case uses a manual size, 4b), Yield & Scenarios
+ * and Financials (4b), Schedule (5b). A built tab whose aggregate the caller did not
+ * pass is a live grey "Not started"; only an unbuilt tab (Reports) is "available in a
+ * later phase". No statuses are hard-coded per project.
  */
 import type { SolarAccessLevel } from './access'
 import { layoutReadiness, type LayoutReadinessInput } from './layout/readiness'
@@ -29,7 +31,7 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'load',       label: 'Load',               built: true,  financial: false, hidden: false },
   { slug: 'schematics', label: 'Schematics',         built: true,  financial: false, hidden: false },
   { slug: 'tariff',     label: 'Tariff',             built: true,  financial: true,  hidden: false },
-  { slug: 'layout',     label: 'Layout',             built: true , financial: false, hidden: false },
+  { slug: 'layout',     label: 'Layout',             built: true,  financial: false, hidden: false },
   { slug: 'yield',      label: 'Yield & Scenarios',  built: true,  financial: false, hidden: false },
   { slug: 'financials', label: 'Financials',         built: true,  financial: true,  hidden: false },
   { slug: 'reports',    label: 'Reports & Proposal', built: false, financial: false, hidden: false },
@@ -149,9 +151,6 @@ export function financialsReadiness(f: FinancialsReadinessInput | null): { statu
   return { status: 'green', reason: 'Capex and a finance model are set' }
 }
 
-/** @deprecated alias kept for Phase 3b callers. */
-export type ReadinessExtra = SolarReadinessExtra
-
 export interface SolarReadinessExtra {
   yield?: YieldReadinessInput
   financials?: FinancialsReadinessInput | null
@@ -182,9 +181,6 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
     nmdKva: num(row.nmd_kva),
   }
 }
-
-/** @deprecated Phase 5b name; the fields live on SolarReadinessExtra. */
-export type ReadinessExtras = SolarReadinessExtra
 
 /**
  * Schedule (functional spec §1.3): green with at least one task — start, end

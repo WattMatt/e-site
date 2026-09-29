@@ -70,6 +70,28 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-09 | Grid-connection warning when **PV AC > 75 % of transformer/mini-sub rating** (warning only) | Functional §3.2 |
 | D-06 | Synthesised load **seeded from GCR kW/m² densities + 8 archetypes**, owner reviews the table once | Engine §2.4 |
 
+## Integration gaps found on feat/solar-final (2026-09-29) — owner decision needed
+
+- **I-1 — Yield & Financials do not read four Tariff/Load inputs yet.** Phases 2b (Tariff tab), 3b (Load)
+  and 4b (Yield & Financials) were built in parallel; merged, they disagree about money:
+  - `apps/web/src/lib/solar/cases/tariff.ts` `resolveStudyTariff` prices on the **published** tariff only —
+    it ignores `studies.tariff_override_id` / `solar.tariff_override_charges` (the Tariff tab's own bill check
+    uses the override-aware `lib/solar/tariff/effective-tariff.ts`);
+  - it ignores `studies.export_rule` and `solar.study_export_rates` (`manualExportTariff` has no production caller),
+    so a manual or "none" export rule has no effect on results;
+  - `packages/shared/src/solar/cases/finance-input.ts` builds escalation from the case's own start/year-10 rates
+    (`published: []`); `escalationPathFromRows` (2b) and `studies.escalation` are unused;
+  - Financials' `analysis.loadGrowthPct` is its own input; `studies.load_growth_pct` (Load tab) is read by nothing.
+  Spec 01 §7/§8 says Financials takes escalation "from Tariff tab" and load growth "from Load". **Not fixed on
+  this branch** (a pricing change needs its own design + validation against the 10 hand-computed tariff cases).
+  Until then the Tariff tab (override, export rule, escalation) and the Load tab (load growth) say so on screen.
+  Fix sketch: one effective-tariff loader for runs (override + export rule + manual rates), escalation from
+  `escalationPathFromRows(buildEscalationRows(…))`, load growth seeded from the study, all three in the run
+  inputs hash so runs go Stale.
+- **I-2 — a money user can PATCH `studies.export_rule = {"method":"manual"}` with no rates** (00218 moved the
+  note to the rate rows; the DB no longer ties "manual" to a note on the study row). `save_export_rule` refuses
+  it; a direct PostgREST write does not. Tariff readiness shows green. Low impact while I-1 stands.
+
 ## Still open (small, non-blocking)
 - Owner review of the seeded density/archetype table (Phase 3).
 - Owner to confirm WM Solar still works when signed in (after containment + key rotation).

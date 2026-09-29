@@ -182,3 +182,11 @@ describe('computeSolarReadiness — Layout step (Phase 5)', () => {
     expect(step).toMatchObject({ status: 'amber', reason: 'Layout started but no north reference' })
   })
 })
+
+describe('Layout step precedence (4b manual case vs Phase 5 aggregate)', () => {
+  it('a manual-size selected case is green even when the layout aggregate says otherwise', () => {
+    const step = computeSolarReadiness(null, 'edit', { layoutManual: true, layout: { layouts: 1, arraysWithModules: 0, northSet: false, arrayOutsideRoof: true } })
+      .find((s) => s.slug === 'layout')
+    expect(step).toMatchObject({ status: 'green', reason: 'The selected case uses a manual system size' })
+  })
+})

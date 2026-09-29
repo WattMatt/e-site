@@ -84,10 +84,14 @@ export async function createSolarCaseAction(input: { projectId: string; name: st
     const base = defaultCaseConfig(readSolarOrgSettings((os as Row | null)?.settings ?? null), size)
     config = layoutId ? { ...base, pv: { ...base.pv, source: 'layout' } } : base
   } else {
-    const { data: src } = await supabase.schema('solar').from('cases').select('config').eq('id', start.fromCaseId).eq('project_id', projectId).maybeSingle()
+    const { data: src } = await supabase.schema('solar').from('cases').select('config, pv_source, layout_id').eq('id', start.fromCaseId).eq('project_id', projectId).maybeSingle()
     const parsed = parseCaseConfig((src as Row | null)?.config)
     if (!parsed.ok) return { error: 'The case to copy could not be read.' }
-    config = parsed.config
+    // A copy keeps the source's layout link, so the row and config.pv.source agree (00218's FK and
+    // cases_layout_bind re-check the layout). The row's pv_source is the truth for the config.
+    const srcRow = src as { pv_source?: string; layout_id?: string | null }
+    layoutId = srcRow.pv_source === 'layout' && srcRow.layout_id ? srcRow.layout_id : null
+    config = { ...parsed.config, pv: { ...parsed.config.pv, source: layoutId ? 'layout' : 'manual' } }
   }
   const ins = await insertCase(supabase, study.id as string, name, config, layoutId)
   if (!('id' in ins)) return ins

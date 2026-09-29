@@ -4,8 +4,9 @@ import { fakeSupabase } from '@/test/fake-supabase'
 import { defaultCaseConfig } from '@esite/shared/solar-cases'
 import { solarOrgSettingDefaults } from '@esite/shared'
 
-const h = vi.hoisted(() => ({ shared: vi.fn(), ctx: vi.fn() }))
+const h = vi.hoisted(() => ({ shared: vi.fn(), ctx: vi.fn(), design: vi.fn() }))
 vi.mock('./run-context', () => ({ loadStudyInputs: h.shared, contextForCase: h.ctx }))
+vi.mock('./layout-design', () => ({ loadLayoutDesign: h.design }))
 import { loadYieldPageData, loadSolarReadinessExtra, loadHeadlineKpis } from './page-data'
 
 const P = 'p1', S = 's1', ORG = 'o1'
@@ -88,6 +89,19 @@ describe('loadYieldPageData', () => {
     expect((await loadYieldPageData(fakeSupabase({ tables }).client as never, svc as never, P, 'edit', { compare: 'c1' })).compare).toBeNull()
     const fin = await loadYieldPageData(fakeSupabase({ tables }).client as never, svc as never, P, 'edit_financials', { compare: 'c1,c2' })
     expect(fin.compare![0]!.money).toEqual({ year1SavingZar: 400_000, irr: 0.2, npvZar: 2e6, simplePaybackYears: 5 })
+  })
+  it('a layout-linked case reports when its layout has changed since it was sized (drift), and not otherwise', async () => {
+    const linked = { ...tables, 'solar.cases': [{ ...tables['solar.cases'][0], pv_source: 'layout', layout_id: 'L1', config: { ...cfg, pv: { ...cfg.pv, source: 'layout' } } }] }
+    const svc = fakeSupabase({ tables: { 'solar.org_settings': [] } }).client
+    h.design.mockResolvedValueOnce({ id: 'L1', name: 'Roof A', summary: { moduleCount: 900, dcKwp: 495, acKw: 400 }, bom: [] })
+    const d = await loadYieldPageData(fakeSupabase({ tables: linked }).client as never, svc as never, P, 'edit', {})
+    expect(d.editor).toMatchObject({ pvSource: 'layout', layoutId: 'L1', layoutDrift: { dcKwp: 495, acKw: 400 } })
+    h.design.mockResolvedValueOnce({ id: 'L1', name: 'Roof A', summary: { moduleCount: 909, dcKwp: 500, acKw: 400 }, bom: [] })
+    const same = await loadYieldPageData(fakeSupabase({ tables: linked }).client as never, svc as never, P, 'edit', {})
+    expect(same.editor?.layoutDrift).toBeNull()
+    const manual = await loadYieldPageData(fakeSupabase({ tables }).client as never, svc as never, P, 'edit', {})
+    expect(manual.editor?.layoutDrift).toBeNull()
+    expect(h.design).toHaveBeenCalledTimes(2)
   })
   it('no study → empty state data', async () => {
     h.shared.mockResolvedValueOnce(null)

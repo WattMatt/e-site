@@ -93,7 +93,7 @@ export function SiteProfilePanel({ projectId, view, canEdit }: { projectId: stri
         </label>
         <label>Load growth (%/yr)<br />
           <input aria-label="Load growth" disabled={!canEdit} inputMode="decimal" value={form.loadGrowthPct} placeholder="0" onChange={(e) => set('loadGrowthPct', e.target.value)} style={{ width: 70 }} />
-          <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-dim)' }}>Cashflow only</span>
+          <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-dim)' }}>Cashflow only — not yet read by Financials, which uses its own Load growth (open item I-1)</span>
           {fieldError('loadGrowthPct')}
         </label>
         <label>Diversity factor<br />

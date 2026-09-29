@@ -21,6 +21,8 @@ type AnyClient = SupabaseClient<any, any, any>
 
 const P = { fontSize: 13, margin: 0 } as const
 const NOTE = { fontSize: 13, margin: 0, padding: '6px 10px', background: 'var(--c-amber-dim)', borderRadius: 6 } as const
+/** Integration gap I-1 (docs/solar/06-open-decisions.md): said where the value is set, until Financials reads it. */
+const NOT_IN_FINANCIALS = 'Not yet used by Yield & Scenarios or Financials: they price on the published tariff with each case’s own escalation (open item I-1). The bill check here does use it.'
 const ASSUMED_ESKOM = "TOU hours assumed equal to Eskom's — confirm against the municipality's by-law"
 
 /**
@@ -84,6 +86,7 @@ export default async function SolarTariffPage({ params, searchParams }: {
             </CardHeader>
             <CardBody>
               {pinned.newerYear && <p style={NOTE}>A newer tariff year ({pinned.newerYear}) is available: choose it above to move this study onto it.</p>}
+              {d.override && <p style={NOTE}>{`Project override: ${NOT_IN_FINANCIALS}`}</p>}
               {d.override
                 ? <div style={{ display: 'grid', gap: 12 }}>
                     <OverridePanel projectId={id} studyUpdatedAt={study.updatedAt} override={d.override} published={published} />
@@ -119,6 +122,7 @@ export default async function SolarTariffPage({ params, searchParams }: {
           <Card>
             <CardHeader><span className="data-panel-title">Export / SSEG rule</span></CardHeader>
             <CardBody>
+              <p style={{ ...NOTE, marginBottom: 8 }}>{`Export rule: ${NOT_IN_FINANCIALS}`}</p>
               <ExportRulePanel projectId={id} updatedAt={study.updatedAt} rule={study.exportRule} rates={d.exportRates} sourceNote={d.exportSourceNote}
                 linkedExportTariff={pinned.exportTariff} sseg={pinned.sseg} ssegFromLibrary={pinned.ssegFromLibrary} />
             </CardBody>
@@ -133,7 +137,10 @@ export default async function SolarTariffPage({ params, searchParams }: {
 
       <Card>
         <CardHeader><span className="data-panel-title">Escalation path</span></CardHeader>
-        <CardBody><EscalationTable projectId={id} updatedAt={study.updatedAt} rows={d.escalation} /></CardBody>
+        <CardBody>
+          <p style={{ ...NOTE, marginBottom: 8 }}>{`Escalation path: ${NOT_IN_FINANCIALS}`}</p>
+          <EscalationTable projectId={id} updatedAt={study.updatedAt} rows={d.escalation} />
+        </CardBody>
       </Card>
 
       <Card>

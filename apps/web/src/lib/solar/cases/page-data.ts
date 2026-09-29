@@ -9,11 +9,12 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings, type SolarAccessLevel, type SolarReadinessExtra, type FinancialsReadinessInput } from '@esite/shared'
 import {
-  caseStatus, capexTotals, parseCaseConfig, parseFinanceConfig, resetLossesToDefaults,
+  caseStatus, capexTotals, caseSizeFromLayout, parseCaseConfig, parseFinanceConfig, resetLossesToDefaults,
   type CaseConfig, type CaseLosses, type CaseRunOutputs, type CaseStatus, type RunKpis,
 } from '@esite/shared/solar-cases'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
 import { loadLayoutList } from '@/lib/solar/layout-loader'
+import { loadLayoutDesign } from './layout-design'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -36,6 +37,8 @@ export interface CaseEditorData {
   caseId: string; name: string; updatedAt: string; config: CaseConfig; buildReasons: string[]
   /** 'layout' = DC/AC come from `layoutId` (00218 FK) and are not edited in the case. */
   pvSource: 'manual' | 'layout'; layoutId: string | null
+  /** A layout-linked case whose layout now sizes differently (or is empty): the layout's current DC/AC. */
+  layoutDrift: { dcKwp: number; acKw: number } | null
   status: CaseStatus; statusLabel: string; running: boolean
   weather: WeatherView | null
   studyExport: { mode: string | null; limitKw: number | null }
@@ -170,10 +173,20 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
           lastRun = { id: lastOk.id, startedAt: lastOk.started_at, finishedAt: lastOk.finished_at ?? null, runByName: ((prof as Row | null)?.full_name as string | undefined)?.trim() || 'Someone', outputs }
         }
       }
+      // The size was taken from the layout when it was linked; say so when the layout has moved on.
+      let layoutDrift: CaseEditorData['layoutDrift'] = null
+      if (r.pv_source === 'layout' && r.layout_id) {
+        const design = await loadLayoutDesign(user, projectId, r.layout_id)
+        if (design) {
+          const now = caseSizeFromLayout(design.summary)
+          const cur = now.ok ? { dcKwp: now.dcKwp, acKw: now.acKw } : { dcKwp: design.summary.dcKwp, acKw: design.summary.acKw }
+          if (Math.abs(cur.dcKwp - config.pv.dcKwp) > 1e-6 || Math.abs(cur.acKw - config.pv.acKw) > 1e-6) layoutDrift = cur
+        }
+      }
       const w = c.ctx.weather
       editor = {
         caseId: r.id, name: r.name, updatedAt: r.updated_at, config,
-        pvSource: r.pv_source === 'layout' ? 'layout' : 'manual', layoutId: r.layout_id ?? null,
+        pvSource: r.pv_source === 'layout' ? 'layout' : 'manual', layoutId: r.layout_id ?? null, layoutDrift,
         buildReasons: c.ctx.build.ok ? [] : c.ctx.build.reasons,
         status: card.status, statusLabel: card.statusLabel, running: card.status === 'running',
         weather: w ? {
