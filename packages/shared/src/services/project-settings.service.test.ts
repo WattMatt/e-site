@@ -440,6 +440,7 @@ describe('projectSettingsService.convenience bundles', () => {
     notify_qc_email: false,
     notify_form_email: true,
     notify_whatsapp: true,
+    notify_solar_email: false,
     created_at: '2026-05-26T00:00:00.000Z',
     updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
   }
@@ -492,6 +493,7 @@ describe('projectSettingsService.convenience bundles', () => {
       qcEmail: false,
       formEmail: true,
       whatsapp: true,
+      solarEmail: false,
     })
   })
 
@@ -505,6 +507,8 @@ describe('projectSettingsService.convenience bundles', () => {
       qcEmail: true,
       formEmail: true,
       whatsapp: false,
+      // 00217: notify_solar_email DEFAULT TRUE.
+      solarEmail: true,
     })
   })
 
@@ -572,6 +576,7 @@ describe('restore rebuilds EVERY notification toggle', () => {
     notify_diary_email: false,
     notify_qc_email: false,
     notify_form_email: false,
+    notify_solar_email: false,
     created_at: '2026-05-20T00:00:00.000Z',
     updated_at: '2026-05-20T00:00:00.000Z', updated_by: null,
   }
@@ -616,6 +621,7 @@ describe('restore rebuilds EVERY notification toggle', () => {
       notify_diary_email: false,
       notify_qc_email: false,
       notify_form_email: false,
+      notify_solar_email: false,
     })
   })
 

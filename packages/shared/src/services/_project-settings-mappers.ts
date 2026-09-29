@@ -37,6 +37,7 @@ type ProjectSettingsRow = {
   notify_qc_email: boolean
   notify_form_email: boolean
   notify_whatsapp: boolean
+  notify_solar_email: boolean
   created_at: string
   updated_at: string
   updated_by: string | null
@@ -83,6 +84,7 @@ export function rowToProjectSettings(row: ProjectSettingsRow): ProjectSettings {
     notifyQcEmail: row.notify_qc_email,
     notifyFormEmail: row.notify_form_email,
     notifyWhatsapp: row.notify_whatsapp,
+    notifySolarEmail: row.notify_solar_email,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
@@ -117,6 +119,7 @@ export function patchToRow(patch: ProjectSettingsPatch): Record<string, unknown>
   if (patch.notifyQcEmail !== undefined) out.notify_qc_email = patch.notifyQcEmail
   if (patch.notifyFormEmail !== undefined) out.notify_form_email = patch.notifyFormEmail
   if (patch.notifyWhatsapp !== undefined) out.notify_whatsapp = patch.notifyWhatsapp
+  if (patch.notifySolarEmail !== undefined) out.notify_solar_email = patch.notifySolarEmail
   if (patch.updatedBy !== undefined) out.updated_by = patch.updatedBy
   return out
 }

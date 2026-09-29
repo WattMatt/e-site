@@ -16,6 +16,10 @@ import {
 const PLAN_A = '66666666-6666-6666-6666-666666666666'
 const PLAN_B = '77777777-7777-7777-7777-777777777777'
 const REV = '33333333-3333-3333-3333-333333333333'
+const ORG = '11111111-1111-1111-1111-111111111111'
+const PROJ = '22222222-2222-2222-2222-222222222222'
+const OTHER = '99999999-9999-9999-9999-999999999999'
+const DIR = `${ORG}/${PROJ}/cable-route-sheets`
 
 function row(over: Partial<Parameters<typeof refsFromReportRows>[0][number]> = {}) {
   return {
@@ -23,7 +27,8 @@ function row(over: Partial<Parameters<typeof refsFromReportRows>[0][number]> = {
     title: 'Cable routes — POWER LAYOUT A',
     version: 2,
     generated_at: '2026-09-15T10:00:00.000Z',
-    storage_path: 'org/proj/cable-route-sheets/plan-p1-v2.pdf',
+    storage_path: `${DIR}/plan-p1-v2.pdf`,
+    organisation_id: ORG,
     size_bytes: 1234,
     source_id: PLAN_A,
     summary: { runs: 3, legsHere: 4, onSheetM: 120.5, page: 1, revisionId: REV },
@@ -201,7 +206,7 @@ describe('listRouteSheetsForRevision — freshness from the route tables', () =>
         { floor_plan_id: PLAN_A, page_index: 2, supply_routes: { revision_id: REV, updated_at: '2026-09-15T09:30:00.000Z' } },
       ],
     )
-    const refs = await listRouteSheetsForRevision(supabase, 'proj', REV)
+    const refs = await listRouteSheetsForRevision(supabase, PROJ, REV)
     expect(refs.map((r) => [r.pageIndex, r.stale])).toEqual([[1, true], [2, false]])
   })
 })
@@ -210,10 +215,10 @@ describe('loadRouteSheetAttachments — bytes under the caps, never a throw', ()
   it('loads every readable sheet and lists the unreadable one as omitted', async () => {
     const good = await sheetPdf(1, 'GOOD')
     const supabase = fakeSupabase(
-      [row(), row({ id: 'rep-2', title: 'Cable routes — PORTION B', source_id: PLAN_B, storage_path: 'missing.pdf', summary: { page: 1, revisionId: REV } })],
+      [row(), row({ id: 'rep-2', title: 'Cable routes — PORTION B', source_id: PLAN_B, storage_path: `${DIR}/missing.pdf`, summary: { page: 1, revisionId: REV } })],
       [],
     )
-    const res = await loadRouteSheetAttachments(supabase, fakeStorage({ 'org/proj/cable-route-sheets/plan-p1-v2.pdf': good }), 'proj', REV)
+    const res = await loadRouteSheetAttachments(supabase, fakeStorage({ [`${DIR}/plan-p1-v2.pdf`]: good }), PROJ, REV)
     expect(res.sheets.map((s) => s.reportId)).toEqual(['rep-1'])
     expect(res.sheets[0].bytes.byteLength).toBe(good.byteLength)
     expect(res.omitted).toEqual([{ title: 'Cable routes — PORTION B', reason: expect.stringMatching(/could not be read/) }])
@@ -222,10 +227,10 @@ describe('loadRouteSheetAttachments — bytes under the caps, never a throw', ()
   it('stops at the sheet-count cap and says which sheets were left out', async () => {
     const good = await sheetPdf(1, 'X')
     const rows = Array.from({ length: MAX_ROUTE_SHEETS_PER_PACK + 2 }, (_, i) =>
-      row({ id: `rep-${i}`, title: `Cable routes — SHEET ${String(i).padStart(2, '0')}`, storage_path: `p${i}.pdf` }),
+      row({ id: `rep-${i}`, title: `Cable routes — SHEET ${String(i).padStart(2, '0')}`, storage_path: `${DIR}/p${i}.pdf` }),
     )
     const files = Object.fromEntries(rows.map((r) => [r.storage_path, good]))
-    const res = await loadRouteSheetAttachments(fakeSupabase(rows, []), fakeStorage(files), 'proj', REV)
+    const res = await loadRouteSheetAttachments(fakeSupabase(rows, []), fakeStorage(files), PROJ, REV)
     expect(res.sheets).toHaveLength(MAX_ROUTE_SHEETS_PER_PACK)
     expect(res.omitted).toHaveLength(2)
     expect(res.omitted[0].reason).toMatch(/more than/)
@@ -234,9 +239,38 @@ describe('loadRouteSheetAttachments — bytes under the caps, never a throw', ()
   it('stops at the byte cap', async () => {
     const big = new Uint8Array(MAX_ROUTE_SHEET_BYTES_PER_PACK - 10)
     const small = await sheetPdf(1, 'S')
-    const rows = [row({ id: 'a', title: 'Cable routes — A', storage_path: 'a.pdf' }), row({ id: 'b', title: 'Cable routes — B', storage_path: 'b.pdf' })]
-    const res = await loadRouteSheetAttachments(fakeSupabase(rows, []), fakeStorage({ 'a.pdf': big, 'b.pdf': small }), 'proj', REV)
+    const rows = [row({ id: 'a', title: 'Cable routes — A', storage_path: `${DIR}/a.pdf` }), row({ id: 'b', title: 'Cable routes — B', storage_path: `${DIR}/b.pdf` })]
+    const res = await loadRouteSheetAttachments(fakeSupabase(rows, []), fakeStorage({ [`${DIR}/a.pdf`]: big, [`${DIR}/b.pdf`]: small }), PROJ, REV)
     expect(res.sheets.map((s) => s.reportId)).toEqual(['a'])
     expect(res.omitted).toEqual([{ title: 'Cable routes — B', reason: expect.stringMatching(/size cap/) }])
+  })
+})
+
+describe('route sheets — only files inside the row’s own folder (00207)', () => {
+  it('never lists or downloads a sheet whose path points outside its org/project', async () => {
+    const good = await sheetPdf(1, 'GOOD')
+    const foreign = `${OTHER}/${OTHER}/valuation-x-v1.pdf`
+    const rows = [
+      row(),
+      row({ id: 'forged', title: 'Cable routes — FORGED', storage_path: foreign }),
+      row({ id: 'traversal', title: 'Cable routes — TRAVERSAL', storage_path: `${DIR}/../../../${OTHER}/${OTHER}/x.pdf` }),
+      row({ id: 'no-org', title: 'Cable routes — NO ORG', organisation_id: undefined }),
+    ]
+    const downloaded: string[] = []
+    const storage = {
+      from: () => ({
+        download: async (path: string) => {
+          downloaded.push(path)
+          return fakeStorage({ [`${DIR}/plan-p1-v2.pdf`]: good, [foreign]: good }).from().download(path)
+        },
+      }),
+    }
+
+    const listed = await listRouteSheetsForRevision(fakeSupabase(rows, []), PROJ, REV)
+    expect(listed.map((r) => r.reportId)).toEqual(['rep-1'])
+
+    const res = await loadRouteSheetAttachments(fakeSupabase(rows, []), storage, PROJ, REV)
+    expect(res.sheets.map((s) => s.reportId)).toEqual(['rep-1'])
+    expect(downloaded).toEqual([`${DIR}/plan-p1-v2.pdf`])
   })
 })

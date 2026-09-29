@@ -66,6 +66,23 @@ function spineMigration(): { path: string; sql: string } {
   throw new Error(`No migration seeds projects.work_item_types (no file in ${MIG_DIR} contains "${SEED_NEEDLE}")`)
 }
 
+/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed, then add-on types such as 00213's solar_task). */
+function registrySeedMigrations(): Array<{ path: string; sql: string }> {
+  return readdirSync(MIG_DIR).sort()
+    .filter((n) => n.endsWith('.sql'))
+    .map((n) => ({ path: join(MIG_DIR, n), sql: readFileSync(join(MIG_DIR, n), 'utf8') }))
+    .filter(({ sql }) => stripSqlLineComments(sql).includes(SEED_NEEDLE))
+}
+
+/** The LAST migration that (re)defines projects.work_items_ensure_ref() — the body in force. */
+function latestEnsureRefMigration(): { path: string; sql: string } {
+  const all = readdirSync(MIG_DIR).sort().filter((n) => n.endsWith('.sql'))
+    .map((n) => ({ path: join(MIG_DIR, n), sql: readFileSync(join(MIG_DIR, n), 'utf8') }))
+    .filter(({ sql }) => /FUNCTION\s+projects\.work_items_ensure_ref\s*\(\)/.test(stripSqlLineComments(sql)))
+  if (all.length === 0) throw new Error('No migration defines projects.work_items_ensure_ref()')
+  return all[all.length - 1]
+}
+
 /** The text between the `### A(b)` and `### A(c)` headings. */
 function appendixAb(): string {
   const md = readFileSync(APPENDIX, 'utf8')
@@ -74,9 +91,9 @@ function appendixAb(): string {
   return block
 }
 
-/** A(b)'s table rows: | `key` | Quarter | Source | Default due | Calendar | ... — Q1 only. */
+/** A(b)'s table rows: | `key` | Quarter | Source | Default due | Calendar | ... — Q1 rows and registered add-on rows (Quarter `Solar`). */
 function appendixQ1Keys(): string[] {
-  return [...appendixAb().matchAll(/^\|\s*`([a-z_]+)`\s*\|\s*Q1\s*\|/gm)].map((m) => m[1])
+  return [...appendixAb().matchAll(/^\|\s*`([a-z_]+)`\s*\|\s*(?:Q1|Solar)\s*\|/gm)].map((m) => m[1])
 }
 
 /** A(b)'s stated column set: `projects.work_item_types (key, label, …, write_roles text[], sort_order, is_active)`. */
@@ -199,7 +216,10 @@ const LITERAL_PATTERNS = [
 
 describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => {
   const { path, sql } = spineMigration()
-  const seeded = seededRows(sql)
+  const seeded = registrySeedMigrations().flatMap((m) => seededRows(m.sql))
+  const refMig = latestEnsureRefMigration()
+  const refSql = refMig.sql
+  const refRel = refMig.path.replace(ROOT + '/', '')
   const seededKeys = seeded.map((r) => r.key)
   const rel = path.replace(ROOT + '/', '')
 
@@ -207,13 +227,13 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
     expect(appendixQ1Keys().length).toBeGreaterThan(0)
     expect(seeded.length).toBeGreaterThan(0)
     expect(WORK_ITEM_TYPE_KEYS.length).toBeGreaterThan(0)
-    expect(Object.keys(sqlRefPrefixes(sql)).length).toBeGreaterThan(0)
+    expect(Object.keys(sqlRefPrefixes(refSql)).length).toBeGreaterThan(0)
     expect(ddlColumns(sql).length).toBeGreaterThan(0)
     expect(appendixColumns().length).toBeGreaterThan(0)
   })
 
   it('Appendix A(b) Q1 == the migration seed, in both directions', () => {
-    expect([...seededKeys].sort(), `seed in ${rel} vs A(b) Q1 rows`).toEqual([...appendixQ1Keys()].sort())
+    expect([...seededKeys].sort(), `registry seeds vs A(b) Q1/Solar rows`).toEqual([...appendixQ1Keys()].sort())
   })
 
   it('the migration seed == WORK_ITEM_TYPE_KEYS, in both directions', () => {
@@ -250,13 +270,13 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
   it('the SQL ref-prefix CASE equals REF_PREFIXES, in both directions', () => {
     // `ref` is immutable and travels into emails, PDFs and client deep links
     // (§15 §(e)). Two sources for a permanent identifier is two identifiers.
-    expect(sqlRefPrefixes(sql), `work_items_ensure_ref() in ${rel} vs REF_PREFIXES`).toEqual({ ...REF_PREFIXES })
+    expect(sqlRefPrefixes(refSql), `work_items_ensure_ref() in ${refRel} vs REF_PREFIXES`).toEqual({ ...REF_PREFIXES })
   })
 
   it('every registered type has a prefix arm — none falls through to upper(item_type)', () => {
-    const fromSql = sqlRefPrefixes(sql)
+    const fromSql = sqlRefPrefixes(refSql)
     for (const key of new Set([...seededKeys, ...WORK_ITEM_TYPE_KEYS])) {
-      expect(fromSql[key], `${key} has no arm in work_items_ensure_ref()'s CASE (${rel})`).toBeDefined()
+      expect(fromSql[key], `${key} has no arm in work_items_ensure_ref()'s CASE (${refRel})`).toBeDefined()
     }
   })
 

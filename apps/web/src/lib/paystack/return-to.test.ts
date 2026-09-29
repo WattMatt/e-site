@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { safeReturnTo, DEFAULT_RETURN_TO, returnToForFeature } from './return-to'
+import { safeReturnTo, DEFAULT_RETURN_TO, returnToForFeature, solarReturnTo, solarLockedPath } from './return-to'
 
 /**
  * `return_to` travels through Paystack: it is written into transaction
@@ -95,5 +95,33 @@ describe('returnToForFeature — a JBCC buyer must not land on the Inspections p
       const v = returnToForFeature(k)
       expect(safeReturnTo(v)).toBe(v)
     }
+  })
+})
+
+describe('solarReturnTo — the Solar payer lands back on the project that sold it', () => {
+  // Owner default (1B): return to the LOCKED page — it sits outside the gated
+  // group, so it renders before the webhook grants, and `payment=received`
+  // tells it to show "activating Solar…" (spec §1.2) instead of the paywall.
+  it("returns the project's Solar locked page, flagged payment=received", () => {
+    expect(solarReturnTo('5a0e8f7c-1b2d-4c3e-9f4a-6b7c8d9e0f1a')).toBe(
+      '/projects/5a0e8f7c-1b2d-4c3e-9f4a-6b7c8d9e0f1a/solar/locked?payment=received',
+    )
+  })
+
+  it('solarLockedPath is the same page without the payment flag (the cancel destination)', () => {
+    expect(solarLockedPath('p1')).toBe('/projects/p1/solar/locked')
+  })
+
+  it('is always a safe same-origin path', () => {
+    for (const id of ['p1', '//evil.test', 'https://evil.test', '..\\x']) {
+      for (const v of [solarReturnTo(id), solarLockedPath(id)]) {
+        expect(safeReturnTo(v)).toBe(v)
+        expect(new URL(v, 'https://www.e-site.live/api/paystack/callback').origin).toBe('https://www.e-site.live')
+      }
+    }
+  })
+
+  it('returnToForFeature has an org-level fallback for solar', () => {
+    expect(returnToForFeature('solar')).toBe(DEFAULT_RETURN_TO)
   })
 })

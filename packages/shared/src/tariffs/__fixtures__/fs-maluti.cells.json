@@ -1,0 +1,42 @@
+{
+  "source": {
+    "file": "2025/Free-State-Province.xlsx",
+    "sha256": "f03f27abc0e71ab1ec087ff9c696b69146871ded3c63ca0c42a18b2dc000db50",
+    "sheet": "MALUTI A PHOFUNG",
+    "rows": "1-19"
+  },
+  "cells": {
+    "A1": "Maluti a Phofung (10,00%)",
+    "B1": "Maluti a Phofung (10,00%)",
+    "A3": "ELECTRICITY",
+    "B3": "kWh",
+    "A4": "Consumer Cost (Tariffs do not include VAT)",
+    "B4": "Consumer Cost (Tariffs do not include VAT)",
+    "A5": "TARIFF -A- DOMESTIC TARIFFS",
+    "A6": "House, Flats, Old Age Homes, Hotels,\nChurch Offices, Charity Organisations, Schools, Sport Grounds, Clubs, Agricultural Societies.",
+    "A7": "BASIC LEVY - PER MONTH",
+    "A8": "Single Phase (Conventional Meters)",
+    "C8": 383.84,
+    "A9": "Three Phase (Conventional Meters)",
+    "C9": 383.84,
+    "A10": "Rural tariff",
+    "C10": 393.26,
+    "A11": "TARIFF PER UNIT",
+    "A12": "DOMESTIC NON RURAL",
+    "B12": "kWh",
+    "A13": "Conventional Normal meter-per\nkWh(single phase)summer tariff",
+    "B13": "(0-50kWh)",
+    "C13": 1.68,
+    "B14": "(51-350kWh)",
+    "C14": 2.18,
+    "B15": "(351-600kWh)",
+    "C15": 3.08,
+    "B16": "(>600kWh)",
+    "C16": 3.49,
+    "A18": "Conventional Normal meter-per\nkWh(single phase)winter tariff",
+    "B18": "(0-50kWh)",
+    "C18": 1.79,
+    "B19": "(51-350kWh)",
+    "C19": 2.35
+  }
+}

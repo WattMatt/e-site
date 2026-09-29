@@ -300,7 +300,8 @@ function selfAuthenticatingRoutes(): string[] {
 
 const LEGAL_PAGES = pagesUnder('(legal)')
 const PUBLIC_PAGES = pagesUnder('(public)')
-const PUBLIC_CONTENT_PAGES = [...LEGAL_PAGES, ...PUBLIC_PAGES]
+const PROPOSAL_PAGES = pagesUnder('(proposal)')
+const PUBLIC_CONTENT_PAGES = [...LEGAL_PAGES, ...PUBLIC_PAGES, ...PROPOSAL_PAGES]
 
 describe('middleware — public-content contract (app/(legal) + app/(public))', () => {
   it('enumerates the groups from disk, and they are not empty', () => {
@@ -312,6 +313,7 @@ describe('middleware — public-content contract (app/(legal) + app/(public))', 
       expect.arrayContaining(['/cookies', '/privacy/request', '/unsubscribe']),
     )
     expect(PUBLIC_PAGES).toEqual(expect.arrayContaining(['/', '/pricing', '/legal/terms']))
+    expect(PROPOSAL_PAGES).toEqual(['/proposal/[token]'])
   })
 
   it.each(PUBLIC_CONTENT_PAGES)('%s is reachable by an anonymous visitor', async (route) => {
@@ -406,3 +408,17 @@ describe('middleware — one-click unsubscribe endpoint', () => {
   })
 })
 
+
+describe('middleware — public proposal endpoints (Solar §9.4)', () => {
+  it.each(['/api/solar/proposal-response', '/api/solar/proposal-download'])('never redirects an anonymous POST to %s', async (p) => {
+    state.user = null
+    const res = await run(p)
+    expect(res.headers.get('location')).toBeNull()
+  })
+  it('does not open a neighbouring path', async () => {
+    state.user = null
+    expect(locationOf(await run('/proposals')).pathname).toBe('/login')
+    expect(locationOf(await run('/api/solar/proposal-responses')).pathname).toBe('/login')
+    expect(locationOf(await run('/api/solar/proposal-download/extra')).pathname).toBe('/login')
+  })
+})

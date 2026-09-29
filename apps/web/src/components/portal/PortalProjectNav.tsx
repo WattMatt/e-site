@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
  * chosen for client visibility (spec 2026-07-06-client-portal.md §2, plus
  * Equipment & Materials per the 2026-07-07 decision). No financial or admin
  * surfaces exist here by construction.
+ * Proposals (Solar §9.4, D-18): issued offers only, rendered from their frozen snapshot.
  */
 const TABS = [
   { slug: '',                  label: 'Overview' },
@@ -21,6 +22,7 @@ const TABS = [
   { slug: 'floor-plans',       label: 'Floor Plans' },
   { slug: 'handover',          label: 'Handover' },
   { slug: 'tenant-schedule',   label: 'Tenant Schedule' },
+  { slug: 'proposals',         label: 'Proposals' },
 ] as const
 
 export function PortalProjectNav({ projectId }: { projectId: string }) {

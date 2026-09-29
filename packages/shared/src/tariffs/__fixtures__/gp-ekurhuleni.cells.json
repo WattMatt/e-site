@@ -1,0 +1,26 @@
+{
+  "source": {
+    "file": "2025/Gauteng-Province.xlsx",
+    "sha256": "19cf92d3e7b04e3213efe5dd44311a917005944303d43648e6335c00bc572361",
+    "sheet": "CITY OF EKURHULENI",
+    "rows": "1-11"
+  },
+  "cells": {
+    "A1": "City of Ekurhuleni",
+    "B1": "12.74%",
+    "A3": "Domestic IBT Tariff A",
+    "A4": "Block 1 (0 to 50 kWh)",
+    "B4": 2.3231,
+    "A5": "Block 2 (>50  to <=600 kWh)",
+    "B5": 2.3231,
+    "A6": "Block 3 (>600 to <=700 kWh)",
+    "B6": 3.9486,
+    "A7": "Block 4 (>700 kWh)",
+    "B7": 11.1291,
+    "A8": "Single rate energy charge",
+    "B8": 2.4574,
+    "A10": "Tariff A – Business Conventional",
+    "A11": "Energy charge: R/kWh",
+    "B11": 3.6764
+  }
+}

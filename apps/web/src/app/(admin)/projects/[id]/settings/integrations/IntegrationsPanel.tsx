@@ -36,6 +36,7 @@ type ToggleField =
   | 'notifyDiaryEmail'
   | 'notifyFormEmail'
   | 'notifyWhatsapp'
+  | 'notifySolarEmail'
 
 interface Props {
   projectId: string
@@ -45,6 +46,7 @@ interface Props {
   initialNotifyDiaryEmail: boolean
   initialNotifyFormEmail: boolean
   initialNotifyWhatsapp: boolean
+  initialNotifySolarEmail: boolean
 }
 
 export function IntegrationsPanel({
@@ -55,6 +57,7 @@ export function IntegrationsPanel({
   initialNotifyDiaryEmail,
   initialNotifyFormEmail,
   initialNotifyWhatsapp,
+  initialNotifySolarEmail,
 }: Props) {
   const [values, setValues] = useState<Record<ToggleField, boolean>>({
     notifyRfiEmail: initialNotifyRfiEmail,
@@ -63,6 +66,7 @@ export function IntegrationsPanel({
     notifyDiaryEmail: initialNotifyDiaryEmail,
     notifyFormEmail: initialNotifyFormEmail,
     notifyWhatsapp: initialNotifyWhatsapp,
+    notifySolarEmail: initialNotifySolarEmail,
   })
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -112,6 +116,12 @@ export function IntegrationsPanel({
       label: 'WhatsApp for work items',
       description:
         'Send assigned, due-tomorrow and overdue work items to people who have linked WhatsApp, and let them acknowledge, finish or add photos by replying. Off by default. Email notifications are unaffected.',
+    },
+    {
+      field: 'notifySolarEmail',
+      label: 'Solar proposal email notifications',
+      description:
+        'Allow emailing an issued Solar proposal link to the client, and email the proposer when the client accepts or declines. Turning this off leaves the in-app notification in place.',
     },
   ]
 

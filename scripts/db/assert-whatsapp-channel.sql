@@ -1,6 +1,6 @@
 -- scripts/db/assert-whatsapp-channel.sql
--- Run: cat apps/edge-functions/supabase/migrations/00207_whatsapp_reply_to_act.sql \
---          apps/edge-functions/supabase/migrations/00208_whatsapp_project_channel.sql > $TMPDIR/wa-both.sql
+-- Run: cat apps/edge-functions/supabase/migrations/00222_whatsapp_reply_to_act.sql \
+--          apps/edge-functions/supabase/migrations/00223_whatsapp_project_channel.sql > $TMPDIR/wa-both.sql
 --      scripts/db/dry-run-migration.sh $TMPDIR/wa-both.sql scripts/db/assert-whatsapp-channel.sql
 SELECT set_config('x.c', '018f2d31-bbe8-4cc1-bbdd-63af0187081e', true);
 SELECT set_config('x.kw', (SELECT pm.project_id::text FROM projects.project_members pm

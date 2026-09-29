@@ -606,7 +606,7 @@ describe('deleteQcReportAction — RBAC gate (ORG_WRITE_ROLES)', () => {
       listRows: {
         qc_entries: [{ id: ENTRY_ID }],
         qc_entry_photos: [{ file_path: PHOTO_ROW.file_path }],
-        reports: [{ storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf` }],
+        reports: [{ storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf`, organisation_id: ORG_ID }],
       },
     })
     createServiceClientMock.mockReturnValue(service.client)
@@ -615,7 +615,30 @@ describe('deleteQcReportAction — RBAC gate (ORG_WRITE_ROLES)', () => {
     expect(res).toEqual({})
     expect(service.storageFrom).toHaveBeenCalledWith('qc-report-entries')
     expect(service.storageFrom).toHaveBeenCalledWith('qc-reports')
+    expect(service.remove).toHaveBeenCalledWith([`${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf`])
     expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/quality-control`)
+  })
+
+  // 00207: the PDF cleanup runs on the service client, so a saved row whose path is outside this
+  // project's own folder (a forged row, or one from another project) never has its file removed.
+  it('never removes a QC PDF path outside the report’s own org/project folder', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager' }))
+    const foreign = `${ORG_ID}/${OTHER_USER}/equipment-materials-v1.pdf`
+    const service = mockServiceClient({
+      listRows: {
+        qc_entries: [],
+        reports: [
+          { storage_path: foreign, organisation_id: ORG_ID },
+          { storage_path: `${ORG_ID}/${PROJECT_ID}/../../x/y/z.pdf`, organisation_id: ORG_ID },
+        ],
+      },
+    })
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const res = await deleteQcReportAction(REPORT_ID)
+    expect(res).toEqual({})
+    expect(service.storageFrom).not.toHaveBeenCalledWith('qc-reports')
+    expect(service.remove).not.toHaveBeenCalled()
   })
 })
 

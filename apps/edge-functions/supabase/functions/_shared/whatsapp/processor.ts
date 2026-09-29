@@ -2,7 +2,7 @@
 //
 // One inbound WhatsApp message -> one outcome. Every domain write goes through
 // a whatsapp.wa_* function, which acts AS the linked user under real RLS
-// (migration 00207 part B). This file decides WHICH item and WHICH action;
+// (migration 00222 part B). This file decides WHICH item and WHICH action;
 // it never decides whether the user is ALLOWED — the database does.
 import {
   ACTIVE_ITEM_TTL_MS, BURST_WINDOW_MS, CONSENT_TEXT_VERSION, WRONG_ITEM_WINDOW_MS, classifyKeyword, decodePayload,

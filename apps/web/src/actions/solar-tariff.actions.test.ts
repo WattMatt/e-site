@@ -1,0 +1,184 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const h = vi.hoisted(() => ({
+  createClient: vi.fn(), svc: vi.fn(), requireSolarLevel: vi.fn(), audit: vi.fn(async () => {}), revalidate: vi.fn(), effective: vi.fn(),
+}))
+vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createServiceClient: h.svc }))
+vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
+vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
+vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
+vi.mock('@/lib/solar/tariff/effective-tariff', () => ({ loadEffectiveTariff: h.effective }))
+
+import {
+  selectSolarTariffAction, saveSolarExportRuleAction, createSolarTariffOverrideAction, revertSolarTariffOverrideAction,
+  editSolarOverrideChargeAction, recordSolarBillCheckAction, reportTariffErrorAction, saveSolarEscalationAction,
+  deleteSolarBillCheckAction, setStudyLicenseeAction,
+} from './solar-tariff.actions'
+import * as actions from './solar-tariff.actions'
+import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
+import { EMPTY_BILL_CHECK_FORM, makeCharge, makeTariff } from '@esite/shared'
+
+const P = 'p1'
+const T = '22222222-2222-2222-2222-222222222222'
+const STALE = 'Someone else changed this — reload to see their version.'
+
+function setup(o: FakeOptions = {}, rpc?: ReturnType<typeof vi.fn>) {
+  const fake = fakeSupabase({ userId: 'u1', ...o })
+  const client = rpc ? { ...fake.client, schema: (s: string) => ({ ...fake.client.schema(s), rpc }) } : fake.client
+  h.createClient.mockResolvedValue(client)
+  return fake
+}
+
+beforeEach(() => { vi.clearAllMocks(); h.requireSolarLevel.mockResolvedValue('edit_financials') })
+
+describe('solar tariff actions', () => {
+  it('every exported action demands Edit + financials before it reads or writes anything (the gate redirects lower levels)', async () => {
+    const f = setup()
+    h.requireSolarLevel.mockRejectedValue(new Error('REDIRECT:/projects/p1/solar/locked'))
+    const exported = Object.entries(actions).filter(([, v]) => typeof v === 'function') as Array<[string, (i: unknown) => Promise<unknown>]>
+    // A new action must join this loop: the count is pinned so the loop cannot silently shrink.
+    expect(exported.map(([k]) => k).sort()).toHaveLength(11)
+    const input = { projectId: P, tariffId: T, expectedUpdatedAt: 'T1', note: 'x', sourceDocumentId: 'd1', billCheckId: 'b1', form: EMPTY_BILL_CHECK_FORM }
+    for (const [name, fn] of exported) {
+      await expect(fn(input), name).rejects.toThrow('REDIRECT')
+    }
+    expect(h.requireSolarLevel).toHaveBeenCalledTimes(exported.length)
+    for (const c of h.requireSolarLevel.mock.calls) expect(c.slice(0, 2)).toEqual([P, 'edit_financials'])
+    expect(f.calls).toHaveLength(0)
+    expect(h.svc).not.toHaveBeenCalled()
+  })
+
+  it('select: conditioned on updated_at; 0 rows is stale; audit carries the id only', async () => {
+    const f = setup({ writes: { 'solar.studies:update': { data: [{ updated_at: 'T2' }] } } })
+    expect(await selectSolarTariffAction({ projectId: P, tariffId: T, expectedUpdatedAt: 'T1' })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(f.calls, 'solar.studies', 'update')[0]).toMatchObject({ payload: { tariff_id: T }, filters: [['eq', 'project_id', P], ['eq', 'updated_at', 'T1']] })
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'tariff_selected', objectRef: { tariffId: T } })
+    setup({ writes: { 'solar.studies:update': { data: [] } } })
+    expect(await selectSolarTariffAction({ projectId: P, tariffId: T, expectedUpdatedAt: 'T1' })).toEqual({ error: STALE })
+  })
+
+  it('select: a draft or overridden pin is refused with the database sentence mapped', async () => {
+    setup({ writes: { 'solar.studies:update': { error: { code: '23514', message: 'solar.studies: the project override belongs to another study or tariff; revert it first' } } } })
+    expect(await selectSolarTariffAction({ projectId: P, tariffId: T, expectedUpdatedAt: 'T1' }))
+      .toEqual({ error: 'Revert the project override before choosing another tariff.' })
+  })
+
+  it('export rule manual: note mandatory; rule + rates saved in ONE stale-guarded SQL call (no table writes)', async () => {
+    const tables = { 'solar.studies': [{ id: 's1', project_id: P, tariff_id: T, updated_at: 'T1' }], 'tariffs.tariff': [{ id: T, export_tariff_id: null }] }
+    setup({ tables })
+    expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1',
+      form: { method: 'manual', sourceNote: '', rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount: '95' }] } }))
+      .toEqual({ fieldErrors: { sourceNote: 'Say where this rate comes from (document and page)' } })
+    const rpc = vi.fn(async () => ({ data: 'T2', error: null }))
+    const f = setup({ tables }, rpc)
+    expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1',
+      form: { method: 'manual', sourceNote: 'Tshwane SSEG 2026/27 p4', rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount: '95' }] } }))
+      .toEqual({ ok: true, updatedAt: 'T2' })
+    expect(f.calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+    expect(rpc).toHaveBeenCalledWith('save_export_rule', {
+      p_project_id: P, p_expected_updated_at: 'T1',
+      p_rule: expect.objectContaining({ method: 'manual', sourceNote: 'Tshwane SSEG 2026/27 p4' }),
+      p_rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount_excl_vat: 95 }],
+    })
+  })
+
+  it('export rule: a study that moved between the read and the save (40001 from SQL) is stale, and not audited', async () => {
+    const tables = { 'solar.studies': [{ id: 's1', project_id: P, tariff_id: T, updated_at: 'T1' }], 'tariffs.tariff': [{ id: T, export_tariff_id: null }] }
+    setup({ tables }, vi.fn(async () => ({ data: null, error: { code: '40001', message: 'solar.save_export_rule: stale' } })))
+    expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1', form: { method: 'none', sourceNote: '', rates: [] } })).toEqual({ error: STALE })
+    expect(h.audit).not.toHaveBeenCalled()
+  })
+
+  it('licensee link: the audit row carries the licensee actually stored (a pinned tariff overrides the request)', async () => {
+    const L = '33333333-3333-3333-3333-333333333333'
+    const f = setup({ writes: { 'solar.studies:update': { data: [{ updated_at: 'T2', licensee_id: 'l-from-tariff' }] } } })
+    expect(await setStudyLicenseeAction({ projectId: P, licenseeId: L, expectedUpdatedAt: 'T1' })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(f.calls, 'solar.studies', 'update')[0].payload).toEqual({ licensee_id: L })
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'tariff_licensee_linked', objectRef: { licenseeId: 'l-from-tariff' } })
+  })
+
+  it('export rule: a stale study is refused before anything is written', async () => {
+    const f = setup({ tables: { 'solar.studies': [{ id: 's1', project_id: P, tariff_id: T, updated_at: 'T9' }], 'tariffs.tariff': [{ id: T, export_tariff_id: null }] } })
+    expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1', form: { method: 'none', sourceNote: '', rates: [] } })).toEqual({ error: STALE })
+    expect(f.calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+  })
+
+  it('override create / revert go through the SQL functions with the expected timestamp', async () => {
+    const rpc = vi.fn(async () => ({ data: 'o1', error: null }))
+    setup({}, rpc)
+    expect(await createSolarTariffOverrideAction({ projectId: P, expectedUpdatedAt: 'T1' })).toEqual({ ok: true })
+    expect(rpc).toHaveBeenCalledWith('create_tariff_override', { p_project_id: P, p_expected_updated_at: 'T1' })
+    const stale = vi.fn(async () => ({ data: null, error: { code: '40001', message: 'solar.revert_tariff_override: stale' } }))
+    setup({}, stale)
+    expect(await revertSolarTariffOverrideAction({ projectId: P, expectedUpdatedAt: 'T1' })).toEqual({ error: STALE })
+  })
+
+  it('override row edit needs a reason and is conditioned on the row updated_at', async () => {
+    const tables = { 'solar.tariff_override_charges': [{ id: 'oc1', project_id: P, component: 'energy', season: 'all' }] }
+    setup({ tables })
+    expect(await editSolarOverrideChargeAction({ projectId: P, chargeId: 'oc1', expectedUpdatedAt: 'R1', form: { amount: '199', unit: 'c_per_kWh', reason: '' } }))
+      .toEqual({ fieldErrors: { reason: 'Say why this rate differs from the published one' } })
+    const f = setup({ tables, writes: { 'solar.tariff_override_charges:update': { data: [{ id: 'oc1' }] } } })
+    expect(await editSolarOverrideChargeAction({ projectId: P, chargeId: 'oc1', expectedUpdatedAt: 'R1', form: { amount: '199', unit: 'c_per_kWh', reason: 'Lease cl. 14' } }))
+      .toEqual({ ok: true })
+    expect(callsTo(f.calls, 'solar.tariff_override_charges', 'update')[0]).toMatchObject({
+      payload: { amount_excl_vat: 199, unit: 'c_per_kWh', reason: 'Lease cl. 14' },
+      filters: [['eq', 'id', 'oc1'], ['eq', 'project_id', P], ['eq', 'updated_at', 'R1']],
+    })
+  })
+
+  it('bill check: models the month with the effective tariff and stores the record', async () => {
+    const f = setup({ writes: { 'solar.bill_checks:insert': { data: [{ id: 'b1' }] } } })
+    h.effective.mockResolvedValue({ studyId: 's1', tariffId: T, overrideId: null, nmdKva: null, highSeasonMonths: null,
+      tariff: makeTariff({ name: 'Flat', structure: 'flat', charges: [
+        makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 250 }), makeCharge({ component: 'basic', unit: 'R_per_month', amountExclVat: 400 }),
+      ] }) })
+    const r = await recordSolarBillCheckAction({ projectId: P, form: { ...EMPTY_BILL_CHECK_FORM, month: '2026-03', totalKwh: '1000', actualTotal: '2700' } })
+    expect(r).toMatchObject({ ok: true, result: { modelled: 2900, actual: 2700, differencePct: 7.407, warn: true } })
+    expect(callsTo(f.calls, 'solar.bill_checks', 'insert')[0].payload).toMatchObject({
+      study_id: 's1', billing_month: '2026-03-01', tariff_id: T, tariff_override_id: null, import_kwh_standard: 1000,
+      actual_total_excl_vat: 2700, modelled_total_excl_vat: 2900, difference_pct: 7.407,
+    })
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'bill_check_recorded', objectRef: { billingMonth: '2026-03' } })
+    // The TOU calendar (high-season months) is the one valid in the BILLING month, not today's.
+    expect(h.effective).toHaveBeenCalledWith(expect.anything(), P, '2026-03-15')
+  })
+
+  it('bill check: a tariff or override change while the bill was checked is refused as stale, not recorded', async () => {
+    setup({ writes: { 'solar.bill_checks:insert': { error: { code: '23514', message: "solar.bill_checks: the study's tariff changed while the bill was being checked" } } } })
+    h.effective.mockResolvedValue({ studyId: 's1', tariffId: T, overrideId: 'o1', nmdKva: null, highSeasonMonths: null,
+      tariff: makeTariff({ name: 'Flat', structure: 'flat', charges: [makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 250 })] }) })
+    expect(await recordSolarBillCheckAction({ projectId: P, form: { ...EMPTY_BILL_CHECK_FORM, month: '2026-03', totalKwh: '1000', actualTotal: '2700' } }))
+      .toEqual({ error: STALE })
+    expect(h.audit).not.toHaveBeenCalled()
+  })
+
+  it('bill check delete: scoped to the project; audited without amounts', async () => {
+    const f = setup({ writes: { 'solar.bill_checks:delete': { data: [{ id: 'b1' }] } } })
+    expect(await deleteSolarBillCheckAction({ projectId: P, id: 'b1' })).toEqual({ ok: true })
+    expect(callsTo(f.calls, 'solar.bill_checks', 'delete')[0].filters).toEqual([['eq', 'id', 'b1'], ['eq', 'project_id', P]])
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'bill_check_deleted', objectRef: { billCheckId: 'b1' } })
+  })
+
+  it('bill check delete: nothing deleted (gone, or hidden by RLS) writes no audit row', async () => {
+    setup({ writes: { 'solar.bill_checks:delete': { data: [] } } })
+    expect(await deleteSolarBillCheckAction({ projectId: P, id: 'b1' })).toEqual({ error: 'That bill check no longer exists. Reload the page.' })
+    expect(h.audit).not.toHaveBeenCalled()
+  })
+
+  it('report a tariff error: note required; inserted through the caller session', async () => {
+    const f = setup({ writes: { 'tariffs.error_report:insert': { data: [{ id: 'r1' }] } } })
+    expect(await reportTariffErrorAction({ projectId: P, tariffId: T, note: '  ' })).toEqual({ error: 'Describe what looks wrong.' })
+    expect(await reportTariffErrorAction({ projectId: P, tariffId: T, note: 'Basic charge is last year\'s' })).toEqual({ ok: true })
+    expect(callsTo(f.calls, 'tariffs.error_report', 'insert')[0].payload).toEqual({ tariff_id: T, project_id: P, note: 'Basic charge is last year\'s' })
+  })
+
+  it('escalation: overrides validated against the org analysis period; empty form clears to defaults', async () => {
+    const tables = { 'solar.studies': [{ id: 's1', project_id: P, organisation_id: 'org1', updated_at: 'T1' }], 'solar.org_settings': [] }
+    setup({ tables })
+    expect(await saveSolarEscalationAction({ projectId: P, expectedUpdatedAt: 'T1', form: { '2': 'abc' } })).toEqual({ fieldErrors: { '2': 'Enter a percentage' } })
+    const f = setup({ tables, writes: { 'solar.studies:update': { data: [{ updated_at: 'T2' }] } } })
+    expect(await saveSolarEscalationAction({ projectId: P, expectedUpdatedAt: 'T1', form: { '2': '' } })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(f.calls, 'solar.studies', 'update')[0].payload).toEqual({ escalation: null })
+  })
+})

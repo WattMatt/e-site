@@ -1,6 +1,6 @@
 -- scripts/db/assert-whatsapp-actor.sql
 -- Acting as the user under REAL RLS. Run:
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-actor.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00222_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-actor.sql
 -- Fixtures: C = rbac-test contractor (KINGSWALK member only); PM = KINGSWALK's PM;
 -- item A (KINGSWALK, C holds the ball); item B (MAMAILA, C has no access).
 

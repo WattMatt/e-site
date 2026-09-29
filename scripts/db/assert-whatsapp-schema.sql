@@ -1,6 +1,6 @@
 -- scripts/db/assert-whatsapp-schema.sql
--- Structure and grants of 00207. Run:
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-schema.sql
+-- Structure and grants of 00222. Run:
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00222_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-schema.sql
 SELECT * FROM (VALUES
   ('schema whatsapp exists',            EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'whatsapp')),
   ('phone_links exists',                to_regclass('whatsapp.phone_links') IS NOT NULL),

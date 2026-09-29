@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { FEATURE_PRICES, type FeatureKey } from '@esite/shared'
+import { FEATURE_PRICES, ONE_TIME_FEATURE_KEYS, type OneTimeFeatureKey } from '@esite/shared'
 import { hasFeature } from '@/lib/features'
 import { rateLimit } from '@/lib/rate-limit'
 import { safeReturnTo, returnToForFeature } from '@/lib/paystack/return-to'
@@ -18,8 +18,12 @@ import { safeReturnTo, returnToForFeature } from '@/lib/paystack/return-to'
 // does not pass one, returnToForFeature supplies a sane default. It is
 // validated here as well as in the callback — see lib/paystack/return-to.ts.
 
+// ONE_TIME_FEATURE_KEYS, not Object.keys(FEATURE_PRICES): a subscription key
+// (model 'org_subscription', e.g. solar) sold here would take a one-time
+// charge that no webhook branch turns into access. Subscriptions have their
+// own routes (/api/paystack/solar-subscribe).
 const bodySchema = z.object({
-  feature_key: z.enum(Object.keys(FEATURE_PRICES) as [FeatureKey, ...FeatureKey[]]),
+  feature_key: z.enum(ONE_TIME_FEATURE_KEYS as unknown as [OneTimeFeatureKey, ...OneTimeFeatureKey[]]),
   return_to: z.string().optional(),
 })
 
