@@ -28,6 +28,8 @@ const PUBLIC_PATHS = [
   '/share',
   '/account-deleted',
   '/inspection',
+  // Client proposal by secure link (Solar §9.4, D-18): no login.
+  '/proposal/',
   // Public marketing + legal pages (PR #10, built for the Paystack KYC
   // review). Must be reachable without a session — Paystack reviewers and
   // anonymous visitors hit these without logging in.
@@ -53,6 +55,9 @@ const PUBLIC_EXACT_PATHS = new Set(['/'])
 // isPublicPath, so without the exemption an unconfirmed or aal1 session gets
 // redirected off the unsubscribe page it was mailed a link to.
 const PUBLIC_CONTENT_PREFIXES = [
+  // A signed-in client opening a mailed proposal link must not be bounced to /dashboard, nor
+  // intercepted by the email-verify / MFA gates (Solar §9.4).
+  '/proposal/',
   '/pricing',
   '/legal',
   '/sitemap.xml',
@@ -94,7 +99,8 @@ const SIGNED_WEBHOOK_PATHS = ['/api/webhooks/resend', '/api/paystack/webhook']
 // the mailbox provider POSTs it with no cookies at all, so a session gate
 // turns every provider-rendered Unsubscribe button into a silent no-op.
 // Exact paths, same reasoning as SIGNED_WEBHOOK_PATHS above.
-const PUBLIC_API_PATHS = ['/api/unsubscribe']
+// The two Solar proposal endpoints carry the share token in the POST body (Solar §9.4, D-18).
+const PUBLIC_API_PATHS = ['/api/unsubscribe', '/api/solar/proposal-response', '/api/solar/proposal-download']
 
 // Service-role client for org membership checks — bypasses RLS entirely.
 // Safe because we always verify the user session via updateSession() first.
