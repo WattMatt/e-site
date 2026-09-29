@@ -82,7 +82,8 @@ export function CaseList({ projectId, level, cases, studyUpdatedAt, openCaseId, 
   // exactly as the tab bar does.
   const nav = useSolarDiscardGuard()
   const openCase = (e: MouseEvent, href: string) => {
-    if (!isSolarDirty()) return
+    // A new-tab / new-window open discards nothing here: let the browser have it.
+    if (!isSolarDirty() || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
     e.preventDefault()
     nav.guard(() => router.push(href))
   }

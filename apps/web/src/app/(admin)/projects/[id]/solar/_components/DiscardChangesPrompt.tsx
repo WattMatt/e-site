@@ -1,9 +1,13 @@
 'use client'
+import { useEffect, useRef } from 'react'
 /**
  * The inline "Discard unsaved changes?" the tab bar asks (never window.confirm), for in-page
  * navigation guarded by useSolarDiscardGuard (YF-08).
  */
 export function DiscardChangesPrompt({ onDiscard, onStay }: { onDiscard: () => void; onStay: () => void }) {
+  const stay = useRef<HTMLButtonElement>(null)
+  // An alertdialog takes focus; Stay (the safe answer) holds it.
+  useEffect(() => { stay.current?.focus() }, [])
   return (
     <div
       role="alertdialog"
@@ -12,7 +16,7 @@ export function DiscardChangesPrompt({ onDiscard, onStay }: { onDiscard: () => v
     >
       <span>Discard unsaved changes?</span>
       <button type="button" onClick={onDiscard}>Discard</button>
-      <button type="button" onClick={onStay}>Stay</button>
+      <button ref={stay} type="button" onClick={onStay}>Stay</button>
     </div>
   )
 }

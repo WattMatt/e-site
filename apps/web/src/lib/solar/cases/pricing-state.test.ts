@@ -71,6 +71,9 @@ describe('resolveCaseStatus — degradation / load shedding edited after the run
   it('financials re-run on the edited values: Done', async () => {
     await expect(resolveCaseStatus(svcWith(finHashFor(edited)), shared, 'c1', latest, okRow, doneCtx(edited))).resolves.toEqual({ status: 'done', label: 'Done' })
   })
+  it('an edit on a case with no financials for this run: Done (nothing priced is out of date)', async () => {
+    await expect(resolveCaseStatus(svcWith(null), shared, 'c1', latest, okRow, doneCtx(edited))).resolves.toEqual({ status: 'done', label: 'Done' })
+  })
   it('no edit: Done', async () => {
     await expect(resolveCaseStatus(svcWith(null), shared, 'c1', latest, okRow, doneCtx(cfg))).resolves.toEqual({ status: 'done', label: 'Done' })
   })

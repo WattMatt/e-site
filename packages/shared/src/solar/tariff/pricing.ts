@@ -172,17 +172,30 @@ export function resolveStudyPricing(i: StudyPricingInput): ResolvedStudyPricing 
   }
 }
 
+/** Every rate × k; a `pct` charge is a percentage, not a price, and is left alone. */
+function scaledRates(t: Tariff, k: number): Tariff {
+  return { ...t, charges: t.charges.map((ch) => (ch.unit === 'pct' ? ch : { ...ch, amountExclVat: ch.amountExclVat * k })) }
+}
+
 /**
- * The tariff a run prices year 1 on: the resolved tariff with every rate brought forward by the
- * year-1 catch-up (a `pct` charge is a percentage, not a price, and is left alone). Without a
- * catch-up it IS `p.tariff`. Export tariffs are not scaled: a linked or manual export rate is not the
- * pinned licensee's published year. The Tariff tab and its bill check keep the published rates.
+ * The tariff a run prices year 1 on: the resolved tariff (override applied) with every rate brought
+ * forward by the year-1 catch-up. Without a catch-up it IS `p.tariff`. The Tariff tab and its bill
+ * check keep the published rates.
  */
 export function yearOneTariff(p: ResolvedStudyPricing): Tariff {
   const c = p.yearOneCatchUp
-  if (!c) return p.tariff
-  const k = 1 + c.pct / 100
-  return { ...p.tariff, charges: p.tariff.charges.map((ch) => (ch.unit === 'pct' ? ch : { ...ch, amountExclVat: ch.amountExclVat * k })) }
+  return c ? scaledRates(p.tariff, 1 + c.pct / 100) : p.tariff
+}
+
+/**
+ * The export tariff a run prices year 1 on. A LINKED export tariff (the pinned tariff's own
+ * export_tariff_id, the same library year) is brought forward with the import tariff, so export
+ * credit keeps its ratio to the import it offsets. A MANUAL rate is the user's own figure and is
+ * never scaled.
+ */
+export function yearOneExportTariff(p: ResolvedStudyPricing): Tariff | null {
+  const c = p.yearOneCatchUp
+  return c && p.exportTariff && p.exportMethod === 'linked_tariff' ? scaledRates(p.exportTariff, 1 + c.pct / 100) : p.exportTariff
 }
 
 /** Canonical SHA-256 of the whole resolved pricing (engine spec §1.3 canonical JSON). */

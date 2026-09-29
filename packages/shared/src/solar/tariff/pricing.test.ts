@@ -7,7 +7,7 @@ import { tariffBillCalculator } from '../../services/solar/finance/tariff-bill-c
 import { runBillCheck } from './bill-check'
 import { buildEscalationRows, escalationPathFromRows, escalationSettingsFrom } from './escalation'
 import type { OverrideChargeRow } from './override'
-import { resolveStudyPricing, studyPricingHash, yearOneTariff, type StudyPricingInput } from './pricing'
+import { resolveStudyPricing, studyPricingHash, yearOneExportTariff, yearOneTariff, type StudyPricingInput } from './pricing'
 
 const flat = (energyCents: number, extra: Tariff['charges'] = []): Tariff => makeTariff({ name: 'Business Flat', structure: 'flat', charges: [
   makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: energyCents }),
@@ -246,6 +246,17 @@ describe('year 1 is brought forward when the pinned tariff is an earlier financi
     const p = resolveStudyPricing(lagging('2026/27', [{ financialYear: '2025/26', approvedIncreasePct: 12.7 }]))
     expect(p.yearOneCatchUp?.steps).toEqual([{ financialYear: '2026/27', pct: 9, source: 'default' }])
     expect(yearOneTariff(p).charges.find((c) => c.unit === 'c_per_kWh')!.amountExclVat).toBeCloseTo(250 * 1.09, 9)
+  })
+
+  it('a linked export tariff is brought forward with the import; a manual rate is not', () => {
+    const exportTariff = makeTariff({ name: 'Gen-offset', structure: 'flat', charges: [makeCharge({ component: 'export_credit', unit: 'R_per_kWh', amountExclVat: 0.8 })] })
+    const linked = resolveStudyPricing({ ...lagging('2026/27'), published: { ...lagging('2026/27').published, exportTariff },
+      study: { ...input().study, exportRule: { version: 1, method: 'linked_tariff' } } })
+    expect(linked.exportMethod).toBe('linked_tariff')
+    expect(yearOneExportTariff(linked)!.charges[0]!.amountExclVat).toBeCloseTo(0.8 * 1.101, 9)
+    const manual = resolveStudyPricing({ ...lagging('2026/27'), study: { ...input().study, exportRule: { version: 1, method: 'manual' } },
+      exportRates: [{ id: 'r', season: 'all', tou: 'all', unit: 'R_per_kWh', amountExclVat: 0.9, sourceNote: 'n' }] })
+    expect(yearOneExportTariff(manual)).toBe(manual.exportTariff)
   })
 
   it('two years behind compounds both steps', () => {
