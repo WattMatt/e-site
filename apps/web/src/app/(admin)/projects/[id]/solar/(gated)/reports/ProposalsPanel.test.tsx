@@ -116,6 +116,8 @@ describe('ProposalsPanel (§9.3)', () => {
     expect(h.withdraw).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm withdraw v1' }))
     await waitFor(() => expect(h.withdraw).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'i1' }))
+    // Controls stay disabled until the withdraw settles; clicking earlier is a no-op (slow CI runners).
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Revise v1' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Revise v1' }))
     await waitFor(() => expect(h.revise).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'i1' }))
     expect(screen.getByRole('button', { name: 'New link for v1' })).toBeTruthy()
