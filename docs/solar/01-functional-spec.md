@@ -585,8 +585,12 @@ no calculation read them).
 ### 13.3 How the hierarchy is used
 - **Reconciliation:** for each parent meter with children, monthly parent kWh vs Σ children, shown on
   Load → Checks (flag > ±10 %).
-- **Double-count guard:** the site-load builder refuses to add both a parent and its children to the
-  site series under basis S2 (children win; the parent is used for reconciliation only).
+- **Double-count guard:** when a parent and its children are both assigned under basis S2, the children
+  are counted in full and the parent contributes only its **residual** — parent − Σ its nearest counted
+  descendants, per interval, floored at 0 (so a chain P → C → G sums to P). If the residual is negative in
+  more than 1 % of intervals, Load → Checks warns and names the kWh by which the children exceed the
+  parent (a wrong hierarchy or CT ratio). (Integration fix, 2026-09-29; before it the parent was dropped,
+  which lost the parent's own un-metered load.)
 - The connection graph is also offered when choosing the point-of-connection node (§3.2).
 
 ---

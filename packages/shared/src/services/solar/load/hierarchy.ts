@@ -47,7 +47,7 @@ export interface DoubleCountResult {
   droppedParents: Array<{ meterId: string; includedDescendants: string[] }>
 }
 
-/** Children win (§13.3): an included meter with an included descendant is dropped from the series. */
+/** §13.3: an included meter with an included descendant is a PARENT — buildSiteLoad counts only its residual. */
 export function doubleCountGuard(includedMeterIds: string[], lines: MeterLine[]): DoubleCountResult {
   const children = supplyChildren(lines)
   const included = new Set(includedMeterIds)

@@ -44,17 +44,58 @@ describe('buildSiteLoad — S2 (sum of tenants)', () => {
     expect(r.series[100]).toBeCloseTo(15 * 1.1)
   })
 
-  it('double-count guard: the parent is dropped, its tenant is covered by the children', () => {
+  it('double-count guard: children are counted and the parent contributes only its residual (30 kW over a 10 kW child = 30 kW)', () => {
     const r = buildSiteLoad(base({
       meters: [meter('P', 30), meter('C', 10)],
       tenants: [tenant('tA', { meters: [{ meterId: 'P', weight: 1 }] }), tenant('tB', { meters: [{ meterId: 'C', weight: 1 }] })],
       lines: [{ fromMeterId: 'P', toMeterId: 'C' }],
     }))
-    expect(r.series[500]).toBeCloseTo(10)
-    expect(r.coverage.coveredByChildren).toBe(1)
-    expect(r.tenants.find((t) => t.nodeId === 'tA')?.source).toBe('covered_by_children')
+    expect(r.series[500]).toBeCloseTo(30)
+    expect(total(r.series)).toBeCloseTo(30 * 8760, 0)
+    expect(r.coverage.coveredByChildren).toBe(0)
+    expect(r.tenants.find((t) => t.nodeId === 'tA')).toMatchObject({ source: 'metered' })
+    expect(r.tenants.find((t) => t.nodeId === 'tA')?.annualKwh).toBeCloseTo(20 * 8760, 0)
     expect(r.checks.some((c) => c.key === 'double_count:P')).toBe(true)
+    expect(r.checks.some((c) => c.key.startsWith('residual_negative:'))).toBe(false)
     expect(r.reconciliation.parents[0].months.every((m) => m.flagged)).toBe(true)
+  })
+
+  it('a chain P → C → G counts each meter once: G + (C − G) + (P − C) = P', () => {
+    const r = buildSiteLoad(base({
+      meters: [meter('P', 30), meter('C', 20), meter('G', 5)],
+      tenants: [
+        tenant('tP', { meters: [{ meterId: 'P', weight: 1 }] }),
+        tenant('tC', { meters: [{ meterId: 'C', weight: 1 }] }),
+        tenant('tG', { meters: [{ meterId: 'G', weight: 1 }] }),
+      ],
+      lines: [{ fromMeterId: 'P', toMeterId: 'C' }, { fromMeterId: 'C', toMeterId: 'G' }],
+    }))
+    expect(r.series[500]).toBeCloseTo(30)
+    expect(r.tenants.find((t) => t.nodeId === 'tC')?.annualKwh).toBeCloseTo(15 * 8760, 0)
+  })
+
+  it('a parent that reads LESS than its children floors at 0 and raises a Checks warning naming the kWh', () => {
+    const r = buildSiteLoad(base({
+      meters: [meter('P', 10), meter('C', 30)],
+      tenants: [tenant('tA', { meters: [{ meterId: 'P', weight: 1 }] }), tenant('tB', { meters: [{ meterId: 'C', weight: 1 }] })],
+      lines: [{ fromMeterId: 'P', toMeterId: 'C' }],
+    }))
+    expect(r.series[500]).toBeCloseTo(30)
+    expect(r.tenants.find((t) => t.nodeId === 'tA')?.annualKwh).toBeCloseTo(0, 6)
+    const w = r.checks.find((c) => c.key === 'residual_negative:P')
+    expect(w?.severity).toBe('warning')
+    expect(w?.message).toContain('175 200 kWh')
+  })
+
+  it('a negative residual in ≤ 1 % of intervals is floored silently', () => {
+    const pr = readings('2025-01-01', 365, 30, 30)
+    for (let i = 0; i < 100; i++) pr[i] = { ...pr[i], value: 5 }  // 50 hours below the 10 kW child (< 1 % of 8760)
+    const r = buildSiteLoad(base({
+      meters: [meter('P', 30, { primary: { readings: pr, intervalMin: 30 } }), meter('C', 10)],
+      tenants: [tenant('tA', { meters: [{ meterId: 'P', weight: 1 }] }), tenant('tB', { meters: [{ meterId: 'C', weight: 1 }] })],
+      lines: [{ fromMeterId: 'P', toMeterId: 'C' }],
+    }))
+    expect(r.checks.some((c) => c.key === 'residual_negative:P')).toBe(false)
   })
 
   it('never counts a solar/generator/check/water meter as load', () => {

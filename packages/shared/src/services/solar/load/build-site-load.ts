@@ -11,7 +11,7 @@ import { CATEGORY_ARCHETYPE, DEFAULT_DENSITY_W_PER_M2, expandArchetype, getArche
 import { HOURS_PER_YEAR } from './calendar'
 import { chooseCommonWindow, DEFAULT_COMMON_WINDOW } from './common-window'
 import { designMaxDemandSynth } from './diversity'
-import { doubleCountGuard, reconcileParents, RECONCILIATION_TOLERANCE, type MeterLine, type ParentReconciliation } from './hierarchy'
+import { descendants, doubleCountGuard, reconcileParents, supplyChildren, RECONCILIATION_TOLERANCE, type MeterLine, type ParentReconciliation } from './hierarchy'
 import { completeDays, readingsToDailyHours } from './hourly'
 import { monthlyMaxDemand, monthlyMaxDemandFromHourly } from './max-demand'
 import { buildS1, buildS2, buildS4, LoadModelError, monthlyEnergyKwh, type LoadBasis, type S2Tenant } from './site-series'
@@ -191,10 +191,46 @@ function evaluateTenants(
     .filter((id) => (covered.get(id)?.length ?? 0) >= DEFAULT_COMMON_WINDOW.minDaysForMeter)
   const guard = doubleCountGuard(included, input.lines)
   const dropped = new Set(guard.droppedParents.map((d) => d.meterId))
+  // A parent with counted children contributes its RESIDUAL (parent − Σ its nearest counted
+  // descendants, per hour, floored at 0), so a chain P → C → G sums to P and nothing is counted twice.
+  const children = supplyChildren(input.lines)
+  const nearest = new Map<string, string[]>()
+  for (const d of guard.droppedParents) {
+    const inc = d.includedDescendants
+    nearest.set(d.meterId, inc.filter((x) => !inc.some((y) => y !== x && descendants(y, children).has(x))))
+  }
+  // Each subtracted meter's reference series, filled (if needed) from the first tenant that meters it.
+  const childSeries = new Map<string, Float64Array>()
+  for (const id of new Set([...nearest.values()].flat())) {
+    const m = meterById.get(id)
+    const owner = input.tenants.find((t) => t.source === 'metered' && t.meters.some((r) => r.meterId === id))
+    if (!m || !owner || !usableForLoad(m)) continue
+    const p = m.primary as ChannelData
+    childSeries.set(id, meterReferenceSeries({ readings: p.readings, intervalMin: p.intervalMin, referenceYear: year, window, fallbackSynth: synthFor(owner, year, input.densities) }).series)
+  }
+  const residualOf = (parent: BuildMeter, series: Float64Array): Float64Array => {
+    const kids = (nearest.get(parent.meterId) ?? []).map((k) => childSeries.get(k)).filter((x): x is Float64Array => Boolean(x))
+    const out = new Float64Array(HOURS_PER_YEAR)
+    let negHours = 0
+    let negKwh = 0
+    for (let h = 0; h < HOURS_PER_YEAR; h++) {
+      let v = series[h]
+      for (const k of kids) v -= k[h]
+      if (v < -1e-9) { negHours++; negKwh -= v }
+      out[h] = v > 0 ? v : 0
+    }
+    if (negHours / HOURS_PER_YEAR > NEGATIVE_RESIDUAL_SHARE && !checks.some((c) => c.key === `residual_negative:${parent.meterId}`)) {
+      checks.push({
+        key: `residual_negative:${parent.meterId}`, severity: 'warning', meterId: parent.meterId,
+        message: `${parent.label} reads less than the meters it feeds in ${Math.round((negHours / HOURS_PER_YEAR) * 1000) / 10} % of hours: ${groupThousands(negKwh)} kWh of their load exceeds it. Its residual is floored at 0 there — check the meter hierarchy or the parent's CT ratio.`,
+      })
+    }
+    return out
+  }
   for (const d of guard.droppedParents) {
     const label = meterById.get(d.meterId)?.label ?? d.meterId
     const kids = d.includedDescendants.map((k) => meterById.get(k)?.label ?? k).join(', ')
-    checks.push({ key: `double_count:${d.meterId}`, severity: 'info', message: `${label} feeds meters that are also counted (${kids}); they are used and ${label} is kept for reconciliation only.`, meterId: d.meterId })
+    checks.push({ key: `double_count:${d.meterId}`, severity: 'info', message: `${label} feeds meters that are also counted (${kids}); they are counted in full and ${label} contributes only its residual (${label} − those meters, floored at 0).`, meterId: d.meterId })
   }
   const e: TenantEval = {
     s2: [], synths: [], meteredSum: new Float64Array(HOURS_PER_YEAR), summaries: [], metered: 0, synthesised: 0,
@@ -225,7 +261,6 @@ function evaluateTenants(
     }
     const used: Array<{ series: Float64Array; weight: number }> = []
     let sample: ArchetypeShapeDef | null = null
-    let coveredByChildren = false
     for (const ref of t.meters) {
       const m = meterById.get(ref.meterId)
       if (!m) {
@@ -233,10 +268,6 @@ function evaluateTenants(
         continue
       }
       if (!usableForLoad(m)) continue
-      if (dropped.has(m.meterId)) {
-        coveredByChildren = true
-        continue
-      }
       const primary = m.primary as ChannelData
       if ((covered.get(m.meterId)?.length ?? 0) < DEFAULT_COMMON_WINDOW.minDaysForMeter) {
         sample = shapeFromSample(readingsToDailyHours(primary.readings, primary.intervalMin), getArchetype(archetypeOf(t)))
@@ -249,7 +280,7 @@ function evaluateTenants(
         checks.push({ key: `filled:${m.meterId}`, severity: 'info', message: `${m.label}: ${r.missingMonths.length} month(s) without data were filled from ${t.label}'s synthesis scaled to the meter (×${r.synthesisScale.toFixed(2)}).`, meterId: m.meterId })
       }
       e.resolutionMin = e.resolutionMin === null ? primary.intervalMin : Math.min(e.resolutionMin, primary.intervalMin)
-      used.push({ series: r.series, weight: ref.weight })
+      used.push({ series: dropped.has(m.meterId) ? residualOf(m, r.series) : r.series, weight: ref.weight })
     }
     if (used.length > 0) {
       e.s2.push({ meters: used })
@@ -258,9 +289,6 @@ function evaluateTenants(
       for (const u of used) for (let h = 0; h < HOURS_PER_YEAR; h++) s[h] += u.weight * u.series[h]
       for (let h = 0; h < HOURS_PER_YEAR; h++) e.meteredSum[h] += s[h]
       summarise(t, 'metered', s)
-    } else if (coveredByChildren) {
-      e.coveredByChildren++
-      summarise(t, 'covered_by_children', null)
     } else {
       useSynth(t, sample ? synthFor(t, year, input.densities, sample) : synth)
     }
@@ -269,6 +297,13 @@ function evaluateTenants(
     checks.push({ key: `unassigned_tenants:${e.unassigned}`, severity: 'warning', message: `${e.unassigned} tenant(s) have no load basis yet; they are synthesised from the tenant schedule until you choose.` })
   }
   return e
+}
+
+/** A parent's residual may dip below 0 in at most this share of hours before Checks warns. */
+export const NEGATIVE_RESIDUAL_SHARE = 0.01
+
+function groupThousands(n: number): string {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 }
 
 export function buildSiteLoad(input: BuildSiteLoadInput): BuildSiteLoadResult {
