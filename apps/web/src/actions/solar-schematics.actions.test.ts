@@ -120,7 +120,7 @@ describe('schematic actions', () => {
     const svc = fakeSupabase({ tables: {} })
     h.createServiceClient.mockReturnValue(Object.assign(svc.client, { storage: { from: () => ({ upload, remove: vi.fn() }) } }))
     const r = await exportSchematicSheetAction({ projectId: P, schematicId: 'sc1', basedOn: 'U-old', jpegBase64: 'x'.repeat(200), crop: { w: 1000, h: 700 }, note: null })
-    expect(r).toEqual({ error: 'This schematic has been saved since the sheet was drawn — save the schematic first (or reload to see the latest), then export.' })
+    expect(r).toEqual({ error: 'This schematic was changed since you opened it — reload, then export.' })
     expect(upload).not.toHaveBeenCalled()
     expect(h.render).not.toHaveBeenCalled()
   })

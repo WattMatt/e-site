@@ -232,7 +232,7 @@ export async function exportSchematicSheetAction(input: { projectId: string; sch
   const sc = scRow as { id: string; study_id: string; organisation_id: string; name: string; kind: string; floor_plan_id: string | null; page_index: number; updated_at: string } | null
   if (!sc) return { error: 'This schematic no longer exists — reload.' }
   if (typeof input.basedOn !== 'string' || input.basedOn !== sc.updated_at) {
-    return { error: 'This schematic has been saved since the sheet was drawn — save the schematic first (or reload to see the latest), then export.' }
+    return { error: 'This schematic was changed since you opened it — reload, then export.' }
   }
   const [{ data: cards }, { data: lines }, { data: project }, { data: plan }] = await Promise.all([
     supabase.schema('solar').from('schematic_cards').select('meter_id').eq('schematic_id', sc.id),
