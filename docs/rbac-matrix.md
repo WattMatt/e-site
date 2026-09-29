@@ -63,7 +63,6 @@ membership.
 | `/inspections/unlock` | W | R | R | — | — | — | — |
 | `/marketplace` | W³ | W³ | W³ | W³ | — | — | — |
 | `/marketplace/supplier/*` | — | — | — | — | — | W | — |
-| `/site` (site capture) | W | W | W | W | W | — | — |
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |

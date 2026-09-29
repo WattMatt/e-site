@@ -8,7 +8,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText, Zap,
+  Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
   ShieldCheck, FileText, BarChart3, Sun,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
@@ -93,7 +93,6 @@ function projectNav(id: string) {
 }
 
 const FOOTER_ITEMS = [
-  { href: '/site',                label: 'Site capture', Icon: HardHat,   adminOnly: false },
   { href: '/cable-schedule/sans', label: 'SANS ref',     Icon: BookMarked, adminOnly: false },
   { href: '/metrics',             label: 'Adoption',     Icon: BarChart3, adminOnly: true },
   { href: '/settings',            label: 'Settings',     Icon: Settings,  adminOnly: true },
