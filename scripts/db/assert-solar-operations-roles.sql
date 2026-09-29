@@ -420,6 +420,24 @@ BEGIN
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_writes_note_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_writes_note_REFUSED', false);
   END;
+  -- Moving the commissioning date later than recorded downtime would leave that downtime before
+  -- commissioning, which the downtime insert refuses (review A6/B10): the move is refused too.
+  INSERT INTO solar.downtime (installation_id, starts_at, ends_at, cause) VALUES (v_inst, '2026-03-20 10:00+02', '2026-03-20 11:00+02', 'other')
+  RETURNING id INTO v_d2;
+  BEGIN
+    UPDATE solar.installations SET commissioning_date = '2026-03-25' WHERE id = v_inst;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.installations SET commissioning_date = '2026-03-20' WHERE id = v_inst;
+    UPDATE solar.installations SET commissioning_date = '2026-02-15' WHERE id = v_inst;
+    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', (SELECT commissioning_date = '2026-02-15' FROM solar.installations WHERE id = v_inst));
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', false);
+  END;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);
 

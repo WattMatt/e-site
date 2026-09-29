@@ -194,6 +194,14 @@ BEGIN
            (OLD.id, OLD.study_id, OLD.project_id, OLD.organisation_id, OLD.proposal_id, OLD.baseline, OLD.created_by, OLD.created_at) THEN
             RAISE EXCEPTION 'solar.installations: the installation identity and its modelled baseline are immutable' USING ERRCODE = '42501';
         END IF;
+        -- downtime_bind refuses downtime before commissioning; moving the date later must not strand
+        -- downtime that is already recorded (review A6/B10).
+        IF NEW.commissioning_date IS NOT NULL AND NEW.commissioning_date IS DISTINCT FROM OLD.commissioning_date
+           AND EXISTS (SELECT 1 FROM solar.downtime d
+                        WHERE d.installation_id = NEW.id
+                          AND d.starts_at < (NEW.commissioning_date::timestamp AT TIME ZONE 'Africa/Johannesburg')) THEN
+            RAISE EXCEPTION 'solar.installations: downtime is recorded before that commissioning date; move or delete it first' USING ERRCODE = '23514';
+        END IF;
     END IF;
     NEW.updated_by := COALESCE(auth.uid(), NEW.updated_by);
     NEW.updated_at := NOW();
