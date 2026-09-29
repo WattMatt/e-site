@@ -339,6 +339,22 @@ BEGIN
   -- Coverage is the minutes the kept readings SPAN, not count x one interval (review round 2).
   INSERT INTO _r VALUES ('mixed_interval_month_minutes_covered', (v_j -> v_mov::text -> '2026-07' ->> 'minutes')::int = 44640
     AND (v_j -> v_mov::text -> '2026-07' ->> 'n')::int = 2208);
+  -- Commissioning clip (#219 review): energy metered before the commissioning date must not count
+  -- against the prorated expectation. activeKwh / activeMinutes keep only readings whose interval
+  -- STARTS on or after local midnight of the commissioning date; kwh / minutes stay the whole month.
+  -- With commissioning on 2026-02-15, March counts in full.
+  INSERT INTO _r VALUES ('commissioning_clip_full_month_after', (v_j -> v_msolar::text -> '2026-03' ->> 'activeKwh')::numeric = 3.5
+    AND (v_j -> v_msolar::text -> '2026-03' ->> 'activeMinutes')::int = 30);
+  -- Commission on 16 July: 1-15 July (15 x 96 x 10 kW x 0.25 h = 3600 kWh) was test energy; only
+  -- 16-31 July (16 x 48 x 10 kW x 0.5 h = 3840 kWh, 16 x 1440 minutes) is the plant's.
+  UPDATE solar.installations SET commissioning_date = '2026-07-16' WHERE id = v_inst;
+  v_j := public.solar_ops_monthly_kwh(v_inst, 'generation');
+  INSERT INTO _r VALUES ('commissioning_clip_month_whole_kwh_kept', (v_j -> v_mov::text -> '2026-07' ->> 'kwh')::numeric = 7440);
+  INSERT INTO _r VALUES ('commissioning_clip_month_active_kwh', (v_j -> v_mov::text -> '2026-07' ->> 'activeKwh')::numeric = 3840
+    AND (v_j -> v_mov::text -> '2026-07' ->> 'activeMinutes')::int = 23040);
+  INSERT INTO _r VALUES ('commissioning_clip_month_before_is_zero', (v_j -> v_mov::text -> '2026-06' ->> 'activeKwh')::numeric = 0
+    AND (v_j -> v_mov::text -> '2026-06' ->> 'kwh')::numeric = 5);
+  UPDATE solar.installations SET commissioning_date = '2026-02-15' WHERE id = v_inst;
   v_j := public.solar_ops_series(v_inst, 'generation', DATE '2026-04-01');
   INSERT INTO _r VALUES ('series_reimport_other_interval_one_value_per_newer_interval', jsonb_array_length(v_j -> 'points') = 4
     AND (SELECT bool_and((p ->> 1)::numeric = 20 AND (p ->> 2)::int = 30) FROM jsonb_array_elements(v_j -> 'points') AS p));

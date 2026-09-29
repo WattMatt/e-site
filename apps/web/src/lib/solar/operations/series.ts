@@ -21,7 +21,13 @@ export async function loadMeterMonths(client: AnyClient, installationId: string,
   for (const [meterId, months] of Object.entries((data ?? {}) as Record<string, Record<string, Record<string, unknown>>>)) {
     const m: MeterMonths[string] = {}
     for (const [k, v] of Object.entries(months ?? {})) {
-      if (isMonthKey(k)) m[k] = { kwh: Number(v.kwh), n: Number(v.n), minutes: Number(v.minutes), intervalMin: Number(v.intervalMin) }
+      if (!isMonthKey(k)) continue
+      m[k] = { kwh: Number(v.kwh), n: Number(v.n), minutes: Number(v.minutes), intervalMin: Number(v.intervalMin) }
+      // 00218: the month clipped to readings from the commissioning date on (#219 review).
+      if (v.activeKwh !== undefined && v.activeMinutes !== undefined) {
+        m[k].activeKwh = Number(v.activeKwh)
+        m[k].activeMinutes = Number(v.activeMinutes)
+      }
     }
     out[meterId] = m
   }

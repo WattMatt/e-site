@@ -110,3 +110,27 @@ describe('commissioning month PR (review B6)', () => {
     expect(rows[0]!.performanceRatio).toBeCloseTo(500 / (100 * 150 * (16 / 31)), 4)
   })
 })
+
+describe('commissioning month actual is clipped to the active days (#219 review)', () => {
+  it('meter totals carry the active (post-commissioning) energy beside the whole month', () => {
+    const t = totalsByMonth({
+      m1: { '2026-02': { kwh: 700, n: 10, minutes: 28 * 1440, intervalMin: 30, activeKwh: 450, activeMinutes: 14 * 1440 } },
+      m2: { '2026-02': { kwh: 100, n: 5, minutes: 28 * 1440, intervalMin: 30 } },
+    })
+    // A meter without an active figure (an older aggregate) counts in full.
+    expect(t['2026-02']).toEqual({ kwh: 800, coverageMinutes: 56 * 1440, activeKwh: 550, activeCoverageMinutes: 42 * 1440 })
+  })
+  it('energy metered before the commissioning date does not count against the prorated expectation', () => {
+    // Commissioned 15 Feb: expectation 500 kWh (14 active days). 250 kWh of test energy before it.
+    const rows = performanceRows(base({
+      actual: { '2026-02': { kwh: 700, coverageMinutes: 28 * 1440, activeKwh: 450, activeCoverageMinutes: 14 * 1440 } },
+      months: ['2026-02'],
+    }))
+    expect(rows[0]).toMatchObject({ guaranteeKwh: 500, actualKwh: 450, varianceKwh: -50, variancePct: -10, coveragePct: 100 })
+  })
+  it('the per-source actual is clipped the same way', () => {
+    const rows = sourceRows([{ meterId: 'm1', label: 'PV', sharePct: null }],
+      { m1: { '2026-02': { kwh: 700, n: 10, minutes: 1, intervalMin: 30, activeKwh: 450, activeMinutes: 1 } } }, '2026-02', 500)
+    expect(rows[0]).toMatchObject({ expectedKwh: 500, actualKwh: 450 })
+  })
+})

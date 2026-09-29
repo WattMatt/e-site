@@ -14,9 +14,20 @@ import { daysInMonth, monthEndMs, monthParts, monthStartMs, type MonthKey } from
  * of each reading's interval) and is the coverage figure: a month re-imported at a second interval
  * holds readings of both, so n x intervalMin (the smallest) understates it (review round 2).
  */
-export interface MonthActual { kwh: number; n: number; minutes: number; intervalMin: number }
+export interface MonthActual {
+  kwh: number; n: number; minutes: number; intervalMin: number
+  /**
+   * The same month clipped to readings whose interval STARTS on or after the commissioning date
+   * (00218 solar_ops_monthly_kwh). Absent from an older aggregate: the whole month counts.
+   */
+  activeKwh?: number; activeMinutes?: number
+}
 export type MeterMonths = Record<string, Record<MonthKey, MonthActual>>
-export interface MonthTotal { kwh: number; coverageMinutes: number }
+export interface MonthTotal {
+  kwh: number; coverageMinutes: number
+  /** Present when any meter's month carried a commissioning-clipped figure. */
+  activeKwh?: number; activeCoverageMinutes?: number
+}
 
 export interface DowntimeRecord {
   id: string
@@ -64,12 +75,21 @@ const r2 = (x: number) => Math.round(x * 100) / 100
 
 export function totalsByMonth(m: MeterMonths): Record<MonthKey, MonthTotal> {
   const out: Record<MonthKey, MonthTotal> = {}
+  const active: Record<MonthKey, { kwh: number; minutes: number; any: boolean }> = {}
   for (const months of Object.values(m)) {
     for (const [k, v] of Object.entries(months)) {
       const t = (out[k] ??= { kwh: 0, coverageMinutes: 0 })
       t.kwh = r3(t.kwh + Number(v.kwh))
       t.coverageMinutes += Number(v.minutes)
+      const a = (active[k] ??= { kwh: 0, minutes: 0, any: false })
+      const clipped = v.activeKwh !== undefined && v.activeMinutes !== undefined
+      a.kwh = r3(a.kwh + Number(clipped ? v.activeKwh : v.kwh))
+      a.minutes += Number(clipped ? v.activeMinutes : v.minutes)
+      a.any ||= clipped
     }
+  }
+  for (const [k, a] of Object.entries(active)) {
+    if (a.any) Object.assign(out[k]!, { activeKwh: a.kwh, activeCoverageMinutes: a.minutes })
   }
   return out
 }
@@ -104,11 +124,12 @@ export function performanceRow(i: PerformanceInput, month: MonthKey): Performanc
   }
   const guaranteeKwh = Math.max(0, exp.kwh - excludedKwh)
   const a = i.actual[month]
-  // Known limit (review round 2, accepted): the commissioning month's actual is the whole month's
-  // metered energy, NOT clipped to the active window, so pre-commissioning test energy counts toward
-  // it while the expectation is prorated. Clipping needs the day-level series; the monthly aggregate
-  // cannot split a month.
-  const actualKwh = a ? a.kwh : null
+  // The actual is clipped to the plant's active days (#219 review): energy metered before the
+  // commissioning date was test energy and must not count against an expectation prorated to the
+  // active fraction. The aggregate carries the clipped figure (activeKwh); an older one without it
+  // counts the whole month.
+  const actualKwh = a ? (a.activeKwh ?? a.kwh) : null
+  const coverageMinutes = a ? (a.activeCoverageMinutes ?? a.coverageMinutes) : 0
   const varianceKwh = actualKwh === null ? null : actualKwh - guaranteeKwh
   const variancePct = varianceKwh === null || guaranteeKwh <= 0 ? null : (varianceKwh / guaranteeKwh) * 100
   const irr = i.irradiation.find((r) => r.month === month) ?? null
@@ -137,7 +158,7 @@ export function performanceRow(i: PerformanceInput, month: MonthKey): Performanc
     correctedExpectedKwh: correctedExpectedKwh === null ? null : r3(correctedExpectedKwh),
     irradiationPlane: irr?.plane ?? null,
     downtimeHours: hours.total, excludedHours: hours.excluded,
-    coveragePct: a ? r2(Math.min(100, (a.coverageMinutes / possible) * 100)) : null,
+    coveragePct: a ? r2(Math.min(100, (coverageMinutes / possible) * 100)) : null,
   }
 }
 
@@ -196,7 +217,7 @@ export function sourceRows(
     return {
       meterId: m.meterId, label: m.label, sharePct: r2(share),
       expectedKwh: r3((guaranteeKwh * share) / 100),
-      actualKwh: a ? r3(Number(a.kwh)) : null,
+      actualKwh: a ? r3(Number(a.activeKwh ?? a.kwh)) : null,
       allocatedEqually: m.sharePct === null,
     }
   })

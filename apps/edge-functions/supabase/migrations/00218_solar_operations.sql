@@ -126,6 +126,7 @@
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('monthly_reports', 'downtime_history') AND cmd IN ('INSERT', 'UPDATE', 'DELETE'))
 -- sql: (SELECT bool_and(c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND c.relname IN ('installations', 'installation_meters', 'guarantees', 'ops_irradiation', 'downtime', 'downtime_history', 'monthly_report_notes', 'monthly_reports', 'handover_templates', 'handover_items'))
 -- sql: (SELECT NOT bool_or(p.prosecdef) FROM pg_proc p WHERE p.oid IN ('public.solar_ops_monthly_kwh(uuid, text)'::regprocedure, 'public.solar_ops_series(uuid, text, date)'::regprocedure))
+-- sql: (SELECT strpos(p.prosrc, 'commissioning_date') > 0 AND strpos(p.prosrc, 'activeKwh') > 0 FROM pg_proc p WHERE p.oid = 'public.solar_ops_monthly_kwh(uuid, text)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%solar_monthly%' AND prosrc LIKE '%solar_layout_sheet%' AND prosrc LIKE '%solar_schematic_sheet%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_proposal%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
 -- sql: (SELECT public.report_kind_is_sensitive('solar_monthly') AND public.report_kind_is_sensitive('solar_proposal'))
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_monthly_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_handover_updated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
@@ -754,7 +755,11 @@ CREATE POLICY handover_items_delete_authz ON solar.handover_items AS RESTRICTIVE
 -- One jsonb document per call, so no PostgREST row cap can truncate a month.
 CREATE OR REPLACE FUNCTION public.solar_ops_monthly_kwh(p_installation_id UUID, p_role TEXT)
 RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
-    WITH ch AS (
+    -- Local midnight that starts the commissioning date; NULL (no date, or not readable) clips nothing.
+    WITH comm AS (
+        SELECT (i.commissioning_date::timestamp AT TIME ZONE 'Africa/Johannesburg') AS t0
+          FROM solar.installations i WHERE i.id = p_installation_id
+    ), ch AS (
         SELECT c.id, c.meter_id, c.interval_min, c.created_at
           FROM solar.installation_meters im
           JOIN solar.meters m ON m.id = im.meter_id
@@ -778,18 +783,24 @@ RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
          ORDER BY ch.meter_id, r.ts_end, ch.created_at DESC, ch.id DESC
     ), bucketed AS (
         SELECT meter_id,
-               to_char((ts_end - make_interval(mins => interval_min)) AT TIME ZONE 'Africa/Johannesburg', 'YYYY-MM') AS month,
-               sum(value * interval_min / 60.0) AS kwh,
+               to_char((ts_end - make_interval(mins => one.interval_min)) AT TIME ZONE 'Africa/Johannesburg', 'YYYY-MM') AS month,
+               sum(value * one.interval_min / 60.0) AS kwh,
                count(*) AS n,
                -- Minutes the kept readings SPAN. A month re-imported at a second interval holds
                -- readings of both, so count x one interval misstates coverage (review round 2).
-               sum(interval_min) AS minutes,
-               min(interval_min) AS interval_min
-          FROM one
+               sum(one.interval_min) AS minutes,
+               min(one.interval_min) AS interval_min,
+               -- The commissioning clip (#219 review): only readings whose interval STARTS on or
+               -- after the commissioning date are the plant's. Pre-commissioning test energy would
+               -- otherwise count against an expectation prorated to the active days.
+               COALESCE(sum(value * interval_min / 60.0) FILTER (WHERE ts_end - make_interval(mins => interval_min) >= COALESCE(comm.t0, '-infinity'::timestamptz)), 0) AS active_kwh,
+               COALESCE(sum(interval_min) FILTER (WHERE ts_end - make_interval(mins => interval_min) >= COALESCE(comm.t0, '-infinity'::timestamptz)), 0) AS active_minutes
+          FROM one LEFT JOIN comm ON TRUE
          GROUP BY 1, 2
     ), per_meter AS (
         SELECT meter_id,
-               jsonb_object_agg(month, jsonb_build_object('kwh', round(kwh::numeric, 3), 'n', n, 'minutes', minutes, 'intervalMin', interval_min)) AS months
+               jsonb_object_agg(month, jsonb_build_object('kwh', round(kwh::numeric, 3), 'n', n, 'minutes', minutes, 'intervalMin', interval_min,
+                                                  'activeKwh', round(active_kwh::numeric, 3), 'activeMinutes', active_minutes)) AS months
           FROM bucketed
          GROUP BY meter_id
     )
