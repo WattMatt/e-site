@@ -18,7 +18,7 @@ import { buildS1, buildS2, buildS4, LoadModelError, monthlyEnergyKwh, type LoadB
 import { shapeFromSample, synthesiseTenant } from './synthesis'
 import { meterReferenceSeries } from './tenant-series'
 
-export const SITE_LOAD_ENGINE_VERSION = '3b.1'
+export const SITE_LOAD_ENGINE_VERSION = '3b.2'  // 3b.2: a counted parent contributes its residual (00218 integration fix)
 /** Never load (functional spec §4.3 "Meter kind"). */
 export const LOAD_EXCLUDED_KINDS = ['solar', 'generator', 'check', 'water'] as const
 
@@ -195,9 +195,23 @@ function evaluateTenants(
   // descendants, per hour, floored at 0), so a chain P → C → G sums to P and nothing is counted twice.
   const children = supplyChildren(input.lines)
   const nearest = new Map<string, string[]>()
-  for (const d of guard.droppedParents) {
+  // A meter drawn under two counted parents (a dual-fed board; 00214 refuses loops, not a second
+  // parent) is subtracted from ONE of them — the first by meter id, deterministically — so the site
+  // total never loses it twice. Checks names it: the hierarchy is ambiguous about where it sits.
+  const claimedBy = new Map<string, string>()
+  for (const d of [...guard.droppedParents].sort((a, b) => a.meterId.localeCompare(b.meterId))) {
     const inc = d.includedDescendants
-    nearest.set(d.meterId, inc.filter((x) => !inc.some((y) => y !== x && descendants(y, children).has(x))))
+    const near = inc.filter((x) => !inc.some((y) => y !== x && descendants(y, children).has(x)))
+    const mine: string[] = []
+    for (const x of near) {
+      const owner = claimedBy.get(x)
+      if (owner === undefined) { claimedBy.set(x, d.meterId); mine.push(x); continue }
+      if (!checks.some((c) => c.key === `multi_parent:${x}`)) {
+        const lbl = (id: string) => meterById.get(id)?.label ?? id
+        checks.push({ key: `multi_parent:${x}`, severity: 'warning', meterId: x, message: `${lbl(x)} is drawn under two counted meters (${lbl(owner)} and ${lbl(d.meterId)}); it is subtracted from ${lbl(owner)} only. Fix the schematic so it has one supply parent.` })
+      }
+    }
+    nearest.set(d.meterId, mine)
   }
   // Each subtracted meter's reference series, filled (if needed) from the first tenant that meters it.
   const childSeries = new Map<string, Float64Array>()

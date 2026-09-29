@@ -87,6 +87,21 @@ describe('buildSiteLoad — S2 (sum of tenants)', () => {
     expect(w?.message).toContain('175 200 kWh')
   })
 
+  it('a meter fed from two counted parents is subtracted from ONE of them (never twice) and Checks names it', () => {
+    const r = buildSiteLoad(base({
+      meters: [meter('P1', 30), meter('P2', 20), meter('C', 10)],
+      tenants: [
+        tenant('t1', { meters: [{ meterId: 'P1', weight: 1 }] }),
+        tenant('t2', { meters: [{ meterId: 'P2', weight: 1 }] }),
+        tenant('tC', { meters: [{ meterId: 'C', weight: 1 }] }),
+      ],
+      lines: [{ fromMeterId: 'P1', toMeterId: 'C' }, { fromMeterId: 'P2', toMeterId: 'C' }],
+    }))
+    // 30 + 20 physically; C (10) sits inside ONE of them: (30 − 10) + 20 + 10 = 50.
+    expect(r.series[500]).toBeCloseTo(50)
+    expect(r.checks.find((c) => c.key === 'multi_parent:C')?.severity).toBe('warning')
+  })
+
   it('a negative residual in ≤ 1 % of intervals is floored silently', () => {
     const pr = readings('2025-01-01', 365, 30, 30)
     for (let i = 0; i < 100; i++) pr[i] = { ...pr[i], value: 5 }  // 50 hours below the 10 kW child (< 1 % of 8760)
