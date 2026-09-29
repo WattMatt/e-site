@@ -70,27 +70,44 @@ export type Payload =
   | { kind: 'optin'; answer: 'yes' | 'no'; linkId: string }
   | { kind: 'wrong'; target: 'note' | 'attachment'; id: string }
   | { kind: 'pick'; itemId: string }
+  | { kind: 'menu'; row: 'mine' | 'project' | 'post' | 'switch' }
+  | { kind: 'proj'; projectId: string }
+  | { kind: 'item'; itemId: string }
+  | { kind: 'open'; itemId: string }
+  | { kind: 'post'; choice: 'diary' | 'issue'; postId: string }
 
 export function encodePayload(p: Payload): string {
   switch (p.kind) {
     case 'ack':
     case 'done':
     case 'pick':
+    case 'item':
+    case 'open':
       return `${p.kind}:${p.itemId}`
+    case 'proj':
+      return `proj:${p.projectId}`
+    case 'menu':
+      return `menu:${p.row}`
     case 'optin':
       return `optin:${p.answer}:${p.linkId}`
     case 'wrong':
       return `wrong:${p.target}:${p.id}`
+    case 'post':
+      return `post:${p.choice}:${p.postId}`
   }
 }
+
+const MENU_ROWS = new Set(['mine', 'project', 'post', 'switch'])
 
 export function decodePayload(s: string | null | undefined): Payload | null {
   if (typeof s !== 'string') return null
   const parts = s.split(':')
   if (parts.length === 2) {
-    const [kind, id] = parts
-    if (!UUID.test(id)) return null
-    if (kind === 'ack' || kind === 'done' || kind === 'pick') return { kind, itemId: id }
+    const [kind, v] = parts
+    if (kind === 'menu') return MENU_ROWS.has(v) ? { kind, row: v as 'mine' | 'project' | 'post' | 'switch' } : null
+    if (!UUID.test(v)) return null
+    if (kind === 'ack' || kind === 'done' || kind === 'pick' || kind === 'item' || kind === 'open') return { kind, itemId: v }
+    if (kind === 'proj') return { kind, projectId: v }
     return null
   }
   if (parts.length === 3) {
@@ -98,6 +115,7 @@ export function decodePayload(s: string | null | undefined): Payload | null {
     if (!UUID.test(id)) return null
     if (kind === 'optin' && (mid === 'yes' || mid === 'no')) return { kind, answer: mid, linkId: id }
     if (kind === 'wrong' && (mid === 'note' || mid === 'attachment')) return { kind, target: mid, id }
+    if (kind === 'post' && (mid === 'diary' || mid === 'issue')) return { kind, choice: mid, postId: id }
   }
   return null
 }
@@ -175,4 +193,38 @@ export function doneRouteFor(itemType: string, origin: string): DoneRoute {
   if (itemType === 'snag') return 'snag'
   if (itemType === 'rfi') return 'rfi'
   return 'link_out'
+}
+
+export const PENDING_POST_TTL_MS = 30 * 60 * 1000
+const MENU_WORDS = new Set(['MENU', 'HI', 'HELLO', 'HEY', 'HELP', 'START'])
+
+export function isMenuWord(text: string): boolean {
+  return MENU_WORDS.has((text ?? '').toUpperCase().replace(/[^A-Z]/g, ''))
+    && (text ?? '').trim().split(/\s+/).length === 1
+}
+
+export interface ProjectRef { id: string; name: string }
+export type ProjectMatch =
+  | { kind: 'exact'; project: ProjectRef }
+  | { kind: 'candidates'; projects: ProjectRef[] }
+  | { kind: 'none' }
+
+export function normaliseName(s: string): string {
+  return String(s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
+}
+
+/** Exact (full name, name without its job number, or the job number) → switch. Partial → always confirm. Never guesses. */
+export function matchProjects(query: string, projects: ProjectRef[]): ProjectMatch {
+  const q = normaliseName(query)
+  if (q.length < 3) return { kind: 'none' }
+  const exact = projects.filter((p) => {
+    const n = normaliseName(p.name)
+    const m = /^(\d+) (.+)$/.exec(n)
+    return n === q || (m !== null && (m[2] === q || m[1] === q))
+  })
+  if (exact.length === 1) return { kind: 'exact', project: exact[0] }
+  if (exact.length > 1) return { kind: 'candidates', projects: exact.slice(0, 10) }
+  if (q.length < 4) return { kind: 'none' }
+  const partial = projects.filter((p) => normaliseName(p.name).includes(q))
+  return partial.length ? { kind: 'candidates', projects: partial.slice(0, 10) } : { kind: 'none' }
 }

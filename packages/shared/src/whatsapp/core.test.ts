@@ -145,3 +145,43 @@ describe('doneRouteFor', () => {
     ['qc_defect', 'mirror', 'link_out'],
   ])('%s/%s -> %s', (t, o, r) => expect(doneRouteFor(t, o)).toBe(r))
 })
+import { isMenuWord, matchProjects, normaliseName, PENDING_POST_TTL_MS } from './core'
+
+const P1 = { id: '11111111-1111-4111-8111-111111111111', name: '(643) KINGSWALK' }
+const P2 = { id: '22222222-2222-4222-8222-222222222222', name: '(649) PNP FAERIE GLEN' }
+const P3 = { id: '33333333-3333-4333-8333-333333333333', name: 'PNP2 FAERIE GLEN EXTENSION' }
+const P4 = { id: '44444444-4444-4444-8444-444444444444', name: '(657) MAMAILA PHASE 2' }
+const ALL = [P1, P2, P3, P4]
+
+describe('channel core', () => {
+  it.each(['menu', 'MENU', ' Hi ', 'hello', 'help', 'start', 'hey!'])('%s is a menu word', (t) => expect(isMenuWord(t)).toBe(true))
+  it.each(['menu please now', 'cable pulled', '', 'hi there team'])('%s is not', (t) => expect(isMenuWord(t)).toBe(false))
+  it('normaliseName strips punctuation and case', () => expect(normaliseName('(643) Kingswalk,  Mall!')).toBe('643 KINGSWALK MALL'))
+  it('exact name without the job number is an exact match', () =>
+    expect(matchProjects('kingswalk', ALL)).toEqual({ kind: 'exact', project: P1 }))
+  it('job number alone is an exact match', () =>
+    expect(matchProjects('643', ALL)).toEqual({ kind: 'exact', project: P1 }))
+  it('a partial name is only ever a candidate list (always confirmed)', () =>
+    expect(matchProjects('faerie', ALL)).toEqual({ kind: 'candidates', projects: [P2, P3] }))
+  it('short or unmatched text is none — never a guess', () => {
+    expect(matchProjects('pnp', ALL)).toEqual({ kind: 'none' })
+    expect(matchProjects('ok', ALL)).toEqual({ kind: 'none' })
+    expect(matchProjects('cover refitted on DB3', ALL)).toEqual({ kind: 'none' })
+  })
+  it('candidates are capped at 10', () => {
+    const many = Array.from({ length: 14 }, (_, i) => ({ id: `${i}`.padStart(8, '0') + '-0000-4000-8000-000000000000', name: `SITE ${i}` }))
+    const m = matchProjects('site', many)
+    expect(m.kind === 'candidates' && m.projects.length).toBe(10)
+  })
+  it('post TTL is 30 minutes', () => expect(PENDING_POST_TTL_MS).toBe(30 * 60 * 1000))
+})
+
+describe('channel payloads', () => {
+  const U = '3f1c2e4a-9b7d-4c1e-8a2b-1234567890ab'
+  it.each([
+    { kind: 'menu', row: 'mine' }, { kind: 'menu', row: 'project' }, { kind: 'menu', row: 'post' }, { kind: 'menu', row: 'switch' },
+    { kind: 'proj', projectId: U }, { kind: 'item', itemId: U }, { kind: 'open', itemId: U },
+    { kind: 'post', choice: 'diary', postId: U }, { kind: 'post', choice: 'issue', postId: U },
+  ] as const)('round-trips %o', (p) => expect(decodePayload(encodePayload(p))).toEqual(p))
+  it.each(['menu:nuke', 'proj:x', 'post:shout:' + U, 'item:'])('rejects %s', (s) => expect(decodePayload(s)).toBeNull())
+})
