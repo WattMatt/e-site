@@ -73,6 +73,11 @@ describe('loadOperationsView', () => {
     const ok = await loadOperationsView({ user: user().client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
     expect(ok.performanceNote).toBeNull()
   })
+  it('a commissioning date and data but no saved guarantee says the guarantee is missing (review round 2)', async () => {
+    const v = await loadOperationsView({ user: user({ 'solar.guarantees': [] }).client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
+    expect(v.performance).toEqual([])
+    expect(v.performanceNote).toBe('No guarantee basis has been saved yet — set it on the Guarantee card to see monthly performance.')
+  })
   it('an unreadable baseline gives a setup sentence, not a thrown page (review A1)', async () => {
     const u = user({ 'solar.installations': [{ id: 'i1', study_id: 's1', commissioning_date: null, baseline: { version: 1, monthlyKwh: [] }, as_built: asBuilt, notes: null, updated_at: 'T1' }] })
     const v = await loadOperationsView({ user: u.client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })

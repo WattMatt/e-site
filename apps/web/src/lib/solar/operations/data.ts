@@ -176,9 +176,13 @@ export async function loadOperationsView(a: {
     : []
   const lastDataMonth = months[months.length - 1] ?? null
   // Review B7: data that all predates commissioning is not "no data"; say which date is the problem.
+  // Review round 2: with a date and data, an empty table means the guarantee is missing; say that,
+  // not the generic "set the commissioning date and import generation data".
   const performanceNote = commissioningDate && lastDataMonth && dateMonthKey(commissioningDate) > lastDataMonth
     ? `The commissioning date (${commissioningDate}) is after the last month with generation data (${monthLabel(lastDataMonth)}), so there is nothing to compare yet.`
-    : null
+    : commissioningDate && lastDataMonth && !guarantee
+      ? 'No guarantee basis has been saved yet — set it on the Guarantee card to see monthly performance.'
+      : null
   const shareNote = shareTotalNote(meters.filter((m) => m.role === 'generation'))
 
   let candidates: DowntimeCandidate[] = []
