@@ -33,6 +33,12 @@ describe('baseline', () => {
     expect(b.ghiKwhM2).toBeNull()
     expect(readBaseline(JSON.parse(JSON.stringify(b)))).toEqual(b)
   })
+  it('reads a malformed baseline as null instead of throwing (review A1: a throw here broke every read)', () => {
+    expect(readBaseline({ version: 1 })).toBeNull()
+    expect(readBaseline(null)).toBeNull()
+    const ok = buildBaseline({ caseRunId: 'r1', inputsHash: 'h', kpis: { dcKwp: 1, acKw: 1, performanceRatio: 0.8 }, monthly, pvAc, tmyRows: null })
+    expect(readBaseline({ ...ok, diurnalKw: ok.diurnalKw.map(() => [0]) })).toBeNull()
+  })
   it('refuses a run without twelve months', () => {
     expect(() => buildBaseline({ caseRunId: 'r1', inputsHash: 'h', kpis: { dcKwp: 1, acKw: 1, performanceRatio: 0.8 }, monthly: monthly.slice(0, 11), pvAc, tmyRows: null }))
       .toThrow('twelve monthly rows')

@@ -102,6 +102,8 @@ export async function loadOperationsView(a: {
   const i = inst as Row
   const installationId = String(i.id)
   const baseline = readBaseline(i.baseline)
+  // A stored baseline the reader cannot use is shown as a sentence, never thrown (review A1).
+  if (!baseline) return emptyView(a.level, studyId, orgId, INSTALL_REASONS.baselineUnreadable, null)
   const parsed = parseAsBuilt(i.as_built)
   const asBuilt: AsBuilt = parsed.ok ? parsed.value
     : { dcKwp: baseline.dcKwp, acKw: baseline.acKw, batteryKwh: null, batteryKw: null, tiltDeg: null, azimuthDeg: null, equipment: [] }

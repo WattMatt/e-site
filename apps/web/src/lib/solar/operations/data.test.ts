@@ -62,6 +62,11 @@ describe('loadOperationsView', () => {
     const b = await loadOperationsView({ user: u.client as never, svc: svc().client as never, projectId: 'p1', level: 'edit', month: null })
     expect(b).toMatchObject({ acceptedProposal: null, setupReason: INSTALL_REASONS.noAccepted })
   })
+  it('an unreadable baseline gives a setup sentence, not a thrown page (review A1)', async () => {
+    const u = user({ 'solar.installations': [{ id: 'i1', study_id: 's1', commissioning_date: null, baseline: { version: 1, monthlyKwh: [] }, as_built: asBuilt, notes: null, updated_at: 'T1' }] })
+    const v = await loadOperationsView({ user: u.client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
+    expect(v).toMatchObject({ installation: null, acceptedProposal: null, setupReason: INSTALL_REASONS.baselineUnreadable })
+  })
   it('installed: performance from the aggregation, available meters exclude linked and non-generation kinds, candidates for an editor', async () => {
     const v = await loadOperationsView({ user: user().client as never, svc: svc().client as never, projectId: 'p1', level: 'edit', month: null })
     expect(v.months).toEqual(['2026-03'])

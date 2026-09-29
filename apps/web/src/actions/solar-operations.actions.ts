@@ -2,7 +2,8 @@
 /**
  * Operations tab actions (spec §10). Every action gates its Solar level FIRST (requireSolarLevel
  * redirects a lower level), writes through the caller's session so 00217's RESTRICTIVE policies and
- * bind triggers decide, and reports trigger refusals in their own words (opsError).
+ * bind triggers decide, and reports trigger refusals in their own words (opsError). The one
+ * exception is the installation INSERT, which 00217 admits only for the service role.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -46,11 +47,17 @@ export async function createInstallationAction(input: { projectId: string }): Pr
   const { data: study } = await supabase.schema('solar').from('studies').select('id, organisation_id').eq('project_id', input.projectId).maybeSingle()
   if (!study) return { error: INSTALL_REASONS.noStudy }
   const s = study as Row
-  const seed = await loadInstallationSeed(createServiceClient() as unknown as AnyClient, String(s.id))
+  const svc = createServiceClient() as unknown as AnyClient
+  const seed = await loadInstallationSeed(svc, String(s.id))
   if (!seed.ok) return { error: seed.reason }
 
-  const { data, error } = await supabase.schema('solar').from('installations')
-    .insert({ study_id: s.id, proposal_id: seed.proposalId, baseline: seed.baseline, as_built: seed.asBuilt }).select('id')
+  // 00217 refuses a session insert: the baseline is the guarantee's yardstick and immutable, so only
+  // this server path (after the Edit gate above, from the run it read itself) writes it. The trigger
+  // still binds project/org to the study and pins the baseline to the accepted proposal's run;
+  // with no session auth.uid() is NULL, so the author is supplied here.
+  const { data, error } = await svc.schema('solar').from('installations')
+    .insert({ study_id: s.id, proposal_id: seed.proposalId, baseline: seed.baseline, as_built: seed.asBuilt, created_by: userId, updated_by: userId })
+    .select('id')
   if (error) return { error: error.code === '23505' ? INSTALL_REASONS.exists : opsError(error) }
   const installationId = Array.isArray(data) ? (data[0]?.id as string | undefined) : undefined
   if (!installationId) return { error: 'Could not record the installation — try again.' }

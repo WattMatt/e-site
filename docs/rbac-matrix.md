@@ -366,8 +366,8 @@ Nothing is granted to `anon` anywhere: every public path uses the service client
 | Route / action | Needs | Notes |
 |---|---|---|
 | `/projects/[id]/solar/operations` (page) | Solar View (`requireSolarLevel 'view'`) | Technical reads for View; Edit sees write controls; the monthly report panel renders only at Edit + financials. Reads through the caller's session (00217 RLS). |
-| `createInstallationAction` | Solar Edit | Only from the study's ACCEPTED proposal (00217 bind trigger re-checks). Seeds a P50 guarantee and the handover checklist. Service client only to read the accepted proposal's run after the gate. |
-| `saveInstallationAction` | Solar Edit | Commissioning date, as-built, notes; stale-guarded. The baseline is immutable (trigger). |
+| `createInstallationAction` | Solar Edit | Only from the study's ACCEPTED proposal (00217 bind trigger re-checks, and pins `baseline.caseRunId` to that proposal's run and the 12 × 24 shape). The installation INSERT is **service-only**: 00217's RESTRICTIVE `installations_insert_authz` is `WITH CHECK (false)` for every session, so the action inserts with the service client after the Edit gate, naming the caller as `created_by`/`updated_by`. Seeds a P50 guarantee and the handover checklist through the caller's session. |
+| `saveInstallationAction` | Solar Edit | Commissioning date, as-built, notes; stale-guarded. The baseline is immutable (trigger); a commissioning date later than recorded downtime is refused (trigger). |
 | `linkMeterAction` / `unlinkMeterAction` / `setMeterShareAction` | Solar Edit | Generation = meter kind `solar`; consumption = `council`/`bulk` (00217 refuses anything else, and a meter of another organisation). |
 | `saveGuaranteeAction` | Solar Edit | Basis fields mirror the 00217 CHECKs. |
 | `saveIrradiationAction` / `deleteIrradiationAction` | Solar Edit | Monthly POA/GHI with a mandatory source note. |

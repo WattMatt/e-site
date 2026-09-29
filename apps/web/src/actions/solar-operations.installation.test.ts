@@ -20,10 +20,12 @@ const asBuilt = { dcKwp: 100, acKw: 80, batteryKwh: null, batteryKw: null, tiltD
   equipment: [{ kind: 'module', make: 'A', model: 'M', rating: 500, unit: 'W', quantity: 200 }] }
 const baseline = { version: 1 }
 
-function setup(extra: Parameters<typeof fakeSupabase>[0] = {}) {
-  const f = fakeSupabase({ userId: 'u1', tables: { 'solar.studies': [{ id: 's1', project_id: P, organisation_id: 'o1' }], 'solar.handover_templates': [] },
-    writes: { 'solar.installations:insert': { data: [{ id: I }] } }, ...extra })
+let svc: ReturnType<typeof fakeSupabase>
+function setup(extra: Parameters<typeof fakeSupabase>[0] = {}, svcOpts: Parameters<typeof fakeSupabase>[0] = {}) {
+  const f = fakeSupabase({ userId: 'u1', tables: { 'solar.studies': [{ id: 's1', project_id: P, organisation_id: 'o1' }], 'solar.handover_templates': [] }, ...extra })
   h.createClient.mockResolvedValue(f.client)
+  svc = fakeSupabase({ userId: null, writes: { 'solar.installations:insert': { data: [{ id: I }] } }, ...svcOpts })
+  h.createServiceClient.mockReturnValue(svc.client as never)
   return f
 }
 
@@ -34,11 +36,14 @@ beforeEach(() => {
 })
 
 describe('createInstallationAction', () => {
-  it('gates Edit FIRST, then inserts through the caller’s session with a P50 guarantee and the default checklist', async () => {
+  it('gates Edit FIRST, inserts the installation with the SERVICE role (00217 refuses a session insert) naming the caller, then a P50 guarantee and the default checklist', async () => {
     const f = setup()
     await expect(createInstallationAction({ projectId: P })).resolves.toEqual({ ok: true, installationId: I, warning: null })
     expect(h.requireSolarLevel).toHaveBeenCalledWith(P, 'edit', expect.anything())
-    expect(callsTo(f.calls, 'solar.installations', 'insert')[0]!.payload).toEqual({ study_id: 's1', proposal_id: 'prop-1', baseline, as_built: asBuilt })
+    expect(h.requireSolarLevel.mock.invocationCallOrder[0]!).toBeLessThan(h.createServiceClient.mock.invocationCallOrder[0]!)
+    expect(callsTo(f.calls, 'solar.installations', 'insert')).toHaveLength(0)
+    expect(callsTo(svc.calls, 'solar.installations', 'insert')[0]!.payload)
+      .toEqual({ study_id: 's1', proposal_id: 'prop-1', baseline, as_built: asBuilt, created_by: 'u1', updated_by: 'u1' })
     expect(callsTo(f.calls, 'solar.guarantees', 'insert')[0]!.payload).toEqual({ installation_id: I, basis: 'p50', degradation_pct_per_year: 0.45 })
     const items = callsTo(f.calls, 'solar.handover_items', 'insert')[0]!.payload as Array<Record<string, unknown>>
     expect(items[0]).toEqual({ installation_id: I, item_key: 'coc', label: 'Certificate of Compliance (CoC)', required: true, sort_order: 0 })
@@ -51,9 +56,10 @@ describe('createInstallationAction', () => {
     h.seed.mockResolvedValue({ ok: false, reason: INSTALL_REASONS.noAccepted })
     await expect(createInstallationAction({ projectId: P })).resolves.toEqual({ error: INSTALL_REASONS.noAccepted })
     expect(callsTo(f.calls, 'solar.installations', 'insert')).toHaveLength(0)
+    expect(callsTo(svc.calls, 'solar.installations', 'insert')).toHaveLength(0)
   })
   it('a second installation for the study is refused in words', async () => {
-    setup({ writes: { 'solar.installations:insert': { error: { code: '23505', message: 'duplicate key' } } } })
+    setup({}, { writes: { 'solar.installations:insert': { error: { code: '23505', message: 'duplicate key' } } } })
     await expect(createInstallationAction({ projectId: P })).resolves.toEqual({ error: INSTALL_REASONS.exists })
   })
   it('no study: says so', async () => {

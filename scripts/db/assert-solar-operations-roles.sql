@@ -54,7 +54,12 @@ DECLARE
   v_sha1     CONSTANT TEXT := repeat('1', 64);
   v_sha2     CONSTANT TEXT := repeat('2', 64);
   v_sha3     CONSTANT TEXT := repeat('3', 64);
-  v_baseline CONSTANT JSONB := '{"version":1,"caseRunId":"r","inputsHash":"h","dcKwp":100,"acKw":80,"performanceRatio":0.8,"monthlyKwh":[15000,14000,14500,13000,12000,11000,11500,13000,14000,15000,15500,16000],"diurnalKw":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],"ghiKwhM2":null}';
+  -- Set once the run exists: 00217 binds baseline.caseRunId to the accepted proposal's run.
+  v_baseline JSONB;
+  v_mov      UUID;
+  v_c5       UUID;
+  v_c6       UUID;
+  v_d2       UUID;
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-7-probe'), (v_org2, 'solar-7-probe-2');
@@ -90,6 +95,11 @@ BEGIN
   INSERT INTO solar.case_runs (case_id, engine_version, inputs, inputs_hash, config_snapshot, weather_dataset_id)
   VALUES (v_case, '0.1.0', '{}', v_hash, '{}', v_w) RETURNING id INTO v_run;
   UPDATE solar.case_runs SET status = 'succeeded', outputs = '{"kpis":{"dcKwp":100}}', hourly_path = 'h.csv.gz' WHERE id = v_run;
+  v_baseline := jsonb_build_object('version', 1, 'caseRunId', v_run::text, 'inputsHash', 'h', 'dcKwp', 100, 'acKw', 80,
+    'performanceRatio', 0.8,
+    'monthlyKwh', '[15000,14000,14500,13000,12000,11000,11500,13000,14000,15000,15500,16000]'::jsonb,
+    'diurnalKw', (SELECT jsonb_agg(to_jsonb(array_fill(0, ARRAY[24]))) FROM generate_series(1, 12)),
+    'ghiKwhM2', NULL);
   -- Proposals straight to their end states (the 00216 guard is exercised by its own file).
   SET LOCAL session_replication_role = replica;
   INSERT INTO solar.proposals (id, study_id, project_id, organisation_id, family_id, version, case_id, case_run_id, status,
@@ -155,8 +165,22 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('view_user_creates_installation_REFUSED', false);
   END;
   RESET ROLE;
+  -- The baseline is the guarantee's yardstick and immutable, so no session may write it (review A1):
+  -- even a VALID row from an Edit user is refused. createInstallationAction inserts with the service
+  -- role after its Edit gate, from the accepted run it read itself.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_edit::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO solar.installations (study_id, proposal_id, baseline, as_built) VALUES (v_study, v_prop_acc, v_baseline, '{}');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_insert_installation_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_insert_installation_REFUSED', false);
+  END;
+  RESET ROLE;
+  -- Service path: no JWT, so auth.uid() is NULL and the author comes from the supplied value.
+  PERFORM set_config('request.jwt.claims', '', true);
+  SET LOCAL ROLE service_role;
   BEGIN
     INSERT INTO solar.installations (study_id, proposal_id, baseline, as_built) VALUES (v_study, v_prop_dr, v_baseline, '{}');
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
@@ -165,13 +189,40 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('installation_from_draft_REFUSED', false);
   END;
   BEGIN
-    INSERT INTO solar.installations (study_id, project_id, organisation_id, proposal_id, baseline, as_built)
-    VALUES (v_study, v_p2, v_org2, v_prop_acc, v_baseline, '{"dcKwp":100}') RETURNING id INTO v_inst;
-    INSERT INTO _r VALUES ('installation_bound_to_study', (SELECT project_id = v_p AND organisation_id = v_org AND created_by = v_edit
-      FROM solar.installations WHERE id = v_inst));
+    INSERT INTO solar.installations (study_id, proposal_id, baseline, as_built)
+    VALUES (v_study, v_prop_acc, v_baseline || '{"caseRunId":"another-run"}', '{}');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('baseline_from_another_run_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('baseline_from_another_run_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.installations (study_id, proposal_id, baseline, as_built)
+    VALUES (v_study, v_prop_acc, v_baseline || '{"diurnalKw":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]]}', '{}');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('baseline_short_diurnal_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('baseline_short_diurnal_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.installations (study_id, proposal_id, baseline, as_built)
+    VALUES (v_study, v_prop_acc, v_baseline - 'version', '{}');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('baseline_unversioned_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('baseline_unversioned_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.installations (study_id, project_id, organisation_id, proposal_id, baseline, as_built, created_by, updated_by)
+    VALUES (v_study, v_p2, v_org2, v_prop_acc, v_baseline, '{"dcKwp":100}', v_edit, v_edit) RETURNING id INTO v_inst;
+    INSERT INTO _r VALUES ('installation_bound_to_study', (SELECT project_id = v_p AND organisation_id = v_org
+      AND created_by = v_edit AND updated_by = v_edit FROM solar.installations WHERE id = v_inst));
   EXCEPTION WHEN OTHERS THEN
     INSERT INTO _r VALUES ('installation_bound_to_study', false);
   END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_edit::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
   UPDATE solar.installations SET commissioning_date = '2026-02-15', as_built = '{"dcKwp":101}' WHERE id = v_inst;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO _r VALUES ('editor_updates_as_built', v_n = 1);

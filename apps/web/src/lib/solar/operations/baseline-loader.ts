@@ -22,6 +22,7 @@ export const INSTALL_REASONS = {
   runMissing: 'The accepted proposal’s run is no longer stored, so its modelled baseline cannot be read.',
   runUnreadable: 'The accepted run’s hourly results could not be read — try again.',
   exists: 'This study already has an installation record.',
+  baselineUnreadable: 'The installation’s stored modelled baseline cannot be read, so its performance cannot be shown. Contact support to re-record the installation from the accepted proposal.',
 } as const
 
 /** The parts of the stored case config the seed reads; passthrough so 4b's schema can grow. */

@@ -68,6 +68,11 @@ export function buildBaseline(i: BuildBaselineInput): OpsBaseline {
   })
 }
 
-export function readBaseline(raw: unknown): OpsBaseline {
-  return OpsBaselineSchema.parse(raw)
+/**
+ * The stored baseline, or null when it is not one. Never throws: the baseline is immutable, so a
+ * throw here would break every read of the tab for good (review A1). Callers show a sentence.
+ */
+export function readBaseline(raw: unknown): OpsBaseline | null {
+  const r = OpsBaselineSchema.safeParse(raw)
+  return r.success ? r.data : null
 }

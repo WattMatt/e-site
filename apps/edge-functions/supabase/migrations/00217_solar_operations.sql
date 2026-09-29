@@ -25,9 +25,11 @@
 --   * solar.handover_items        per-installation checklist; each item links one
 --                                 tenants.documents row of the same project, or is N/A.
 --   * public.solar_ops_monthly_kwh / public.solar_ops_series: SECURITY INVOKER aggregations
---     returning ONE jsonb document. One reading per (meter, ts_end): the most recently created
---     channel wins, so a re-import of overlapping data never doubles. Month = SAST month of the
---     interval START (ts_end minus interval_min).
+--     returning ONE jsonb document. A reading overlapped by a reading of a NEWER channel of the same
+--     meter is dropped, so a re-import of overlapping data never doubles, at any interval. Month =
+--     SAST month of the interval START (ts_end minus interval_min).
+--   * solar.installations is written by the SERVICE role only (createInstallationAction after its
+--     Edit gate); the bind trigger also pins the baseline to the accepted proposal's run.
 --   * public.user_can_read_report_kind(): every Solar kind, solar_monthly on Edit + financials.
 --   * projects.reports: a solar_monthly row is evidence of what the client received; no session
 --     deletes it (the 00216 proposal rule, extended to the monthly report).
@@ -119,6 +121,7 @@
 -- grant_present: authenticated EXECUTE ON public.solar_ops_series(uuid, text, date)
 -- anon_execute_absent: ALL prosecdef functions in solar
 -- sql: (SELECT bool_and(strpos(qual, 'solar_can_see_money') > 0) FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('monthly_reports', 'monthly_report_notes') AND cmd = 'SELECT')
+-- sql: (SELECT with_check = 'false' FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'installations' AND policyname = 'installations_insert_authz' AND permissive = 'RESTRICTIVE')
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('installations', 'installation_meters', 'guarantees', 'ops_irradiation', 'downtime', 'downtime_history', 'monthly_report_notes', 'monthly_reports', 'handover_templates', 'handover_items') AND cmd = 'ALL')
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('monthly_reports', 'downtime_history') AND cmd IN ('INSERT', 'UPDATE', 'DELETE'))
 -- sql: (SELECT bool_and(c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND c.relname IN ('installations', 'installation_meters', 'guarantees', 'ops_irradiation', 'downtime', 'downtime_history', 'monthly_report_notes', 'monthly_reports', 'handover_templates', 'handover_items'))
@@ -157,6 +160,8 @@ CREATE INDEX IF NOT EXISTS installations_project_idx ON solar.installations (pro
 
 CREATE OR REPLACE FUNCTION solar.installations_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_run UUID;
 BEGIN
     -- Depth > 1 is an FK action (proposal SET NULL, study cascade); it passes untouched.
     IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
@@ -166,10 +171,20 @@ BEGIN
         IF NEW.project_id IS NULL THEN
             RAISE EXCEPTION 'solar.installations: study % not found', NEW.study_id USING ERRCODE = '23503';
         END IF;
-        IF NEW.proposal_id IS NULL OR NOT EXISTS (
-            SELECT 1 FROM solar.proposals p
-             WHERE p.id = NEW.proposal_id AND p.study_id = NEW.study_id AND p.status = 'accepted') THEN
+        SELECT p.case_run_id INTO v_run FROM solar.proposals p
+         WHERE p.id = NEW.proposal_id AND p.study_id = NEW.study_id AND p.status = 'accepted';
+        IF NOT FOUND THEN
             RAISE EXCEPTION 'solar.installations: an installation starts from an accepted proposal of this study' USING ERRCODE = '23514';
+        END IF;
+        -- Defence in depth behind the service-only insert: the baseline is the accepted run's, and
+        -- is shaped the way the reader expects (a malformed baseline would break every read, forever).
+        IF NEW.baseline ->> 'caseRunId' IS DISTINCT FROM v_run::text THEN
+            RAISE EXCEPTION 'solar.installations: the baseline is not the accepted proposal''s run' USING ERRCODE = '23514';
+        END IF;
+        IF jsonb_typeof(NEW.baseline -> 'version') IS DISTINCT FROM 'number'
+           OR EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.baseline -> 'diurnalKw') AS d(row)
+                       WHERE CASE WHEN jsonb_typeof(d.row) = 'array' THEN jsonb_array_length(d.row) <> 24 ELSE TRUE END) THEN
+            RAISE EXCEPTION 'solar.installations: the baseline is not a versioned 12 x 24 profile' USING ERRCODE = '23514';
         END IF;
         NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
         NEW.created_at := NOW();
@@ -199,8 +214,11 @@ CREATE POLICY installations_update ON solar.installations FOR UPDATE TO authenti
     USING (public.user_has_project_access(project_id)) WITH CHECK (public.user_has_project_access(project_id));
 CREATE POLICY installations_delete ON solar.installations FOR DELETE TO authenticated
     USING (public.user_has_project_access(project_id));
+-- Service-only INSERT (review A1): the baseline is the guarantee's yardstick and immutable, so no
+-- session may write it. createInstallationAction gates Edit, reads the accepted run itself and
+-- inserts with the service role, supplying created_by/updated_by.
 CREATE POLICY installations_insert_authz ON solar.installations AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (public.solar_can_edit(project_id));
+    WITH CHECK (false);
 CREATE POLICY installations_update_authz ON solar.installations AS RESTRICTIVE FOR UPDATE TO authenticated
     USING (public.solar_can_edit(project_id)) WITH CHECK (public.solar_can_edit(project_id));
 -- Deleting an installation removes its downtime, reports and checklist: owner/admin/Edit + financials only.
