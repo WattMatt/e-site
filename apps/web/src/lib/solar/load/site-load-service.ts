@@ -21,6 +21,9 @@ export async function rebuildSiteLoad(
   supabase: AnyClient, projectId: string, userId: string, emit: (e: RebuildEvent) => void,
 ): Promise<{ ok: true; siteLoadId: string } | { ok: false }> {
   emit({ type: 'progress', stage: 'reading', done: 0, total: 1 })
+  // Stamped as built_at: taken BEFORE the inputs are read, so an edit landing during a long read is
+  // newer than the build and the cheap stale probe still sees it.
+  const startedAt = new Date().toISOString()
   const g = await gatherLoadInputs(supabase, projectId, {
     readReadings: true,
     onProgress: (done, total) => emit({ type: 'progress', stage: 'reading', done, total }),
@@ -47,11 +50,11 @@ export async function rebuildSiteLoad(
     reference_year: r.referenceYear,
     series: Array.from(r.series, (v) => Math.round(v * 1000) / 1000),
     md_monthly: r.mdMonthly,
-    coverage: { ...r.coverage, designMdKw: r.designMdKw, checks: r.checks, reconciliation: r.reconciliation, tenants: r.tenants },
+    coverage: { ...r.coverage, designMdKw: r.designMdKw, checks: r.checks, reconciliation: r.reconciliation, tenants: r.tenants, inputCounts: g.inputCounts },
     inputs_hash: g.inputsHash,
     engine_version: SITE_LOAD_ENGINE_VERSION,
     built_by: userId,
-    built_at: new Date().toISOString(),
+    built_at: startedAt,
   }, { onConflict: 'study_id,basis,reference_year' }).select('id').single()
   const id = (data as { id?: string } | null)?.id
   if (error || !id) {

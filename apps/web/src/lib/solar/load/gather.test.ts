@@ -64,6 +64,8 @@ describe('gatherLoadInputs', () => {
     expect(g.input).toMatchObject({ basis: 'S2', referenceYear: null, fallbackYear: 2025, commonAreaPct: 10, diversityFactor: 1 })
     expect(g.input.meters[0].primary?.readings).toHaveLength(1)
     expect(g.inputsHash).toMatch(/^[0-9a-f]{64}$/)
+    // The counts of exactly the sets the hash covers (every study-meter link, every project line, every basis row).
+    expect(g.inputCounts).toEqual({ studyMeters: 1, schematicLines: 0, basisRows: 1 })
   })
   it('does not read readings when asked not to, and the hash does not depend on them', async () => {
     const a = await gatherLoadInputs(fakeSupabase(tables()).client as never, P, { readReadings: false })

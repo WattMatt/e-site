@@ -114,6 +114,8 @@ export function mergeChannelData(list: ChannelRow[], readings: Map<string, Readi
   return { intervalMin: list[0].interval_min, readings: [...byTs.values()].sort((a, b) => a.tsEnd - b.tsEnd) }
 }
 
+export interface InputCounts { studyMeters: number; schematicLines: number; basisRows: number }
+
 export type GatherResult =
   | {
       ok: true
@@ -126,6 +128,8 @@ export type GatherResult =
       channels: ChannelRow[]
       picked: Map<string, MeterChannels>
       summaries: Map<string, ChannelSummary>
+      /** Sizes of exactly the row sets the hash covers, stored with a build so the cheap stale probe can see a pure DELETE. */
+      inputCounts: InputCounts
     }
   | { ok: false; error: 'no_study' }
 
@@ -233,5 +237,6 @@ export async function gatherLoadInputs(
   return {
     ok: true, study, input, inputsHash: await sha256Hex(JSON.stringify(canonical)),
     nodes, basisRows, meters, channels, picked, summaries,
+    inputCounts: { studyMeters: meterIds.length, schematicLines: lines.length, basisRows: basisRows.length },
   }
 }

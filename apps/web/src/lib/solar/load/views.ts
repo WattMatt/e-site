@@ -14,7 +14,7 @@ import {
 } from '@esite/shared/solar-load'
 import {
   CHANNEL_COLUMNS, gatherLoadInputs, METER_COLUMNS, NODE_COLUMNS, pickChannels, STUDY_LOAD_COLUMNS, tenantLabel,
-  type ChannelRow, type MeterRow, type StudyLoadRow, type TenantNodeRow,
+  type ChannelRow, type InputCounts, type MeterRow, type StudyLoadRow, type TenantNodeRow,
 } from './gather'
 import { channelSummaries } from './readings'
 import { isVacantTenant, type AutoMatchView, type ChecksView, type MetersView, type MeterView, type ProfileView, type TenantRowView, type TenantsView } from './view-types'
@@ -31,7 +31,7 @@ interface SiteLoadRow {
   md_monthly: MdMonth[]
   inputs_hash: string
   built_at: string
-  coverage: SiteLoadCoverage & { designMdKw: number | null; checks: LoadCheck[]; reconciliation: { bulk: BulkReconciliation[]; parents: ParentReconciliation[] }; tenants: TenantSummary[] }
+  coverage: SiteLoadCoverage & { designMdKw: number | null; checks: LoadCheck[]; reconciliation: { bulk: BulkReconciliation[]; parents: ParentReconciliation[] }; tenants: TenantSummary[]; inputCounts?: InputCounts }
 }
 
 async function study(supabase: AnyClient, projectId: string): Promise<StudyLoadRow | null> {
@@ -211,17 +211,20 @@ function siteLoadIsStale(supabase: AnyClient, projectId: string, storedHash: str
  * every such row bumps a timestamp read here (studies / tenant_load_basis / meters / meter_channels /
  * schematic_lines / structure.nodes / tenant_details `updated_at`, study_meters `added_at`,
  * meter_import_reports `accepted_at`). Where the two CAN disagree (dot fresh, banner stale):
- *   - a pure DELETE of an input row (a basis row, a study-meter link, a schematic line) — no row is
- *     left to carry a timestamp. Tenant nodes are soft-deleted, so those ARE seen.
+ *   - a DELETE that leaves every input count unchanged (none known today). A pure DELETE leaves no row
+ *     to carry a timestamp, so the build stores the sizes of the sets the hash covers
+ *     (`coverage.inputCounts`: study-meter links, schematic lines, basis rows) and a count that differs
+ *     reads stale — a removed study meter, the last line off a schematic, a deleted schematic sheet.
+ *     A build without stored counts (older) is unknown here, not stale. Tenant nodes are soft-deleted,
+ *     so those ARE seen by timestamp.
  *   - `projects.opening_date` (BO dates) — `projects.updated_at` is bumped by cloud sync every 15 min,
  *     so it cannot be used as a signal.
  *   - readings landing in an existing channel with no newer channel row or accepted import report.
  *   - an existing-PV channel on a meter outside the study.
- *   - an edit racing the build between its read and its `built_at` stamp.
  * The other way (dot stale, banner fresh) happens when a row was re-saved with identical values.
  * Any failure reads as "not stale" and is logged.
  */
-function inputsChangedSinceBuild(supabase: AnyClient, projectId: string, studyRow: StudyLoadRow, builtAt: string, nodeIds: string[]): Promise<boolean> {
+function inputsChangedSinceBuild(supabase: AnyClient, projectId: string, studyRow: StudyLoadRow, builtAt: string, nodeIds: string[], storedCounts: InputCounts | undefined): Promise<boolean> {
   return memo(`cheap:${projectId}:${builtAt}`, async () => {
     try {
       const built = Date.parse(builtAt)
@@ -231,16 +234,31 @@ function inputsChangedSinceBuild(supabase: AnyClient, projectId: string, studyRo
         if (r.error) throw new Error(`staleness probe: ${String((r.error as { message?: string }).message ?? r.error)}`)
         return Array.isArray(r.data) && r.data.length > 0
       }
-      const [links, basis, lines, nodes, details] = await Promise.all([
+      const count = (r: { count?: number | null; error: unknown }) => {
+        if (r.error) throw new Error(`staleness probe: ${String((r.error as { message?: string }).message ?? r.error)}`)
+        return r.count ?? null
+      }
+      const counted = storedCounts != null
+      const [links, basis, lines, nodes, details, basisCount, lineCount] = await Promise.all([
         solar().from('study_meters').select('meter_id, added_at').eq('study_id', studyRow.id),
         solar().from('tenant_load_basis').select('id').eq('study_id', studyRow.id).gt('updated_at', builtAt).limit(1),
         solar().from('schematic_lines').select('id').eq('project_id', projectId).gt('updated_at', builtAt).limit(1),
         supabase.schema('structure').from('nodes').select('id').eq('project_id', projectId).eq('kind', 'tenant_db').gt('updated_at', builtAt).limit(1),
         nodeIds.length ? supabase.schema('structure').from('tenant_details').select('node_id').in('node_id', nodeIds).gt('updated_at', builtAt).limit(1) : Promise.resolve({ data: [], error: null }),
+        // Scoped exactly as gatherLoadInputs reads them for the hash.
+        counted ? solar().from('tenant_load_basis').select('id', { count: 'exact', head: true }).eq('study_id', studyRow.id) : Promise.resolve({ count: null, error: null }),
+        counted ? solar().from('schematic_lines').select('id', { count: 'exact', head: true }).eq('project_id', projectId) : Promise.resolve({ count: null, error: null }),
       ])
       if (links.error) throw new Error(`staleness probe: ${String((links.error as { message?: string }).message ?? links.error)}`)
       const linkRows = (links.data ?? []) as Array<{ meter_id: string; added_at: string | null }>
       if (any(basis) || any(lines) || any(nodes) || any(details)) return true
+      if (storedCounts) {
+        if (linkRows.length !== storedCounts.studyMeters) return true
+        const b = count(basisCount)
+        const l = count(lineCount)
+        if (b !== null && b !== storedCounts.basisRows) return true
+        if (l !== null && l !== storedCounts.schematicLines) return true
+      }
       if (linkRows.some((l) => l.added_at && Date.parse(l.added_at) > built)) return true
       const meterIds = linkRows.map((l) => l.meter_id)
       if (meterIds.length === 0) return false
@@ -361,7 +379,7 @@ async function computeLoadReadiness(supabase: AnyClient, projectId: string): Pro
     // An accepted import cannot carry an error: commit refuses one (3a commit.ts `unresolved_errors`).
     failingAcceptedImports: 0,
   }
-  if (sl && loadReadiness(load).status === 'green') load.stale = await inputsChangedSinceBuild(supabase, projectId, s, sl.built_at, nodes.map((n) => n.id))
+  if (sl && loadReadiness(load).status === 'green') load.stale = await inputsChangedSinceBuild(supabase, projectId, s, sl.built_at, nodes.map((n) => n.id), sl.coverage.inputCounts)
   return {
     load,
     schematics: { waived: s.schematic_waived, schematics: schematicIds.length, studyMeters: studyMeterIds.size, placedMeters: placed.size },

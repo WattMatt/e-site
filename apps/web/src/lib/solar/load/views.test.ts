@@ -84,8 +84,13 @@ describe('load views', () => {
       { ...tables['solar.tenant_load_basis'][0], updated_at: BEFORE },
       { id: 'b2', study_id: 's1', node_id: 'n2', source: 'vacant', meters: [], archetype: null, density_override_w_m2: null, updated_at: BEFORE },
     ],
-    'solar.schematic_lines': [{ id: 'l1', project_id: P, updated_at: BEFORE }],
+    'solar.schematic_lines': [
+      { id: 'l1', project_id: P, schematic_id: 'sc1', updated_at: BEFORE },
+      { id: 'l2', project_id: P, schematic_id: 'sc2', updated_at: BEFORE },
+    ],
     'solar.meter_import_reports': [{ file_id: 'f1', accepted_at: BEFORE, created_at: BEFORE }],
+    // The build stamped the counts of exactly the sets the inputs hash covers.
+    'solar.site_load': [{ ...tables['solar.site_load'][0], coverage: { ...tables['solar.site_load'][0].coverage, inputCounts: { studyMeters: 1, schematicLines: 2, basisRows: 2 } as Record<string, number> | undefined } }],
   })
   it('readiness dot: fresh when no input row changed after the build, and it never reads channel summaries or gathers', async () => {
     const { client: c, calls } = fakeSupabase({ tables: freshTables() })
@@ -111,6 +116,29 @@ describe('load views', () => {
     mutate(t)
     const r = await loadLoadReadiness(fakeSupabase({ tables: t }).client as never, P)
     expect(r.load?.stale).toBe(true)
+  })
+  // A pure DELETE leaves no row to carry a timestamp, but it changes the inputs hash: the stored counts catch it.
+  it.each([
+    ['a study meter was removed (no tenant assigned to it)', (t: ReturnType<typeof freshTables>) => { t['solar.study_meters'] = [] }],
+    ['the last line was removed from a schematic', (t: ReturnType<typeof freshTables>) => { t['solar.schematic_lines'] = t['solar.schematic_lines'].filter((l) => l.id !== 'l2') }],
+    ['a schematic sheet was deleted (its lines cascade)', (t: ReturnType<typeof freshTables>) => { t['solar.schematic_lines'] = t['solar.schematic_lines'].filter((l) => l.schematic_id !== 'sc1') }],
+  ])('readiness dot: stale when %s after the build', async (_label, mutate) => {
+    const t = freshTables()
+    mutate(t)
+    const r = await loadLoadReadiness(fakeSupabase({ tables: t }).client as never, P)
+    expect(r.load?.stale).toBe(true)
+  })
+  it('readiness dot: equal input counts are not stale', async () => {
+    const r = await loadLoadReadiness(fakeSupabase({ tables: freshTables() }).client as never, P)
+    expect(r.load?.stale).toBe(false)
+  })
+  it('readiness dot: a build without stored input counts (older build) is not stale by the count rule', async () => {
+    const t = freshTables()
+    t['solar.site_load'][0].coverage.inputCounts = undefined
+    t['solar.study_meters'] = []
+    t['solar.schematic_lines'] = []
+    const r = await loadLoadReadiness(fakeSupabase({ tables: t }).client as never, P)
+    expect(r.load?.stale).toBe(false)
   })
   it('readiness resolves (not stale) when a staleness query throws, and logs it server-side', async () => {
     const { client: c } = fakeSupabase({ tables: freshTables() })

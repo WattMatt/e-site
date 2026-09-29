@@ -20,7 +20,7 @@ const result = {
 }
 beforeEach(() => {
   vi.clearAllMocks()
-  h.gather.mockResolvedValue({ ok: true, study: { id: 's1' }, input: {}, inputsHash: 'a'.repeat(64) })
+  h.gather.mockResolvedValue({ ok: true, study: { id: 's1' }, input: {}, inputsHash: 'a'.repeat(64), inputCounts: { studyMeters: 3, schematicLines: 2, basisRows: 4 } })
   h.build.mockReturnValue(result)
 })
 
@@ -34,9 +34,26 @@ describe('rebuildSiteLoad', () => {
     expect(up).toMatchObject({ study_id: 's1', basis: 'S2', reference_year: 2025, inputs_hash: 'a'.repeat(64), built_by: 'u1' })
     expect((up.series as number[])[0]).toBe(1.235)
     expect((up.coverage as Record<string, unknown>).checks).toEqual([{ key: 'x' }])
+    expect((up.coverage as Record<string, unknown>).inputCounts).toEqual({ studyMeters: 3, schematicLines: 2, basisRows: 4 })
     expect(callsTo(calls, 'solar.site_load', 'delete')[0].filters).toEqual([['eq', 'study_id', 's1'], ['neq', 'id', 'sl1']])
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'site_load_built' }))
     expect(events.at(-1)).toEqual({ type: 'done', siteLoadId: 'sl1', basis: 'S2', referenceYear: 2025, checks: 1 })
+  })
+  it('stamps built_at with the time BEFORE the inputs were read, so an edit during a long build is not missed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-09-29T10:00:00.000Z'))
+      h.gather.mockImplementation(async () => {
+        vi.setSystemTime(new Date('2026-09-29T10:05:00.000Z')) // a slow read
+        return { ok: true, study: { id: 's1' }, input: {}, inputsHash: 'a'.repeat(64), inputCounts: { studyMeters: 0, schematicLines: 0, basisRows: 0 } }
+      })
+      const { client, calls } = fakeSupabase({ writes: { 'solar.site_load:upsert': { data: [{ id: 'sl1' }] } } })
+      await rebuildSiteLoad(client as never, 'p1', 'u1', () => {})
+      const up = callsTo(calls, 'solar.site_load', 'upsert')[0].payload as Record<string, unknown>
+      expect(up.built_at).toBe('2026-09-29T10:00:00.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('turns a LoadModelError into its sentence and writes nothing', async () => {
     h.build.mockImplementation(() => { throw new LoadModelError('no_confirmed_bulk', 'Confirm a bulk meter first.') })

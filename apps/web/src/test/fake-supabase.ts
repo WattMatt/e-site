@@ -10,6 +10,7 @@
  *   })
  *
  * SELECTs filter `tables[schema.table]` by eq / neq / in / gte / gt (string order) / is; or, ilike,
+ * (`select(cols, { count: 'exact', head: true })` resolves `{ data: null, count }` over the filtered rows)
  * overlaps, not and range pass through unfiltered. `schema(s).rpc(n)` resolves `rpc['s.n']`. Writes are recorded
  * in `calls` and resolve to `writes['schema.table:op']` (default: the payload
  * echoed back as one row; delete → []). `client.from(t)` is schema `public`.
@@ -17,7 +18,7 @@
 import { vi } from 'vitest'
 
 export type FakeError = { message: string; code?: string }
-export type FakeResult = { data: unknown; error: FakeError | null }
+export type FakeResult = { data: unknown; error: FakeError | null; count?: number | null }
 type Filter = ['eq' | 'neq' | 'in' | 'gte' | 'gt' | 'is', string, unknown]
 
 export interface FakeCall {
@@ -49,14 +50,16 @@ export function fakeSupabase(opts: FakeOptions = {}) {
               : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
-    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number } = { op: 'select', filters: [] }
+    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number; count?: boolean; head?: boolean } = { op: 'select', filters: [] }
     const run = (): Promise<FakeResult> => {
       const call: FakeCall = { table, op: state.op, payload: state.payload, filters: [...state.filters] }
       calls.push(call)
       if (state.op === 'select') {
         let rows = (opts.tables?.[table] ?? []).filter((r) => matches(r, state.filters))
+        const count = state.count ? rows.length : undefined
         if (state.limit !== undefined) rows = rows.slice(0, state.limit)
-        return Promise.resolve({ data: rows, error: null })
+        if (state.head) return Promise.resolve({ data: null, error: null, count: count ?? null })
+        return Promise.resolve(count === undefined ? { data: rows, error: null } : { data: rows, error: null, count })
       }
       const spec = opts.writes?.[`${table}:${state.op}`]
       const w = typeof spec === 'function' ? spec(call) : spec
@@ -66,7 +69,7 @@ export function fakeSupabase(opts: FakeOptions = {}) {
     const first = () =>
       run().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] ?? null) : r.data, error: r.error }))
     const b: any = {
-      select: () => b,
+      select: (_cols?: string, o?: { count?: string; head?: boolean }) => { state.count = Boolean(o?.count); state.head = Boolean(o?.head); return b },
       insert: (p: unknown) => { state.op = 'insert'; state.payload = p; return b },
       update: (p: unknown) => { state.op = 'update'; state.payload = p; return b },
       delete: () => { state.op = 'delete'; return b },
