@@ -61,4 +61,13 @@ describe('autoMatchMeters', () => {
     })
     expect(p).toEqual([])
   })
+
+  it('a tenant chosen on the meter (import "Link to tenant") comes first, high and pre-ticked (LS-02)', () => {
+    const p = autoMatchMeters({
+      // The shop number in the file name says n7; the person importing chose n50. Their choice wins.
+      meters: [m('m1', { shopNo: '7', nodeId: 'n50' }), m('m2', { nodeId: 'gone' })],
+      tenants, register: [], assignedMeterIds: new Set(),
+    })
+    expect(p).toEqual([expect.objectContaining({ meterId: 'm1', nodeId: 'n50', source: 'linked', confidence: 'high', preTicked: true })])
+  })
 })

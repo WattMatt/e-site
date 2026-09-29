@@ -69,6 +69,20 @@ export async function loadMetersView(supabase: AnyClient, projectId: string, isG
   const picked = new Map(meters.map((m) => [m.id, pickChannels(m, channels)]))
   const primaryIds = [...picked.values()].flatMap((x) => x.primary.map((c) => c.id))
   const sums = await channelSummaries(supabase, primaryIds)
+  // The tenant a meter feeds is read from tenant_load_basis, the one place the builder reads it from.
+  // meters.node_id (chosen at import) is only shown as "not assigned" when no basis row carries it.
+  const { data: basisRows } = s ? await supabase.schema('solar').from('tenant_load_basis').select('node_id, source, meters').eq('study_id', s.id) : { data: [] }
+  const assignedTo = new Map<string, string[]>()
+  for (const b of (basisRows ?? []) as Array<{ node_id: string; source: string; meters: Array<{ meter_id: string }> | null }>) {
+    if (b.source !== 'metered') continue
+    for (const x of b.meters ?? []) assignedTo.set(x.meter_id, [...(assignedTo.get(x.meter_id) ?? []), nodeLabel.get(b.node_id) ?? 'Tenant'])
+  }
+  const tenantOf = (m: { id: string; node_id: string | null }): string | null => {
+    const on = assignedTo.get(m.id)
+    if (on) return on.join(', ')
+    const chosen = m.node_id ? nodeLabel.get(m.node_id) : undefined
+    return chosen ? `${chosen} (not assigned — Tenants → Auto-match)` : null
+  }
   const otherLinks = new Map<string, number>()
   if (isGrantor && meters.length > 0) {
     const { data } = await supabase.schema('solar').from('study_meters').select('meter_id, study_id').in('meter_id', meters.map((m) => m.id))
@@ -86,7 +100,7 @@ export async function loadMetersView(supabase: AnyClient, projectId: string, isG
     const spanDays = first !== null && last !== null && interval ? (last - first) / DAY + interval / 1440 : null
     return {
       id: m.id, label: m.label, kind: m.kind, siteLabel: m.site_label, serials: m.serials ?? [], nodeId: m.node_id,
-      tenantLabel: m.node_id ? nodeLabel.get(m.node_id) ?? null : null, shopNo: m.shop_no,
+      tenantLabel: tenantOf(m), shopNo: m.shop_no,
       areaM2: m.area_m2 == null ? null : Number(m.area_m2), supplyPointConfirmed: m.supply_point_confirmed, updatedAt: m.updated_at,
       primaryChannelId: pc.primary[0]?.id ?? null, intervalMin: interval,
       periodStart: first !== null && Number.isFinite(first) ? new Date(first).toISOString() : null,
@@ -154,7 +168,7 @@ export async function loadTenantsView(supabase: AnyClient, projectId: string): P
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const meterById = new Map(meters.map((m) => [m.id, m]))
   const proposals: AutoMatchView[] = autoMatchMeters({
-    meters: meters.map((m) => ({ meterId: m.id, label: m.label, kind: m.kind, serials: m.serials ?? [], shopNo: m.shop_no })),
+    meters: meters.map((m) => ({ meterId: m.id, label: m.label, kind: m.kind, serials: m.serials ?? [], shopNo: m.shop_no, nodeId: m.node_id })),
     tenants: nodes.map((n) => ({ nodeId: n.id, shopNumber: n.shop_number, name: n.shop_name ?? n.name })),
     register: ((reg ?? []) as Array<{ file_name: string | null; shop_no: string | null; tenant_name: string | null; serial: string | null; match_method: 'exact' | 'llm' | 'unmapped' | 'manual' | 'none'; confirmed_at: string | null }>).map((r) => ({
       fileName: r.file_name, shopNo: r.shop_no, tenantName: r.tenant_name, serial: r.serial, matchMethod: r.match_method, confirmed: r.confirmed_at !== null,

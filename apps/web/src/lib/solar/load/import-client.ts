@@ -1,6 +1,6 @@
 'use client'
 /** Browser half of the meter import: hash, raw path, and the 3a register / parse / commit routes. */
-import type { ReviewModel } from '@/lib/solar/meter-import/review'
+import type { IdentityPanel, ReviewModel } from '@/lib/solar/meter-import/review'
 import { loadErrorMessage } from './messages'
 
 export const METER_UPLOAD_RE = /\.(csv|txt|xlsx|xls)$/i
@@ -48,13 +48,38 @@ export async function parseFiles(projectId: string, fileIds: string[], options?:
       else failed.push({ fileId: r.fileId, message: loadErrorMessage(r.error) })
     }
   }
-  return { reviews, failed }
+  return { reviews: markBatchDuplicates(reviews), failed }
 }
 
-export type CommitResult = { ok: true; meterId?: string; meterLabel?: string; reusedMeter?: boolean; registerRows?: number; skipped?: boolean } | { ok: false; message: string }
+/**
+ * Two files in ONE upload with identical data (the portal serving one meter's readings under two
+ * names). The server checks identity at parse time, before any file of the batch is committed, so it
+ * cannot see this; the later file is given a blocking same_body conflict here so the dialog asks
+ * before it imports a second copy.
+ */
+export function markBatchDuplicates(reviews: ReviewModel[]): ReviewModel[] {
+  const firstByHash = new Map<string, ReviewModel>()
+  return reviews.map((r) => {
+    if (r.outcome !== 'series' || !r.bodySha256) return r
+    const first = firstByHash.get(r.bodySha256)
+    if (!first) { firstByHash.set(r.bodySha256, r); return r }
+    if (first.fileId === r.fileId) return r
+    const base: IdentityPanel = r.identity ?? { sourceSerials: [], filenameSerial: null, conflicts: [], blocking: false }
+    const name = `${first.fileName}${first.sheetName ? ` — ${first.sheetName}` : ''}`
+    return { ...r, identity: { ...base, blocking: true, conflicts: [...base.conflicts, { kind: 'same_body', fileId: first.fileId, message: `Same data as ${name} in this upload.` }] } }
+  })
+}
+
+export type CommitResult =
+  | { ok: true; meterId?: string; meterLabel?: string; reusedMeter?: boolean; registerRows?: number; skipped?: boolean }
+  /** identity: on a 409 identity_conflict, the server's panel, so the dialog can show the conflict it found. */
+  | { ok: false; message: string; identity?: IdentityPanel }
 
 export async function commitReview(projectId: string, body: Record<string, unknown>): Promise<CommitResult> {
   const { status, json } = await post(`/api/projects/${projectId}/solar/meter-files/commit`, body)
   if (status === 200) return { ok: true, ...(json as object) }
+  if (status === 409 && json.error === 'identity_conflict' && json.identity && typeof json.identity === 'object') {
+    return { ok: false, message: loadErrorMessage('identity_conflict'), identity: json.identity as IdentityPanel }
+  }
   return { ok: false, message: status === 403 ? 'You need Solar edit access to import.' : loadErrorMessage(String(json.error ?? 'commit_failed')) }
 }

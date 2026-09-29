@@ -9,7 +9,7 @@ import { useMemo, useState } from 'react'
 import type { ReviewModel } from '@/lib/solar/meter-import/review'
 import { commitReview, parseFiles, type ParseOptionsInput } from '@/lib/solar/load/import-client'
 import { METER_KIND_OPTIONS, UNIT_OPTIONS, type MeterKind, type NodeOption } from '@/lib/solar/load/view-types'
-import { acceptBlockers, buildCommitBody, initialChoices, optionsFrom, type Choices } from './review-choices'
+import { acceptBlockers, buildCommitBody, choicesForIdentity, initialChoices, optionsFrom, sameBodyConflict, type Choices } from './review-choices'
 
 const pct = (x: number | null | undefined) => (x == null ? '—' : `${(x * 100).toFixed(1)} %`)
 const box = { border: '1px solid var(--c-border)', borderRadius: 6, padding: 10, marginTop: 10 } as const
@@ -32,12 +32,18 @@ export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, edi
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tally, setTally] = useState({ imported: 0, skipped: 0, registers: 0 })
+  // Meters this dialog created, by file: a later file of the same upload with the same data can link to one.
+  const [created, setCreated] = useState<Record<string, { id: string; label: string }>>({})
   const set = <K extends keyof Choices>(k: K, v: Choices[K]) => setChoices((c) => ({ ...c, [k]: v }))
   const optionsDirty = JSON.stringify(optionsFrom(choices)) !== JSON.stringify(applied)
   const blockers = useMemo(() => acceptBlockers(current, choices, optionsDirty), [current, choices, optionsDirty])
   const r = current.report
   const primaryCh = current.channels.find((c) => c.column === choices.primary)
-  const conflictMeters = (current.identity?.conflicts ?? []).filter((c) => c.meterId).map((c) => ({ id: c.meterId as string, label: c.message }))
+  const conflictMeters = (current.identity?.conflicts ?? []).flatMap((c) => {
+    const id = c.meterId ?? (c.fileId ? created[c.fileId]?.id : undefined)
+    return id ? [{ id, label: c.meterId ? c.message : `${created[c.fileId as string].label} (${c.message})` }] : []
+  })
+  const duplicate = sameBodyConflict(current.identity)
 
   function next(t: typeof tally) {
     setTally(t)
@@ -55,7 +61,18 @@ export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, edi
     setError(null)
     const res = await commitReview(projectId, body)
     setBusy(false)
-    if (!res.ok) { setError(res.message); return }
+    if (!res.ok) {
+      setError(res.message)
+      // The server found a conflict the parse-time preview could not (e.g. another file of this upload,
+      // committed since): show it, so the user can resolve it here instead of only skipping or closing.
+      if (res.identity) {
+        const identity = res.identity
+        setCurrent((c) => ({ ...c, identity }))
+        setChoices((c) => choicesForIdentity({ ...c, resolution: 'none' }, identity, editMeterId))
+      }
+      return
+    }
+    if (kind === 'imported' && res.meterId) setCreated((m) => ({ ...m, [current.fileId]: { id: res.meterId as string, label: res.meterLabel ?? 'the meter just imported' } }))
     next({ ...tally, [kind]: tally[kind] + 1 })
   }
   async function rerun() {
@@ -160,14 +177,23 @@ export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, edi
             <h3 style={{ fontSize: 13, margin: '0 0 6px' }}>Identity</h3>
             <p style={{ fontSize: 12, margin: 0 }}>Serial(s) in the file: {current.identity.sourceSerials.join(', ') || '—'}{current.identity.filenameSerial ? ` · file name says ${current.identity.filenameSerial}` : ''}</p>
             {current.identity.conflicts.map((c, i) => <p key={i} style={{ fontSize: 12, margin: '4px 0', color: '#b45309' }}>{c.message}</p>)}
+            {duplicate && !editMeterId && (
+              <p style={{ fontSize: 12, margin: '4px 0' }}>
+                This is usually the portal returning another meter&apos;s data under this name. Skip it and download this meter again.
+                Link it only if it really is the same meter (its readings are then not imported again); override only if these are two
+                meters that truly recorded identical readings — importing both counts the load twice.
+              </p>
+            )}
             {current.identity.blocking && !editMeterId && (
               <fieldset style={{ border: 'none', padding: 0, fontSize: 13 }}>
+                <label><input type="radio" name="res" checked={choices.resolution === 'skip'} onChange={() => {
+                  setChoices((c) => ({ ...c, resolution: 'skip', skipReason: c.skipReason || `${duplicate ? 'Duplicate data' : 'Identity conflict'}: ${(duplicate ?? current.identity?.conflicts[0])?.message ?? ''}`.slice(0, 480) }))
+                }} /> {duplicate ? 'Skip this file (recommended)' : 'Skip this file'}</label>{' '}
                 <label><input type="radio" name="res" checked={choices.resolution === 'link'} onChange={() => { set('resolution', 'link'); set('meterMode', 'existing'); set('existingMeterId', conflictMeters[0]?.id ?? '') }} /> Link to existing meter</label>{' '}
                 <label><input type="radio" name="res" checked={choices.resolution === 'override'} onChange={() => { set('resolution', 'override'); set('meterMode', 'new') }} /> Override with reason</label>
                 {choices.resolution === 'override' && (
                   <input aria-label="Override reason" value={choices.reason} onChange={(e) => set('reason', e.target.value)} placeholder="Why this is a different meter" style={{ display: 'block', width: '100%', marginTop: 4 }} />
                 )}
-                <span style={{ display: 'block', fontSize: 12, color: 'var(--c-text-dim)' }}>Or skip the file below.</span>
               </fieldset>
             )}
           </section>

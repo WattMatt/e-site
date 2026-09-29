@@ -13,6 +13,8 @@ export interface IdentityConflict {
   kind: IdentityConflictKind
   message: string
   meterId?: string
+  /** A duplicate of another file in the same upload (client-side check): that file's id. */
+  fileId?: string
 }
 export interface IdentityPanel {
   sourceSerials: string[]
@@ -107,6 +109,8 @@ export interface ReviewModel {
   channels: ChannelReview[]
   preview: Array<{ tsEnd: string; value: number | null; quality: number }>
   identity: IdentityPanel | null
+  /** The series body hash (series only): lets the client catch two files in one upload with the same data. */
+  bodySha256?: string | null
   registerRows: number
   choicesNeeded: string[]
   blockingErrors: string[]
@@ -152,6 +156,7 @@ export function buildReviewModel(args: {
     channels,
     preview: (primary?.readings ?? []).slice(0, 48).map((r) => ({ tsEnd: new Date(r.tsEnd).toISOString(), value: r.value, quality: r.quality })),
     identity: args.identity,
+    bodySha256: outcome.kind === 'series' ? outcome.bodySha256 : null,
     registerRows: outcome.kind === 'register' ? outcome.rows.length : 0,
     choicesNeeded,
     blockingErrors,

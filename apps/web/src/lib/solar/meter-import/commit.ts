@@ -10,7 +10,8 @@ import {
   applyScaleCorrection, METER_PARSER_VERSION, parseMeterFile, parseMeterWorkbook, SOURCE_UNITS,
   type MeterParseOutcome, type NormalisedChannel, type ParseOptions, type SeriesOutcome,
 } from '@esite/shared/meter-data'
-import type { MeterFileRow, MeterImportRepo, MeterRow } from './repo'
+import { NOT_TENANT_KINDS } from '@esite/shared/solar-load'
+import type { MeterFileRow, MeterImportRepo, MeterRow, TenantAssignment } from './repo'
 import { fileParsePatch, lookupIdentity } from './review'
 import { loadVerifiedRaw } from './raw-file'
 
@@ -192,8 +193,10 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     if (body.identity.resolution === 'link' && !('existingMeterId' in body.meter)) throw new CommitError(422, { error: 'link_needs_existing_meter' })
   }
 
-  // Channel choices are validated before anything is written.
+  // Channel choices and the tenant are validated before anything is written.
   const selected = selectChannels(outcome, body)
+  const nodeId = 'new' in body.meter ? body.meter.new.nodeId ?? null : null
+  if (nodeId && !(await repo.tenantNodeInProject(ctx.projectId, nodeId))) throw new CommitError(422, { error: 'tenant_not_in_project' })
   const { meter, reused: reusedMeter } = await resolveMeter(repo, ctx, outcome, body)
   // Clearing and rewriting readings is not atomic across calls. Take the file out of 'accepted' before
   // the first write, so a failure part-way never leaves an accepted file with partial or empty
@@ -251,6 +254,14 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
 
   const studyId = await repo.studyId(ctx.projectId)
   if (studyId) await repo.linkStudyMeter(studyId, meter.id)
+  // The tenant chosen at import goes on the tenant's load basis, the one place the site load and the
+  // Tenants tab read a tenant's meters from (meters.node_id alone is only a label). Only for a meter
+  // this commit created, of a kind that can carry a tenant's load. With no study row the link stays on
+  // the meter and Auto-match proposes it, pre-ticked, once the study exists.
+  let tenantAssignment: TenantAssignment | null = null
+  if (nodeId && studyId && !reusedMeter && 'new' in body.meter && !NOT_TENANT_KINDS.has(body.meter.new.kind)) {
+    tenantAssignment = await repo.assignMeterToTenant(studyId, nodeId, meter.id)
+  }
   const reportId = await repo.insertReport({
     file_id: ctx.file.id, parser_version: METER_PARSER_VERSION, options,
     report: { ...outcome.report, identity: { ...outcome.report.identity, resolution: body.identity.resolution, reason: body.identity.reason ?? null, conflicts: identity.conflicts } },
@@ -259,7 +270,8 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   await repo.updateFile(ctx.file.id, { ...fileParsePatch(outcome), status: 'accepted', skip_reason: null })
   await repo.audit(ctx.projectId, 'meter_file_imported', {
     file_id: ctx.file.id, meter_id: meter.id, channels: results.length, identity_resolution: body.identity.resolution,
+    ...(tenantAssignment ? { tenant_node_id: nodeId, tenant_assignment: tenantAssignment } : {}),
   })
   // reusedMeter: the UI says the new-meter details were NOT applied (the file already fed this meter).
-  return { meterId: meter.id, meterLabel: meter.label, reusedMeter, reportId, channels: results }
+  return { meterId: meter.id, meterLabel: meter.label, reusedMeter, reportId, channels: results, tenantAssignment }
 }

@@ -80,6 +80,14 @@ export interface RegisterHint {
   fileName: string | null
 }
 
+export type TenantAssignment = 'assigned' | 'already' | 'stale'
+export type BasisMeter = { meter_id: string; weight: number }
+
+/** The basis meters with this meter added at weight 1 (unchanged when it is already there). */
+export function withMeter(meters: BasisMeter[], meterId: string): BasisMeter[] {
+  return meters.some((m) => m.meter_id === meterId) ? meters : [...meters, { meter_id: meterId, weight: 1 }]
+}
+
 export interface MeterImportRepo {
   projectOrg(projectId: string): Promise<string | null>
   studyId(projectId: string): Promise<string | null>
@@ -109,6 +117,15 @@ export interface MeterImportRepo {
   countReadings(channelId: string): Promise<number>
   insertSeriesHash(row: { organisation_id: string; body_hash: string; meter_id: string; file_id: string }): Promise<void>
   linkStudyMeter(studyId: string, meterId: string): Promise<void>
+  /** Is nodeId a tenant DB (structure.nodes kind 'tenant_db') of this project? */
+  tenantNodeInProject(projectId: string, nodeId: string): Promise<boolean>
+  /**
+   * Put the meter on the tenant's load basis (solar.tenant_load_basis, the ONE place the site load
+   * reads a tenant's meters from): no row → a metered row with this meter at weight 1; a row → the
+   * meter appended at weight 1 and the source set to metered (the rule applyAutoMatchAction uses).
+   * The update is pinned on the version just read, so a concurrent edit is reported, not overwritten.
+   */
+  assignMeterToTenant(studyId: string, nodeId: string, meterId: string): Promise<TenantAssignment>
   insertRegisterRows(rows: Array<Record<string, unknown>>): Promise<number>
   audit(projectId: string, verb: string, objectRef: Record<string, unknown>): Promise<void>
 }
@@ -247,6 +264,26 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
     async linkStudyMeter(studyId, meterId) {
       const r = await solar().from('study_meters').upsert({ study_id: studyId, meter_id: meterId }, { onConflict: 'study_id,meter_id', ignoreDuplicates: true })
       if (r.error) throw new Error(`link study meter: ${r.error.message}`)
+    },
+    async tenantNodeInProject(projectId, nodeId) {
+      const r = await supabase.schema('structure').from('nodes').select('id').eq('id', nodeId).eq('project_id', projectId).eq('kind', 'tenant_db').maybeSingle()
+      if (r.error) throw new Error(`tenant node: ${r.error.message}`)
+      return r.data !== null
+    },
+    async assignMeterToTenant(studyId, nodeId, meterId) {
+      const t = () => solar().from('tenant_load_basis')
+      const cur = await t().select('source, meters, updated_at').eq('study_id', studyId).eq('node_id', nodeId).maybeSingle()
+      if (cur.error) throw new Error(`tenant basis: ${cur.error.message}`)
+      const row = cur.data as { source: string; meters: BasisMeter[] | null; updated_at: string } | null
+      if (row && row.source === 'metered' && (row.meters ?? []).some((m) => m.meter_id === meterId)) return 'already'
+      const res = row
+        ? await t().update({ source: 'metered', meters: withMeter(row.meters ?? [], meterId) }).eq('study_id', studyId).eq('node_id', nodeId).eq('updated_at', row.updated_at).select('id')
+        : await t().insert({ study_id: studyId, node_id: nodeId, source: 'metered', meters: withMeter([], meterId) }).select('id')
+      if (res.error) {
+        if (res.error.code === '23505') return 'stale'
+        throw new Error(`tenant basis: ${res.error.message}`)
+      }
+      return Array.isArray(res.data) && res.data.length > 0 ? 'assigned' : 'stale'
     },
     async insertRegisterRows(rows) {
       const r = await solar().from('meter_register').insert(rows).select('id')

@@ -13,6 +13,7 @@ export const LOAD_MESSAGES: Record<string, string> = {
   unresolved_errors: 'The file still has errors — make the choices it asks for, or skip it.',
   already_imported: 'This file is already imported.',
   duplicate_in_other_project: 'These bytes are already imported through another project — use Copy from org meter library.',
+  tenant_not_in_project: 'That tenant is not in this project — choose another or leave it blank.',
   water_is_not_load: 'A water meter is never load data.',
   multi_serial_meter_is_virtual: 'This file holds several meter serials, so its meter kind must be Virtual (multi-serial).',
   primary_not_eligible: 'That channel cannot be the primary channel (it is excluded or its time labels lag).',
