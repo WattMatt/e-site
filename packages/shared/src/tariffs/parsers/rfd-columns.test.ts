@@ -122,6 +122,8 @@ describe('decimalStyle and an ambiguous "1,050"', () => {
       'Energy charge (c/kWh)    230.67     258.35     12.00%      253.74        10.00%',
     ].join('\n'), { fileSha256: 'x' })
     expect(points.tariffs[0].charges.map((c) => [c.component, c.amountExclVat])).toEqual([['basic', 1155], ['energy', 253.74]])
+    // Both cells ambiguous: the table's mark decided, the row could not; that blocks.
+    expect(points.issues.find((i) => i.code === 'rfd_row_unverified' && i.message.includes('decimal mark'))).toMatchObject({ severity: 'block' })
   })
 })
 

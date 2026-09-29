@@ -850,6 +850,8 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
   // numbers are out of step somewhere above (every row after the slip carries the wrong label).
   for (const t of pendingLabel) {
     if (!rowLike(t) || detectSeason(t)) continue
+    // Prose between tables ("*Energy charges exclude VAT.") is not a leftover row label.
+    if (t.trim().split(/\s+/).length > 8 || /[.;]\s*$|\.\s+[A-Z]/.test(t) || /^\*/.test(t)) continue
     const at = body[body.length - 1]
     // "Charge:" or "(c/kWh)" alone is the tail of a label wrapped below its numbers: review.
     const names = parseBlockRange(t) !== null || /^part\s*\d|\bblock\s*\d/i.test(t) || (!isFragment(t) && t.trim().split(/\s+/).length >= 2)
@@ -906,6 +908,12 @@ function emitRow(r: Row, x: EmitCtx): void {
       dp.recommended = fits[0] === asDecimal ? 3 : 0
     }
   }
+  // Settled by the table's decimal mark alone, not by the row: a ratio check cannot tell 2419 -> 2686
+  // from 2.419 -> 2.686, so say so (block when the Approved cell was ambiguous too).
+  const settledByArithmetic = AMBIGUOUS_COMMA.test(bare) && prior !== null && pct !== null
+    && !AMBIGUOUS_COMMA.test(priorSeg?.text.replace(/^R\s?/, '').trim() ?? '')
+  const styleOnly = AMBIGUOUS_COMMA.test(bare) && recommended !== null && !settledByArithmetic
+  const priorAmbiguous = AMBIGUOUS_COMMA.test(priorSeg?.text.replace(/^R\s?/, '').trim() ?? '')
   if (recommended === null || recSeg.text.endsWith('%')) {
     if (AMBIGUOUS_COMMA.test(recSeg.text.replace(/^R\s?/, ''))) {
       dropRow(x.out, x.draft, { label: label || '(no label)', raw: recSeg.text, reason: 'the table does not show whether its comma is a decimal or a thousands separator', locator }, 'block')
@@ -940,6 +948,12 @@ function emitRow(r: Row, x: EmitCtx): void {
   }
   draft.charges.push(res.charge)
   x.out.issues.push(...res.issues)
+  if (styleOnly) {
+    x.out.issues.push({
+      code: 'rfd_row_unverified', severity: priorAmbiguous ? 'block' : 'review', tariff: draft.name, locator: res.charge.sourceLocator,
+      message: `"${label}": "${rawValue}" read as ${recommended} from the table's decimal mark only; the row's arithmetic cannot confirm a comma's meaning`,
+    })
+  }
 
   // Self-consistency: Recommended ≈ 2025/26 Approved × (1 + Recommended %).
   if (pct !== null) x.pcts.push(pct)
