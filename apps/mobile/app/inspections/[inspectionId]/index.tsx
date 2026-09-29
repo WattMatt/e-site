@@ -31,6 +31,10 @@ import {
 } from '@esite/shared'
 import { useAuth } from '../../../src/providers/AuthProvider'
 import { Renderer, type FieldChangePatch } from '../../../src/inspections/FieldRenderers'
+import {
+  retryFailedAttachments,
+  stalledCount,
+} from '../../../src/inspections/attachment-queue'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../../src/theme'
 
 type LocalInspection = {
@@ -62,6 +66,33 @@ export default function MobileCaptureScreen() {
   const [activeSection, setActiveSection] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [stalledUploads, setStalledUploads] = useState(0)
+
+  // Uploads that exhausted their automatic retries never re-enter the worker
+  // loop on their own — poll the queue so the inspector can re-arm them.
+  useEffect(() => {
+    if (!inspectionId) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const n = await stalledCount(inspectionId)
+        if (!cancelled) setStalledUploads(n)
+      } catch {
+        // Local queue table may not exist yet (ensureSchema runs on boot).
+      }
+    }
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [inspectionId])
+
+  const onRetryUploads = async () => {
+    await retryFailedAttachments(inspectionId)
+    setStalledUploads(await stalledCount(inspectionId))
+  }
 
   useEffect(() => {
     if (!inspectionId) return
@@ -241,6 +272,15 @@ export default function MobileCaptureScreen() {
         <Text style={styles.subtitle}>{template.name}</Text>
       </View>
 
+      {/* Stalled uploads — failed permanently until manually retried */}
+      {stalledUploads > 0 ? (
+        <Pressable onPress={onRetryUploads} style={styles.retryBanner}>
+          <Text style={styles.retryBannerText}>
+            {stalledUploads} upload{stalledUploads === 1 ? '' : 's'} failed — tap to retry
+          </Text>
+        </Pressable>
+      ) : null}
+
       {/* Section tabs */}
       <ScrollView
         horizontal
@@ -379,6 +419,19 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   subtitle: { color: colors.textMid, fontSize: fontSize.small, marginTop: spacing.xs },
+  retryBanner: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.amberDim,
+  },
+  retryBannerText: {
+    color: colors.amber,
+    fontSize: fontSize.small,
+    fontWeight: fontWeight.semibold,
+  },
   tabBar: {
     flexGrow: 0,
     borderBottomWidth: 1,
