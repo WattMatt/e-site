@@ -1,5 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
+
+const audit = vi.hoisted(() => ({ recordSolarAudit: vi.fn(async () => undefined) }))
+vi.mock('@/lib/solar/audit', () => audit)
+
 import { createMeterImportRepo, MAX_METER_FILE_BYTES } from './repo'
 
 function client(overrides: Record<string, unknown> = {}) {
@@ -40,5 +44,18 @@ describe('createMeterImportRepo', () => {
     const c = client()
     c.download.mockResolvedValue({ data: null, error: { message: 'Object not found' } } as never)
     expect(await createMeterImportRepo(c as never).downloadRaw('o/p/x.csv')).toBeNull()
+  })
+
+  it('audit goes through the service-role recorder with the caller as actor, never a user-session INSERT (00218)', async () => {
+    const c = client({ auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'u-1' } } })) } })
+    await createMeterImportRepo(c as never).audit('p-1', 'meter_file_imported', { file_id: 'f-1' })
+    expect(audit.recordSolarAudit).toHaveBeenCalledWith({ projectId: 'p-1', actorId: 'u-1', verb: 'meter_file_imported', objectRef: { file_id: 'f-1' } })
+    expect(c.from).not.toHaveBeenCalled()
+  })
+  it('audit records nothing without a signed-in caller', async () => {
+    audit.recordSolarAudit.mockClear()
+    const c = client({ auth: { getUser: vi.fn(async () => ({ data: { user: null } })) } })
+    await createMeterImportRepo(c as never).audit('p-1', 'meter_file_skipped', {})
+    expect(audit.recordSolarAudit).not.toHaveBeenCalled()
   })
 })

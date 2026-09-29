@@ -1,9 +1,12 @@
 import 'server-only'
 /**
  * Append one row to solar.audit_events (feeds Overview → Recent activity).
- * Written with the service client AFTER the action's own gate has passed:
- * the RLS insert policy requires solar_can_edit, which is false while the org
- * is unsubscribed — and grantors may legitimately grant access before paying.
+ * Written with the service client AFTER the action's own gate has passed.
+ * Since 00218 authenticated users hold NO insert grant or policy on
+ * solar.audit_events (an editor could otherwise post a forged activity line
+ * through PostgREST), so this is the only writer — pinned by
+ * audit-writers.contract.test.ts. It also covers grantors acting before the
+ * org subscribes.
  * The bind trigger derives organisation_id from the project; actor_id is kept
  * as passed because auth.uid() is NULL on the service path.
  * Never throws: an audit failure must not fail the user's action.

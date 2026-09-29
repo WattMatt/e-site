@@ -1,9 +1,13 @@
 /**
  * The meter-import pipeline's only Supabase code. It uses the CALLER's client, so every read and
- * write goes through RLS (the service key is never used here). Everything else in the pipeline is
- * pure and is tested against the in-memory fake (fake-repo.ts).
+ * write goes through RLS. The one exception is the activity line: solar.audit_events is
+ * service-written since 00218 (users cannot INSERT, so an editor cannot forge a line), so audit()
+ * hands it to recordSolarAudit with the caller as actor — every route reaching it has already passed
+ * requireSolarLevelAPI(…, 'edit'). Everything else in the pipeline is pure and is tested against the
+ * in-memory fake (fake-repo.ts).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { recordSolarAudit } from '@/lib/solar/audit'
 
 type AnyClient = SupabaseClient<any, any, any>
 
@@ -250,8 +254,10 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
       return (r.data ?? []).length
     },
     async audit(projectId, verb, objectRef) {
-      const r = await solar().from('audit_events').insert({ project_id: projectId, verb, object_ref: objectRef })
-      if (r.error) throw new Error(`audit: ${r.error.message}`)
+      const { data } = await supabase.auth.getUser()
+      const actorId = data?.user?.id
+      if (!actorId) return
+      await recordSolarAudit({ projectId, actorId, verb, objectRef })
     },
   }
 }
