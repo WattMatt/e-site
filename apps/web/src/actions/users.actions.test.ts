@@ -149,7 +149,11 @@ describe('resendInviteAction', () => {
     if (!result.ok) expect(result.error).toMatch(/not an active member/i)
   })
 
-  it('returns a friendly failure when the target has already signed in', async () => {
+  it('resends even when last_sign_in_at is set — a consumed invite link is not established access', async () => {
+    // GoTrue sets last_sign_in_at when a recovery link is *verified* (server-side
+    // verifyOtp in /auth/callback), so a scanner-prefetched or abandoned link makes
+    // a stranded invitee look "signed in". Proven in prod 2026-07-07: token consumed,
+    // 0 sessions, no password. The resend must not refuse on this signal.
     getOrgContextMock.mockResolvedValueOnce(adminCtx)
     createServiceClientMock.mockReturnValueOnce(
       makeService({
@@ -159,9 +163,29 @@ describe('resendInviteAction', () => {
     )
     const { resendInviteAction } = await import('./users.actions')
     const result = await resendInviteAction({ userId: TARGET_ID })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toMatch(/already active/i)
-    expect(sendInviteEmailMock).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(sendInviteEmailMock).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'mike@example.com',
+      role: 'contractor',
+    }))
+  })
+
+  it('records had_prior_sign_in in the audit event for the incident trail', async () => {
+    getOrgContextMock.mockResolvedValueOnce(adminCtx)
+    createServiceClientMock.mockReturnValueOnce(
+      makeService({
+        membership: { role: 'contractor', is_active: true },
+        authUser: { id: TARGET_ID, email: 'mike@example.com', last_sign_in_at: '2026-07-01T00:00:00Z' },
+      }),
+    )
+    const { resendInviteAction } = await import('./users.actions')
+    const result = await resendInviteAction({ userId: TARGET_ID })
+    expect(result.ok).toBe(true)
+    const { logAuthEvent } = await import('@esite/shared')
+    expect(logAuthEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      eventType: 'password_reset_requested',
+      metadata: expect.objectContaining({ via: 'invite_resend', had_prior_sign_in: true }),
+    }))
   })
 
   it('resends the invite with the org role and assigned site names', async () => {
