@@ -6,7 +6,7 @@
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { isMonthKey, monthFirstDay, parseAsBuilt, parseGuarantee, templateFromRow } from '@esite/shared/solar-operations'
+import { CAUSE_LABELS, isMonthKey, monthFirstDay, parseAsBuilt, parseGuarantee, sastLocalToIso, templateFromRow } from '@esite/shared/solar-operations'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
@@ -188,6 +188,87 @@ export async function deleteIrradiationAction(input: { projectId: string; instal
   const { error } = await g.supabase.schema('solar').from('ops_irradiation').delete()
     .eq('installation_id', input.installationId).eq('month', monthFirstDay(input.month))
   if (error) return { error: opsError(error) }
+  done(input.projectId)
+  return { ok: true }
+}
+
+// ── Downtime ──────────────────────────────────────────────────────────────
+// The same eight causes as 00217's CHECK (CAUSE_LABELS is the shared single source).
+const CAUSES = Object.keys(CAUSE_LABELS)
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/
+
+/** A datetime-local value (read as SAST) or an ISO UTC instant (a confirmed candidate). */
+function when(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  if (ISO_RE.test(v) && Number.isFinite(Date.parse(v))) return new Date(v).toISOString()
+  return sastLocalToIso(v)
+}
+
+function checkDowntime(i: { startsAt: unknown; endsAt: unknown; cause: unknown; description: unknown }):
+  { ok: true; startsAt: string; endsAt: string; description: string | null } | FieldErrors {
+  const fieldErrors: Record<string, string> = {}
+  const s = when(i.startsAt)
+  const e = when(i.endsAt)
+  if (!s) fieldErrors.startsAt = 'Enter a date and time.'
+  if (!e) fieldErrors.endsAt = 'Enter a date and time.'
+  if (s && e && Date.parse(e) <= Date.parse(s)) fieldErrors.endsAt = 'The end must be after the start.'
+  else if (s && e && Date.parse(e) - Date.parse(s) > 31 * 86_400_000) fieldErrors.endsAt = 'One entry covers at most 31 days — split longer outages.'
+  if (typeof i.cause !== 'string' || !CAUSES.includes(i.cause)) fieldErrors.cause = 'Choose a cause.'
+  const d = typeof i.description === 'string' ? i.description.trim() : ''
+  if (d.length > 2000) fieldErrors.description = 'At most 2000 characters.'
+  if (Object.keys(fieldErrors).length > 0) return { fieldErrors }
+  return { ok: true, startsAt: s!, endsAt: e!, description: d || null }
+}
+
+export async function addDowntimeAction(input: {
+  projectId: string; installationId: string; startsAt: string; endsAt: string; cause: string; description: string
+  excludedFromGuarantee: boolean; source: 'manual' | 'detected'
+}): Promise<{ ok: true; id: string } | Err | FieldErrors> {
+  const c = checkDowntime(input)
+  if (!('ok' in c)) return c
+  const source = input.source === 'detected' ? 'detected' : 'manual'
+  const g = await gate(input.projectId, 'edit')
+  if ('error' in g) return g
+  const { data, error } = await g.supabase.schema('solar').from('downtime').insert({
+    installation_id: input.installationId, starts_at: c.startsAt, ends_at: c.endsAt, cause: input.cause,
+    description: c.description, excluded_from_guarantee: input.excludedFromGuarantee === true, source,
+  }).select('id')
+  if (error) return { error: opsError(error) }
+  const id = Array.isArray(data) ? (data[0]?.id as string | undefined) : undefined
+  if (!id) return { error: 'Could not record the downtime — try again.' }
+  const hours = Math.round(((Date.parse(c.endsAt) - Date.parse(c.startsAt)) / 3_600_000) * 100) / 100
+  await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'downtime_added', objectRef: { id, hours, source } })
+  await emitProductEvent({ actorId: g.userId, projectId: input.projectId, event: 'solar_downtime_saved', properties: { action: 'added', source } })
+  done(input.projectId)
+  return { ok: true, id }
+}
+
+export async function updateDowntimeAction(input: {
+  projectId: string; id: string; startsAt: string; endsAt: string; cause: string; description: string
+  excludedFromGuarantee: boolean; expectedUpdatedAt: string
+}): Promise<{ ok: true; updatedAt: string } | Err | FieldErrors> {
+  const c = checkDowntime(input)
+  if (!('ok' in c)) return c
+  const g = await gate(input.projectId, 'edit')
+  if ('error' in g) return g
+  const { data, error } = await g.supabase.schema('solar').from('downtime').update({
+    starts_at: c.startsAt, ends_at: c.endsAt, cause: input.cause, description: c.description,
+    excluded_from_guarantee: input.excludedFromGuarantee === true,
+  }).eq('id', input.id).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+  if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
+  await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'downtime_updated', objectRef: { id: input.id } })
+  await emitProductEvent({ actorId: g.userId, projectId: input.projectId, event: 'solar_downtime_saved', properties: { action: 'updated', source: 'manual' } })
+  done(input.projectId)
+  return { ok: true, updatedAt: String((data[0] as Row).updated_at) }
+}
+
+export async function deleteDowntimeAction(input: { projectId: string; id: string }): Promise<{ ok: true } | Err> {
+  const g = await gate(input.projectId, 'edit')
+  if ('error' in g) return g
+  const { error } = await g.supabase.schema('solar').from('downtime').delete().eq('id', input.id)
+  if (error) return { error: opsError(error) }
+  await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'downtime_deleted', objectRef: { id: input.id } })
   done(input.projectId)
   return { ok: true }
 }
