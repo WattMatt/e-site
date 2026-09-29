@@ -10,7 +10,7 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  buildMonthlySnapshot, expectedForMonth, lostHourlyKwh, lostKwh, lostSteps, monthEndMs, monthFirstDay, monthLabel,
+  buildMonthlySnapshot, dateMonthKey, expectedForMonth, lostHourlyKwh, lostKwh, lostSteps, monthEndMs, monthFirstDay, monthLabel,
   monthlyReportModel, monthStartMs, sourceRows, totalsByMonth, yearToDate, type MonthKey,
 } from '@esite/shared/solar-operations'
 import { solarBranding } from '@/lib/solar/reports/branding'
@@ -39,6 +39,11 @@ const sha256 = (b: Uint8Array | string) => createHash('sha256').update(b).digest
 export async function generateMonthlyReport(i: GenerateMonthlyInput): Promise<GenerateMonthlyResult> {
   const v = await loadOperationsView({ user: i.user, svc: i.svc, projectId: i.projectId, level: 'edit_financials', month: i.month })
   if (!v.installation || !v.organisationId) return { ok: false, error: MONTHLY_ERRORS.noInstallation }
+  // Review B7: a month before commissioning may well have data; "no generation data" would be wrong.
+  const commMonth = v.installation.commissioningDate ? dateMonthKey(v.installation.commissioningDate) : null
+  if (commMonth && i.month < commMonth) {
+    return { ok: false, error: `${monthLabel(i.month)} is before the commissioning month (${monthLabel(commMonth)}).` }
+  }
   if (v.selectedMonth !== i.month) return { ok: false, error: `There is no generation data for ${monthLabel(i.month)}.` }
   if (v.monthly?.generateReason) return { ok: false, error: v.monthly.generateReason }
   const row = v.performance.find((r) => r.month === i.month)

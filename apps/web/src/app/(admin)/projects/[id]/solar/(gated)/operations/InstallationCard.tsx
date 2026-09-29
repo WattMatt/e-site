@@ -4,6 +4,7 @@
  * the as-built record — commissioning date, sizes and the equipment table the monthly report prints.
  */
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { EQUIPMENT_KINDS, EQUIPMENT_UNITS, type AsBuilt, type EquipmentLine } from '@esite/shared/solar-operations/client'
 import type { OpsInstallationView } from '@/lib/solar/operations/data'
@@ -19,6 +20,8 @@ interface Props {
   installation: OpsInstallationView | null
   acceptedProposal: { id: string; version: number } | null
   setupReason: string | null
+  /** Where the setup reason is resolved (e.g. the Reports & Proposal tab), shown as a link. */
+  setupAction?: { href: string; label: string } | null
 }
 
 const HINT = { fontSize: 13, color: 'var(--c-text-dim)', margin: 0 } as const
@@ -34,7 +37,12 @@ export function InstallationCard(p: Props) {
       <Card>
         <CardHeader><span className="data-panel-title">Installation</span></CardHeader>
         <CardBody>
-          {p.setupReason ? <p style={HINT}>{p.setupReason}</p>
+          {p.setupReason ? (
+            <p style={HINT}>
+              {p.setupReason}
+              {p.setupAction ? <>{' '}<Link href={p.setupAction.href}>{p.setupAction.label}</Link></> : null}
+            </p>
+          )
             : p.acceptedProposal && p.canEdit ? (
               <div style={{ display: 'grid', gap: 12 }}>
                 <p style={HINT}>{`Proposal v${p.acceptedProposal.version} was accepted. Recording the installation freezes its modelled generation as the baseline the guarantee is measured against.`}</p>
@@ -96,13 +104,46 @@ function InstallationForm({ projectId, canEdit, installation }: Props & { instal
   }
 
   const b = installation.baseline
+  const baselineLine = (
+    <p style={{ ...HINT, marginBottom: 12 }}>
+      {`Modelled baseline: accepted run ${b.caseRunId.slice(0, 8)} — ${kwh(installation.annualP50Kwh)} kWh a year (P50), design PR ${b.performanceRatio.toFixed(2)}. Frozen when the installation was recorded.`}
+    </p>
+  )
+  // Spec §0.2: controls above the viewer's level are hidden, not shown disabled (review B9).
+  if (!canEdit) {
+    const show = (v: number | null, unit: string) => (v === null ? '—' : `${v} ${unit}`)
+    return (
+      <Card>
+        <CardHeader><span className="data-panel-title">Installation (as built)</span></CardHeader>
+        <CardBody>
+          {baselineLine}
+          <dl style={{ fontSize: 13, margin: 0, display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px' }}>
+            <dt>Commissioning date</dt><dd style={{ margin: 0 }}>{installation.commissioningDate ?? 'Not set'}</dd>
+            <dt>DC</dt><dd style={{ margin: 0 }}>{show(a.dcKwp, 'kWp')}</dd>
+            <dt>AC</dt><dd style={{ margin: 0 }}>{show(a.acKw, 'kW')}</dd>
+            <dt>Battery</dt><dd style={{ margin: 0 }}>{a.batteryKwh === null ? '—' : `${a.batteryKwh} kWh / ${show(a.batteryKw, 'kW')}`}</dd>
+            <dt>Tilt / azimuth</dt><dd style={{ margin: 0 }}>{`${show(a.tiltDeg, '°')} / ${show(a.azimuthDeg, '°')}`}</dd>
+          </dl>
+          {a.equipment.length > 0 ? (
+            <table style={{ width: '100%', marginTop: 16, fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead><tr><th align="left">Kind</th><th align="left">Make</th><th align="left">Model</th><th align="right">Rating</th><th align="right">Qty</th></tr></thead>
+              <tbody>
+                {a.equipment.map((e, k) => (
+                  <tr key={k}><td>{e.kind}</td><td>{e.make}</td><td>{e.model}</td><td align="right">{`${e.rating} ${e.unit}`}</td><td align="right">{e.quantity}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p style={{ ...HINT, marginTop: 12 }}>No equipment has been recorded yet.</p>}
+          {installation.notes ? <p style={{ fontSize: 13, marginTop: 12, whiteSpace: 'pre-wrap' }}>{installation.notes}</p> : null}
+        </CardBody>
+      </Card>
+    )
+  }
   return (
     <Card>
       <CardHeader><span className="data-panel-title">Installation (as built)</span></CardHeader>
       <CardBody>
-        <p style={{ ...HINT, marginBottom: 12 }}>
-          {`Modelled baseline: accepted run ${b.caseRunId.slice(0, 8)} — ${kwh(installation.annualP50Kwh)} kWh a year (P50), design PR ${b.performanceRatio.toFixed(2)}. Frozen when the installation was recorded.`}
-        </p>
+        {baselineLine}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
           <FormField label="Commissioning date" htmlFor="ops-comm" error={errors.commissioningDate}>
             <TextInput id="ops-comm" type="date" value={date} disabled={!canEdit} onChange={(e) => setDate(e.target.value)} />

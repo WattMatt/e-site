@@ -9,8 +9,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { OperationsReadinessInput, SolarAccessLevel } from '@esite/shared'
 import {
   dateMonthKey, detectDowntimeCandidates, equipmentComplete, expectedForMonth, guaranteeFromRow, handoverCompletion,
-  isMonthKey, lostKwh, lostSteps, monthEndMs, monthParts, monthRange, monthStartMs, NOTE_SECTIONS, parseAsBuilt,
-  performanceRows, plantSeries, readBaseline, templateFromRow, totalsByMonth,
+  isMonthKey, lostKwh, lostSteps, monthEndMs, monthLabel, monthParts, monthRange, monthStartMs, NOTE_SECTIONS, parseAsBuilt,
+  performanceRows, plantSeries, readBaseline, shareTotalNote, templateFromRow, totalsByMonth,
   type AsBuilt, type DowntimeCandidate, type DowntimeRecord, type Guarantee, type HandoverCompletion,
   type IrradiationRecord, type MonthKey, type NoteSection, type OpsBaseline, type PerformanceRow,
 } from '@esite/shared/solar-operations'
@@ -48,6 +48,8 @@ export interface OperationsView {
   studyId: string | null
   organisationId: string | null
   setupReason: string | null
+  /** Where the setup reason can be resolved (a link on the card), or null. */
+  setupAction: { href: string; label: string } | null
   acceptedProposal: { id: string; version: number } | null
   installation: OpsInstallationView | null
   meters: OpsMeterView[]
@@ -58,6 +60,10 @@ export interface OperationsView {
   months: MonthKey[]
   selectedMonth: MonthKey | null
   performance: PerformanceRow[]
+  /** Why the performance table is empty when the generic hint would mislead, or null. */
+  performanceNote: string | null
+  /** A sentence when the generation meters' expected shares do not add to 100 %, or null. */
+  shareNote: string | null
   candidates: DowntimeCandidate[]
   handover: { items: OpsHandoverItemView[]; completion: HandoverCompletion; documents: Array<{ id: string; name: string }>; templateName: string }
   monthly: OpsMonthlyView | null
@@ -67,13 +73,20 @@ export interface OperationsView {
 const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v))
 const OPS_METER_KINDS = ['solar', 'council', 'bulk']
 
-function emptyView(level: SolarAccessLevel, studyId: string | null, orgId: string | null, setupReason: string | null,
+function setupActionFor(projectId: string, reason: string | null): OperationsView['setupAction'] {
+  // Plan decision 3: "no accepted proposal" points at the tab where a proposal is accepted (review B7).
+  if (reason === INSTALL_REASONS.noAccepted) return { href: `/projects/${projectId}/solar/reports`, label: 'Open Reports & Proposal' }
+  if (reason === INSTALL_REASONS.noStudy) return { href: `/projects/${projectId}/solar/site`, label: 'Open Site & Supply' }
+  return null
+}
+
+function emptyView(level: SolarAccessLevel, projectId: string, studyId: string | null, orgId: string | null, setupReason: string | null,
   accepted: { id: string; version: number } | null): OperationsView {
   return {
     level, canEdit: level !== 'view', canSeeMoney: level === 'edit_financials',
-    studyId, organisationId: orgId, setupReason, acceptedProposal: accepted, installation: null,
+    studyId, organisationId: orgId, setupReason, setupAction: setupActionFor(projectId, setupReason), acceptedProposal: accepted, installation: null,
     meters: [], availableMeters: [], guarantee: null, irradiation: [], downtime: [], months: [], selectedMonth: null,
-    performance: [], candidates: [],
+    performance: [], performanceNote: null, shareNote: null, candidates: [],
     handover: { items: [], completion: handoverCompletion([]), documents: [], templateName: '' },
     monthly: null, readiness: null,
   }
@@ -88,7 +101,7 @@ export async function loadOperationsView(a: {
 
   const { data: study } = await solar().from('studies').select('id, organisation_id, latitude, longitude, elevation_m')
     .eq('project_id', a.projectId).maybeSingle()
-  if (!study) return emptyView(a.level, null, null, INSTALL_REASONS.noStudy, null)
+  if (!study) return emptyView(a.level, a.projectId, null, null, INSTALL_REASONS.noStudy, null)
   const s = study as Row
   const studyId = String(s.id)
   const orgId = String(s.organisation_id)
@@ -97,13 +110,13 @@ export async function loadOperationsView(a: {
     .eq('study_id', studyId).maybeSingle()
   if (!inst) {
     const accepted = await acceptedProposal(a.svc, studyId)
-    return emptyView(a.level, studyId, orgId, accepted ? null : INSTALL_REASONS.noAccepted, accepted ? { id: accepted.id, version: accepted.version } : null)
+    return emptyView(a.level, a.projectId, studyId, orgId, accepted ? null : INSTALL_REASONS.noAccepted, accepted ? { id: accepted.id, version: accepted.version } : null)
   }
   const i = inst as Row
   const installationId = String(i.id)
   const baseline = readBaseline(i.baseline)
   // A stored baseline the reader cannot use is shown as a sentence, never thrown (review A1).
-  if (!baseline) return emptyView(a.level, studyId, orgId, INSTALL_REASONS.baselineUnreadable, null)
+  if (!baseline) return emptyView(a.level, a.projectId, studyId, orgId, INSTALL_REASONS.baselineUnreadable, null)
   const parsed = parseAsBuilt(i.as_built)
   const asBuilt: AsBuilt = parsed.ok ? parsed.value
     : { dcKwp: baseline.dcKwp, acKw: baseline.acKw, batteryKwh: null, batteryKw: null, tiltDeg: null, azimuthDeg: null, equipment: [] }
@@ -161,6 +174,12 @@ export async function loadOperationsView(a: {
         generationMeterCount: genCount, downtime: downtimeBase, irradiation,
       })
     : []
+  const lastDataMonth = months[months.length - 1] ?? null
+  // Review B7: data that all predates commissioning is not "no data"; say which date is the problem.
+  const performanceNote = commissioningDate && lastDataMonth && dateMonthKey(commissioningDate) > lastDataMonth
+    ? `The commissioning date (${commissioningDate}) is after the last month with generation data (${monthLabel(lastDataMonth)}), so there is nothing to compare yet.`
+    : null
+  const shareNote = shareTotalNote(meters.filter((m) => m.role === 'generation'))
 
   let candidates: DowntimeCandidate[] = []
   const lostById = new Map<string, number>()
@@ -227,12 +246,12 @@ export async function loadOperationsView(a: {
   }
 
   return {
-    level: a.level, canEdit, canSeeMoney, studyId, organisationId: orgId, setupReason: null, acceptedProposal: null,
+    level: a.level, canEdit, canSeeMoney, studyId, organisationId: orgId, setupReason: null, setupAction: null, acceptedProposal: null,
     installation: {
       id: installationId, commissioningDate, asBuilt, notes: (i.notes as string | null) ?? null, updatedAt: String(i.updated_at), baseline,
       annualP50Kwh: Math.round(baseline.monthlyKwh.reduce((t, v) => t + v, 0)),
     },
-    meters, availableMeters, guarantee, irradiation, downtime, months, selectedMonth, performance, candidates,
+    meters, availableMeters, guarantee, irradiation, downtime, months, selectedMonth, performance, performanceNote, shareNote, candidates,
     handover: { items, completion: handoverCompletion(items), documents, templateName: template.name },
     monthly,
     readiness: { installed: true, commissioningDate, monthsWithData: months.length },

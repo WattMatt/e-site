@@ -16,7 +16,7 @@ export function OperationsTab({ projectId, view }: { projectId: string; view: Op
   if (!view.installation) {
     return (
       <InstallationCard projectId={projectId} canEdit={view.canEdit} installation={null}
-        acceptedProposal={view.acceptedProposal} setupReason={view.setupReason} />
+        acceptedProposal={view.acceptedProposal} setupReason={view.setupReason} setupAction={view.setupAction} />
     )
   }
   const inst = view.installation
@@ -24,9 +24,9 @@ export function OperationsTab({ projectId, view }: { projectId: string; view: Op
     <div style={{ display: 'grid', gap: 16 }}>
       <InstallationCard projectId={projectId} canEdit={view.canEdit} installation={inst} acceptedProposal={null} setupReason={null} />
       <MetersCard projectId={projectId} installationId={inst.id} organisationId={view.organisationId ?? ''} canEdit={view.canEdit}
-        meters={view.meters} availableMeters={view.availableMeters} />
+        meters={view.meters} availableMeters={view.availableMeters} shareNote={view.shareNote} />
       <GuaranteeCard projectId={projectId} installationId={inst.id} canEdit={view.canEdit} guarantee={view.guarantee} />
-      <PerformanceTable projectId={projectId} rows={view.performance} selectedMonth={view.selectedMonth} />
+      <PerformanceTable projectId={projectId} rows={view.performance} selectedMonth={view.selectedMonth} note={view.performanceNote} />
       <IrradiationCard projectId={projectId} installationId={inst.id} canEdit={view.canEdit} entries={view.irradiation} />
       <DowntimeLog projectId={projectId} installationId={inst.id} canEdit={view.canEdit} downtime={view.downtime}
         candidates={view.candidates} selectedMonth={view.selectedMonth} />

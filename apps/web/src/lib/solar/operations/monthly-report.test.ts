@@ -80,6 +80,11 @@ describe('generateMonthlyReport', () => {
     h.view.mockResolvedValue(view({ selectedMonth: '2026-02' }))
     await expect(generateMonthlyReport(setup().args)).resolves.toEqual({ ok: false, error: 'There is no generation data for March 2026.' })
   })
+  it('a month before the commissioning month says so, not "no generation data" (review B7)', async () => {
+    // March has data, but the plant was commissioned in April: the view has no performance row for March.
+    h.view.mockResolvedValue(view({ installation: { ...view().installation, commissioningDate: '2026-04-02' }, performance: [] }))
+    await expect(generateMonthlyReport(setup().args)).resolves.toEqual({ ok: false, error: 'March 2026 is before the commissioning month (April 2026).' })
+  })
   it('a concurrent generation loses cleanly: the report row and the PDF are removed', async () => {
     const { svc, args } = setup([], { 'solar.monthly_reports:insert': { error: { code: '23505', message: 'solar.monthly_reports: version 1 is not the next version' } } })
     await expect(generateMonthlyReport(args)).resolves.toEqual({ ok: false, error: MONTHLY_ERRORS.race })

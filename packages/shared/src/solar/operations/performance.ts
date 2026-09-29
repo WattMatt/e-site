@@ -107,7 +107,10 @@ export function performanceRow(i: PerformanceInput, month: MonthKey): Performanc
   let performanceRatio: number | null = null
   let correctedExpectedKwh: number | null = null
   if (irr?.plane === 'poa') {
-    performanceRatio = actualKwh !== null && i.dcKwp > 0 ? actualKwh / (i.dcKwp * irr.kwhPerM2) : null
+    // The month's irradiation is prorated by the same active fraction as the expectation, so a plant
+    // commissioned mid-month is not measured against sun that fell before it ran (review B6).
+    performanceRatio = actualKwh !== null && i.dcKwp > 0 && exp.activeFraction > 0
+      ? actualKwh / (i.dcKwp * irr.kwhPerM2 * exp.activeFraction) : null
     correctedExpectedKwh = i.baseline.performanceRatio * i.dcKwp * irr.kwhPerM2 * exp.activeFraction
   } else if (irr?.plane === 'ghi' && i.baseline.ghiKwhM2) {
     const modelled = (i.baseline.ghiKwhM2[m - 1]! * daysInMonth(year, m)) / TMY_DAYS[m - 1]!
@@ -173,15 +176,28 @@ export function sourceRows(
   month: MonthKey,
   guaranteeKwh: number,
 ): SourceRow[] {
-  const equal = meters.every((m) => m.sharePct === null)
+  // Meters without a share split what the set shares leave (floor 0) equally; with none set, that is
+  // an equal split of 100 % (review B4: they used to get 0 once any meter had a share).
+  const set = meters.reduce((s, m) => s + (m.sharePct ?? 0), 0)
+  const unset = meters.filter((m) => m.sharePct === null).length
+  const each = unset > 0 ? Math.max(0, 100 - set) / unset : 0
   return meters.map((m) => {
-    const share = equal ? 100 / Math.max(1, meters.length) : (m.sharePct ?? 0)
+    const share = m.sharePct ?? each
     const a = meterMonths[m.meterId]?.[month]
     return {
       meterId: m.meterId, label: m.label, sharePct: r2(share),
       expectedKwh: r3((guaranteeKwh * share) / 100),
       actualKwh: a ? r3(Number(a.kwh)) : null,
-      allocatedEqually: equal,
+      allocatedEqually: m.sharePct === null,
     }
   })
+}
+
+/** A sentence when the generation meters' expected shares (after the remainder split) do not add to 100 %. */
+export function shareTotalNote(meters: ReadonlyArray<{ sharePct: number | null }>): string | null {
+  if (meters.length === 0) return null
+  const set = meters.reduce((s, m) => s + (m.sharePct ?? 0), 0)
+  const unset = meters.some((m) => m.sharePct === null)
+  const total = unset ? Math.max(100, set) : set
+  return Math.abs(total - 100) < 0.005 ? null : `The expected shares of the generation meters add to ${r2(total)} %, not 100 %.`
 }

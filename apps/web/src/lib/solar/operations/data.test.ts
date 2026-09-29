@@ -61,6 +61,17 @@ describe('loadOperationsView', () => {
     expect(a).toMatchObject({ installation: null, acceptedProposal: { id: 'prop-1', version: 3 }, setupReason: null })
     const b = await loadOperationsView({ user: u.client as never, svc: svc().client as never, projectId: 'p1', level: 'edit', month: null })
     expect(b).toMatchObject({ acceptedProposal: null, setupReason: INSTALL_REASONS.noAccepted })
+    // Review B7 (plan decision 3): the sentence comes with the way to the Reports & Proposal tab.
+    expect(b.setupAction).toEqual({ href: '/projects/p1/solar/reports', label: 'Open Reports & Proposal' })
+    expect(a.setupAction).toBeNull()
+  })
+  it('a commissioning date after the last month with data says so instead of an empty table (review B7)', async () => {
+    const u = user({ 'solar.installations': [{ id: 'i1', study_id: 's1', commissioning_date: '2026-05-04', baseline, as_built: asBuilt, notes: null, updated_at: 'T1' }] })
+    const v = await loadOperationsView({ user: u.client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
+    expect(v.performance).toEqual([])
+    expect(v.performanceNote).toBe('The commissioning date (2026-05-04) is after the last month with generation data (March 2026), so there is nothing to compare yet.')
+    const ok = await loadOperationsView({ user: user().client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
+    expect(ok.performanceNote).toBeNull()
   })
   it('an unreadable baseline gives a setup sentence, not a thrown page (review A1)', async () => {
     const u = user({ 'solar.installations': [{ id: 'i1', study_id: 's1', commissioning_date: null, baseline: { version: 1, monthlyKwh: [] }, as_built: asBuilt, notes: null, updated_at: 'T1' }] })

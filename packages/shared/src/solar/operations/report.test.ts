@@ -69,6 +69,26 @@ describe('monthlyReportModel', () => {
     expect(dt.paragraphs.join(' ')).toContain('Business 1 (City of Tshwane, 2026/27)')
     expect(m.summary).toEqual({ period: '2026-03', actualKwh: 900, guaranteeKwh: 1000, variancePct: -10 })
   })
+  it('a month with no guarantee to compare against keeps its variance null, never 0 (review B8)', () => {
+    const m = monthlyReportModel(buildMonthlySnapshot(input({ performance: { ...rows[1]!, variancePct: null } })))
+    expect(m.summary.variancePct).toBeNull()
+  })
+  it('a GHI entry with no modelled TMY GHI says what the correction needs (review B7)', () => {
+    const ghiRow = performanceRows({ ...perfIn, baseline: flatBaseline({ ghiKwhM2: null }), irradiation: [{ month: '2026-03', plane: 'ghi', kwhPerM2: 180, sourceNote: 'Portal' }] })[1]!
+    const m = monthlyReportModel(buildMonthlySnapshot(input({ performance: ghiRow })))
+    const cell = m.sections[0]!.tables[0]!.rows.find((r) => r[0] === 'Irradiation-corrected expected')![1]
+    expect(cell).toBe('needs the modelled horizontal (TMY GHI) irradiation, which this baseline does not carry — record plane-of-array irradiation instead')
+    const none = monthlyReportModel(buildMonthlySnapshot(input()))
+    expect(none.sections[0]!.tables[0]!.rows.find((r) => r[0] === 'Irradiation-corrected expected')![1]).toBe('no irradiation recorded')
+  })
+  it('explains a partial share split and shares that do not add to 100 % (review B4)', () => {
+    const partial = sourceRows([{ meterId: 'm1', label: 'A', sharePct: 40 }, { meterId: 'm2', label: 'B', sharePct: null }], {}, '2026-03', 1000)
+    const p = monthlyReportModel(buildMonthlySnapshot(input({ sources: partial }))).sections[1]!.paragraphs
+    expect(p).toEqual(['Meters without a set share take equal parts of what the set shares leave.'])
+    const off = sourceRows([{ meterId: 'm1', label: 'A', sharePct: 70 }, { meterId: 'm2', label: 'B', sharePct: 20 }], {}, '2026-03', 1000)
+    expect(monthlyReportModel(buildMonthlySnapshot(input({ sources: off }))).sections[1]!.paragraphs)
+      .toEqual(['The expected shares of the generation meters add to 90 %, not 100 %.'])
+  })
   it('drops empty commentary instead of printing blanks', () => {
     const m = monthlyReportModel(buildMonthlySnapshot(input({ notes: {} })))
     expect(m.sections.find((x) => x.title === 'Commentary and actions')!.paragraphs).toEqual(['No commentary was recorded for this month.'])

@@ -11,7 +11,7 @@ import type { ReportSection, ReportTable } from '../reports/report-model'
 import type { AsBuilt } from './as-built'
 import type { OpsBaseline } from './baseline'
 import { GUARANTEE_BASIS_LABELS, type Guarantee, type GuaranteeBasis } from './guarantee'
-import type { PerformanceRow, SourceRow, YearToDate } from './performance'
+import { shareTotalNote, type PerformanceRow, type SourceRow, type YearToDate } from './performance'
 import { monthLabel, type MonthKey } from './time'
 
 export const NOTE_SECTIONS = ['summary', 'performance', 'downtime', 'financial', 'actions'] as const
@@ -113,7 +113,7 @@ const table = (columns: string[], rows: string[][], numericFrom = 1): ReportTabl
 const sast = (iso: string) => new Date(Date.parse(iso) + 2 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ')
 const KIND_LABEL: Record<string, string> = { module: 'Module', inverter: 'Inverter', battery: 'Battery', other: 'Other' }
 
-export function monthlyReportModel(s: MonthlySnapshot): { title: string; kicker: string; sections: ReportSection[]; summary: Record<string, number | string> } {
+export function monthlyReportModel(s: MonthlySnapshot): { title: string; kicker: string; sections: ReportSection[]; summary: Record<string, number | string | null> } {
   const p = s.performance
   const sections: ReportSection[] = []
   const para = (t: string) => (t ? [t] : [])
@@ -131,7 +131,12 @@ export function monthlyReportModel(s: MonthlySnapshot): { title: string; kicker:
       ['Actual generation', p.actualKwh === null ? 'no data' : `${kwh(p.actualKwh)} kWh`],
       ['Variance', pctText(p.variancePct)],
       ['Performance ratio', p.performanceRatio === null ? 'needs plane-of-array irradiation' : fixed(p.performanceRatio, 3)],
-      ['Irradiation-corrected expected', p.correctedExpectedKwh === null ? 'no irradiation recorded' : `${kwh(p.correctedExpectedKwh)} kWh (${p.irradiationPlane === 'poa' ? 'plane of array' : 'horizontal'})`],
+      ['Irradiation-corrected expected', p.correctedExpectedKwh !== null
+        ? `${kwh(p.correctedExpectedKwh)} kWh (${p.irradiationPlane === 'poa' ? 'plane of array' : 'horizontal'})`
+        // A GHI entry exists but the frozen baseline has no TMY GHI to compare it with (review B7).
+        : p.irradiationPlane === 'ghi'
+          ? 'needs the modelled horizontal (TMY GHI) irradiation, which this baseline does not carry — record plane-of-array irradiation instead'
+          : 'no irradiation recorded'],
       ['Downtime', `${fixed(p.downtimeHours, 1)} h (${fixed(p.excludedHours, 1)} h excluded)`],
       ['Data coverage', p.coveragePct === null ? 'no data' : `${fixed(p.coveragePct, 1)} %`],
     ])],
@@ -139,7 +144,13 @@ export function monthlyReportModel(s: MonthlySnapshot): { title: string; kicker:
 
   sections.push({
     title: 'Expected vs actual per source',
-    paragraphs: s.sources.some((x) => x.allocatedEqually) ? ['The guarantee is allocated equally between the generation meters (no share has been set).'] : [],
+    paragraphs: [
+      ...(s.sources.length > 0 && s.sources.every((x) => x.allocatedEqually)
+        ? ['The guarantee is allocated equally between the generation meters (no share has been set).']
+        : s.sources.some((x) => x.allocatedEqually) ? ['Meters without a set share take equal parts of what the set shares leave.'] : []),
+      // Review B4: shares that do not add to 100 % are said, not hidden.
+      ...para(shareTotalNote(s.sources.map((x) => ({ sharePct: x.allocatedEqually ? null : x.sharePct }))) ?? ''),
+    ],
     tables: [table(['Source', 'Share', 'Expected kWh', 'Actual kWh', 'Variance'], s.sources.map((x) => [
       x.label, `${fixed(x.sharePct, 1)} %`, kwh(x.expectedKwh), kwh(x.actualKwh),
       x.actualKwh === null || x.expectedKwh <= 0 ? 'n/a' : pctText(((x.actualKwh - x.expectedKwh) / x.expectedKwh) * 100),
@@ -220,6 +231,7 @@ export function monthlyReportModel(s: MonthlySnapshot): { title: string; kicker:
     title: `Solar monthly report — ${s.periodLabel}`,
     kicker: 'SOLAR MONTHLY REPORT',
     sections,
-    summary: { period: s.period, actualKwh: p.actualKwh ?? 0, guaranteeKwh: p.guaranteeKwh, variancePct: p.variancePct ?? 0 },
+    // variancePct stays null when there is no guarantee to compare against (review B8): 0 would read as "on target".
+    summary: { period: s.period, actualKwh: p.actualKwh ?? 0, guaranteeKwh: p.guaranteeKwh, variancePct: p.variancePct },
   }
 }

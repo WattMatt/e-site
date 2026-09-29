@@ -79,7 +79,7 @@ export interface ProjectReportRow {
   /** Optional revision note captured at generate time (migration 00183). */
   note?: string | null
   /** Headline figures for the list, so it never re-gathers (migration 00183). */
-  summary?: Record<string, number | string> | null
+  summary?: Record<string, number | string | null> | null
   /** Resolved display name for generated_by — not a column. */
   generated_by_name?: string | null
 }

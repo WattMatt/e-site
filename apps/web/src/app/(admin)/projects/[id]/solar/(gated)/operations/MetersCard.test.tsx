@@ -35,6 +35,23 @@ describe('MetersCard', () => {
     expect(screen.getByText(/allocated equally/)).toBeTruthy()
     expect(screen.getByTestId('import')).toBeTruthy()
   })
+  it('shows the view’s note when the shares do not add to 100 % (review B4)', () => {
+    render(<MetersCard {...props} shareNote="The expected shares of the generation meters add to 90 %, not 100 %." />)
+    expect(screen.getByText('The expected shares of the generation meters add to 90 %, not 100 %.')).toBeTruthy()
+  })
+  it('Save share is disabled while it is saving (review B9)', async () => {
+    let release: (v: { ok: true }) => void = () => {}
+    h.share.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    render(<MetersCard {...props} />)
+    fireEvent.change(screen.getByLabelText('Expected share of PV main'), { target: { value: '60' } })
+    const save = screen.getByRole('button', { name: 'Save share' }) as HTMLButtonElement
+    fireEvent.click(save)
+    await waitFor(() => expect(save.disabled).toBe(true))
+    fireEvent.click(save)
+    expect(h.share).toHaveBeenCalledTimes(1)
+    release({ ok: true })
+    await waitFor(() => expect(save.disabled).toBe(false))
+  })
   it('View level: no controls', () => {
     render(<MetersCard {...props} canEdit={false} />)
     expect(screen.queryByRole('button', { name: 'Link meter' })).toBeNull()

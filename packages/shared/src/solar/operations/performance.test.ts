@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { downtimeHoursInMonth, performanceRows, sourceRows, totalsByMonth, yearToDate, type PerformanceInput } from './performance'
+import { downtimeHoursInMonth, performanceRows, shareTotalNote, sourceRows, totalsByMonth, yearToDate, type PerformanceInput } from './performance'
 import { flatBaseline } from './__fixtures__/baseline'
 
 const base = (over: Partial<PerformanceInput> = {}): PerformanceInput => ({
@@ -74,5 +74,30 @@ describe('helpers', () => {
       ])
     expect(sourceRows([{ meterId: 'm1', label: 'A', sharePct: 70 }, { meterId: 'm2', label: 'B', sharePct: 30 }], mm, '2026-03', 1000)[0])
       .toMatchObject({ expectedKwh: 700, allocatedEqually: false })
+  })
+  it('meters without a share split the REMAINDER equally, never zero (review B4)', () => {
+    const three = [{ meterId: 'm1', label: 'A', sharePct: 40 }, { meterId: 'm2', label: 'B', sharePct: null }, { meterId: 'm3', label: 'C', sharePct: null }]
+    const rows = sourceRows(three, {}, '2026-03', 1000)
+    expect(rows.map((r) => [r.sharePct, r.expectedKwh, r.allocatedEqually])).toEqual([[40, 400, false], [30, 300, true], [30, 300, true]])
+    // Set shares above 100 leave nothing to split (floor 0).
+    const over = sourceRows([{ meterId: 'm1', label: 'A', sharePct: 80 }, { meterId: 'm2', label: 'B', sharePct: 30 }, { meterId: 'm3', label: 'C', sharePct: null }], {}, '2026-03', 1000)
+    expect(over.map((r) => r.sharePct)).toEqual([80, 30, 0])
+  })
+  it('says when the shares do not add to 100 % (review B4)', () => {
+    expect(shareTotalNote([{ sharePct: null }, { sharePct: null }])).toBeNull()
+    expect(shareTotalNote([{ sharePct: 40 }, { sharePct: null }])).toBeNull()
+    expect(shareTotalNote([{ sharePct: 70 }, { sharePct: 30 }])).toBeNull()
+    expect(shareTotalNote([{ sharePct: 70 }, { sharePct: 20 }])).toBe('The expected shares of the generation meters add to 90 %, not 100 %.')
+    expect(shareTotalNote([{ sharePct: 80 }, { sharePct: 30 }, { sharePct: null }])).toBe('The expected shares of the generation meters add to 110 %, not 100 %.')
+    expect(shareTotalNote([])).toBeNull()
+  })
+})
+
+describe('commissioning month PR (review B6)', () => {
+  it('prorates the month’s irradiation by the same active fraction as the expectation', () => {
+    // Commissioned on the 16th of March: 16 of 31 days active.
+    const rows = performanceRows(base({ commissioningDate: '2026-03-16', months: ['2026-03'], actual: { '2026-03': { kwh: 500, coverageMinutes: 16 * 1440 } },
+      irradiation: [{ month: '2026-03', plane: 'poa', kwhPerM2: 150, sourceNote: 'Station' }] }))
+    expect(rows[0]!.performanceRatio).toBeCloseTo(500 / (100 * 150 * (16 / 31)), 4)
   })
 })

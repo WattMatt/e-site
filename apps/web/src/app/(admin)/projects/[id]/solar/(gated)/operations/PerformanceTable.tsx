@@ -5,15 +5,15 @@ import type { PerformanceRow } from '@esite/shared/solar-operations'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { kwh, pctSigned } from '@/components/solar/ops-format'
 
-interface Props { projectId: string; rows: PerformanceRow[]; selectedMonth: string | null }
+interface Props { projectId: string; rows: PerformanceRow[]; selectedMonth: string | null; note?: string | null }
 
-export function PerformanceTable({ projectId, rows, selectedMonth }: Props) {
+export function PerformanceTable({ projectId, rows, selectedMonth, note = null }: Props) {
   return (
     <Card>
       <CardHeader><span className="data-panel-title">Monthly performance</span></CardHeader>
       <CardBody>
         {rows.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--c-text-dim)', margin: 0 }}>Set the commissioning date and import generation data to see monthly performance.</p>
+          <p style={{ fontSize: 13, color: 'var(--c-text-dim)', margin: 0 }}>{note ?? 'Set the commissioning date and import generation data to see monthly performance.'}</p>
         ) : (
           <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>

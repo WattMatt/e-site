@@ -20,6 +20,7 @@ function NoteField({ p, month, section }: { p: Props; month: string; section: No
   const [body, setBody] = useState(p.monthly.notes[section])
   const [updatedAt, setUpdatedAt] = useState<string | null>(p.monthly.notesUpdatedAt[section])
   const [msg, setMsg] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const label = NOTE_SECTION_LABELS[section]
   return (
     <div style={{ display: 'grid', gap: 4 }}>
@@ -27,11 +28,18 @@ function NoteField({ p, month, section }: { p: Props; month: string; section: No
         <Textarea id={`note-${section}`} rows={3} value={body} onChange={(e) => setBody(e.target.value)} />
       </FormField>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Button size="sm" variant="secondary" aria-label={`Save ${label}`} onClick={async () => {
-          const r = await saveMonthlyReportNoteAction({ projectId: p.projectId, installationId: p.installationId, month, section, body, expectedUpdatedAt: updatedAt })
-          if ('error' in r) { setMsg(r.error); return }
-          setUpdatedAt(r.updatedAt)
-          setMsg('Saved.')
+        {/* Disabled while saving: a second press would carry the same (now stale) version (review B9). */}
+        <Button size="sm" variant="secondary" aria-label={`Save ${label}`} disabled={saving} onClick={async () => {
+          if (saving) return
+          setSaving(true)
+          try {
+            const r = await saveMonthlyReportNoteAction({ projectId: p.projectId, installationId: p.installationId, month, section, body, expectedUpdatedAt: updatedAt })
+            if ('error' in r) { setMsg(r.error); return }
+            setUpdatedAt(r.updatedAt)
+            setMsg('Saved.')
+          } finally {
+            setSaving(false)
+          }
         }}>Save</Button>
         {msg ? <span role="status" style={{ fontSize: 12 }}>{msg}</span> : null}
       </div>

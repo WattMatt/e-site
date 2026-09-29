@@ -17,6 +17,8 @@ import { GenerationImport } from './GenerationImport'
 interface Props {
   projectId: string; installationId: string; organisationId: string; canEdit: boolean
   meters: OpsMeterView[]; availableMeters: OpsAvailableMeter[]
+  /** The view's sentence when the expected shares do not add to 100 % (review B4). */
+  shareNote?: string | null
 }
 const HINT = { fontSize: 13, color: 'var(--c-text-dim)', margin: 0 } as const
 
@@ -25,6 +27,7 @@ function MeterRow({ p, m }: { p: Props; m: OpsMeterView }) {
   const { armed, arm, disarm } = useArmedConfirm()
   const [share, setShare] = useState(m.sharePct === null ? '' : String(m.sharePct))
   const [msg, setMsg] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   return (
     <tr>
       <td>{m.label}</td>
@@ -33,9 +36,16 @@ function MeterRow({ p, m }: { p: Props; m: OpsMeterView }) {
         {m.role === 'generation' ? (p.canEdit ? (
           <span style={{ display: 'inline-flex', gap: 6 }}>
             <TextInput aria-label={`Expected share of ${m.label}`} inputMode="decimal" value={share} style={{ width: 80 }} onChange={(e) => setShare(e.target.value)} />
-            <Button size="sm" variant="secondary" onClick={async () => {
-              const r = await setMeterShareAction({ projectId: p.projectId, installationId: p.installationId, meterId: m.meterId, sharePct: share.trim() === '' ? null : Number(share) })
-              if ('error' in r) setMsg(r.error); else router.refresh()
+            <Button size="sm" variant="secondary" disabled={saving} onClick={async () => {
+              if (saving) return
+              setSaving(true)
+              setMsg(null)
+              try {
+                const r = await setMeterShareAction({ projectId: p.projectId, installationId: p.installationId, meterId: m.meterId, sharePct: share.trim() === '' ? null : Number(share) })
+                if ('error' in r) setMsg(r.error); else router.refresh()
+              } finally {
+                setSaving(false)
+              }
             }}>Save share</Button>
           </span>
         ) : (m.sharePct === null ? 'equal' : `${m.sharePct} %`)) : '—'}
@@ -70,7 +80,9 @@ export function MetersCard(p: Props) {
             <tbody>{p.meters.map((m) => <MeterRow key={m.meterId} p={p} m={m} />)}</tbody>
           </table>
         )}
-        {equal ? <p style={{ ...HINT, marginTop: 8 }}>The guarantee is allocated equally between the generation meters until you set shares.</p> : null}
+        {equal ? <p style={{ ...HINT, marginTop: 8 }}>The guarantee is allocated equally between the generation meters until you set shares.</p>
+          : generation.some((m) => m.sharePct === null) ? <p style={{ ...HINT, marginTop: 8 }}>Meters without a share take equal parts of what the set shares leave.</p> : null}
+        {p.shareNote ? <p role="status" style={{ ...HINT, color: 'var(--c-amber)', marginTop: 8 }}>{p.shareNote}</p> : null}
         {p.canEdit && p.availableMeters.length > 0 ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 12 }}>
             <FormField label="Meter to link" htmlFor="ops-link">

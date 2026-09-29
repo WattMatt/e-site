@@ -21,6 +21,14 @@ export function GuaranteeCard({ projectId, installationId, canEdit, guarantee }:
   const [msg, setMsg] = useState<string | null>(null)
 
   async function save() {
+    // Review B5: Number('') is 0, so a blank month would silently guarantee nothing. All 12 are required.
+    if (basis === 'manual') {
+      const blank = MONTH_NAMES.filter((_, k) => (manual[k] ?? '').trim() === '')
+      if (blank.length > 0) {
+        setErrors({ manualMonthlyKwh: `Enter the guaranteed kWh for every month (${blank.join(', ')} ${blank.length === 1 ? 'is' : 'are'} blank).` })
+        return
+      }
+    }
     const r = await saveGuaranteeAction({
       projectId, installationId, expectedUpdatedAt: updatedAt,
       guarantee: {
@@ -37,13 +45,39 @@ export function GuaranteeCard({ projectId, installationId, canEdit, guarantee }:
     router.refresh()
   }
 
+  const intro = (
+    <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 0 }}>
+      Expected generation is derived for every month automatically from this basis and the frozen baseline. The commissioning month is prorated; degradation applies from operating year 2 (not to a manual schedule).
+    </p>
+  )
+  // Spec §0.2: controls above the viewer's level are hidden, not shown disabled (review B9).
+  if (!canEdit) {
+    return (
+      <Card>
+        <CardHeader><span className="data-panel-title">Guarantee</span></CardHeader>
+        <CardBody>
+          {intro}
+          {guarantee ? (
+            <dl style={{ fontSize: 13, margin: 0, display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px' }}>
+              <dt>Basis</dt>
+              <dd style={{ margin: 0 }}>{guarantee.basis === 'pct_of_modelled' && guarantee.pct !== null
+                ? `${guarantee.pct} % of modelled (P50)` : GUARANTEE_BASIS_LABELS[guarantee.basis]}</dd>
+              {guarantee.basis !== 'manual' ? <><dt>Degradation</dt><dd style={{ margin: 0 }}>{`${guarantee.degradationPctPerYear} % a year`}</dd></> : null}
+              {guarantee.basis === 'manual' && guarantee.manualMonthlyKwh ? MONTH_NAMES.map((name, k) => (
+                <span key={name} style={{ display: 'contents' }}><dt>{name}</dt><dd style={{ margin: 0 }}>{`${guarantee.manualMonthlyKwh![k]} kWh`}</dd></span>
+              )) : null}
+            </dl>
+          ) : <p style={{ fontSize: 13, margin: 0 }}>No guarantee basis has been saved yet.</p>}
+        </CardBody>
+      </Card>
+    )
+  }
+
   return (
     <Card>
       <CardHeader><span className="data-panel-title">Guarantee</span></CardHeader>
       <CardBody>
-        <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 0 }}>
-          Expected generation is derived for every month automatically from this basis and the frozen baseline. The commissioning month is prorated; degradation applies from operating year 2 (not to a manual schedule).
-        </p>
+        {intro}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
           <FormField label="Guarantee basis" htmlFor="ops-basis" error={errors.basis}>
             <Select id="ops-basis" value={basis} disabled={!canEdit} onChange={(e) => setBasis(e.target.value as GuaranteeBasis)}>

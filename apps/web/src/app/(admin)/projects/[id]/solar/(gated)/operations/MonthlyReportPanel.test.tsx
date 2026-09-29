@@ -37,6 +37,18 @@ describe('MonthlyReportPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Actions' }))
     await waitFor(() => expect(h.note).toHaveBeenLastCalledWith(expect.objectContaining({ section: 'actions', expectedUpdatedAt: null })))
   })
+  it('a commentary Save is disabled while it is saving, so a double press cannot race the version guard (review B9)', async () => {
+    let release: (v: { ok: true; updatedAt: string }) => void = () => {}
+    h.note.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    render(<MonthlyReportPanel projectId="p1" installationId="i1" month="2026-03" monthly={monthly(null)} />)
+    const save = screen.getByRole('button', { name: 'Save Summary commentary' }) as HTMLButtonElement
+    fireEvent.click(save)
+    await waitFor(() => expect(save.disabled).toBe(true))
+    fireEvent.click(save)
+    expect(h.note).toHaveBeenCalledTimes(1)
+    release({ ok: true, updatedAt: 'N2' })
+    await waitFor(() => expect(save.disabled).toBe(false))
+  })
   it('no month yet: says why', () => {
     render(<MonthlyReportPanel projectId="p1" installationId="i1" month={null} monthly={monthly('Import generation data first.')} />)
     expect(screen.getByText('Import generation data first.')).toBeTruthy()

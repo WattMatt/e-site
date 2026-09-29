@@ -26,6 +26,11 @@ describe('InstallationCard — before installation', () => {
     await waitFor(() => expect(h.create).toHaveBeenCalledWith({ projectId: 'p1' }))
     expect(h.refresh).toHaveBeenCalled()
   })
+  it('a setup reason with a way forward links to it (review B7: no accepted proposal → Reports & Proposal)', () => {
+    render(<InstallationCard projectId="p1" canEdit installation={null} acceptedProposal={null} setupReason="No accepted proposal yet."
+      setupAction={{ href: '/projects/p1/solar/reports', label: 'Open Reports & Proposal' }} />)
+    expect(screen.getByRole('link', { name: 'Open Reports & Proposal' }).getAttribute('href')).toBe('/projects/p1/solar/reports')
+  })
   it('a View user is told who records it', () => {
     render(<InstallationCard projectId="p1" canEdit={false} installation={null} acceptedProposal={{ id: 'prop', version: 3 }} setupReason={null} />)
     expect(screen.getByText(/Someone with Solar Edit access records the installation/)).toBeTruthy()
@@ -52,9 +57,15 @@ describe('InstallationCard — as-built', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save installation' }))
     expect(await screen.findByText('Enter a real date (YYYY-MM-DD).')).toBeTruthy()
   })
-  it('View level is read-only', () => {
+  it('View level is read-only: values as text, no inputs (review B9: controls above the level are hidden)', () => {
     render(<InstallationCard projectId="p1" canEdit={false} installation={inst} acceptedProposal={null} setupReason={null} />)
     expect(screen.queryByRole('button', { name: 'Save installation' })).toBeNull()
-    expect((screen.getByLabelText('DC kWp') as HTMLInputElement).disabled).toBe(true)
+    expect(screen.queryByLabelText('DC kWp')).toBeNull()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.getByText('2026-02-15')).toBeTruthy()
+    const line = screen.getByRole('row', { name: /Acme/ }).textContent ?? ''
+    expect(line).toContain('M-500')
+    expect(line).toContain('200')
   })
 })

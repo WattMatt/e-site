@@ -12,9 +12,9 @@ import { OperationsTab } from './OperationsTab'
 import type { OperationsView } from '@/lib/solar/operations/data'
 
 const base: OperationsView = {
-  level: 'edit', canEdit: true, canSeeMoney: false, studyId: 's1', organisationId: 'o1', setupReason: null, acceptedProposal: null,
+  level: 'edit', canEdit: true, canSeeMoney: false, studyId: 's1', organisationId: 'o1', setupReason: null, setupAction: null, acceptedProposal: null,
   installation: null, meters: [], availableMeters: [], guarantee: null, irradiation: [], downtime: [], months: [], selectedMonth: null,
-  performance: [], candidates: [], handover: { items: [], completion: { done: 0, total: 0, pct: 0, requiredDone: 0, requiredTotal: 0 }, documents: [], templateName: '' },
+  performance: [], performanceNote: null, shareNote: null, candidates: [], handover: { items: [], completion: { done: 0, total: 0, pct: 0, requiredDone: 0, requiredTotal: 0 }, documents: [], templateName: '' },
   monthly: null, readiness: null,
 }
 const installed = { ...base, installation: { id: 'i1', commissioningDate: '2026-02-15', notes: null, updatedAt: 'T', annualP50Kwh: 12000,
