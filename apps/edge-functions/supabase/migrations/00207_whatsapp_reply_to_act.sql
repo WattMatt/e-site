@@ -477,3 +477,121 @@ GRANT EXECUTE ON FUNCTION whatsapp.wa_add_note(uuid,uuid,text,uuid) TO service_r
 GRANT EXECUTE ON FUNCTION whatsapp.wa_add_attachment(uuid,uuid,text,text,text,text,uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_redact(uuid,text,uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_open_items(uuid) TO service_role;
+
+-- ═══ Part C: outbox enqueue, sweep, helpers, cron ═════════════════════════
+CREATE FUNCTION whatsapp.enqueue_for_event() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security TO 'off' AS $fn$
+DECLARE v_to uuid := NEW.to_ball_in_court_id;
+BEGIN
+  IF NEW.verb = 'acknowledged' OR v_to IS NULL THEN RETURN NULL; END IF;
+  IF v_to IS NOT DISTINCT FROM NEW.from_ball_in_court_id THEN RETURN NULL; END IF;
+  -- No actor = a service-path write (backfill, migration): never page anyone.
+  -- Actor = recipient: nobody needs telling what they just did.
+  IF NEW.actor_id IS NULL OR v_to = NEW.actor_id THEN RETURN NULL; END IF;
+  IF NOT COALESCE((SELECT ps.notify_whatsapp FROM projects.project_settings ps
+                    WHERE ps.project_id = NEW.project_id), false) THEN RETURN NULL; END IF;
+  IF NOT EXISTS (SELECT 1 FROM whatsapp.phone_links l WHERE l.user_id = v_to AND l.status = 'active') THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO whatsapp.outbox (user_id, work_item_id, trigger, idempotency_key)
+  VALUES (v_to, NEW.work_item_id, 'assigned',
+          format('%s:assigned:%s:%s', NEW.work_item_id, v_to, (now() AT TIME ZONE 'Africa/Johannesburg')::date))
+  ON CONFLICT (idempotency_key) DO NOTHING;
+  RETURN NULL;
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.enqueue_for_event() FROM PUBLIC, anon, authenticated;
+CREATE TRIGGER whatsapp_enqueue_trg AFTER INSERT ON projects.work_item_events
+  FOR EACH ROW EXECUTE FUNCTION whatsapp.enqueue_for_event();
+
+CREATE FUNCTION whatsapp.sweep_due(p_today date DEFAULT (now() AT TIME ZONE 'Africa/Johannesburg')::date)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security TO 'off' AS $fn$
+DECLARE n int;
+BEGIN
+  INSERT INTO whatsapp.outbox (user_id, work_item_id, trigger, idempotency_key, payload)
+  SELECT wi.ball_in_court_id, wi.id, t.trig, format('%s:%s:%s', wi.id, t.trig, p_today),
+         jsonb_build_object('days_overdue', p_today - wi.due_date)
+    FROM projects.work_items wi
+    JOIN projects.project_settings ps ON ps.project_id = wi.project_id AND ps.notify_whatsapp
+    JOIN whatsapp.phone_links l ON l.user_id = wi.ball_in_court_id AND l.status = 'active'
+    CROSS JOIN LATERAL (SELECT CASE
+        WHEN wi.due_date = p_today + 1 THEN 'due_tomorrow'
+        WHEN p_today - wi.due_date >= 1 AND (p_today - wi.due_date - 1) % 3 = 0 THEN 'overdue'
+      END AS trig) t
+   WHERE wi.status IN ('triage', 'open', 'answered') AND t.trig IS NOT NULL
+  ON CONFLICT (idempotency_key) DO NOTHING;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.sweep_due(date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.sweep_due(date) TO service_role;
+
+-- Overflow past the daily cap folds into ONE message per user per day.
+CREATE FUNCTION whatsapp.enqueue_fold(p_user uuid, p_day date) RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $fn$
+  INSERT INTO whatsapp.outbox (user_id, trigger, idempotency_key, payload)
+  VALUES (p_user, 'fold', format('%s:fold:%s', p_user, p_day), jsonb_build_object('count', 1))
+  ON CONFLICT (idempotency_key) DO UPDATE
+     SET payload = jsonb_build_object('count', COALESCE((whatsapp.outbox.payload->>'count')::int, 0) + 1)
+   WHERE whatsapp.outbox.status IN ('queued', 'held_quiet', 'retry');
+$fn$;
+REVOKE ALL ON FUNCTION whatsapp.enqueue_fold(uuid,date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.enqueue_fold(uuid,date) TO service_role;
+
+CREATE FUNCTION whatsapp.claim_outbox(p_limit int) RETURNS SETOF whatsapp.outbox
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+BEGIN
+  -- A worker that died mid-send leaves 'sending' rows; give them back after 10 minutes.
+  UPDATE whatsapp.outbox SET status = 'retry', updated_at = now()
+   WHERE status = 'sending' AND updated_at < now() - interval '10 minutes';
+  RETURN QUERY
+  UPDATE whatsapp.outbox o SET status = 'sending', attempts = o.attempts + 1, updated_at = now()
+   WHERE o.id IN (SELECT q.id FROM whatsapp.outbox q
+                   WHERE q.status IN ('queued', 'retry', 'held_quiet') AND q.send_after <= now()
+                   ORDER BY q.send_after, q.created_at LIMIT p_limit FOR UPDATE SKIP LOCKED)
+  RETURNING o.*;
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.claim_outbox(int) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.claim_outbox(int) TO service_role;
+
+-- The webhook and the worker must never both process one message.
+CREATE FUNCTION whatsapp.claim_inbound(p_limit int, p_min_age_seconds int) RETURNS SETOF whatsapp.inbound
+LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $fn$
+  UPDATE whatsapp.inbound i SET claimed_at = now(), attempts = i.attempts + 1
+   WHERE i.id IN (SELECT q.id FROM whatsapp.inbound q
+                   WHERE q.outcome = 'pending' AND q.attempts < 5
+                     AND q.received_at <= now() - make_interval(secs => p_min_age_seconds)
+                     AND (q.claimed_at IS NULL OR q.claimed_at < now() - interval '2 minutes')
+                   ORDER BY q.received_at LIMIT p_limit FOR UPDATE SKIP LOCKED)
+  RETURNING i.*;
+$fn$;
+REVOKE ALL ON FUNCTION whatsapp.claim_inbound(int,int) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.claim_inbound(int,int) TO service_role;
+
+-- Is this item message still worth sending to this person right now?
+CREATE FUNCTION whatsapp.receive_check(p_user uuid, p_item uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' SET row_security TO 'off' AS $fn$
+DECLARE v_wi projects.work_items; v_name text; v_on boolean; v_role text;
+BEGIN
+  SELECT * INTO v_wi FROM projects.work_items WHERE id = p_item;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'reason', 'item_gone'); END IF;
+  IF v_wi.status IN ('closed', 'void') THEN RETURN jsonb_build_object('ok', false, 'reason', 'item_closed'); END IF;
+  SELECT p.name, COALESCE(ps.notify_whatsapp, false) INTO v_name, v_on
+    FROM projects.projects p LEFT JOIN projects.project_settings ps ON ps.project_id = p.id
+   WHERE p.id = v_wi.project_id;
+  IF NOT v_on THEN RETURN jsonb_build_object('ok', false, 'reason', 'project_off'); END IF;
+  v_role := public.user_effective_project_role(v_wi.project_id, p_user);
+  IF v_role IS NULL OR v_role = 'client_viewer' THEN RETURN jsonb_build_object('ok', false, 'reason', 'no_access'); END IF;
+  IF v_wi.ball_in_court_id IS DISTINCT FROM p_user THEN RETURN jsonb_build_object('ok', false, 'reason', 'ball_moved'); END IF;
+  RETURN jsonb_build_object('ok', true, 'item_id', v_wi.id, 'ref', v_wi.ref, 'title', v_wi.title,
+    'project_name', v_name, 'due_date', v_wi.due_date,
+    'days_overdue', GREATEST(0, (now() AT TIME ZONE 'Africa/Johannesburg')::date - v_wi.due_date));
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.receive_check(uuid,uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.receive_check(uuid,uuid) TO service_role;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'whatsapp-due-sweep') THEN
+    PERFORM cron.unschedule('whatsapp-due-sweep');
+  END IF;
+END $$;
+SELECT cron.schedule('whatsapp-due-sweep', '30 4 * * *', $cron$ SELECT whatsapp.sweep_due(); $cron$);
