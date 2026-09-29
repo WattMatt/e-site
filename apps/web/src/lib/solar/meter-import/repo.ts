@@ -80,7 +80,12 @@ export interface RegisterHint {
   fileName: string | null
 }
 
-export type TenantAssignment = 'assigned' | 'already' | 'stale'
+/**
+ * assigned / already: the meter is on the tenant's metered basis. needs_review: the tenant has a
+ * deliberate synthesised or excluded basis, which an import never overturns (Auto-match proposes the
+ * link instead). stale: the row moved under us. failed: the write was refused; the import still stands.
+ */
+export type TenantAssignment = 'assigned' | 'already' | 'needs_review' | 'stale' | 'failed'
 export type BasisMeter = { meter_id: string; weight: number }
 
 /** The basis meters with this meter added at weight 1 (unchanged when it is already there). */
@@ -117,13 +122,14 @@ export interface MeterImportRepo {
   countReadings(channelId: string): Promise<number>
   insertSeriesHash(row: { organisation_id: string; body_hash: string; meter_id: string; file_id: string }): Promise<void>
   linkStudyMeter(studyId: string, meterId: string): Promise<void>
-  /** Is nodeId a tenant DB (structure.nodes kind 'tenant_db') of this project? */
+  /** Is nodeId a live tenant DB (structure.nodes kind 'tenant_db', not deleted or decommissioned) of this project? */
   tenantNodeInProject(projectId: string, nodeId: string): Promise<boolean>
   /**
    * Put the meter on the tenant's load basis (solar.tenant_load_basis, the ONE place the site load
-   * reads a tenant's meters from): no row → a metered row with this meter at weight 1; a row → the
-   * meter appended at weight 1 and the source set to metered (the rule applyAutoMatchAction uses).
+   * reads a tenant's meters from): no row → a metered row with this meter at weight 1; a metered row →
+   * the meter appended at weight 1. A synthesised or excluded row is left alone ('needs_review').
    * The update is pinned on the version just read, so a concurrent edit is reported, not overwritten.
+   * Never throws for a refused write: the readings are already imported.
    */
   assignMeterToTenant(studyId: string, nodeId: string, meterId: string): Promise<TenantAssignment>
   insertRegisterRows(rows: Array<Record<string, unknown>>): Promise<number>
@@ -266,23 +272,21 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
       if (r.error) throw new Error(`link study meter: ${r.error.message}`)
     },
     async tenantNodeInProject(projectId, nodeId) {
-      const r = await supabase.schema('structure').from('nodes').select('id').eq('id', nodeId).eq('project_id', projectId).eq('kind', 'tenant_db').maybeSingle()
+      const r = await supabase.schema('structure').from('nodes').select('id, status').eq('id', nodeId).eq('project_id', projectId).eq('kind', 'tenant_db').is('deleted_at', null).maybeSingle()
       if (r.error) throw new Error(`tenant node: ${r.error.message}`)
-      return r.data !== null
+      return r.data !== null && (r.data as { status: string | null }).status !== 'decommissioned'
     },
     async assignMeterToTenant(studyId, nodeId, meterId) {
       const t = () => solar().from('tenant_load_basis')
       const cur = await t().select('source, meters, updated_at').eq('study_id', studyId).eq('node_id', nodeId).maybeSingle()
-      if (cur.error) throw new Error(`tenant basis: ${cur.error.message}`)
+      if (cur.error) return 'failed'
       const row = cur.data as { source: string; meters: BasisMeter[] | null; updated_at: string } | null
-      if (row && row.source === 'metered' && (row.meters ?? []).some((m) => m.meter_id === meterId)) return 'already'
+      if (row && row.source !== 'metered') return 'needs_review'
+      if (row && (row.meters ?? []).some((m) => m.meter_id === meterId)) return 'already'
       const res = row
-        ? await t().update({ source: 'metered', meters: withMeter(row.meters ?? [], meterId) }).eq('study_id', studyId).eq('node_id', nodeId).eq('updated_at', row.updated_at).select('id')
+        ? await t().update({ meters: withMeter(row.meters ?? [], meterId) }).eq('study_id', studyId).eq('node_id', nodeId).eq('updated_at', row.updated_at).select('id')
         : await t().insert({ study_id: studyId, node_id: nodeId, source: 'metered', meters: withMeter([], meterId) }).select('id')
-      if (res.error) {
-        if (res.error.code === '23505') return 'stale'
-        throw new Error(`tenant basis: ${res.error.message}`)
-      }
+      if (res.error) return res.error.code === '23505' ? 'stale' : 'failed'
       return Array.isArray(res.data) && res.data.length > 0 ? 'assigned' : 'stale'
     },
     async insertRegisterRows(rows) {

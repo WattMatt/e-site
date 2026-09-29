@@ -256,10 +256,11 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   if (studyId) await repo.linkStudyMeter(studyId, meter.id)
   // The tenant chosen at import goes on the tenant's load basis, the one place the site load and the
   // Tenants tab read a tenant's meters from (meters.node_id alone is only a label). Only for a meter
-  // this commit created, of a kind that can carry a tenant's load. With no study row the link stays on
-  // the meter and Auto-match proposes it, pre-ticked, once the study exists.
+  // the file's meter (also on a retry, when the meter already exists), of a kind that can carry a
+  // tenant's load. With no study row, or a tenant already set to synthesised/excluded, the link stays
+  // on the meter and Auto-match proposes it.
   let tenantAssignment: TenantAssignment | null = null
-  if (nodeId && studyId && !reusedMeter && 'new' in body.meter && !NOT_TENANT_KINDS.has(body.meter.new.kind)) {
+  if (nodeId && studyId && !NOT_TENANT_KINDS.has(meter.kind)) {
     tenantAssignment = await repo.assignMeterToTenant(studyId, nodeId, meter.id)
   }
   const reportId = await repo.insertReport({

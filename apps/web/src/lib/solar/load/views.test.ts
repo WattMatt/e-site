@@ -55,6 +55,16 @@ describe('load views', () => {
     // node_id says n1 but no basis row carries m1: the load treats n1 as unassigned, so must the table.
     expect(v.meters[0].tenantLabel).toBe('12 · Pep (not assigned — Tenants → Auto-match)')
   })
+  it('meters view: a meter in an excluded tenant says so, and a decided tenant is not re-proposed (LS-02)', async () => {
+    const t = { ...tables, 'solar.tenant_load_basis': [{ ...tables['solar.tenant_load_basis'][0], source: 'excluded' }] }
+    const v = await loadMetersView(fakeSupabase({ tables: t }).client as never, P, false)
+    expect(v.meters[0].tenantLabel).toBe('12 · Pep (excluded)')
+    const moved = { ...tables, 'solar.tenant_load_basis': [{ ...tables['solar.tenant_load_basis'][0], meters: [] }] }
+    const tv = await loadTenantsView(fakeSupabase({ tables: moved }).client as never, P)
+    expect(tv.proposals.some((p) => p.source === 'linked')).toBe(false)
+    const mv = await loadMetersView(fakeSupabase({ tables: moved }).client as never, P, false)
+    expect(mv.meters[0].tenantLabel).toBeNull()
+  })
   it('tenants view: a tenant chosen on the meter but never assigned is proposed, pre-ticked (LS-02)', async () => {
     const t = { ...tables, 'solar.tenant_load_basis': [] as Array<Record<string, unknown>> }
     const v = await loadTenantsView(fakeSupabase({ tables: t }).client as never, P)

@@ -310,9 +310,32 @@ describe('commitMeterFile: a tenant chosen at import is the tenant the load uses
   it('appends to a tenant that already has metered meters, keeping theirs', async () => {
     const { repo, state, ctx } = setup(A_TEXT)
     state.tenantNodes = { p1: [NODE] }
-    state.basis = [{ studyId: 's1', nodeId: NODE, source: 'synthesised', meters: [{ meter_id: 'mOld', weight: 0.5 }], updated_at: 'v1' }]
+    state.basis = [{ studyId: 's1', nodeId: NODE, source: 'metered', meters: [{ meter_id: 'mOld', weight: 0.5 }], updated_at: 'v1' }]
     await commitMeterFile(repo, ctx, withNode())
     expect(state.basis).toEqual([expect.objectContaining({ source: 'metered', meters: [{ meter_id: 'mOld', weight: 0.5 }, { meter_id: state.meters[0].id, weight: 1 }] })])
+  })
+
+  it('never overturns a deliberate synthesised or excluded tenant', async () => {
+    for (const source of ['synthesised', 'excluded']) {
+      const { repo, state, ctx } = setup(A_TEXT)
+      state.tenantNodes = { p1: [NODE] }
+      state.basis = [{ studyId: 's1', nodeId: NODE, source, meters: [{ meter_id: 'mOld', weight: 1 }], updated_at: 'v1' }]
+      const out = await commitMeterFile(repo, ctx, withNode())
+      expect(state.basis).toEqual([expect.objectContaining({ source, meters: [{ meter_id: 'mOld', weight: 1 }], updated_at: 'v1' })])
+      expect(out).toMatchObject({ tenantAssignment: 'needs_review' })
+    }
+  })
+
+  it('a retry after a partial failure still assigns the tenant', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    state.countOffset = -1
+    await expect(commitMeterFile(repo, ctx, withNode())).rejects.toMatchObject({ status: 500 })
+    expect(state.basis).toEqual([])
+    state.countOffset = 0
+    const out = await commitMeterFile(repo, ctx, withNode())
+    expect(out).toMatchObject({ reusedMeter: true, tenantAssignment: 'assigned' })
+    expect(state.basis).toEqual([expect.objectContaining({ nodeId: NODE, meters: [{ meter_id: state.meters[0].id, weight: 1 }] })])
   })
 
   it('a meter kind that never carries a tenant load (bulk) is not assigned', async () => {

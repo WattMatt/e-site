@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import type { BulkReconciliation } from '@esite/shared/solar-load'
+import { NOT_TENANT_KINDS, type BulkReconciliation } from '@esite/shared/solar-load'
 import { removeStudyMeterAction, updateStudyMeterAction, type MeterPatch } from '@/actions/solar-load.actions'
 import { useArmedConfirm } from '@/app/(admin)/projects/[id]/solar/_components/useArmedConfirm'
 import { HeatmapCanvas } from '@/components/charts/HeatmapCanvas'
@@ -96,7 +96,7 @@ export function MeterDrawer({ projectId, meter, canEdit, isGrantor, bulkRecon, o
                 {METER_KIND_OPTIONS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
               </select></label>
               {/* The tenant a meter feeds lives in the tenant's load basis; it is changed on the Tenants tab only. */}
-              <p style={{ margin: 0 }}>Tenant: {meter.tenantLabel ?? '—'} · <Link href={loadHref(projectId, 'tenants')}>Change it on the Tenants tab</Link></p>
+              {!NOT_TENANT_KINDS.has(kind) && <p style={{ margin: 0 }}>Tenant: {meter.tenantLabel ?? '—'} · <Link href={loadHref(projectId, 'tenants')}>Change it on the Tenants tab</Link></p>}
               <label>Area (m²) <input inputMode="decimal" value={area} onChange={(e) => setArea(e.target.value)} /></label>
             </>
           ) : (

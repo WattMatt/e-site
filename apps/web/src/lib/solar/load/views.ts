@@ -9,7 +9,7 @@ import { cache } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { computeBoDate, loadReadiness, loadSettingsFormFromRow, type LoadReadinessInput, type SchematicsReadinessInput } from '@esite/shared'
 import {
-  autoMatchMeters, CATEGORY_ARCHETYPE, DEFAULT_DENSITY_W_PER_M2, siteProfileCharts, type BulkReconciliation, type LoadCheck,
+  autoMatchMeters, CATEGORY_ARCHETYPE, NOT_TENANT_KINDS, DEFAULT_DENSITY_W_PER_M2, siteProfileCharts, type BulkReconciliation, type LoadCheck,
   type MdMonth, type ParentReconciliation, type SiteLoadCoverage, type TenantSummary,
 } from '@esite/shared/solar-load'
 import {
@@ -59,6 +59,29 @@ async function studyMeters(supabase: AnyClient, studyId: string): Promise<{ mete
 }
 const isVacant = (n: TenantNodeRow) => isVacantTenant(n)
 
+type BasisLite = { node_id: string; source: string; meters: Array<{ meter_id: string }> | null }
+
+/**
+ * The tenant label for each meter, from tenant_load_basis (what the builder uses). A meter in a
+ * synthesised or excluded tenant's row says so (the builder ignores it there). meters.node_id (the
+ * tenant chosen at import) is shown only as "not assigned" when that tenant has no basis row yet —
+ * exactly the case Auto-match proposes it for.
+ */
+export function meterTenantLabels(basisRows: BasisLite[], nodeLabel: Map<string, string>) {
+  const on = new Map<string, string[]>()
+  const hasBasis = new Set(basisRows.map((b) => b.node_id))
+  for (const b of basisRows) {
+    const label = `${nodeLabel.get(b.node_id) ?? 'Tenant'}${b.source === 'metered' ? '' : ` (${b.source})`}`
+    for (const x of b.meters ?? []) on.set(x.meter_id, [...(on.get(x.meter_id) ?? []), label])
+  }
+  return (m: { id: string; kind: string; node_id: string | null }): string | null => {
+    const labels = on.get(m.id)
+    if (labels) return labels.join(', ')
+    const chosen = m.node_id && !hasBasis.has(m.node_id) && !NOT_TENANT_KINDS.has(m.kind) ? nodeLabel.get(m.node_id) : undefined
+    return chosen ? `${chosen} (not assigned — Tenants → Auto-match)` : null
+  }
+}
+
 export async function loadMetersView(supabase: AnyClient, projectId: string, isGrantor: boolean): Promise<MetersView> {
   const { data: project } = await supabase.schema('projects').from('projects').select('organisation_id, cloud_storage_connection_id, cloud_storage_folder_id').eq('id', projectId).maybeSingle()
   const p = (project ?? {}) as { organisation_id?: string; cloud_storage_connection_id?: string | null; cloud_storage_folder_id?: string | null }
@@ -70,19 +93,10 @@ export async function loadMetersView(supabase: AnyClient, projectId: string, isG
   const primaryIds = [...picked.values()].flatMap((x) => x.primary.map((c) => c.id))
   const sums = await channelSummaries(supabase, primaryIds)
   // The tenant a meter feeds is read from tenant_load_basis, the one place the builder reads it from.
-  // meters.node_id (chosen at import) is only shown as "not assigned" when no basis row carries it.
-  const { data: basisRows } = s ? await supabase.schema('solar').from('tenant_load_basis').select('node_id, source, meters').eq('study_id', s.id) : { data: [] }
-  const assignedTo = new Map<string, string[]>()
-  for (const b of (basisRows ?? []) as Array<{ node_id: string; source: string; meters: Array<{ meter_id: string }> | null }>) {
-    if (b.source !== 'metered') continue
-    for (const x of b.meters ?? []) assignedTo.set(x.meter_id, [...(assignedTo.get(x.meter_id) ?? []), nodeLabel.get(b.node_id) ?? 'Tenant'])
-  }
-  const tenantOf = (m: { id: string; node_id: string | null }): string | null => {
-    const on = assignedTo.get(m.id)
-    if (on) return on.join(', ')
-    const chosen = m.node_id ? nodeLabel.get(m.node_id) : undefined
-    return chosen ? `${chosen} (not assigned — Tenants → Auto-match)` : null
-  }
+  const basisRes = s ? await supabase.schema('solar').from('tenant_load_basis').select('node_id, source, meters').eq('study_id', s.id) : { data: [], error: null }
+  const tenantOf = basisRes.error
+    ? (m: { node_id: string | null }) => (m.node_id ? nodeLabel.get(m.node_id) ?? null : null)
+    : meterTenantLabels((basisRes.data ?? []) as BasisLite[], nodeLabel)
   const otherLinks = new Map<string, number>()
   if (isGrantor && meters.length > 0) {
     const { data } = await supabase.schema('solar').from('study_meters').select('meter_id, study_id').in('meter_id', meters.map((m) => m.id))
@@ -168,7 +182,9 @@ export async function loadTenantsView(supabase: AnyClient, projectId: string): P
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const meterById = new Map(meters.map((m) => [m.id, m]))
   const proposals: AutoMatchView[] = autoMatchMeters({
-    meters: meters.map((m) => ({ meterId: m.id, label: m.label, kind: m.kind, serials: m.serials ?? [], shopNo: m.shop_no, nodeId: m.node_id })),
+    // The tenant chosen at import is proposed only while that tenant has no basis row: once someone has
+    // decided the tenant on the Tenants tab, a stale node_id must not keep re-proposing a removed meter.
+    meters: meters.map((m) => ({ meterId: m.id, label: m.label, kind: m.kind, serials: m.serials ?? [], shopNo: m.shop_no, nodeId: m.node_id && !basis.has(m.node_id) ? m.node_id : null })),
     tenants: nodes.map((n) => ({ nodeId: n.id, shopNumber: n.shop_number, name: n.shop_name ?? n.name })),
     register: ((reg ?? []) as Array<{ file_name: string | null; shop_no: string | null; tenant_name: string | null; serial: string | null; match_method: 'exact' | 'llm' | 'unmapped' | 'manual' | 'none'; confirmed_at: string | null }>).map((r) => ({
       fileName: r.file_name, shopNo: r.shop_no, tenantName: r.tenant_name, serial: r.serial, matchMethod: r.match_method, confirmed: r.confirmed_at !== null,

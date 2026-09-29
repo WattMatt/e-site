@@ -14,6 +14,18 @@ import { acceptBlockers, buildCommitBody, choicesForIdentity, initialChoices, op
 const pct = (x: number | null | undefined) => (x == null ? '—' : `${(x * 100).toFixed(1)} %`)
 const box = { border: '1px solid var(--c-border)', borderRadius: 6, padding: 10, marginTop: 10 } as const
 
+/**
+ * A same-upload duplicate flag (client-side, keyed by the earlier file) only stands while that earlier
+ * file was imported by this dialog: if it was skipped, the data is not in the system and there is
+ * nothing to duplicate. (A server-side same_body conflict carries a meterId and is kept.)
+ */
+function withoutSkippedBatchDuplicates(r: ReviewModel, made: Record<string, unknown>): ReviewModel {
+  if (!r.identity) return r
+  const conflicts = r.identity.conflicts.filter((c) => !c.fileId || c.fileId in made)
+  if (conflicts.length === r.identity.conflicts.length) return r
+  return { ...r, identity: { ...r.identity, conflicts, blocking: conflicts.length > 0 } }
+}
+
 export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, editMeterId, onClose, onFinished }: {
   projectId: string
   reviews: ReviewModel[]
@@ -45,10 +57,10 @@ export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, edi
   })
   const duplicate = sameBodyConflict(current.identity)
 
-  function next(t: typeof tally) {
+  function next(t: typeof tally, made: typeof created = created) {
     setTally(t)
     if (index + 1 >= reviews.length) { onFinished(t); return }
-    const n = reviews[index + 1]
+    const n = withoutSkippedBatchDuplicates(reviews[index + 1], made)
     setIndex(index + 1)
     setCurrent(n)
     const init = initialChoices(n, nodes, editMeterId)
@@ -65,15 +77,16 @@ export function ImportReviewDialog({ projectId, reviews, nodes, studyMeters, edi
       setError(res.message)
       // The server found a conflict the parse-time preview could not (e.g. another file of this upload,
       // committed since): show it, so the user can resolve it here instead of only skipping or closing.
-      if (res.identity) {
+      if (res.identity && !editMeterId) {
         const identity = res.identity
         setCurrent((c) => ({ ...c, identity }))
         setChoices((c) => choicesForIdentity({ ...c, resolution: 'none' }, identity, editMeterId))
       }
       return
     }
-    if (kind === 'imported' && res.meterId) setCreated((m) => ({ ...m, [current.fileId]: { id: res.meterId as string, label: res.meterLabel ?? 'the meter just imported' } }))
-    next({ ...tally, [kind]: tally[kind] + 1 })
+    const made = kind === 'imported' && res.meterId ? { ...created, [current.fileId]: { id: res.meterId, label: res.meterLabel ?? 'the meter just imported' } } : created
+    setCreated(made)
+    next({ ...tally, [kind]: tally[kind] + 1 }, made)
   }
   async function rerun() {
     setBusy(true)

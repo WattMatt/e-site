@@ -81,4 +81,13 @@ describe('ImportReviewDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Accept & import' }))
     expect(h.commit).toHaveBeenLastCalledWith('p1', expect.objectContaining({ fileId: 'f2', meter: { existingMeterId: 'mNew' }, identity: { resolution: 'link' } }))
   })
+  it('a same-upload duplicate of a file that was skipped is no longer flagged (LS-01)', async () => {
+    h.commit.mockResolvedValueOnce({ ok: true, skipped: true })
+    const second = review({ fileId: 'f2', fileName: 'copy.csv', identity: { sourceSerials: [], filenameSerial: null, conflicts: [{ kind: 'same_body', message: 'Same data as f1.csv in this upload.', fileId: 'f1' }], blocking: true } })
+    render(<ImportReviewDialog projectId="p1" reviews={[review(), second]} nodes={nodes} studyMeters={[]} editMeterId={null} onClose={vi.fn()} onFinished={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Skip reason'), 'wrong shop')
+    await userEvent.click(screen.getByRole('button', { name: 'Skip this file' }))
+    expect(screen.queryByText('Same data as f1.csv in this upload.')).toBeNull()
+    expect((screen.getByRole('button', { name: 'Accept & import' }) as HTMLButtonElement).disabled).toBe(false)
+  })
 })
