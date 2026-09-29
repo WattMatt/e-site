@@ -4,10 +4,11 @@ import 'server-only'
  * portal user. Everything goes through 00216's SERVICE-ONLY definer functions — the raw token is
  * hashed in SQL, only the frozen snapshot is returned. The caller has already applied its own gate
  * (token shape + rate limit, or requirePortalAccess). `ClientProposalView` is what reaches the
- * browser: no storage path, no project id.
+ * browser: no storage path, no project id, and only the client projection of the snapshot
+ * (toClientSnapshot: no proposal/family id, case, run id, hash or provenance).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { ProposalSnapshot } from '@esite/shared/solar-reports'
+import { toClientSnapshot, type ProposalClientSnapshot, type ProposalSnapshot } from '@esite/shared/solar-reports'
 import { createServiceClient } from '@/lib/supabase/server'
 import { isShareToken } from './token'
 
@@ -20,7 +21,7 @@ export interface ClientProposalView {
   state: ClientState
   version: number | null
   expiresAt: string | null
-  snapshot: ProposalSnapshot | null
+  snapshot: ProposalClientSnapshot | null
   issuer: ProposalSnapshot['issuer'] | null
   response: { kind: 'accepted' | 'declined'; name: string; at: string } | null
 }
@@ -37,6 +38,7 @@ export const RESPONSE_ERRORS: Record<string, string> = {
   withdrawn: 'This proposal has been withdrawn.',
   accepted: 'This proposal has already been accepted.',
   declined: 'This proposal has already been declined.',
+  family_accepted: 'Another version of this proposal has already been accepted.',
   not_found: 'This proposal is no longer available.',
   invalid_decision: 'Something went wrong — try again.',
 }
@@ -46,13 +48,15 @@ const NOT_FOUND_VIEW: ClientProposalView = { state: 'not_found', version: null, 
 
 function toView(j: Json | null): ClientProposalView {
   if (!j || typeof j.state !== 'string') return NOT_FOUND_VIEW
-  const snapshot = (j.snapshot as ProposalSnapshot | undefined) ?? null
+  const full = (j.snapshot as ProposalSnapshot | undefined) ?? null
+  const snapshot = full ? toClientSnapshot(full) : null
+  const issuer = (full?.issuer ?? (j.issuer as ProposalSnapshot['issuer'] | undefined)) ?? null
   return {
     state: j.state as ClientState,
     version: typeof j.version === 'number' ? j.version : null,
     expiresAt: typeof j.expiresAt === 'string' ? j.expiresAt : null,
     snapshot,
-    issuer: snapshot?.issuer ?? ((j.issuer as ProposalSnapshot['issuer'] | undefined) ?? null),
+    issuer: issuer ? { orgName: issuer.orgName, proposerName: issuer.proposerName, proposerEmail: issuer.proposerEmail } : null,
     response: (j.response as ClientProposalView['response']) ?? null,
   }
 }

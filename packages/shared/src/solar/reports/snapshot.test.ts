@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildProposalSnapshot, financeOptionTable, keyFigures, type BuildSnapshotInput } from './snapshot'
+import { buildProposalSnapshot, financeOptionTable, keyFigures, toClientSnapshot, type BuildSnapshotInput } from './snapshot'
 import { offerPrice } from './offer'
 
 export const snapshotInput = (): BuildSnapshotInput => ({
@@ -73,5 +73,26 @@ describe('keyFigures / financeOptionTable (one source for PDF and page)', () => 
       ['Simple payback', '3.1 years', 'n/a'],
       ['IRR', '21.0 %', 'n/a'],
     ])
+  })
+})
+
+describe('toClientSnapshot (what reaches an anonymous browser)', () => {
+  const withBattery = () => { const i = snapshotInput(); i.kpis = { ...i.kpis, batteryKwh: 200, batteryKw: 100 }; return buildProposalSnapshot(i) }
+  it('produces the IDENTICAL key figures and finance table as the full snapshot (the PDF)', () => {
+    for (const full of [buildProposalSnapshot(snapshotInput()), withBattery()]) {
+      const c = toClientSnapshot(full)
+      expect(keyFigures(c)).toEqual(keyFigures(full))
+      expect(financeOptionTable(c)).toEqual(financeOptionTable(full))
+    }
+  })
+  it('carries no internal id, run, hash, provenance or finance internals', () => {
+    const full = buildProposalSnapshot(snapshotInput())
+    const c = toClientSnapshot(full) as unknown as Record<string, unknown>
+    expect(Object.keys(c).sort()).toEqual(['bills', 'client', 'financeOptions', 'issuer', 'price', 'project', 'proposal', 'system', 'text'])
+    expect(Object.keys(c.proposal as object).sort()).toEqual(['issuedAt', 'title', 'validUntil', 'version'])
+    const json = JSON.stringify(c)
+    for (const needle of ['"case"', 'provenance', 'familyId', 'runId', 'inputsHash', 'engineVersion', 'financeInputsHash', 'tariffId', 'npvZar', '"view"', 'a'.repeat(64), 'b'.repeat(64), '"p1"', '"c1"', '"r1"']) {
+      expect(json).not.toContain(needle)
+    }
   })
 })

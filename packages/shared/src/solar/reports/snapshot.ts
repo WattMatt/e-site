@@ -82,9 +82,60 @@ export function buildProposalSnapshot(i: BuildSnapshotInput, sanitize: (s: strin
   }
 }
 
+/** The fields of one finance option a client sees (financeOptionTable + labels) — no npv, no view. */
+export type ClientFinanceOption = Pick<FinanceOptionSummary,
+  'kind' | 'terms' | 'upfrontZar' | 'year1NetZar' | 'lifetimeNetZar' | 'years' | 'simplePaybackYears' | 'irr'>
+
+/**
+ * What reaches a CLIENT'S browser (token page, portal): only what ProposalClientView renders. The
+ * frozen snapshot also carries the proposal/family ids, the case, run id, inputs hash, engine
+ * version and provenance — internal evidence that stays server-side (review I3). keyFigures() and
+ * financeOptionTable() accept this shape, so the page prints the same strings as the PDF.
+ */
+export interface ProposalClientSnapshot {
+  proposal: Pick<ProposalSnapshot['proposal'], 'title' | 'issuedAt' | 'validUntil' | 'version'>
+  issuer: ProposalSnapshot['issuer']
+  client: ProposalSnapshot['client']
+  project: ProposalSnapshot['project']
+  system: Pick<ProposalSnapshot['system'], 'dcKwp' | 'acKw' | 'batteryKwh' | 'batteryKw' | 'year1PvKwh' | 'specificYieldKwhPerKwp' | 'solarFraction'>
+  price: ProposalSnapshot['price']
+  bills: { savingZar: number } | null
+  financeOptions: ClientFinanceOption[]
+  text: ProposalSnapshot['text']
+}
+
+/** Field-by-field copy (never a spread), so a field added to the snapshot later does not leak. */
+export function toClientSnapshot(s: ProposalSnapshot): ProposalClientSnapshot {
+  const y = s.system
+  return {
+    proposal: { title: s.proposal.title, issuedAt: s.proposal.issuedAt, validUntil: s.proposal.validUntil, version: s.proposal.version },
+    issuer: { orgName: s.issuer.orgName, proposerName: s.issuer.proposerName, proposerEmail: s.issuer.proposerEmail },
+    client: { name: s.client.name },
+    project: { name: s.project.name, address: s.project.address },
+    system: {
+      dcKwp: y.dcKwp, acKw: y.acKw, batteryKwh: y.batteryKwh, batteryKw: y.batteryKw,
+      year1PvKwh: y.year1PvKwh, specificYieldKwhPerKwp: y.specificYieldKwhPerKwp, solarFraction: y.solarFraction,
+    },
+    price: { offerExclVatZar: s.price.offerExclVatZar, vatZar: s.price.vatZar, offerInclVatZar: s.price.offerInclVatZar },
+    bills: s.bills ? { savingZar: s.bills.savingZar } : null,
+    financeOptions: s.financeOptions.map((o) => ({
+      kind: o.kind, terms: o.terms, upfrontZar: o.upfrontZar, year1NetZar: o.year1NetZar, lifetimeNetZar: o.lifetimeNetZar,
+      years: o.years, simplePaybackYears: o.simplePaybackYears, irr: o.irr,
+    })),
+    text: {
+      summary: s.text.summary, scope: s.text.scope, priceTerms: s.text.priceTerms, assumptions: s.text.assumptions,
+      inclusions: [...s.text.inclusions], exclusions: [...s.text.exclusions],
+      terms: s.text.terms, narrative: s.text.narrative, disclaimer: s.text.disclaimer,
+    },
+  }
+}
+
 export interface KeyFigure { label: string; value: string }
 
-export function keyFigures(s: ProposalSnapshot): KeyFigure[] {
+/** The inputs keyFigures reads — satisfied by the full snapshot (PDF) and the client snapshot (page). */
+export type KeyFigureSource = Pick<ProposalClientSnapshot, 'system' | 'price' | 'bills'> & { proposal: Pick<ProposalSnapshot['proposal'], 'validUntil'> }
+
+export function keyFigures(s: KeyFigureSource): KeyFigure[] {
   const out: KeyFigure[] = [{ label: 'System size', value: `${kwp(s.system.dcKwp)} DC / ${kw(s.system.acKw)} AC` }]
   if (s.system.batteryKwh !== null) out.push({ label: 'Battery', value: `${fixed(s.system.batteryKwh, 1)} kWh / ${kw(s.system.batteryKw ?? 0)}` })
   out.push(
@@ -102,7 +153,7 @@ export function keyFigures(s: ProposalSnapshot): KeyFigure[] {
 
 export interface FinanceOptionTable { columns: string[]; rows: string[][] }
 
-export function financeOptionTable(s: ProposalSnapshot): FinanceOptionTable {
+export function financeOptionTable(s: { financeOptions: readonly ClientFinanceOption[] }): FinanceOptionTable {
   const o = s.financeOptions
   return {
     columns: ['', ...o.map((x) => FINANCE_OPTION_LABELS[x.kind])],
