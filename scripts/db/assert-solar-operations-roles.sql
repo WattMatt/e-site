@@ -125,7 +125,8 @@ BEGIN
   -- Distinct source_column: 00211's meter_channels_source_key is UNIQUE NULLS NOT DISTINCT on
   -- (meter_id, file_id, source_column) and file_id is ON DELETE SET NULL, so two same-named
   -- channels of one meter collide when the project delete in section 11 nulls both file ids
-  -- (a 00211 trap, reported separately; the dedupe under test does not depend on the name).
+  -- (a 00211 trap, fixed by 00221 and pinned by assert-solar-meter-channel-orphans.sql; the dedupe
+  -- under test does not depend on the name).
   INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
                                     interval_min, tz_convention, is_primary, parser_version, created_at)
   VALUES (v_msolar, v_f1, 'kW', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now() - interval '1 day')

@@ -208,8 +208,11 @@ BEGIN
   END LOOP;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
-  INSERT INTO _r VALUES ('storage_control_object_readable',
-    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'reports' AND name = v_org || '/' || v_p || '/tenant-schedule/probe-control.pdf') = 1);
+  -- Since 00207 (#218, applied before this chain) the WHOLE reports bucket is service-only, so the
+  -- non-Solar control object is hidden from a session too; the Solar policies above stay as defence
+  -- in depth. (Before #218 this control read 1: the old org-folder policies admitted any member.)
+  INSERT INTO _r VALUES ('storage_control_object_hidden_by_00207',
+    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'reports' AND name = v_org || '/' || v_p || '/tenant-schedule/probe-control.pdf') = 0);
   BEGIN
     UPDATE storage.objects SET metadata = '{"forged":true}'::jsonb WHERE bucket_id = 'reports' AND name LIKE v_org || '/' || v_p || '/solar-%';
     GET DIAGNOSTICS v_n = ROW_COUNT;
