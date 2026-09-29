@@ -1,5 +1,11 @@
-/** CaseFinanceConfig + the case + the stored run's size → the engine's FinanceInput (engine spec §6). */
+/**
+ * CaseFinanceConfig + the case + the stored run's size + the STUDY pricing → the engine's FinanceInput
+ * (engine spec §6). Tariff escalation and load growth are the study's (resolveStudyPricing: the Tariff
+ * tab path and the Load tab growth, I-1); the case config's own escalation and loadGrowthPct fields are
+ * legacy and are NOT priced.
+ */
 import type { FinanceInput, FinanceModel } from '../../services/solar/finance/cashflow'
+import type { EscalationPath } from '../../services/solar/finance/factors'
 import { SOLAR_ENGINE_DEFAULTS } from '../../services/solar/defaults'
 import type { CaseConfig } from './config'
 import { capexTotals, type CaseFinanceConfig } from './finance-config'
@@ -13,8 +19,14 @@ export const FINANCE_REASONS = {
 
 const f = (pct: number) => pct / 100
 
+/** The two money inputs Financials takes from the study (ResolvedStudyPricing carries both). */
+export interface FinancePricing {
+  escalationPath: EscalationPath
+  loadGrowthPct: number
+}
+
 export function buildFinanceInput(
-  fin: CaseFinanceConfig, c: CaseConfig, size: { dcKwp: number; acKw: number },
+  fin: CaseFinanceConfig, c: CaseConfig, size: { dcKwp: number; acKw: number }, pricing: FinancePricing,
 ): { ok: true; input: FinanceInput } | { ok: false; reasons: string[] } {
   const t = capexTotals(fin.capex, size.dcKwp)
   const m = fin.models
@@ -48,8 +60,8 @@ export function buildFinanceInput(
     tax: { enabled: a.taxEnabled, companyRate: f(a.companyTaxRatePct), allowance: a.section12b ? 'section12b' : 'none', systemAcKw: size.acKw },
     degradation: { firstYear: f(c.degradation.firstYearPct), annual: f(c.degradation.annualPct), batteryFadePerYear: d.batteryFadePerYear, batteryEndOfLife: d.batteryEndOfLife },
     analysis: {
-      years: a.years, discountRate: f(a.discountRatePct), cpi: f(a.cpiPct), loadGrowth: f(a.loadGrowthPct),
-      escalation: { published: [], startRate: f(a.escalationStartPct), endRate: f(a.escalationYear10Pct), linearToYear: 10, cpiMargin: f(a.escalationAfterCpiPlusPct) },
+      years: a.years, discountRate: f(a.discountRatePct), cpi: f(a.cpiPct), loadGrowth: f(pricing.loadGrowthPct),
+      escalation: pricing.escalationPath,
     },
     models,
     loadShedding: c.loadShedding.enabled && fin.loadShedding.valueZarPerKwh !== null

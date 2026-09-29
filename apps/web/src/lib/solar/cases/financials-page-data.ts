@@ -127,7 +127,7 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
   let currentFinHash: string | null = null
   if (!lastOk || !kpis || !snap?.ok) runReasons.push(FIN_RUN_REASONS.noRun)
   else {
-    const built = buildFinanceInput(config, snap.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw })
+    const built = buildFinanceInput(config, snap.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, /* legacy until the study pricing is wired (next commit) */ { escalationPath: { published: [], startRate: config.analysis.escalationStartPct / 100, endRate: config.analysis.escalationYear10Pct / 100, linearToYear: 10, cpiMargin: config.analysis.escalationAfterCpiPlusPct / 100 }, loadGrowthPct: config.analysis.loadGrowthPct })
     if (!built.ok) runReasons.push(...built.reasons)
     else if (shared.tariff.ok) currentFinHash = finInputsHash(built.input, shared.tariff.tariffRef, lastOk.id)
   }

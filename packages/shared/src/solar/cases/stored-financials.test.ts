@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { loadWeather } from '../../services/solar/__fixtures__/pvgis'
 import { stubBillCalculator } from '../../services/solar/__fixtures__/stub-bill-calculator'
 import { runFinancials, simulateCase } from '../../services/solar/case'
+import { SOLAR_ENGINE_DEFAULTS } from '../../services/solar/defaults'
 import { solarOrgSettingDefaults } from '../org-settings'
 import { defaultCaseConfig } from './config'
 import { buildCaseInput } from './build-input'
@@ -22,7 +23,7 @@ function scenario(battery: boolean) {
   const b = buildCaseInput({ config: c, study: { exportMode: 'net_billing', exportLimitKw: null }, siteLoad: { series: load, basis: 'S1', referenceYear: 2025 }, touPeriods: null })
   if (!b.ok) throw new Error(b.reasons.join('; '))
   const result = simulateCase(b.input, { id: b.input.weatherDatasetId, year: loadWeather('jhb') })
-  const fin = buildFinanceInput({ ...defaultFinanceConfig(s), capex: [{ id: 'a', category: 'modules', description: 'PV', qty: 300_000, unit: 'Wp', rateZar: 11, qualifies12b: true, source: 'manual' }] }, c, { dcKwp: 300, acKw: 250 })
+  const fin = buildFinanceInput({ ...defaultFinanceConfig(s), capex: [{ id: 'a', category: 'modules', description: 'PV', qty: 300_000, unit: 'Wp', rateZar: 11, qualifies12b: true, source: 'manual' }] }, c, { dcKwp: 300, acKw: 250 }, { escalationPath: SOLAR_ENGINE_DEFAULTS.finance.escalation, loadGrowthPct: 0 })
   if (!fin.ok) throw new Error(fin.reasons.join('; '))
   return { result, fin: fin.input }
 }

@@ -227,3 +227,21 @@ describe('blocking inputs', () => {
     expect(() => runFinance({ ...toy, replacements: { ...toy.replacements, batteryYear: 7.5 } }, toyEnergy)).toThrow(/batteryYear/)
   })
 })
+
+describe('load growth (engine spec §6, v1: the energy balance rescaled per year, not re-simulated)', () => {
+  const grown = runFinance({ ...toy, analysis: { ...toy.analysis, loadGrowth: 0.03 } }, toyEnergy).models[0]!.views[0]!
+  const flat = runFinance(toy, toyEnergy).models[0]!.views[0]!
+  it('leaves year 1 exactly as it was', () => {
+    expect(grown.rows[0]).toEqual(flat.rows[0])
+  })
+  it('scales Bill_before, Bill_after AND the saving by (1+g)^(n-1) in years 2+', () => {
+    for (const n of [2, 3]) {
+      const g = 1.03 ** (n - 1)
+      const a = grown.rows[n - 1]!, b = flat.rows[n - 1]!
+      expect(a.billBeforeZar).toBeCloseTo(b.billBeforeZar * g, 6)
+      expect(a.billAfterZar).toBeCloseTo(b.billAfterZar * g, 6)
+      expect(a.savingZar).toBeCloseTo(b.savingZar * g, 6)
+    }
+    expect(grown.npvZar).toBeGreaterThan(flat.npvZar)
+  })
+})

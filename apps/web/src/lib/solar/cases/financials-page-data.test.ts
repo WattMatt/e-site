@@ -22,7 +22,7 @@ const results = {
   tornado: { model: 'cash', view: 'owner', baseNpvZar: 900_000, swing: 0.2, bars: [{ variable: 'capex', lowNpvZar: 1_140_000, highNpvZar: 660_000, spreadZar: 480_000 }] },
   engineVersion: '0.1.0',
 }
-const built = buildFinanceInput(fin, cfg, { dcKwp: 100, acKw: 80 })
+const built = buildFinanceInput(fin, cfg, { dcKwp: 100, acKw: 80 }, /* legacy until the study pricing is wired (next commit) */ { escalationPath: { published: [], startRate: fin.analysis.escalationStartPct / 100, endRate: fin.analysis.escalationYear10Pct / 100, linearToYear: 10, cpiMargin: fin.analysis.escalationAfterCpiPlusPct / 100 }, loadGrowthPct: fin.analysis.loadGrowthPct })
 const tables = (over: Record<string, unknown[]> = {}) => ({
   'solar.cases': [{ id: 'c1', study_id: 's1', project_id: P, name: 'Base', pv_source: 'manual', config: cfg, updated_at: 'T1' }],
   'solar.case_runs': [{ id: 'r1', case_id: 'c1', project_id: P, status: 'succeeded', inputs_hash: H, started_at: '2026-09-28T09:00:00Z', config_snapshot: cfg, outputs: { kpis: { dcKwp: 100, acKw: 80, batteryKwh: null } } }],

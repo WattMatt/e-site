@@ -52,7 +52,7 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   if (!cfg.ok) return { ok: false, status: 422, error: FIN_RUN_REASONS.badRun }
   const outputs = run.outputs as CaseRunOutputs
   const kpis = outputs.kpis
-  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw })
+  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, /* legacy until the study pricing is wired (next commit) */ { escalationPath: { published: [], startRate: fin.fin.analysis.escalationStartPct / 100, endRate: fin.fin.analysis.escalationYear10Pct / 100, linearToYear: 10, cpiMargin: fin.fin.analysis.escalationAfterCpiPlusPct / 100 }, loadGrowthPct: fin.fin.analysis.loadGrowthPct })
   if (!built.ok) return { ok: false, status: 422, error: built.reasons.join(' ') }
   const year = Number(outputs.provenance?.loadReferenceYear)
   const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })

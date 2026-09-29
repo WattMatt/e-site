@@ -224,8 +224,12 @@ function common(f: FinanceInput, e: FinanceEnergy): Common {
     const cpi = cpiFactor(n, f.analysis.cpi)
     c.energy.push(e.year1PvKwh * deg)
     c.delivered.push(delivered1 * deg)
-    c.saving.push((pvSaving1 * deg + battSaving1 * health) * tf[n - 1]!)
-    c.billBefore.push(e.bills.beforeZar * tf[n - 1]! * (1 + f.analysis.loadGrowth) ** (n - 1))
+    // Load growth (engine spec §6, v1): the year-1 energy balance is rescaled by G_n, not re-simulated,
+    // so Bill_before AND Bill_after (= before − saving) both scale by G_n; year 1 is unchanged. An
+    // upper bound on the saving: a fully self-consumed system's saving does not grow with its load.
+    const growth = (1 + f.analysis.loadGrowth) ** (n - 1)
+    c.saving.push((pvSaving1 * deg + battSaving1 * health) * tf[n - 1]! * growth)
+    c.billBefore.push(e.bills.beforeZar * tf[n - 1]! * growth)
     c.opex.push(
       (f.opex.omZarPerKwpYear * f.kWpDc + f.capex.totalZar * f.opex.insuranceFractionOfCapex + f.opex.monitoringZarPerYear) * cpi,
     )
