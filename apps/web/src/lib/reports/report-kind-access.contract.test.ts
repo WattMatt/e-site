@@ -73,7 +73,7 @@ describe('report kind read policy contract', () => {
     const kinds = new Set(findWrittenKinds().map((f) => f.kind))
     // If this fails the scanner has stopped seeing writers — fix the scanner,
     // do not relax the assertion, or the contract below becomes vacuous.
-    for (const expected of ['tenant_schedule', 'qc', 'snag', 'valuation', 'inspection', 'site_form']) {
+    for (const expected of ['tenant_schedule', 'qc', 'snag', 'valuation', 'inspection', 'site_form', 'solar_feasibility', 'solar_technical']) {
       expect(kinds, `scanner lost sight of the '${expected}' writer`).toContain(expected)
     }
   })

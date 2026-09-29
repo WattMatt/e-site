@@ -16,7 +16,7 @@ type AnyClient = SupabaseClient<any, any, any>
 
 export async function recordSolarAudit(a: {
   projectId: string
-  actorId: string
+  actorId: string | null
   verb: string
   objectRef?: Record<string, unknown>
 }): Promise<void> {
