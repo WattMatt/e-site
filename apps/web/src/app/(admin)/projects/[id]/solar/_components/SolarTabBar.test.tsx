@@ -22,11 +22,12 @@ describe('SolarTabBar', () => {
     render(<SolarTabBar projectId="p1" level="view" readiness={computeSolarReadiness(site, 'view')} />)
     expect(screen.getByRole('link', { name: /Overview/ }).getAttribute('href')).toBe('/projects/p1/solar/overview')
     expect(screen.getByRole('link', { name: /Site & Supply/ }).getAttribute('href')).toBe('/projects/p1/solar/site')
-    // Load and Schematics became links when 3b flipped them to built; Layout is still unbuilt.
+    // Every tab through Phase 5b is built; Reports & Proposal is the one still unbuilt.
     expect(screen.getByRole('link', { name: /Load/ }).getAttribute('href')).toBe('/projects/p1/solar/load')
-    const layout = screen.getByText('Layout').closest('[aria-disabled="true"]') as HTMLElement
-    expect(layout.getAttribute('title')).toBe('Coming in a later phase')
-    expect(screen.queryByRole('link', { name: /Layout/ })).toBeNull()
+    expect(screen.getByRole('link', { name: /Layout/ }).getAttribute('href')).toBe('/projects/p1/solar/layout')
+    const reports = screen.getByText('Reports & Proposal').closest('[aria-disabled="true"]') as HTMLElement
+    expect(reports.getAttribute('title')).toBe('Coming in a later phase')
+    expect(screen.queryByRole('link', { name: /Reports/ })).toBeNull()
   })
 
   it('hides Tariff and Financials below Edit + financials, shows them at it; never Operations', () => {

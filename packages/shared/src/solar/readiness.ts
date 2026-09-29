@@ -213,6 +213,8 @@ export function computeSolarReadiness(site: SiteReadinessInput | null, level: So
       // selected case (4b, above) wins because that case needs no layout.
       if (t.slug === 'layout' && extra.layout !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...layoutReadiness(extra.layout) }
       if (t.slug === 'schedule') return { slug: t.slug, label: t.label, live: true, ...scheduleReadiness(extra.scheduleTaskCount) }
-      return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
+      // A built tab whose aggregate the caller did not pass is still a live link (grey, not
+      // "later phase" — that sentence would be false once every phase through 5b is merged).
+      return { slug: t.slug, label: t.label, live: t.built, status: 'grey' as const, reason: t.built ? 'Not started' : LATER_PHASE_REASON }
     })
 }

@@ -7,10 +7,11 @@ describe('ReadinessChecklist', () => {
   it('links live steps to their tab and greys out later phases', () => {
     render(<ReadinessChecklist projectId="p1" steps={computeSolarReadiness(null, 'edit')} />)
     expect(screen.getByRole('link', { name: 'Site & Supply' }).getAttribute('href')).toBe('/projects/p1/solar/site')
-    expect(screen.queryByRole('link', { name: 'Load' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Load' }).getAttribute('href')).toBe('/projects/p1/solar/load')
     expect(screen.getByRole('link', { name: 'Yield & Scenarios' }).getAttribute('href')).toBe('/projects/p1/solar/yield')
-    expect(screen.getAllByText('Not started — available in a later phase').length).toBe(5)
-    expect(screen.getByText('Not started')).toBeDefined()
+    // Only Reports is still a later phase once phases 1–5b are merged.
+    expect(screen.getAllByText('Not started — available in a later phase').length).toBe(1)
+    expect(screen.queryByRole('link', { name: /Reports/ })).toBeNull()
     expect(screen.getByRole('link', { name: 'Schedule' }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
   })
 })

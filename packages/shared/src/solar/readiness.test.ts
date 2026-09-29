@@ -54,13 +54,14 @@ describe('isInSouthAfrica', () => {
 })
 
 describe('computeSolarReadiness', () => {
-  it('has one row per visible tab except Overview; Site & Supply and Yield are live', () => {
+  it('has one row per visible tab except Overview; every built tab is live, only Reports is a later phase', () => {
     const steps = computeSolarReadiness(full, 'view')
     expect(steps.map((s) => s.slug)).toEqual(['site', 'load', 'schematics', 'layout', 'yield', 'reports', 'schedule'])
     expect(steps[0]).toMatchObject({ slug: 'site', status: 'green', live: true })
     for (const s of steps.slice(1)) {
       if (s.slug === 'yield') expect(s).toMatchObject({ status: 'grey', reason: 'No cases yet', live: true })
-      else expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
+      else if (s.slug === 'reports') expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
+      else expect(s).toMatchObject({ status: 'grey', reason: 'Not started', live: true })
     }
   })
   it('includes Tariff and Financials for Edit + financials', () => {

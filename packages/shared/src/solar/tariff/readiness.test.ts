@@ -23,10 +23,12 @@ describe('tariff readiness (spec §2.3 Tariff row)', () => {
     expect(toTariffReadinessInput(null, false)).toBeNull()
   })
   it('replaces the tariff step only, and makes it live', () => {
-    const steps = withTariffReadiness(computeSolarReadiness(null, 'edit_financials'), { tariffId: 't', exportRule: null, hasLinkedExportTariff: false })
+    const base = computeSolarReadiness(null, 'edit_financials')
+    const steps = withTariffReadiness(base, { tariffId: 't', exportRule: null, hasLinkedExportTariff: false })
     const t = steps.find((s) => s.slug === 'tariff')!
     expect(t).toEqual({ slug: 'tariff', label: 'Tariff', live: true, status: 'amber', reason: 'Missing: export credit rule' })
-    expect(steps.find((s) => s.slug === 'financials')!.live).toBe(false)
+    // Every other step is passed through untouched.
+    expect(steps.filter((s) => s.slug !== 'tariff')).toEqual(base.filter((s) => s.slug !== 'tariff'))
   })
   it('a level without the Tariff tab has no tariff step to replace', () => {
     expect(withTariffReadiness(computeSolarReadiness(null, 'edit'), null).some((s) => s.slug === 'tariff')).toBe(false)
