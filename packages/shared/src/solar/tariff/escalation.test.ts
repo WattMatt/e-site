@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildEscalationRows, escalationSettingsFrom, parseStoredEscalation, validateEscalationOverrides, escalationPathFromRows,
+  yearOneCatchUp, describeYearOneCatchUp,
 } from './escalation'
 import { escalationRate } from '../../services/solar/finance/factors'
 
@@ -47,5 +48,23 @@ describe('escalation path (D-07)', () => {
       errors: { '4': 'Enter a percentage', '40': 'Year 40 is outside the 12-year analysis' },
     })
     expect(validateEscalationOverrides({ '2': '150' }, 12).errors).toEqual({ '2': 'Must be between -50 and 100 %' })
+  })
+})
+
+describe('year-1 catch-up (TARIFF-12)', () => {
+  const published = [{ financialYear: '2025/26', approvedIncreasePct: 12.74 }, { financialYear: '2026/27', approvedIncreasePct: 10 }, { financialYear: '2027/28', approvedIncreasePct: 8 }]
+  it('year 2 continues from the study’s year-1 financial year, not the pinned one', () => {
+    const rows = buildEscalationRows({ pinnedFinancialYear: '2025/26', studyFinancialYear: '2026/27', published, settings, stored: null })
+    expect(rows[0]).toEqual({ year: 2, pct: 8, source: 'published', financialYear: '2027/28' })
+    expect(rows[1]).toMatchObject({ year: 3, source: 'default' })
+  })
+  it('no catch-up when the pinned year covers (or follows) year 1', () => {
+    expect(yearOneCatchUp({ pinnedFinancialYear: '2026/27', studyFinancialYear: '2026/27', published, settings })).toBeNull()
+    expect(yearOneCatchUp({ pinnedFinancialYear: '2027/28', studyFinancialYear: '2026/27', published, settings })).toBeNull()
+    expect(yearOneCatchUp({ pinnedFinancialYear: '2025/26', studyFinancialYear: null, published, settings })).toBeNull()
+  })
+  it('describes exactly what was applied', () => {
+    const c = yearOneCatchUp({ pinnedFinancialYear: '2025/26', studyFinancialYear: '2026/27', published, settings })!
+    expect(describeYearOneCatchUp(c)).toBe('2025/26 rates + 10.0% (2026/27 approved increase)')
   })
 })

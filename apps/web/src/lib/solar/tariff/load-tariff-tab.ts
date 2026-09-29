@@ -181,7 +181,10 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
   const fromFy = opts.fy ? years.find((y) => y.financialYear === opts.fy) : undefined
   const pinnedYearId = pinned?.yearId
   const fromPin = pinnedYearId ? years.find((y) => y.id === pinnedYearId) : undefined
-  const def = pickDefaultYear(years, opts.todayIso, regime)
+  // Org escalation settings first: the year note states the year-1 catch-up the resolver applies (TARIFF-12).
+  const settingsRow = await solar.from('org_settings').select('settings').eq('organisation_id', String(st.organisation_id)).maybeSingle()
+  const settings = escalationSettingsFrom(readSolarOrgSettings((settingsRow.data as { settings?: unknown } | null)?.settings ?? null))
+  const def = pickDefaultYear(years, opts.todayIso, regime, settings)
   const selectedYearId = fromFy?.id ?? fromPin?.id ?? def.yearId
   const { data: ts } = selectedYearId
     ? await tariffs.from('tariff').select('id, code, name, category, metering, structure, voltage_band, phase, min_kva, max_kva, min_amps, max_amps, is_legacy, export_tariff_id')
@@ -190,12 +193,11 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
 
   // Override, export rates, bill checks (money tables: this page is Edit + financials).
   const overrideId = (st.tariff_override_id ?? null) as string | null
-  const [ov, rates, checks, settingsRow] = await Promise.all([
+  const [ov, rates, checks] = await Promise.all([
     overrideId ? solar.from('tariff_override_charges').select('*').eq('override_id', overrideId).order('component') : Promise.resolve({ data: [] as Row[] }),
     solar.from('study_export_rates').select('*').eq('study_id', String(st.id)),
     solar.from('bill_checks').select('id, billing_month, actual_total_excl_vat, modelled_total_excl_vat, difference_pct, created_at')
       .eq('study_id', String(st.id)).order('billing_month', { ascending: false }).limit(12),
-    solar.from('org_settings').select('settings').eq('organisation_id', String(st.organisation_id)).maybeSingle(),
   ])
   const rateRows = (rates.data ?? []) as Row[]
 
@@ -204,12 +206,11 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
   const { data: hol } = await supabase.schema('projects').from('public_holidays').select('d, name').gte('d', `${year}-01-01`).order('d')
   const holidays = ((hol ?? []) as Array<{ d: string; name: string }>)
     .filter((h) => h.d <= `${year}-12-31`).map((h) => ({ date: h.d, name: h.name }))
-  const settings = escalationSettingsFrom(readSolarOrgSettings((settingsRow.data as { settings?: unknown } | null)?.settings ?? null))
   // With a pinned tariff, the escalation table, the SSEG rule in force and the export source note
   // are the PRICING RESOLVER's (loadStudyPricing, I-1) — the same values Yield & Financials price —
   // so what the tab shows cannot drift from what is priced. Without a pin nothing is priced and
   // the table is the org default path.
-  const priced = pinned ? await loadStudyPricing(supabase, projectId) : null
+  const priced = pinned ? await loadStudyPricing(supabase, projectId, { todayIso: opts.todayIso }) : null
   const pricing = priced?.ok ? priced.pricing : null
   if (pinned && pricing) {
     pinned = { ...pinned, sseg: pricing.ssegRuleInForce, ssegFromLibrary: pricing.ssegFromLibrary }
@@ -228,7 +229,7 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
     },
     supply: { nmdKva: num(st.nmd_kva), supplyVoltageV: num(st.supply_voltage_v) },
     licensee, licenseeOptions, years, selectedYearId,
-    yearNote: noteForYear(years, selectedYearId, opts.todayIso, regime),
+    yearNote: noteForYear(years, selectedYearId, opts.todayIso, regime, settings),
     tariffs: ((ts ?? []) as Row[]).map(tariffListItemFromRow),
     pinned,
     override: overrideId ? { id: overrideId, rows: ((ov.data ?? []) as Row[]).map(overrideChargeFromDb) } : null,

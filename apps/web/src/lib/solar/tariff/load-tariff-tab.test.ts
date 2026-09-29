@@ -58,7 +58,7 @@ describe('loadTariffTab', () => {
     const d = await loadTariffTab(fakeSupabase({ tables: t }).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
     expect(d.selectedYearId).toBe('y24')
     expect(d.pinned).toMatchObject({ id: 't0', financialYear: '2024/25', yearState: 'superseded', newerYear: '2025/26' })
-    expect(d.yearNote).toBe('2024/25 does not cover today: 2025/26 is published in the library')
+    expect(d.yearNote).toBe('2024/25 does not cover today: 2025/26 is published in the library — year 1 uses 2024/25 rates + 12.7% (2025/26 approved increase)')
   })
   it('a pinned tariff in the year covering today: no note, no newer year', async () => {
     const t = { ...tables, 'solar.studies': [{ ...tables['solar.studies'][0], tariff_id: 't1' }] }
@@ -67,12 +67,12 @@ describe('loadTariffTab', () => {
     expect(d.pinned).toMatchObject({ id: 't1', newerYear: null })
     expect(d.yearNote).toBeNull()
   })
-  it('the library is a year behind: the escalation note shows whether the year came from the default or ?fy=', async () => {
+  it('the library is a year behind: the note states the year-1 increase applied, from the default or ?fy= (TARIFF-12)', async () => {
     const { client } = fakeSupabase({ tables })
     expect((await loadTariffTab(client as never, 'p1', { fy: null, todayIso: '2026-08-01' })).yearNote)
-      .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
+      .toBe('2026/27 not yet published in the library — year 1 uses 2025/26 rates + 9.0% (2026/27 org default escalation)')
     expect((await loadTariffTab(client as never, 'p1', { fy: '2025/26', todayIso: '2026-08-01' })).yearNote)
-      .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
+      .toBe('2026/27 not yet published in the library — year 1 uses 2025/26 rates + 9.0% (2026/27 org default escalation)')
   })
 })
 
@@ -89,10 +89,12 @@ describe('what the Tariff tab SHOWS is what Yield & Financials PRICE (review I-B
     }
     const client = fakeSupabase({ tables: t as never }).client as never
     const tab = await loadTariffTab(client, 'p1', { fy: null, todayIso: '2026-01-10' })
-    const priced = await loadStudyPricing(client, 'p1')
+    const priced = await loadStudyPricing(client, 'p1', { todayIso: '2026-01-10' })
     if (!priced.ok) throw new Error(priced.code)
     expect(tab.escalation).toEqual(priced.pricing.escalationRows)
-    expect(tab.escalation.find((r) => r.year === 2)).toMatchObject({ source: 'published', financialYear: '2025/26' })
+    // The 2024/25 pin is brought forward to 2025/26 for year 1 (its approved 12.72 %); year 2 follows 2025/26.
+    expect(priced.pricing.yearOneCatchUp).toMatchObject({ fromFinancialYear: '2024/25', toFinancialYear: '2025/26', pct: 12.72 })
+    expect(tab.escalation.find((r) => r.year === 2)).toMatchObject({ source: 'default', financialYear: null })
     expect(tab.escalation.find((r) => r.year === 4)).toMatchObject({ pct: 6.5, source: 'override' })
     expect(tab.pinned?.sseg).toEqual(priced.pricing.ssegRuleInForce)
     expect(tab.pinned?.ssegFromLibrary).toBe(false)
