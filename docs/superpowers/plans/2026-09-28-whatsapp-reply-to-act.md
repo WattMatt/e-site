@@ -1944,7 +1944,7 @@ export async function verifyMetaSignature(rawBody: Uint8Array, header: string | 
   if (!m) return false
   const key = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(appSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, rawBody))
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, rawBody as BufferSource))
   return constantTimeEqual(sig, hexToBytes(m[1].toLowerCase()))
 }
 ```
@@ -2050,7 +2050,7 @@ function fakeFetch(responses: Array<{ status: number; json?: unknown; bytes?: Ui
   const fn = vi.fn(async (url: string, init: RequestInit = {}) => {
     calls.push({ url, init })
     const r = responses.shift()!
-    return new Response(r.bytes ?? JSON.stringify(r.json ?? {}), { status: r.status, headers: { 'content-type': r.type ?? 'application/json' } })
+    return new Response((r.bytes as BodyInit | undefined) ?? JSON.stringify(r.json ?? {}), { status: r.status, headers: { 'content-type': r.type ?? 'application/json' } })
   })
   return { fn, calls }
 }

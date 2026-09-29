@@ -8,7 +8,7 @@ function fakeFetch(responses: Array<{ status: number; json?: unknown; bytes?: Ui
   const fn = vi.fn(async (url: string, init: RequestInit = {}) => {
     calls.push({ url, init })
     const r = responses.shift()!
-    return new Response(r.bytes ?? JSON.stringify(r.json ?? {}), { status: r.status, headers: { 'content-type': r.type ?? 'application/json' } })
+    return new Response((r.bytes as BodyInit | undefined) ?? JSON.stringify(r.json ?? {}), { status: r.status, headers: { 'content-type': r.type ?? 'application/json' } })
   })
   return { fn, calls }
 }

@@ -22,6 +22,6 @@ export async function verifyMetaSignature(rawBody: Uint8Array, header: string | 
   if (!m) return false
   const key = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(appSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, rawBody))
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, rawBody as BufferSource))
   return constantTimeEqual(sig, hexToBytes(m[1].toLowerCase()))
 }

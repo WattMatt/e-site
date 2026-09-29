@@ -59,6 +59,7 @@ FUNCTIONS=(
   "onboarding-email-d3:"
   "onboarding-email-d7:"
   "onboarding-email-d14:"
+  "whatsapp-worker:"
 
   # send-email serves the PUBLIC data-subject-request type, and it is tempting to
   # conclude that it therefore needs --no-verify-jwt. It does NOT, and production
@@ -77,6 +78,10 @@ FUNCTIONS=(
   # retirement notice never reaches whoever mis-pasted the URL. The whole
   # purpose of the stub is that message. It reads no input and touches nothing.
   "paystack-webhook:--no-verify-jwt"
+  # whatsapp-webhook: Meta sends no JWT at all. It authenticates by PROVING the
+  # X-Hub-Signature-256 HMAC over the raw body with WHATSAPP_APP_SECRET, and
+  # fails closed when the secret is unset. It never imports requireServiceRole.
+  "whatsapp-webhook:--no-verify-jwt"
 
   # ── No service-role guard; they authenticate their callers differently.
   "auth-email-hook:"
