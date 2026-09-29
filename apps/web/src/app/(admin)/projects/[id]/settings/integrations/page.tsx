@@ -63,6 +63,7 @@ export default async function Page({ params }: Props) {
   const notifyQcEmail = settings?.notifyQcEmail ?? true
   const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
   const notifyFormEmail = settings?.notifyFormEmail ?? true
+  const notifyWhatsapp = settings?.notifyWhatsapp ?? false
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -121,6 +122,7 @@ export default async function Page({ params }: Props) {
         initialNotifyQcEmail={notifyQcEmail}
         initialNotifyDiaryEmail={notifyDiaryEmail}
         initialNotifyFormEmail={notifyFormEmail}
+        initialNotifyWhatsapp={notifyWhatsapp}
       />
     </div>
   )

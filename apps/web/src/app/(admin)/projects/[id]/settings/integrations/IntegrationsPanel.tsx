@@ -35,6 +35,7 @@ type ToggleField =
   | 'notifyQcEmail'
   | 'notifyDiaryEmail'
   | 'notifyFormEmail'
+  | 'notifyWhatsapp'
 
 interface Props {
   projectId: string
@@ -43,6 +44,7 @@ interface Props {
   initialNotifyQcEmail: boolean
   initialNotifyDiaryEmail: boolean
   initialNotifyFormEmail: boolean
+  initialNotifyWhatsapp: boolean
 }
 
 export function IntegrationsPanel({
@@ -52,6 +54,7 @@ export function IntegrationsPanel({
   initialNotifyQcEmail,
   initialNotifyDiaryEmail,
   initialNotifyFormEmail,
+  initialNotifyWhatsapp,
 }: Props) {
   const [values, setValues] = useState<Record<ToggleField, boolean>>({
     notifyRfiEmail: initialNotifyRfiEmail,
@@ -59,6 +62,7 @@ export function IntegrationsPanel({
     notifyQcEmail: initialNotifyQcEmail,
     notifyDiaryEmail: initialNotifyDiaryEmail,
     notifyFormEmail: initialNotifyFormEmail,
+    notifyWhatsapp: initialNotifyWhatsapp,
   })
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -102,6 +106,12 @@ export function IntegrationsPanel({
       label: 'Site form email notifications',
       description:
         'Send the branded PDF to the project team when a site form (such as a Termination & Making Safe record) is distributed on this project. Turning this off leaves the in-app notification in place.',
+    },
+    {
+      field: 'notifyWhatsapp',
+      label: 'WhatsApp for work items',
+      description:
+        'Send assigned, due-tomorrow and overdue work items to people who have linked WhatsApp, and let them acknowledge, finish or add photos by replying. Off by default. Email notifications are unaffected.',
     },
   ]
 

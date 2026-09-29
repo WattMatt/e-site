@@ -4,7 +4,7 @@
 // read is a 404.
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { stateLabel, type WorkItemStatus } from '@esite/shared'
+import { projectSettingsService, stateLabel, type WorkItemStatus } from '@esite/shared'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { noteText, logRows } from '@/lib/whatsapp/item-page-data'
 
@@ -20,6 +20,7 @@ export default async function WorkItemPage({ params }: Props) {
     .select('id, ref, title, item_type, status, due_date, assignee_id, gatekeeper_id, ball_in_court_id')
     .eq('project_id', projectId).eq('ref', ref).maybeSingle()
   if (!item) notFound()
+  const cfg = await projectSettingsService.getNotificationConfig(supabase as never, projectId)
 
   const [people, notes, atts, outbox, inbound] = await Promise.all([
     sb.from('profiles').select('id, full_name').in('id', [item.assignee_id, item.gatekeeper_id]),
@@ -44,6 +45,12 @@ export default async function WorkItemPage({ params }: Props) {
           {stateLabel(item.item_type, item.status as WorkItemStatus)} · due {item.due_date} · assignee {name(item.assignee_id)} · signs off {name(item.gatekeeper_id)}
         </div>
       </div>
+
+      {!cfg.whatsapp && (
+        <p style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+          WhatsApp is off for this project — nobody is messaged about this item. A project owner or admin can turn it on in Settings → Integrations.
+        </p>
+      )}
 
       <Card>
         <CardHeader><h2 style={{ margin: 0, fontSize: 14 }}>Notes</h2></CardHeader>
