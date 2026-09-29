@@ -5,6 +5,7 @@ import 'server-only'
  * with the caller's client; everything a client component receives is JSON (view-types.ts).
  * Nothing here computes load: charts come from siteProfileCharts over the STORED series.
  */
+import { cache } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { computeBoDate, loadReadiness, loadSettingsFormFromRow, type LoadReadinessInput, type SchematicsReadinessInput } from '@esite/shared'
 import {
@@ -169,13 +170,94 @@ export async function loadTenantsView(supabase: AnyClient, projectId: string): P
 }
 
 /**
- * The ONE staleness rule: the stored inputs hash vs one recomputed from rows + per-channel summaries
- * (no readings read). The Site profile banner and the Load tab dot both call this, so they cannot
- * disagree.
+ * Per-request memo (React `cache` scopes the Map to one server render), so the gated layout and the
+ * page beneath it (overview, Site profile) share one staleness answer instead of each recomputing it.
+ * Keyed on the project, not the client object: every caller in one request is the same session.
+ * Outside a render (server actions, tests) `cache` does not memoise, so nothing leaks across requests.
  */
-async function siteLoadIsStale(supabase: AnyClient, projectId: string, storedHash: string): Promise<boolean> {
-  const g = await gatherLoadInputs(supabase, projectId, { readReadings: false })
-  return g.ok ? g.inputsHash !== storedHash : false
+const requestMemo = cache(() => new Map<string, Promise<unknown>>())
+function memo<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const m = requestMemo()
+  let p = m.get(key) as Promise<T> | undefined
+  if (!p) { p = run(); m.set(key, p) }
+  return p
+}
+
+/**
+ * The FULL staleness rule, for the Site profile banner: the stored inputs hash vs one recomputed from
+ * rows + per-channel summaries (no readings read). It calls `channel_summaries`, which can fail (a
+ * statement timeout, >500 channels → 22023); a failure reads as "not stale" and is logged — it must
+ * never take the page down.
+ */
+function siteLoadIsStale(supabase: AnyClient, projectId: string, storedHash: string): Promise<boolean> {
+  return memo(`hash:${projectId}:${storedHash}`, async () => {
+    try {
+      const g = await gatherLoadInputs(supabase, projectId, { readReadings: false })
+      return g.ok ? g.inputsHash !== storedHash : false
+    } catch (e) {
+      console.error('[solar/load] staleness hash check failed', { projectId, error: e instanceof Error ? e.message : String(e) })
+      return false
+    }
+  })
+}
+
+/**
+ * The CHEAP staleness signal, for the Load tab dot (rendered on every solar page by the gated
+ * layout): has any input row been written after the build? One `limit(1)` probe per input table, no
+ * `channel_summaries`, no readings.
+ *
+ * It never says fresh when the banner would say stale because an input ROW was inserted or edited:
+ * every such row bumps a timestamp read here (studies / tenant_load_basis / meters / meter_channels /
+ * schematic_lines / structure.nodes / tenant_details `updated_at`, study_meters `added_at`,
+ * meter_import_reports `accepted_at`). Where the two CAN disagree (dot fresh, banner stale):
+ *   - a pure DELETE of an input row (a basis row, a study-meter link, a schematic line) — no row is
+ *     left to carry a timestamp. Tenant nodes are soft-deleted, so those ARE seen.
+ *   - `projects.opening_date` (BO dates) — `projects.updated_at` is bumped by cloud sync every 15 min,
+ *     so it cannot be used as a signal.
+ *   - readings landing in an existing channel with no newer channel row or accepted import report.
+ *   - an existing-PV channel on a meter outside the study.
+ *   - an edit racing the build between its read and its `built_at` stamp.
+ * The other way (dot stale, banner fresh) happens when a row was re-saved with identical values.
+ * Any failure reads as "not stale" and is logged.
+ */
+function inputsChangedSinceBuild(supabase: AnyClient, projectId: string, studyRow: StudyLoadRow, builtAt: string, nodeIds: string[]): Promise<boolean> {
+  return memo(`cheap:${projectId}:${builtAt}`, async () => {
+    try {
+      const built = Date.parse(builtAt)
+      if (Date.parse(studyRow.updated_at) > built) return true
+      const solar = () => supabase.schema('solar')
+      const any = (r: { data: unknown; error: unknown }) => {
+        if (r.error) throw new Error(`staleness probe: ${String((r.error as { message?: string }).message ?? r.error)}`)
+        return Array.isArray(r.data) && r.data.length > 0
+      }
+      const [links, basis, lines, nodes, details] = await Promise.all([
+        solar().from('study_meters').select('meter_id, added_at').eq('study_id', studyRow.id),
+        solar().from('tenant_load_basis').select('id').eq('study_id', studyRow.id).gt('updated_at', builtAt).limit(1),
+        solar().from('schematic_lines').select('id').eq('project_id', projectId).gt('updated_at', builtAt).limit(1),
+        supabase.schema('structure').from('nodes').select('id').eq('project_id', projectId).eq('kind', 'tenant_db').gt('updated_at', builtAt).limit(1),
+        nodeIds.length ? supabase.schema('structure').from('tenant_details').select('node_id').in('node_id', nodeIds).gt('updated_at', builtAt).limit(1) : Promise.resolve({ data: [], error: null }),
+      ])
+      if (links.error) throw new Error(`staleness probe: ${String((links.error as { message?: string }).message ?? links.error)}`)
+      const linkRows = (links.data ?? []) as Array<{ meter_id: string; added_at: string | null }>
+      if (any(basis) || any(lines) || any(nodes) || any(details)) return true
+      if (linkRows.some((l) => l.added_at && Date.parse(l.added_at) > built)) return true
+      const meterIds = linkRows.map((l) => l.meter_id)
+      if (meterIds.length === 0) return false
+      const [meters, changed, files] = await Promise.all([
+        solar().from('meters').select('id').in('id', meterIds).gt('updated_at', builtAt).limit(1),
+        solar().from('meter_channels').select('id').in('meter_id', meterIds).gt('updated_at', builtAt).limit(1),
+        solar().from('meter_channels').select('file_id').in('meter_id', meterIds),
+      ])
+      if (any(meters) || any(changed)) return true
+      if (files.error) throw new Error(`staleness probe: ${String((files.error as { message?: string }).message ?? files.error)}`)
+      const fileIds = [...new Set(((files.data ?? []) as Array<{ file_id: string | null }>).map((f) => f.file_id).filter((x): x is string => Boolean(x)))]
+      if (fileIds.length === 0) return false
+      return any(await solar().from('meter_import_reports').select('file_id').in('file_id', fileIds).gt('accepted_at', builtAt).limit(1))
+    } catch (e) {
+      console.error('[solar/load] staleness probe failed', { projectId, error: e instanceof Error ? e.message : String(e) })
+      return false
+    }
+  })
 }
 
 export async function loadProfileView(supabase: AnyClient, projectId: string): Promise<ProfileView> {
@@ -233,12 +315,27 @@ export async function loadChecksView(supabase: AnyClient, projectId: string): Pr
   }
 }
 
+type LoadReadiness = { load: LoadReadinessInput | null; schematics: SchematicsReadinessInput | null }
+
 /**
- * For the gated layout's tab dots (spec §2.3). Staleness uses the Site profile banner's rule
- * (`siteLoadIsStale`: rows + channel summaries, no readings). It is the last rule in `loadReadiness`,
- * so it is only computed when the dot would otherwise be green — an amber/red dot never pays for it.
+ * For the gated layout's tab dots (spec §2.3), awaited by the layout on EVERY solar page (and by the
+ * overview), so it must be cheap and must never throw. Staleness uses the cheap timestamp signal
+ * (`inputsChangedSinceBuild`), not the banner's hash check. It is the last rule in `loadReadiness`,
+ * so it is only computed when the dot would otherwise be green. Deduped per request (layout +
+ * overview); an unexpected failure resolves to "no load data" and is logged.
  */
-export async function loadLoadReadiness(supabase: AnyClient, projectId: string): Promise<{ load: LoadReadinessInput | null; schematics: SchematicsReadinessInput | null }> {
+export function loadLoadReadiness(supabase: AnyClient, projectId: string): Promise<LoadReadiness> {
+  return memo(`readiness:${projectId}`, async () => {
+    try {
+      return await computeLoadReadiness(supabase, projectId)
+    } catch (e) {
+      console.error('[solar/load] readiness failed', { projectId, error: e instanceof Error ? e.message : String(e) })
+      return { load: null, schematics: null }
+    }
+  })
+}
+
+async function computeLoadReadiness(supabase: AnyClient, projectId: string): Promise<LoadReadiness> {
   const s = await study(supabase, projectId)
   if (!s) return { load: null, schematics: null }
   const [sl, nodes, { data: basisRows }, { data: links }, { data: schematics }] = await Promise.all([
@@ -263,7 +360,7 @@ export async function loadLoadReadiness(supabase: AnyClient, projectId: string):
     // An accepted import cannot carry an error: commit refuses one (3a commit.ts `unresolved_errors`).
     failingAcceptedImports: 0,
   }
-  if (sl && loadReadiness(load).status === 'green') load.stale = await siteLoadIsStale(supabase, projectId, sl.inputs_hash)
+  if (sl && loadReadiness(load).status === 'green') load.stale = await inputsChangedSinceBuild(supabase, projectId, s, sl.built_at, nodes.map((n) => n.id))
   return {
     load,
     schematics: { waived: s.schematic_waived, schematics: schematicIds.length, studyMeters: studyMeterIds.size, placedMeters: placed.size },

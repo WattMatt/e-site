@@ -69,21 +69,72 @@ describe('load views', () => {
     const r = await loadLoadReadiness(client(), P)
     expect(r).toMatchObject({ load: { hasSiteLoad: true, unassignedTenants: 1, totalTenants: 2, basis: 'S2' } })
   })
-  const allAssigned = () => fakeSupabase({ tables: { ...tables, 'solar.tenant_load_basis': [
-    ...tables['solar.tenant_load_basis'],
-    { id: 'b2', study_id: 's1', node_id: 'n2', source: 'vacant', meters: [], archetype: null, density_override_w_m2: null, updated_at: 'B0' },
-  ] } }).client as never
-  it('readiness stale uses the same hash comparison as the Site profile banner (dot and banner agree)', async () => {
-    const r = await loadLoadReadiness(allAssigned(), P)
-    const v = await loadProfileView(allAssigned(), P)
-    expect(r.load?.stale).toBe(true)
-    expect(r.load?.stale).toBe(v.siteLoad?.stale)
-    expect(h.gather).toHaveBeenCalledWith(expect.anything(), P, { readReadings: false })
+  // The dot's CHEAP signal: every input row carries a timestamp before the build (2025-09-01) here.
+  const BEFORE = '2025-08-01T00:00:00Z'
+  const AFTER = '2025-09-02T00:00:00Z'
+  const freshTables = () => ({
+    ...tables,
+    'solar.studies': [{ ...tables['solar.studies'][0], updated_at: BEFORE }],
+    'solar.study_meters': [{ study_id: 's1', meter_id: 'm1', added_at: BEFORE }],
+    'solar.meters': [{ ...tables['solar.meters'][0], updated_at: BEFORE }],
+    'solar.meter_channels': [{ ...CH, updated_at: BEFORE }],
+    'structure.nodes': tables['structure.nodes'].map((n) => ({ ...n, updated_at: BEFORE })),
+    'structure.tenant_details': [{ node_id: 'n1', updated_at: BEFORE }],
+    'solar.tenant_load_basis': [
+      { ...tables['solar.tenant_load_basis'][0], updated_at: BEFORE },
+      { id: 'b2', study_id: 's1', node_id: 'n2', source: 'vacant', meters: [], archetype: null, density_override_w_m2: null, updated_at: BEFORE },
+    ],
+    'solar.schematic_lines': [{ id: 'l1', project_id: P, updated_at: BEFORE }],
+    'solar.meter_import_reports': [{ file_id: 'f1', accepted_at: BEFORE, created_at: BEFORE }],
   })
-  it('readiness is not stale when the recomputed hash matches the stored one', async () => {
-    h.gather.mockResolvedValue({ ok: true, inputsHash: 'h1' })
-    const r = await loadLoadReadiness(allAssigned(), P)
+  it('readiness dot: fresh when no input row changed after the build, and it never reads channel summaries or gathers', async () => {
+    const { client: c, calls } = fakeSupabase({ tables: freshTables() })
+    const r = await loadLoadReadiness(c as never, P)
     expect(r.load?.stale).toBe(false)
+    expect(h.gather).not.toHaveBeenCalled()
+    expect(h.sums).not.toHaveBeenCalled()
+    expect(c.rpc).not.toHaveBeenCalled()
+    expect(calls.some((x) => x.table === 'solar.meter_readings')).toBe(false)
+  })
+  it.each([
+    ['the study settings', (t: ReturnType<typeof freshTables>) => { t['solar.studies'][0].updated_at = AFTER }],
+    ['a tenant basis', (t: ReturnType<typeof freshTables>) => { t['solar.tenant_load_basis'][1].updated_at = AFTER }],
+    ['a meter linked to the study', (t: ReturnType<typeof freshTables>) => { t['solar.study_meters'][0].added_at = AFTER }],
+    ['a study meter', (t: ReturnType<typeof freshTables>) => { t['solar.meters'][0].updated_at = AFTER }],
+    ['a study meter channel', (t: ReturnType<typeof freshTables>) => { t['solar.meter_channels'][0].updated_at = AFTER }],
+    ['an import accepted into a study meter file', (t: ReturnType<typeof freshTables>) => { t['solar.meter_import_reports'][0].accepted_at = AFTER }],
+    ['a schematic supply line', (t: ReturnType<typeof freshTables>) => { t['solar.schematic_lines'][0].updated_at = AFTER }],
+    ['a tenant node (area, category, soft-delete)', (t: ReturnType<typeof freshTables>) => { t['structure.nodes'][1].updated_at = AFTER }],
+    ['a tenant BO date', (t: ReturnType<typeof freshTables>) => { t['structure.tenant_details'][0].updated_at = AFTER }],
+  ])('readiness dot: stale when %s changed after the build', async (_label, mutate) => {
+    const t = freshTables()
+    mutate(t)
+    const r = await loadLoadReadiness(fakeSupabase({ tables: t }).client as never, P)
+    expect(r.load?.stale).toBe(true)
+  })
+  it('readiness resolves (not stale) when a staleness query throws, and logs it server-side', async () => {
+    const { client: c } = fakeSupabase({ tables: freshTables() })
+    const orig = c.schema
+    c.schema = ((s: string) => (s === 'solar'
+      ? { ...orig(s), from: (t: string) => { if (t === 'meter_channels' || t === 'schematic_lines') throw new Error('statement timeout'); return orig(s).from(t) } }
+      : orig(s))) as typeof c.schema
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await loadLoadReadiness(c as never, P)
+    expect(r.load).not.toBeNull()
+    expect(r.load?.stale).toBe(false)
+    expect(err).toHaveBeenCalled()
+    err.mockRestore()
+  })
+  it('the Site profile banner keeps the full hash check, and a failing gather does not take the page down', async () => {
+    h.gather.mockRejectedValue(new Error('channel_summaries: 22023 too many channels'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const v = await loadProfileView(client(), P)
+    expect(v.siteLoad?.stale).toBe(false)
+    expect(err).toHaveBeenCalled()
+    err.mockRestore()
+    h.gather.mockResolvedValue({ ok: true, inputsHash: 'h2' })
+    expect((await loadProfileView(client(), P)).siteLoad?.stale).toBe(true)
+    expect(h.gather).toHaveBeenLastCalledWith(expect.anything(), P, { readReadings: false })
   })
   it('readiness skips the staleness gather when an earlier rule already holds the dot amber', async () => {
     const r = await loadLoadReadiness(client(), P) // S2 with one unassigned tenant
