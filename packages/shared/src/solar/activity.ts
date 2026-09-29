@@ -2,7 +2,7 @@
 import { isSolarAccessLevel } from './access'
 import { SOLAR_LEVEL_LABELS } from './entry'
 
-export type SolarActivityTarget = 'access' | 'site' | 'reports' | null
+export type SolarActivityTarget = 'access' | 'site' | 'reports' | 'operations' | null
 
 export function describeSolarAuditEvent(
   verb: string,
@@ -42,6 +42,28 @@ export function describeSolarAuditEvent(
       return { text: `Proposal v${Number(ref.version ?? 1)} accepted by the client`, target: 'reports' }
     case 'proposal_declined':
       return { text: `Proposal v${Number(ref.version ?? 1)} declined by the client`, target: 'reports' }
+    case 'installation_created':
+      return { text: 'Installation recorded', target: 'operations' }
+    case 'installation_saved':
+      return { text: 'Installation details saved', target: 'operations' }
+    case 'meter_linked':
+      return { text: `Meter linked for ${ref.role === 'consumption' ? 'consumption' : 'generation'}`, target: 'operations' }
+    case 'meter_unlinked':
+      return { text: 'Meter unlinked', target: 'operations' }
+    case 'guarantee_saved':
+      return { text: 'Guarantee basis saved', target: 'operations' }
+    case 'irradiation_saved':
+      return { text: `Irradiation recorded for ${String(ref.month ?? '')}`, target: 'operations' }
+    case 'downtime_added':
+      return { text: `Downtime recorded (${Number(ref.hours ?? 0)} h)`, target: 'operations' }
+    case 'downtime_updated':
+      return { text: 'Downtime updated', target: 'operations' }
+    case 'downtime_deleted':
+      return { text: 'Downtime removed', target: 'operations' }
+    case 'monthly_report_generated':
+      return { text: `Monthly report ${String(ref.period ?? '')} v${Number(ref.version ?? 1)} generated`, target: 'operations' }
+    case 'handover_updated':
+      return { text: `Handover: ${String(ref.item ?? 'item')} updated`, target: 'operations' }
     default:
       return { text: verb.replace(/_/g, ' '), target: null }
   }

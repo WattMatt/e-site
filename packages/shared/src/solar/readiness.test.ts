@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   SOLAR_TABS, visibleSolarTabs, siteReadiness, computeSolarReadiness, toSiteReadinessInput,
   isInSouthAfrica, LATER_PHASE_REASON, yieldReadiness, financialsReadiness, reportsReadiness,
+  operationsReadiness,
 } from './readiness'
 
 const full = { latitude: -26.1, longitude: 28.05, licenseeName: 'City Power', nmdKva: 500 }
@@ -12,14 +13,15 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('Overview, Site & Supply, Yield & Scenarios, Financials (Phase 4b) and Reports & Proposal (Phase 6) are built', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'yield', 'financials', 'reports'])
+  it('Overview, Site & Supply, Yield & Scenarios, Financials (Phase 4b), Reports & Proposal (Phase 6) and Operations (Phase 7) are built', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'yield', 'financials', 'reports', 'operations'])
   })
-  it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
+  it('hides Tariff and Financials below Edit + financials; Operations is visible to every level', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('financials')
     expect(visibleSolarTabs('edit_financials').map((t) => t.slug)).toContain('financials')
-    expect(visibleSolarTabs('edit_financials').map((t) => t.slug)).not.toContain('operations')
+    expect(visibleSolarTabs('view').map((t) => t.slug)).toContain('operations')
+    expect(visibleSolarTabs('edit_financials').map((t) => t.slug)).toContain('operations')
   })
 })
 
@@ -56,11 +58,12 @@ describe('isInSouthAfrica', () => {
 describe('computeSolarReadiness', () => {
   it('has one row per visible tab except Overview; Site & Supply and Yield are live', () => {
     const steps = computeSolarReadiness(full, 'view')
-    expect(steps.map((s) => s.slug)).toEqual(['site', 'load', 'schematics', 'layout', 'yield', 'reports', 'schedule'])
+    expect(steps.map((s) => s.slug)).toEqual(['site', 'load', 'schematics', 'layout', 'yield', 'reports', 'schedule', 'operations'])
     expect(steps[0]).toMatchObject({ slug: 'site', status: 'green', live: true })
     for (const s of steps.slice(1)) {
       if (s.slug === 'yield') expect(s).toMatchObject({ status: 'grey', reason: 'No cases yet', live: true })
       else if (s.slug === 'reports') expect(s).toMatchObject({ status: 'grey', reason: 'Feasibility reports need Edit + financials access', live: true })
+      else if (s.slug === 'operations') expect(s).toMatchObject({ status: 'grey', reason: 'Not installed yet — record the installation from the accepted proposal', live: true })
       else expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
     }
   })
@@ -131,5 +134,20 @@ describe('Reports readiness (Phase 6)', () => {
   it('computeSolarReadiness makes the Reports step live', () => {
     const steps = computeSolarReadiness(null, 'edit_financials', { reports: { hasCurrentFeasibility: true } })
     expect(steps.find((s) => s.slug === 'reports')).toMatchObject({ live: true, status: 'green' })
+  })
+})
+
+describe('Operations readiness (§2.3)', () => {
+  it('the tab is built and visible to every level', () => {
+    const t = SOLAR_TABS.find((x) => x.slug === 'operations')!
+    expect(t).toMatchObject({ built: true, hidden: false, financial: false })
+  })
+  it('grey until installed; amber installed without data or date; green with a date and ≥ 1 month of data', () => {
+    expect(operationsReadiness(null)).toEqual({ status: 'grey', reason: 'Not installed yet — record the installation from the accepted proposal' })
+    expect(operationsReadiness({ installed: true, commissioningDate: null, monthsWithData: 3 }).status).toBe('amber')
+    expect(operationsReadiness({ installed: true, commissioningDate: '2026-02-15', monthsWithData: 0 }))
+      .toEqual({ status: 'amber', reason: 'Installed, but no generation data imported yet' })
+    expect(operationsReadiness({ installed: true, commissioningDate: '2026-02-15', monthsWithData: 2 }))
+      .toEqual({ status: 'green', reason: 'Commissioned 2026-02-15; 2 months of generation data' })
   })
 })

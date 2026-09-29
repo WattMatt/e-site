@@ -27,3 +27,12 @@ describe('report and proposal verbs (Phase 6)', () => {
     expect(describeSolarAuditEvent('proposal_withdrawn', { version: 1 }).target).toBe('reports')
   })
 })
+
+describe('operations activity', () => {
+  it('describes each verb and targets the Operations tab', () => {
+    expect(describeSolarAuditEvent('installation_created', {})).toEqual({ text: 'Installation recorded', target: 'operations' })
+    expect(describeSolarAuditEvent('downtime_added', { hours: 2 })).toEqual({ text: 'Downtime recorded (2 h)', target: 'operations' })
+    expect(describeSolarAuditEvent('monthly_report_generated', { period: '2026-03', version: 2 })).toEqual({ text: 'Monthly report 2026-03 v2 generated', target: 'operations' })
+    expect(describeSolarAuditEvent('handover_updated', { item: 'CoC' })).toEqual({ text: 'Handover: CoC updated', target: 'operations' })
+  })
+})

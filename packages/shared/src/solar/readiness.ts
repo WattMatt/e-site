@@ -33,7 +33,7 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'financials', label: 'Financials',         built: true,  financial: true,  hidden: false },
   { slug: 'reports',    label: 'Reports & Proposal', built: true , financial: false, hidden: false },
   { slug: 'schedule',   label: 'Schedule',           built: false, financial: false, hidden: false },
-  { slug: 'operations', label: 'Operations',         built: false, financial: false, hidden: true },
+  { slug: 'operations', label: 'Operations',         built: true,  financial: false, hidden: false },
 ]
 
 export function visibleSolarTabs(level: SolarAccessLevel): SolarTab[] {
@@ -118,6 +118,15 @@ export function reportsReadiness(r: { hasCurrentFeasibility: boolean } | null): 
     : { status: 'grey', reason: 'No feasibility report for the selected case’s current run yet' }
 }
 
+export interface OperationsReadinessInput { installed: boolean; commissioningDate: string | null; monthsWithData: number }
+
+export function operationsReadiness(o: OperationsReadinessInput | null): { status: ReadinessStatus; reason: string } {
+  if (!o || !o.installed) return { status: 'grey', reason: 'Not installed yet — record the installation from the accepted proposal' }
+  if (!o.commissioningDate) return { status: 'amber', reason: 'Installed, but no commissioning date set' }
+  if (o.monthsWithData < 1) return { status: 'amber', reason: 'Installed, but no generation data imported yet' }
+  return { status: 'green', reason: `Commissioned ${o.commissioningDate}; ${o.monthsWithData} month${o.monthsWithData === 1 ? '' : 's'} of generation data` }
+}
+
 export interface SolarReadinessExtra {
   yield?: YieldReadinessInput
   financials?: FinancialsReadinessInput | null
@@ -125,6 +134,8 @@ export interface SolarReadinessExtra {
   reports?: { hasCurrentFeasibility: boolean } | null
   /** The selected case uses a manual system size (§2.3 Layout rule). */
   layoutManual?: boolean
+  /** Null or absent until an installation exists. */
+  operations?: OperationsReadinessInput | null
 }
 
 function num(v: unknown): number | null {
@@ -152,6 +163,7 @@ export function computeSolarReadiness(site: SiteReadinessInput | null, level: So
       if (t.slug === 'yield') return { slug: t.slug, label: t.label, live: true, ...yieldReadiness(extra.yield ?? { caseCount: 0, selectedCaseId: null, selectedStatus: null }) }
       if (t.slug === 'financials') return { slug: t.slug, label: t.label, live: true, ...financialsReadiness(extra.financials ?? null) }
       if (t.slug === 'reports') return { slug: t.slug, label: t.label, live: true, ...reportsReadiness(extra.reports ?? null) }
+      if (t.slug === 'operations') return { slug: t.slug, label: t.label, live: true, ...operationsReadiness(extra.operations ?? null) }
       if (t.slug === 'layout' && extra.layoutManual) return { slug: t.slug, label: t.label, live: t.built, status: 'green' as const, reason: 'The selected case uses a manual system size' }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
