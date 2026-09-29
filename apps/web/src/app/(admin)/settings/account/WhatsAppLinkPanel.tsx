@@ -1,9 +1,10 @@
 // apps/web/src/app/(admin)/settings/account/WhatsAppLinkPanel.tsx
 'use client'
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { maskPhone } from '@esite/shared'
 import {
-  confirmWhatsAppCodeAction, removeWhatsAppLinkAction, requestWhatsAppCodeAction, setWhatsAppQuietHoursAction,
+  getWhatsAppLinkStatusAction, removeWhatsAppLinkAction, requestWhatsAppCodeAction, setWhatsAppQuietHoursAction,
 } from '@/actions/whatsapp-link.actions'
 
 export interface LinkView {
@@ -14,27 +15,44 @@ export interface LinkView {
   undeliverable_reason: string | null
 }
 
+interface Waiting { masked: string; message: string; waNumber: string | null; expiresAt: string }
+
 const CONSENT =
   'By linking, you agree that E-Site may send you WhatsApp messages about site items assigned to you, ' +
   'and that your replies, photos and notes sent to E-Site on WhatsApp are recorded against those items. ' +
   'Reply STOP at any time to stop.'
 
+const POLL_MS = 4000
+
 const input: React.CSSProperties = { padding: '7px 10px', fontSize: 13, border: '1px solid var(--c-border)', borderRadius: 6, background: 'var(--c-panel)', color: 'var(--c-text)' }
-const btn: React.CSSProperties = { padding: '7px 14px', fontSize: 13, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-amber)', color: '#111', cursor: 'pointer' }
+const btn: React.CSSProperties = { padding: '7px 14px', fontSize: 13, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-amber)', color: '#111', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' }
 
 export function WhatsAppLinkPanel({ link }: { link: LinkView | null }) {
+  const router = useRouter()
   const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
-  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [waiting, setWaiting] = useState<Waiting | null>(null)
+  const [linked, setLinked] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [quiet, setQuiet] = useState({ start: link?.quiet_start.slice(0, 5) ?? '18:00', end: link?.quiet_end.slice(0, 5) ?? '06:30' })
   const [pending, start] = useTransition()
 
-  const run = (fn: () => Promise<{ ok?: true; masked?: string; error?: string }>, after?: (r: { masked?: string }) => void) =>
+  // While waiting, poll until the webhook activates the link (the code arrived FROM the phone).
+  useEffect(() => {
+    if (!waiting || linked) return
+    const t = setInterval(async () => {
+      const r = await getWhatsAppLinkStatusAction()
+      if ('status' in r && r.status === 'active') {
+        setLinked(true)
+        router.refresh()
+      }
+    }, POLL_MS)
+    return () => clearInterval(t)
+  }, [waiting, linked, router])
+
+  const run = (fn: () => Promise<{ ok?: true; error?: string }>) =>
     start(async () => {
       const r = await fn()
-      if ('error' in r && r.error) setMsg(r.error)
-      else { setMsg(null); after?.(r) }
+      setMsg('error' in r && r.error ? r.error : null)
     })
 
   if (link && (link.status === 'active' || link.status === 'undeliverable')) {
@@ -62,26 +80,51 @@ export function WhatsAppLinkPanel({ link }: { link: LinkView | null }) {
     )
   }
 
+  if (linked) {
+    return <p style={{ fontSize: 13, color: 'var(--c-green)' }}>✅ Linked. Site items will now arrive on WhatsApp.</p>
+  }
+
+  if (waiting) {
+    const href = waiting.waNumber ? `https://wa.me/${waiting.waNumber}?text=${encodeURIComponent(waiting.message)}` : null
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <p style={{ fontSize: 13, margin: 0 }}>
+          From WhatsApp on <strong>{waiting.masked}</strong>, send this message to E-Site:
+        </p>
+        <code style={{ fontSize: 20, fontWeight: 600, letterSpacing: 1, padding: '8px 12px', border: '1px dashed var(--c-border)', borderRadius: 6, alignSelf: 'flex-start' }}>
+          {waiting.message}
+        </code>
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer" style={btn}>Open WhatsApp with this message</a>
+        ) : (
+          <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>Send it to the E-Site WhatsApp number.</p>
+        )}
+        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+          Waiting for it to arrive… this page updates by itself. The code expires at{' '}
+          {new Date(waiting.expiresAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}.
+        </p>
+        <div>
+          <button type="button" style={{ ...btn, background: 'transparent' }} onClick={() => setWaiting(null)}>Use a different number</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <p style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{CONSENT}</p>
-      {!sentTo ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label htmlFor="wa-phone" style={{ fontSize: 12 }}>Mobile number</label>
-          <input id="wa-phone" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="082 123 4567" style={input} />
-          <button type="button" disabled={pending || !phone} style={btn}
-            onClick={() => run(() => requestWhatsAppCodeAction({ phone }), (r) => setSentTo(r.masked ?? phone))}>Send code</button>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 12 }}>We sent a code on WhatsApp to {sentTo}.</span>
-          <label htmlFor="wa-code" style={{ fontSize: 12 }}>6-digit code</label>
-          <input id="wa-code" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} style={{ ...input, width: 90 }} />
-          <button type="button" disabled={pending || code.length !== 6} style={btn}
-            onClick={() => run(() => confirmWhatsAppCodeAction({ code }), () => setMsg('Linked. Refresh to see your settings.'))}>Confirm</button>
-        </div>
-      )}
-      {msg && <p style={{ fontSize: 12, color: msg.startsWith('Linked') ? 'var(--c-green)' : 'var(--c-red)' }}>{msg}</p>}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <label htmlFor="wa-phone" style={{ fontSize: 12 }}>Mobile number</label>
+        <input id="wa-phone" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="082 123 4567" style={input} />
+        <button type="button" disabled={pending || !phone} style={btn}
+          onClick={() => start(async () => {
+            const r = await requestWhatsAppCodeAction({ phone })
+            if ('error' in r) { setMsg(r.error); return }
+            setMsg(null)
+            setWaiting({ masked: r.masked, message: r.message, waNumber: r.waNumber, expiresAt: r.expiresAt })
+          })}>Get my link code</button>
+      </div>
+      {msg && <p style={{ fontSize: 12, color: 'var(--c-red)' }}>{msg}</p>}
     </div>
   )
 }

@@ -80,20 +80,19 @@ Do **not** use the existing support WhatsApp number. Moving a number that's on t
    - or put it in the macOS keychain as `esite-whatsapp-token` and **[Claude]** will set it from there without ever seeing the value.
 5. Also note these, which are not secret: the **Phone number ID** and **WhatsApp Business Account ID** (WhatsApp Manager → API setup), and the **App secret** (App → Settings → Basic). The app secret *is* secret, so handle it like the token.
 
-## Step 6: Submit the six message templates (you, or [Claude] via the API once the token is set)
+## Step 6: Message templates (submitted 2026-09-29 via the API)
 
-WhatsApp Manager → **Message templates → Create**. Language **English**. The bodies must match exactly, because the code sends the parameters in this order.
+Five utility templates were submitted on 2026-09-29 through the Graph API with the system-user token. Their status shows in WhatsApp Manager → Message templates, and in the `whatsapp.templates` table. Wording, with the parameters in the order the code sends them:
 
-| Name | Category | Body | Buttons |
-|---|---|---|---|
-| `esite_otp` | Authentication | (Meta's fixed text) `{{1}} is your verification code.` | Copy code |
-| `esite_optin` | Utility | `{{1}} has invited you to receive and respond to site items for {{2}} on WhatsApp via E-Site. Your replies, photos and notes will be recorded on those items. Reply STOP at any time.` | Quick reply: `Yes, I agree` · Quick reply: `No thanks` |
-| `esite_item_assigned` | Utility | `*{{1}}* · {{2}}` ⏎ `{{3}}` ⏎ `Due {{4}}` | Quick reply: `Acknowledge` · Quick reply: `Mark done` · URL: `Open in E-Site` → `https://www.e-site.live/wa/{{1}}` |
-| `esite_item_due_tomorrow` | Utility | `Due tomorrow — *{{1}}* · {{2}}` ⏎ `{{3}}` ⏎ `Due {{4}}` | same three buttons |
-| `esite_item_overdue` | Utility | `Overdue {{5}} days — *{{1}}* · {{2}}` ⏎ `{{3}}` ⏎ `Was due {{4}}` | same three buttons |
-| `esite_items_waiting` | Utility | `You have {{1}} more E-Site items waiting for you today.` | URL: `Open E-Site` → `https://www.e-site.live/dashboard` |
+| Name | Body | Buttons |
+|---|---|---|
+| `esite_optin` | `Hi! {{1}} has invited you to receive and respond to site items for {{2}} on WhatsApp via E-Site. Your replies, photos and notes will be recorded on those items. Reply STOP at any time.` | Yes, I agree · No thanks |
+| `esite_item_assigned` | `Site item *{{1}}* · {{2}}` / `{{3}}` / `Due {{4}}.` / `Reply with a photo or a note to add it to this item.` | Acknowledge · Mark done · URL Open in E-Site → `https://www.e-site.live/wa/{{1}}` |
+| `esite_item_due_tomorrow` | `Due tomorrow: site item *{{1}}* · {{2}}` / `{{3}}` / `Due {{4}}.` / (same last line) | same three |
+| `esite_item_overdue` | `Overdue: site item *{{1}}* · {{2}}` / `{{3}}` / `Was due {{4}}, now {{5}} days overdue.` / (same last line) | same three |
+| `esite_items_waiting` | `You have {{1}} more E-Site items waiting for you today. Open E-Site to see them all.` | URL Open E-Site → `https://www.e-site.live/dashboard` |
 
-Sample values for Meta's review: `{{1}}` = `SNAG-14`, `{{2}}` = `KINGSWALK`, `{{3}}` = `Loose cover on DB-3`, `{{4}}` = `Fri 3 Oct`, `{{5}}` = `2`. For the opt-in: `{{1}}` = `Thandi Nkosi`, `{{2}}` = `KINGSWALK`.
+Meta rejects a template that starts or ends with a variable, so the wording differs slightly from the first draft. **`esite_otp` is not needed:** Meta refuses authentication templates for unverified businesses, so number linking now works by an inbound code (spec §9 amendment 13).
 
 ## Step 7: Webhook ([Claude] with you)
 

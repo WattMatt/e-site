@@ -185,3 +185,14 @@ describe('channel payloads', () => {
   ] as const)('round-trips %o', (p) => expect(decodePayload(encodePayload(p))).toEqual(p))
   it.each(['menu:nuke', 'proj:x', 'post:shout:' + U, 'item:'])('rejects %s', (s) => expect(decodePayload(s)).toBeNull())
 })
+
+import { parseLinkCode, linkCodeMessage } from './core'
+
+describe('inbound link code', () => {
+  it.each([
+    ['LINK 482917', '482917'], ['link 482917', '482917'], ['  Link   482917 ', '482917'], ['LINK482917', '482917'],
+  ])('%s -> %s', (t, c) => expect(parseLinkCode(t)).toBe(c))
+  it.each(['482917', 'LINK 48291', 'LINK 4829170', 'please LINK 482917', 'LINK abcdef', ''])('rejects %s', (t) =>
+    expect(parseLinkCode(t)).toBeNull())
+  it('message and parser agree', () => expect(parseLinkCode(linkCodeMessage('004211'))).toBe('004211'))
+})
