@@ -70,27 +70,49 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-09 | Grid-connection warning when **PV AC > 75 % of transformer/mini-sub rating** (warning only) | Functional §3.2 |
 | D-06 | Synthesised load **seeded from GCR kW/m² densities + 8 archetypes**, owner reviews the table once | Engine §2.4 |
 
-## Integration gaps found on feat/solar-final (2026-09-29) — owner decision needed
+## Integration gaps found on feat/solar-final (2026-09-29) — Fixed 2026-09-29
 
-- **I-1 — Yield & Financials do not read four Tariff/Load inputs yet.** Phases 2b (Tariff tab), 3b (Load)
-  and 4b (Yield & Financials) were built in parallel; merged, they disagree about money:
-  - `apps/web/src/lib/solar/cases/tariff.ts` `resolveStudyTariff` prices on the **published** tariff only —
-    it ignores `studies.tariff_override_id` / `solar.tariff_override_charges` (the Tariff tab's own bill check
-    uses the override-aware `lib/solar/tariff/effective-tariff.ts`);
-  - it ignores `studies.export_rule` and `solar.study_export_rates` (`manualExportTariff` has no production caller),
-    so a manual or "none" export rule has no effect on results;
-  - `packages/shared/src/solar/cases/finance-input.ts` builds escalation from the case's own start/year-10 rates
-    (`published: []`); `escalationPathFromRows` (2b) and `studies.escalation` are unused;
-  - Financials' `analysis.loadGrowthPct` is its own input; `studies.load_growth_pct` (Load tab) is read by nothing.
-  Spec 01 §7/§8 says Financials takes escalation "from Tariff tab" and load growth "from Load". **Not fixed on
-  this branch** (a pricing change needs its own design + validation against the 10 hand-computed tariff cases).
-  Until then the Tariff tab (override, export rule, escalation) and the Load tab (load growth) say so on screen.
-  Fix sketch: one effective-tariff loader for runs (override + export rule + manual rates), escalation from
-  `escalationPathFromRows(buildEscalationRows(…))`, load growth seeded from the study, all three in the run
-  inputs hash so runs go Stale.
-- **I-2 — a money user can PATCH `studies.export_rule = {"method":"manual"}` with no rates** (00218 moved the
-  note to the rate rows; the DB no longer ties "manual" to a note on the study row). `save_export_rule` refuses
-  it; a direct PostgREST write does not. Tariff readiness shows green. Low impact while I-1 stands.
+Plan: `docs/superpowers/plans/2026-09-29-solar-pricing-inputs.md`.
+
+- **I-1 — Fixed.** Yield & Financials priced on the published tariff only and ignored the project override,
+  the export rule and its rates, the Tariff tab escalation path and the Load tab load growth, so they
+  disagreed with the Tariff tab's own bill check. Now there is ONE pure resolver,
+  `resolveStudyPricing` (`packages/shared/src/solar/tariff/pricing.ts`), and ONE loader,
+  `loadStudyPricing` (`apps/web/src/lib/solar/pricing/load-study-pricing.ts`). The Tariff tab bill check
+  (`lib/solar/tariff/effective-tariff.ts`, caller's session) and the case run + financials
+  (`lib/solar/cases/tariff.ts`, service client) both go through it; a contract test refuses either
+  building a tariff itself. What the resolver decides:
+  - **Tariff:** the override's rows when `studies.tariff_override_id` points at them (D-10), else published.
+  - **Export:** the stored rule, else the Tariff tab default (linked if the tariff has one, else none).
+    Manual → `manualExportTariff(rates, note)`; linked → the Gen-offset tariff; **none → the effective SSEG
+    rule's crediting is `none`**, so no calculator credits export (even a tariff's own `export_credit` rows).
+  - **SSEG rule:** the library row, else the Net-Billing Rules default for the licensee kind — the rule the
+    Tariff tab shows. (Before, the run passed `null`, i.e. no credit at all, whatever the tab said.)
+  - **Escalation:** `escalationPathFromRows(buildEscalationRows(…))` — the Tariff tab table (D-07). The case
+    config's own `escalation*` fields are kept for compatibility and are not priced; Financials shows the
+    Tariff tab's year-2 / year-10 figures read-only.
+  - **Load growth:** `studies.load_growth_pct` (Load tab), NULL → 0; the case's own `loadGrowthPct` is not priced.
+  - **Hashes:** `studyPricingHash` (canonical, salted with the money rows' ids — unreadable at View — so the
+    View-readable `case_runs.inputs_hash` cannot be brute-forced back to a rate) enters the case hash
+    (`inputsHash({ energy, pricing })`) and `fin_inputs_hash`: changing any of the four marks the case and
+    its financials **Stale**. Every run recorded before this change reads Stale once (nothing is in
+    production yet).
+  - **Load growth in the cashflow (engine spec §6, v1):** `G_n = (1+g)^(n-1)` scales Bill_before, Bill_after
+    and therefore the saving (the energy balance rescaled, not re-simulated); year 1 is unchanged. This is
+    an **upper bound** on the saving: a fully self-consumed system does not save more when load grows (its
+    extra load is all imported). A re-simulation per year remains a later refinement.
+  - Validated: the 2a golden cases 1–8 and 10 reproduce exactly through the resolver; an override case gives
+    the same March bill (R2,732.00) in the bill check and in the run's year-1 bills; manual R0.85/kWh
+    credits R85.00 on 100 kWh and 'none' credits R0; an escalation change moves NPV and the case hash;
+    3 %/yr growth leaves year 1 untouched and scales years 2+ by 1.03^(n−1).
+- **I-2 — Fixed (00219).** Two DEFERRED constraint triggers enforce at COMMIT that a study's export rule is
+  `manual` **iff** it has `study_export_rates` rows: a direct PATCH of a manual rule with no rates, a direct
+  DELETE of the rates under a manual rule, and a stray rate under a non-manual rule are all refused (23514);
+  `save_export_rule` still passes.
+- **`solar.layouts.module_id` FK — Fixed (00219).** `REFERENCES solar.equipment(id) ON DELETE RESTRICT`,
+  NULL backfill of anything that is not a module of the layout's org or of the platform catalogue (nothing
+  writes `module_id` today), and `layouts_module_bind` refuses another org's row or a non-module.
+  `module_spec` stays the design-time snapshot.
 
 ## Still open (small, non-blocking)
 - Owner review of the seeded density/archetype table (Phase 3).

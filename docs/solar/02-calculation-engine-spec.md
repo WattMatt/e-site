@@ -324,6 +324,10 @@ LCOE      = (capex + Σ PV(Opex_n + Repl_n)) / Σ PV(Energy_n)          (discoun
 Rules: one discount rate `r` (default org WACC **[D-07]**); tariff escalation `e_n` = approved % for years
 with a published tariff, then the org default path; load growth applies to `Bill_before` and
 `Bill_after` via re-simulation factors per year (energy balance rescaled, not re-run hourly per year).
+*As built (v1, 2026-09-29):* `G_n = (1+g)^(n−1)` multiplies `Bill_before`, `Bill_after` and so the saving in
+year n; year 1 is unchanged. `g` is `studies.load_growth_pct` (Load tab) and the escalation path is the
+Tariff tab's, both through `resolveStudyPricing`. Scaling the saving too is an upper bound (a fully
+self-consumed system's saving does not grow with its load); a per-year re-simulation is a later refinement.
 Load-shedding value is computed separately and shown as an additional line, never merged into IRR by default.
 
 **Validation:** a spreadsheet reference model (XLSX) of one case, built independently, must match
