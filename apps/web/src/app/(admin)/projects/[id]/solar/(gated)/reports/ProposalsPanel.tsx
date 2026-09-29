@@ -47,7 +47,9 @@ function Row({ p, props }: { p: ProposalListItem; props: Props }) {
   const [link, setLink] = useState<{ link: string; note: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const del = useArmedConfirm(), wd = useArmedConfirm()
+  const del = useArmedConfirm(), wd = useArmedConfirm(), rot = useArmedConfirm()
+  // Preview renders from the selected case now; a stale or missing case would 500 or mislead.
+  const previewBlocked = props.selected.ok ? null : props.selected.reason
   const run = async (f: () => Promise<{ error?: string } | Record<string, unknown>>) => {
     setBusy(true); setError(null)
     const r = await f()
@@ -67,18 +69,24 @@ function Row({ p, props }: { p: ProposalListItem; props: Props }) {
         {p.expiresAt && <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{`valid until ${p.expiresAt.slice(0, 10)}`}</span>}
         <span style={{ flex: 1 }} />
         {c.canEdit && <Button type="button" size="sm" variant="secondary" aria-label={`Edit draft v${p.version}`} onClick={() => setEditing((x) => !x)}>{editing ? 'Close editor' : 'Edit'}</Button>}
-        {c.canIssue && <a href={`/api/projects/${props.projectId}/solar/proposals/${p.id}/preview`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>Preview PDF</a>}
+        {c.canIssue && (previewBlocked
+          ? <Button type="button" size="sm" variant="ghost" disabled title={previewBlocked}>Preview PDF</Button>
+          : <a href={`/api/projects/${props.projectId}/solar/proposals/${p.id}/preview`} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>Preview PDF</a>)}
         {c.canIssue && <Button type="button" size="sm" aria-label={`Issue v${p.version}`} onClick={() => setIssuing((x) => !x)}>Issue</Button>}
+        {!c.canIssue && c.issueBlockedReason && <Button type="button" size="sm" aria-label={`Issue v${p.version}`} disabled title={c.issueBlockedReason}>Issue</Button>}
         {c.canDelete && (del.armed
           ? <Button type="button" size="sm" variant="danger" aria-label={`Confirm delete draft v${p.version}`} disabled={busy} onClick={() => { del.disarm(); void run(() => deleteSolarProposalDraftAction({ projectId: props.projectId, proposalId: p.id })) }}>Confirm delete</Button>
           : <Button type="button" size="sm" variant="ghost" aria-label={`Delete draft v${p.version}`} onClick={del.arm}>Delete</Button>)}
         {c.canWithdraw && (wd.armed
           ? <Button type="button" size="sm" variant="danger" aria-label={`Confirm withdraw v${p.version}`} disabled={busy} onClick={() => { wd.disarm(); void run(() => withdrawSolarProposalAction({ projectId: props.projectId, proposalId: p.id })) }}>Confirm withdraw</Button>
           : <Button type="button" size="sm" variant="secondary" aria-label={`Withdraw v${p.version}`} onClick={wd.arm}>Withdraw</Button>)}
-        {c.canRotate && <Button type="button" size="sm" variant="secondary" aria-label={`New link for v${p.version}`} disabled={busy}
-          onClick={async () => { setBusy(true); const r = await newSolarProposalLinkAction({ projectId: props.projectId, proposalId: p.id }); setBusy(false); if ('error' in r) setError(r.error); else setLink({ link: r.link, note: null }) }}>New link</Button>}
+        {c.canRotate && (rot.armed
+          ? <Button type="button" size="sm" variant="danger" aria-label={`Confirm new link for v${p.version}`} disabled={busy}
+              onClick={async () => { rot.disarm(); setBusy(true); const r = await newSolarProposalLinkAction({ projectId: props.projectId, proposalId: p.id }); setBusy(false); if ('error' in r) setError(r.error); else setLink({ link: r.link, note: null }) }}>Confirm new link — the old link stops working</Button>
+          : <Button type="button" size="sm" variant="secondary" aria-label={`New link for v${p.version}`} disabled={busy} onClick={rot.arm}>New link</Button>)}
         {c.canRevise && <Button type="button" size="sm" variant="secondary" aria-label={`Revise v${p.version}`} disabled={busy} onClick={() => void run(() => reviseSolarProposalAction({ projectId: props.projectId, proposalId: p.id }))}>Revise</Button>}
       </div>
+      {!c.canIssue && c.issueBlockedReason && <p style={{ fontSize: 12, margin: '4px 0 0', color: 'var(--c-text-dim)' }}>{c.issueBlockedReason}</p>}
       {editing && <ProposalEditor projectId={props.projectId} proposalId={p.id} version={p.version} initial={p.draft} updatedAt={updatedAt} narrative={props.narrative} onSaved={setUpdatedAt} />}
       {issuing && !link && (
         <IssueDialog projectId={props.projectId} proposalId={p.id} updatedAt={updatedAt} validityDays={p.draft.validityDays}

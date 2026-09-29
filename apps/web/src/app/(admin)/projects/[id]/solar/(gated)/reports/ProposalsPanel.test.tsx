@@ -13,7 +13,7 @@ import { ProposalsPanel } from './ProposalsPanel'
 import type { ProposalListItem } from '@/lib/solar/reports/page-data'
 
 const draft = { clientName: 'Acme', marginPct: 0, validityDays: 30, financeOptions: ['cash' as const], summary: '', scope: '', priceTerms: '', assumptions: '', inclusions: [], exclusions: [], terms: '', narrative: '' }
-const controls = (o: Partial<ProposalListItem['controls']> = {}) => ({ canEdit: false, canIssue: false, canDelete: false, canWithdraw: false, canRotate: false, canRevise: false, ...o })
+const controls = (o: Partial<ProposalListItem['controls']> = {}) => ({ canEdit: false, canIssue: false, issueBlockedReason: null, canDelete: false, canWithdraw: false, canRotate: false, canRevise: false, ...o })
 const item = (o: Partial<ProposalListItem>): ProposalListItem => ({
   id: 'd1', familyId: 'f1', version: 1, status: 'draft', effectiveStatus: 'draft', expiresAt: null, issuedAt: null, updatedAt: 'T0', draft, offerExclVat: null, controls: controls(), events: [], ...o,
 })
@@ -47,6 +47,33 @@ describe('ProposalsPanel (§9.3)', () => {
   it('Preview PDF opens the preview route', () => {
     render(<ProposalsPanel {...base} proposals={[item({ controls: controls({ canEdit: true, canIssue: true }) })]} />)
     expect(screen.getByRole('link', { name: 'Preview PDF' }).getAttribute('href')).toBe('/api/projects/p1/solar/proposals/d1/preview')
+  })
+  it('New link is two-step and says the old link stops working (review M4)', async () => {
+    h.link.mockResolvedValue({ ok: true, link: 'https://www.e-site.live/proposal/NEW' })
+    render(<ProposalsPanel {...base} proposals={[item({ id: 'i0', status: 'issued', effectiveStatus: 'issued', controls: controls({ canRotate: true }) })]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'New link for v1' }))
+    expect(h.link).not.toHaveBeenCalled()
+    const confirm = screen.getByRole('button', { name: 'Confirm new link for v1' })
+    expect(confirm.textContent).toBe('Confirm new link — the old link stops working')
+    fireEvent.click(confirm)
+    await waitFor(() => expect(h.link).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'i0' }))
+  })
+  it('Preview PDF is disabled with the reason when the selected case is not usable (review M5)', () => {
+    const reason = 'The selected case is stale — re-run it first.'
+    render(<ProposalsPanel {...base} selected={{ ok: false, stale: true, reason }} proposals={[item({ controls: controls({ canEdit: true, canIssue: true }) })]} />)
+    expect(screen.queryByRole('link', { name: 'Preview PDF' })).toBeNull()
+    const b = screen.getByRole('button', { name: 'Preview PDF' }) as HTMLButtonElement
+    expect(b.disabled).toBe(true)
+    expect(b.title).toBe(reason)
+  })
+  it('a draft whose family has an accepted version shows Issue disabled with the reason (review I2)', () => {
+    const reason = 'Another version of this proposal was accepted — it cannot be issued. Start a new proposal instead.'
+    render(<ProposalsPanel {...base} proposals={[item({ controls: controls({ canEdit: true, canDelete: true, canIssue: false, issueBlockedReason: reason }) })]} />)
+    const b = screen.getByRole('button', { name: 'Issue v1' }) as HTMLButtonElement
+    expect(b.disabled).toBe(true)
+    expect(b.title).toBe(reason)
+    expect(screen.getByText(reason)).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Preview PDF' })).toBeNull()
   })
   it('Issue is two-step, sends the chosen client ids, then shows the link ONCE with the email note', async () => {
     h.issue.mockResolvedValue({ ok: true, link: 'https://www.e-site.live/proposal/TOKEN', emailed: 0, emailNote: 'Solar emails are off for this project (Project settings, Integrations), so no email was sent.' })
@@ -111,6 +138,8 @@ describe('ProposalsPanel (§9.3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm delete draft v1' }))
     await waitFor(() => expect(h.del).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'd1' }))
     fireEvent.click(screen.getByRole('button', { name: 'New link for v1' }))
+    expect(h.link).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm new link for v1' }))
     await waitFor(() => expect(h.link).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'i0' }))
     expect((await screen.findByLabelText('Client link')) as HTMLInputElement).toHaveProperty('value', 'https://www.e-site.live/proposal/NEW')
   })
