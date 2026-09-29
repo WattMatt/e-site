@@ -42,6 +42,39 @@ describe('DowntimeLog', () => {
     expect(screen.queryByRole('button', { name: 'Confirm 2026-03-12 11:30' })).toBeNull()
     expect(h.add).not.toHaveBeenCalled()
   })
+  describe('a press is disabled while its action is in flight, so a double press cannot write twice (review round 2)', () => {
+    type Res = { ok: true; id: string } | { error: string }
+    function hold(fn: typeof h.add | typeof h.upd) {
+      let release: (v: Res) => void = () => {}
+      fn.mockImplementationOnce((() => new Promise<Res>((r) => { release = r })) as never)
+      return (v: Res) => release(v)
+    }
+    async function pressTwice(btn: HTMLButtonElement, fn: typeof h.add | typeof h.upd, release: (v: Res) => void, v: Res) {
+      fireEvent.click(btn)
+      await waitFor(() => expect(btn.disabled).toBe(true))
+      fireEvent.click(btn)
+      expect(fn).toHaveBeenCalledTimes(1)
+      release(v)
+      await waitFor(() => expect(btn.disabled).toBe(false))
+    }
+    it('Add downtime (Record)', async () => {
+      render(<DowntimeLog projectId="p1" installationId="i1" canEdit downtime={[]} candidates={[]} selectedMonth="2026-03" />)
+      const release = hold(h.add)
+      await pressTwice(screen.getByRole('button', { name: 'Add downtime' }) as HTMLButtonElement, h.add, release, { ok: true, id: 'd9' })
+    })
+    it('candidate Confirm', async () => {
+      render(<DowntimeLog projectId="p1" installationId="i1" canEdit downtime={[]} candidates={[cand]} selectedMonth="2026-03" />)
+      const release = hold(h.add)
+      await pressTwice(screen.getByRole('button', { name: 'Confirm 2026-03-12 11:30' }) as HTMLButtonElement, h.add, release, { ok: true, id: 'd9' })
+    })
+    it('edit Save', async () => {
+      render(<DowntimeLog projectId="p1" installationId="i1" canEdit downtime={[row]} candidates={[]} selectedMonth="2026-03" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+      const release = hold(h.upd)
+      // Released with a refusal so the row stays in edit mode and the button can be read back.
+      await pressTwice(screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement, h.upd, release, { error: 'Stale.' })
+    })
+  })
   it('delete needs a second press; View level has no controls', async () => {
     const { unmount } = render(<DowntimeLog projectId="p1" installationId="i1" canEdit downtime={[row]} candidates={[]} selectedMonth="2026-03" />)
     fireEvent.click(screen.getByRole('button', { name: 'Delete downtime 2026-03-10 10:00' }))

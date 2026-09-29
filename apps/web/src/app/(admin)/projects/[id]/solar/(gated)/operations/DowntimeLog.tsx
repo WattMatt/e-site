@@ -33,6 +33,7 @@ function DowntimeRow({ p, d }: { p: Props; d: OpsDowntimeView }) {
   const [cause, setCause] = useState(d.cause)
   const [excluded, setExcluded] = useState(d.excludedFromGuarantee)
   const [msg, setMsg] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const label = sastDateTime(d.startsAt)
   if (editing) {
     return (
@@ -43,12 +44,18 @@ function DowntimeRow({ p, d }: { p: Props; d: OpsDowntimeView }) {
           <FormField label="Cause" htmlFor={`e-c-${d.id}`}><Select id={`e-c-${d.id}`} value={cause} onChange={(e) => setCause(e.target.value)}>
             {CAUSES.map((c) => <option key={c} value={c}>{CAUSE_LABELS[c]}</option>)}</Select></FormField>
           <label style={{ fontSize: 13 }}><input type="checkbox" checked={excluded} onChange={(e) => setExcluded(e.target.checked)} /> Excluded from the guarantee</label>
-          <Button size="sm" onClick={async () => {
-            const r = await updateDowntimeAction({ projectId: p.projectId, id: d.id, startsAt: start, endsAt: end, cause, description: d.description ?? '', excludedFromGuarantee: excluded, expectedUpdatedAt: d.updatedAt })
-            if ('fieldErrors' in r) { setMsg(Object.values(r.fieldErrors).join(' ')); return }
-            if ('error' in r) { setMsg(r.error); return }
-            setEditing(false)
-            router.refresh()
+          <Button size="sm" disabled={saving} onClick={async () => {
+            if (saving) return
+            setSaving(true)
+            try {
+              const r = await updateDowntimeAction({ projectId: p.projectId, id: d.id, startsAt: start, endsAt: end, cause, description: d.description ?? '', excludedFromGuarantee: excluded, expectedUpdatedAt: d.updatedAt })
+              if ('fieldErrors' in r) { setMsg(Object.values(r.fieldErrors).join(' ')); return }
+              if ('error' in r) { setMsg(r.error); return }
+              setEditing(false)
+              router.refresh()
+            } finally {
+              setSaving(false)
+            }
           }}>Save</Button>
           <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
           {msg ? <span role="alert" style={{ color: 'var(--c-red)', fontSize: 12 }}>{msg}</span> : null}
@@ -92,6 +99,14 @@ export function DowntimeLog(p: Props) {
   const [excluded, setExcluded] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
+  // Presses in flight ('add', or a candidate's startsAt): each button is disabled until its action
+  // returns, so a double press cannot record the same window twice (review round 2).
+  const [pending, setPending] = useState<string[]>([])
+  const run = async (key: string, fn: () => Promise<void>) => {
+    if (pending.includes(key)) return
+    setPending((ks) => [...ks, key])
+    try { await fn() } finally { setPending((ks) => ks.filter((k) => k !== key)) }
+  }
   const visible = p.candidates.filter((c) => !hidden.includes(c.startsAt))
 
   return (
@@ -117,13 +132,13 @@ export function DowntimeLog(p: Props) {
                     <Select aria-label={`Cause for ${l}`} value={candCause[c.startsAt] ?? 'other'} onChange={(e) => setCandCause((m) => ({ ...m, [c.startsAt]: e.target.value }))}>
                       {CAUSES.map((x) => <option key={x} value={x}>{CAUSE_LABELS[x]}</option>)}
                     </Select>
-                    <Button size="sm" aria-label={`Confirm ${l}`} onClick={async () => {
+                    <Button size="sm" aria-label={`Confirm ${l}`} disabled={pending.includes(c.startsAt)} onClick={() => run(c.startsAt, async () => {
                       const r = await addDowntimeAction({ projectId: p.projectId, installationId: p.installationId, startsAt: c.startsAt, endsAt: c.endsAt,
                         cause: candCause[c.startsAt] ?? 'other', description: '', excludedFromGuarantee: false, source: 'detected' })
                       if ('error' in r) { setMsg(r.error); return }
                       if ('fieldErrors' in r) { setMsg(Object.values(r.fieldErrors).join(' ')); return }
                       router.refresh()
-                    }}>Confirm</Button>
+                    })}>Confirm</Button>
                     <Button size="sm" variant="ghost" aria-label={`Dismiss ${l}`} onClick={() => setHidden((hs) => [...hs, c.startsAt])}>Dismiss</Button>
                   </li>
                 )
@@ -139,14 +154,14 @@ export function DowntimeLog(p: Props) {
               {CAUSES.map((c) => <option key={c} value={c}>{CAUSE_LABELS[c]}</option>)}</Select></FormField>
             <FormField label="Description" htmlFor="dt-desc" error={errors.description}><TextInput id="dt-desc" value={description} onChange={(e) => setDescription(e.target.value)} /></FormField>
             <label style={{ fontSize: 13 }}><input type="checkbox" checked={excluded} onChange={(e) => setExcluded(e.target.checked)} /> Excluded from the guarantee</label>
-            <Button onClick={async () => {
+            <Button disabled={pending.includes('add')} onClick={() => run('add', async () => {
               const r = await addDowntimeAction({ projectId: p.projectId, installationId: p.installationId, startsAt: start, endsAt: end, cause, description, excludedFromGuarantee: excluded, source: 'manual' })
               if ('fieldErrors' in r) { setErrors(r.fieldErrors); return }
               setErrors({})
               if ('error' in r) { setMsg(r.error); return }
               setStart(''); setEnd(''); setDescription(''); setExcluded(false)
               router.refresh()
-            }}>Add downtime</Button>
+            })}>Add downtime</Button>
           </div>
         ) : null}
         {msg ? <p role="alert" style={{ fontSize: 13, color: 'var(--c-red)' }}>{msg}</p> : null}

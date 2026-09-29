@@ -44,6 +44,7 @@ export function IrradiationCard(p: Props) {
   const [source, setSource] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   return (
     <Card>
       <CardHeader><span className="data-panel-title">Measured irradiation</span></CardHeader>
@@ -61,13 +62,20 @@ export function IrradiationCard(p: Props) {
               <option value="poa">Plane of array (POA)</option><option value="ghi">Horizontal (GHI)</option></Select></FormField>
             <FormField label="Irradiation kWh/m²" htmlFor="ops-irr-val" error={errors.kwhPerM2}><TextInput id="ops-irr-val" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} /></FormField>
             <FormField label="Source" htmlFor="ops-irr-src" error={errors.sourceNote}><TextInput id="ops-irr-src" value={source} onChange={(e) => setSource(e.target.value)} /></FormField>
-            <Button onClick={async () => {
-              const r = await saveIrradiationAction({ projectId, installationId, month, plane, kwhPerM2: Number(value), sourceNote: source })
-              if ('fieldErrors' in r) { setErrors(r.fieldErrors); return }
-              setErrors({})
-              if ('error' in r) { setMsg(r.error); return }
-              setMonth(''); setValue(''); setSource('')
-              router.refresh()
+            {/* Disabled while saving: a second press would insert the month twice (review round 2). */}
+            <Button disabled={saving} onClick={async () => {
+              if (saving) return
+              setSaving(true)
+              try {
+                const r = await saveIrradiationAction({ projectId, installationId, month, plane, kwhPerM2: Number(value), sourceNote: source })
+                if ('fieldErrors' in r) { setErrors(r.fieldErrors); return }
+                setErrors({})
+                if ('error' in r) { setMsg(r.error); return }
+                setMonth(''); setValue(''); setSource('')
+                router.refresh()
+              } finally {
+                setSaving(false)
+              }
             }}>Save irradiation</Button>
           </div>
         ) : null}

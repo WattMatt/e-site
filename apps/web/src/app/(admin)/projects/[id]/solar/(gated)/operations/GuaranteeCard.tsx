@@ -19,8 +19,16 @@ export function GuaranteeCard({ projectId, installationId, canEdit, guarantee }:
   const [updatedAt, setUpdatedAt] = useState<string | null>(guarantee?.updatedAt ?? null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
+  // Disabled while saving: a second press would carry the same (now stale) version (review round 2).
   async function save() {
+    if (saving) return
+    setSaving(true)
+    try { await submit() } finally { setSaving(false) }
+  }
+
+  async function submit() {
     // Review B5: Number('') is 0, so a blank month would silently guarantee nothing. All 12 are required.
     if (basis === 'manual') {
       const blank = MONTH_NAMES.filter((_, k) => (manual[k] ?? '').trim() === '')
@@ -107,7 +115,7 @@ export function GuaranteeCard({ projectId, installationId, canEdit, guarantee }:
           </div>
         ) : null}
         {canEdit ? <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
-          <Button onClick={save}>Save guarantee</Button>
+          <Button disabled={saving} onClick={save}>Save guarantee</Button>
           {msg ? <span role="status" style={{ fontSize: 13 }}>{msg}</span> : null}
         </div> : null}
       </CardBody>

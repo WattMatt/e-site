@@ -17,6 +17,18 @@ describe('GuaranteeCard', () => {
     await waitFor(() => expect(h.save).toHaveBeenCalledWith({ projectId: 'p1', installationId: 'i1', expectedUpdatedAt: 'G1',
       guarantee: { basis: 'pct_of_modelled', pct: 90, manualMonthlyKwh: null, degradationPctPerYear: 0.45 } }))
   })
+  it('Save guarantee is disabled while it is saving, so a double press cannot race the version guard (review round 2)', async () => {
+    let release: (v: { ok: true; updatedAt: string }) => void = () => {}
+    h.save.mockImplementationOnce((() => new Promise((r) => { release = r })) as never)
+    render(<GuaranteeCard projectId="p1" installationId="i1" canEdit guarantee={g} />)
+    const save = screen.getByRole('button', { name: 'Save guarantee' }) as HTMLButtonElement
+    fireEvent.click(save)
+    await waitFor(() => expect(save.disabled).toBe(true))
+    fireEvent.click(save)
+    expect(h.save).toHaveBeenCalledTimes(1)
+    release({ ok: true, updatedAt: 'G2' })
+    await waitFor(() => expect(save.disabled).toBe(false))
+  })
   it('manual basis offers twelve months', async () => {
     render(<GuaranteeCard projectId="p1" installationId="i1" canEdit guarantee={g} />)
     fireEvent.change(screen.getByLabelText('Guarantee basis'), { target: { value: 'manual' } })

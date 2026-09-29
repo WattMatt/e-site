@@ -16,6 +16,18 @@ describe('IrradiationCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save irradiation' }))
     await waitFor(() => expect(h.save).toHaveBeenCalledWith({ projectId: 'p1', installationId: 'i1', month: '2026-03', plane: 'poa', kwhPerM2: 150.5, sourceNote: 'Site pyranometer' }))
   })
+  it('Save irradiation is disabled while it is saving, so a double press cannot write twice (review round 2)', async () => {
+    let release: (v: { ok: true }) => void = () => {}
+    h.save.mockImplementationOnce((() => new Promise((r) => { release = r })) as never)
+    render(<IrradiationCard projectId="p1" installationId="i1" canEdit entries={[]} />)
+    const save = screen.getByRole('button', { name: 'Save irradiation' }) as HTMLButtonElement
+    fireEvent.click(save)
+    await waitFor(() => expect(save.disabled).toBe(true))
+    fireEvent.click(save)
+    expect(h.save).toHaveBeenCalledTimes(1)
+    release({ ok: true })
+    await waitFor(() => expect(save.disabled).toBe(false))
+  })
   it('lists entries and removes one on the second press', async () => {
     render(<IrradiationCard projectId="p1" installationId="i1" canEdit entries={[{ month: '2026-03', plane: 'ghi', kwhPerM2: 180, sourceNote: 'Portal' }]} />)
     expect(screen.getByText('March 2026')).toBeTruthy()
