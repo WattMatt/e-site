@@ -60,6 +60,8 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../../apps/edge-functions/supab
 const EXPOSED_SCHEMAS = [
   'public', 'projects', 'inspections', 'field', 'tenants', 'suppliers',
   'billing', 'marketplace', 'cable_schedule', 'structure', 'gcr',
+  // 00207: added to db_schema by the WhatsApp runbook §3 PATCH.
+  'whatsapp',
 ] as const
 
 /** Migration head in production when PRODUCTION_ANON_EXECUTABLE_BEFORE_00186 was captured. */

@@ -9,7 +9,63 @@
 -- include `whatsapp` (docs/whatsapp-runbook.md §2), or REST returns PGRST002.
 --
 -- @verify:begin
--- (Task 8 writes the full block; keep this marker pair at the top of the file.)
+-- table: whatsapp.settings
+-- table: whatsapp.templates
+-- table: whatsapp.phone_links
+-- table: whatsapp.outbox
+-- table: whatsapp.inbound
+-- table: whatsapp.unknown_senders
+-- table: projects.work_item_notes
+-- table: projects.work_item_attachments
+-- column: projects.project_settings.notify_whatsapp
+-- column: whatsapp.inbound.claimed_at
+-- function: whatsapp.act_as(uuid)
+-- function: whatsapp.record_ack(uuid)
+-- function: whatsapp.wa_acknowledge(uuid,uuid)
+-- function: whatsapp.wa_mark_done(uuid,uuid)
+-- function: whatsapp.wa_add_note(uuid,uuid,text,uuid)
+-- function: whatsapp.wa_add_attachment(uuid,uuid,text,text,text,text,uuid)
+-- function: whatsapp.wa_redact(uuid,text,uuid)
+-- function: whatsapp.wa_open_items(uuid)
+-- function: whatsapp.enqueue_for_event()
+-- function: whatsapp.sweep_due(date)
+-- function: whatsapp.enqueue_fold(uuid,date)
+-- function: whatsapp.claim_outbox(int)
+-- function: whatsapp.claim_inbound(int,int)
+-- function: whatsapp.receive_check(uuid,uuid)
+-- trigger: whatsapp_enqueue_trg ON projects.work_item_events
+-- trigger: inbound_immutable_trg ON whatsapp.inbound
+-- trigger: work_item_notes_bind ON projects.work_item_notes
+-- trigger: work_item_attachments_bind ON projects.work_item_attachments
+-- constraint: work_item_events_verb_check ON projects.work_item_events
+-- policy: phone_links_select_own ON whatsapp.phone_links PERMISSIVE
+-- policy: outbox_select ON whatsapp.outbox PERMISSIVE
+-- policy: inbound_select ON whatsapp.inbound PERMISSIVE
+-- policy: work_item_notes_select ON projects.work_item_notes PERMISSIVE
+-- policy: work_item_notes_insert_wa ON projects.work_item_notes PERMISSIVE
+-- policy: work_item_notes_redact_wa ON projects.work_item_notes PERMISSIVE
+-- policy: work_item_attachments_select ON projects.work_item_attachments PERMISSIVE
+-- policy: work_item_attachments_insert_wa ON projects.work_item_attachments PERMISSIVE
+-- policy: work_item_attachments_redact_wa ON projects.work_item_attachments PERMISSIVE
+-- cron: whatsapp-due-sweep
+-- grant_absent: anon SELECT ON whatsapp.phone_links
+-- grant_absent: authenticated INSERT ON whatsapp.phone_links
+-- grant_absent: authenticated UPDATE ON whatsapp.inbound
+-- grant_absent: authenticated INSERT ON projects.work_item_notes
+-- grant_absent: authenticated INSERT ON projects.work_item_attachments
+-- anon_execute_absent: ALL prosecdef functions in whatsapp
+-- sql: (SELECT pg_get_userbyid(p.proowner) = 'whatsapp_actor' FROM pg_proc p WHERE p.oid = 'whatsapp.wa_mark_done(uuid,uuid)'::regprocedure)
+-- sql: (SELECT NOT r.rolbypassrls AND NOT r.rolsuper AND NOT r.rolcanlogin FROM pg_roles r WHERE r.rolname = 'whatsapp_actor')
+-- sql: (SELECT pg_has_role('whatsapp_actor', 'authenticated', 'MEMBER'))
+-- sql: (SELECT NOT has_function_privilege('authenticated', 'whatsapp.wa_mark_done(uuid,uuid)', 'EXECUTE'))
+-- sql: (SELECT NOT has_function_privilege('authenticated', 'whatsapp.act_as(uuid)', 'EXECUTE'))
+-- sql: (SELECT NOT has_column_privilege('authenticated', 'whatsapp.phone_links', 'otp_hash', 'SELECT'))
+-- sql: (SELECT pg_get_constraintdef(c.oid) LIKE '%acknowledged%' FROM pg_constraint c WHERE c.conrelid = 'projects.work_item_events'::regclass AND c.conname = 'work_item_events_verb_check')
+-- sql: (SELECT count(*) = 1 FROM pg_constraint c WHERE c.conrelid = 'projects.work_item_events'::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%verb%')
+-- sql: (SELECT EXISTS (SELECT 1 FROM storage.buckets b WHERE b.id = 'work-item-attachments' AND b.public = false))
+-- sql: (SELECT count(*) = 1 FROM whatsapp.settings)
+-- behaviour: wa_* functions act as the user under real RLS; proven by scripts/db/assert-whatsapp-actor.sql
+--   including the re-own-to-postgres mutation (Task 6 step 5).
 -- @verify:end
 
 CREATE SCHEMA IF NOT EXISTS whatsapp;

@@ -1785,7 +1785,7 @@ with this block:
 -- grant_absent: authenticated UPDATE ON whatsapp.inbound
 -- grant_absent: authenticated INSERT ON projects.work_item_notes
 -- grant_absent: authenticated INSERT ON projects.work_item_attachments
--- anon_execute_absent: whatsapp
+-- anon_execute_absent: ALL prosecdef functions in whatsapp
 -- sql: (SELECT pg_get_userbyid(p.proowner) = 'whatsapp_actor' FROM pg_proc p WHERE p.oid = 'whatsapp.wa_mark_done(uuid,uuid)'::regprocedure)
 -- sql: (SELECT NOT r.rolbypassrls AND NOT r.rolsuper AND NOT r.rolcanlogin FROM pg_roles r WHERE r.rolname = 'whatsapp_actor')
 -- sql: (SELECT pg_has_role('whatsapp_actor', 'authenticated', 'MEMBER'))
