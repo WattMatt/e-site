@@ -43,8 +43,11 @@ function makeSupabase(opts: {
   listError?: { message: string } | null
   reportRow?: unknown | null
   deleteError?: { message: string } | null
+  /** Rows `.delete()…select('id')` reports as removed (default: exactly the one row). */
+  deletedRows?: unknown[] | null
 } = {}) {
   const { orgId = ORG_ID, listRows = [], listError = null, reportRow = null, deleteError = null } = opts
+  const deletedRows = opts.deletedRows === undefined ? [{ id: REPORT_ID }] : opts.deletedRows
 
   const projMaybeSingle = vi.fn().mockResolvedValue({ data: orgId ? { organisation_id: orgId } : null, error: null })
   const projEq = vi.fn().mockReturnValue({ maybeSingle: projMaybeSingle })
@@ -62,8 +65,9 @@ function makeSupabase(opts: {
   const eq2 = vi.fn().mockReturnValue({ in: inFn, maybeSingle: repMaybeSingle })
   const eq1 = vi.fn().mockReturnValue({ eq: eq2 })
   const reportsSelect = vi.fn().mockReturnValue({ eq: eq1 })
-  // delete: delete → eq(id) → eq(project)
-  const delEq2 = vi.fn().mockResolvedValue({ error: deleteError })
+  // delete: delete → eq(id) → eq(project) [→ select('id')]
+  const delSelect = vi.fn().mockResolvedValue({ data: deleteError ? null : deletedRows, error: deleteError })
+  const delEq2 = vi.fn().mockReturnValue(Object.assign(Promise.resolve({ error: deleteError }), { select: delSelect }))
   const delEq1 = vi.fn().mockReturnValue({ eq: delEq2 })
   const del = vi.fn().mockReturnValue({ eq: delEq1 })
   const fromReports = vi.fn().mockReturnValue({ select: reportsSelect, delete: del })
@@ -74,7 +78,7 @@ function makeSupabase(opts: {
 
   return {
     client: { schema, auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } } }) } },
-    del, order, srcEqTable, srcEqId,
+    del, delSelect, order, srcEqTable, srcEqId,
   }
 }
 
@@ -257,6 +261,24 @@ describe('deleteProjectReportAction', () => {
     expect(JSON.stringify(log.mock.calls)).toContain('row-level security policy')
     expect(service.remove).not.toHaveBeenCalled()
     log.mockRestore()
+  })
+
+  it('deletes a row whose path is forged but never removes the object it names (review round 3)', async () => {
+    for (const storage_path of [
+      `${ORG_ID}/${PROJECT_ID}/../../00000000-0000-0000-0000-0000000000cc/00000000-0000-0000-0000-0000000000dd/valuation-x-v1.pdf`,
+      `${ORG_ID}/${PROJECT_ID}/x\\..\\y.pdf`,
+      `00000000-0000-0000-0000-0000000000cc/00000000-0000-0000-0000-0000000000dd/valuation-x-v1.pdf`,
+    ]) {
+      const { client } = makeSupabase({ reportRow: { ...REPORT_ROW, storage_path } })
+      const service = makeServiceClient({})
+      createClientMock.mockResolvedValue(client)
+      createServiceClientMock.mockReturnValue(service.client)
+      requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+      const { deleteProjectReportAction } = await import('./project-reports.actions')
+      await expect(deleteProjectReportAction(PROJECT_ID, REPORT_ID)).resolves.toEqual({ ok: true })
+      expect(service.remove, storage_path).not.toHaveBeenCalled()
+    }
   })
 
   it('removes kind=qc objects from the dedicated qc-reports bucket', async () => {

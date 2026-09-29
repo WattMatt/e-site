@@ -135,6 +135,7 @@
 -- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'public.solar_issue_proposal(uuid, timestamptz, uuid, jsonb, text, text, text, timestamptz, uuid, uuid)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'solar.proposal_record_response(uuid, text, uuid, text, text, text, boolean, text, text, text, text)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%uo.organisation_id%' FROM pg_proc WHERE oid = 'solar.is_portal_member(uuid, uuid)'::regprocedure)
+-- sql: (SELECT count(*) = 2 AND bool_and(strpos(coalesce(with_check, ''), '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+') > 0 AND strpos(coalesce(with_check, ''), 'starts_with(') > 0 AND strpos(coalesce(with_check, ''), '''..''') > 0) AND bool_and(cmd = 'INSERT' OR (strpos(coalesce(qual, ''), '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+') > 0 AND strpos(coalesce(qual, ''), 'starts_with(') > 0 AND strpos(coalesce(qual, ''), '''..''') > 0)) FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'reports' AND policyname LIKE 'reports_solar_service_only_%' AND permissive = 'RESTRICTIVE' AND cmd IN ('INSERT', 'UPDATE'))
 -- behaviour: scripts/db/assert-solar-proposals-roles.sql, every row ok
 -- @verify:end
 
@@ -842,11 +843,34 @@ CREATE POLICY solar_pdfs_service_only_delete ON storage.objects AS RESTRICTIVE F
 -- inserts or updates a row whose kind is solar_* OR whose path is a Solar PDF (USING and WITH CHECK).
 -- DELETE stays narrow: deleteProjectReportAction removes feasibility/technical rows through the
 -- session (OWNER_ADMIN + Solar Edit); only the proposal row is evidence.
+--
+-- Review round 3: the path must also be CANONICAL, for every session-written row of every kind.
+-- storage-js builds `${url}/object/sign/${bucket}/${path}` unencoded and the URL parser inside fetch
+-- turns `\` into `/`, deletes TAB/CR/LF and resolves `.`, `..` and `%2e%2e`, so a raw-string test
+-- is not a test of the object that gets signed (`<org>/<p>/solar-reports\f.pdf` signs
+-- `<org>/<p>/solar-reports/f.pdf`; `<org>/<p>/../../<org2>/<p2>/x.pdf` signs another org's file).
+-- Every report writer (tenant schedule, equipment, QC, valuation, snag, site form, inspection, cable
+-- route sheet, Solar reports/proposals/layout sheets) uses the service client and writes
+-- `<org uuid>/<project uuid>/[dir/]file.pdf`; all 14 production rows matched at review time. So a
+-- session row must sit on that shape, under its OWN org and project, with no `..` anywhere.
+-- apps/web/src/lib/reports/report-path.ts holds the same pattern and its test pins the two together.
 CREATE POLICY reports_solar_service_only_insert ON projects.reports AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/');
+    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%'
+        AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/'
+        AND coalesce(storage_path, '') ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.pdf$'
+        AND strpos(coalesce(storage_path, ''), '..') = 0
+        AND starts_with(coalesce(storage_path, ''), organisation_id::text || '/' || project_id::text || '/'));
 CREATE POLICY reports_solar_service_only_update ON projects.reports AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/')
-    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/');
+    USING (coalesce(kind, '') NOT LIKE 'solar\_%'
+        AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/'
+        AND coalesce(storage_path, '') ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.pdf$'
+        AND strpos(coalesce(storage_path, ''), '..') = 0
+        AND starts_with(coalesce(storage_path, ''), organisation_id::text || '/' || project_id::text || '/'))
+    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%'
+        AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/'
+        AND coalesce(storage_path, '') ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.pdf$'
+        AND strpos(coalesce(storage_path, ''), '..') = 0
+        AND starts_with(coalesce(storage_path, ''), organisation_id::text || '/' || project_id::text || '/'));
 CREATE POLICY reports_solar_proposal_delete_authz ON projects.reports AS RESTRICTIVE FOR DELETE TO authenticated
     USING (kind IS DISTINCT FROM 'solar_proposal');
 

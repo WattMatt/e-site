@@ -6,6 +6,7 @@ import { ORG_WRITE_ROLES, OWNER_ADMIN } from '@esite/shared'
 import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
 import { getSolarAccessLevel } from '@/lib/solar/access'
 import { solarLevelAllows } from '@esite/shared'
+import { isCanonicalReportPath } from '@/lib/reports/report-path'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const REPORTS_BUCKET = 'reports'
@@ -47,6 +48,9 @@ function solarKindForPath(path: string): string {
 async function reportPathDenied(
   supabase: unknown, projectId: string, report: { storage_path: string; kind: string; organisation_id: string },
 ): Promise<string | null> {
+  // FIRST: every check below reads the raw string, and the URL parser rewrites a non-canonical one
+  // into a different object before it is signed (review round 3). See lib/reports/report-path.ts.
+  if (!isCanonicalReportPath(report.storage_path)) return REPORT_PATH_REFUSED
   if (!report.organisation_id || !report.storage_path.startsWith(`${report.organisation_id}/${projectId}/`)) return REPORT_PATH_REFUSED
   if (!SOLAR_PDF_PATH.test(report.storage_path)) return null
   if (!solarLevelForKind(report.kind)) return REPORT_PATH_REFUSED
@@ -265,12 +269,12 @@ export async function deleteProjectReportAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: row } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path, kind')
+    .select('storage_path, kind, organisation_id')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const report = row as { storage_path: string; kind: string } | null
+  const report = row as { storage_path: string; kind: string; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
   // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00216).
@@ -297,6 +301,13 @@ export async function deleteProjectReportAction(
     // The raw database message can name tables, policies and triggers — log it, show a sentence.
     console.error('deleteProjectReportAction: delete failed', { projectId, reportId, kind: report.kind, error: deleteErr.message ?? deleteErr })
     return { error: 'The report could not be deleted — try again.' }
+  }
+
+  // The object is removed with the SERVICE client, so its path is trusted only when it is canonical
+  // and under the row's own <org>/<project>/ (a forged row could otherwise name another org's file).
+  // The row is already gone; an orphaned private object is harmless.
+  if (!isCanonicalReportPath(report.storage_path) || !report.storage_path.startsWith(`${report.organisation_id}/${projectId}/`)) {
+    return { ok: true }
   }
 
   // Best-effort object removal — an orphaned private object is harmless.

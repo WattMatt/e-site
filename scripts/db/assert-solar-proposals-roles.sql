@@ -38,6 +38,11 @@ DECLARE
   v_n       INT;
   v_status  TEXT;
   u         UUID;
+  v_path    TEXT;   -- review round 3: forged storage_path forms
+  v_kind    TEXT;
+  v_i       INT;
+  v_ok      BOOLEAN;
+  v_forged  TEXT[];
   v_hash    CONSTANT TEXT := repeat('c', 64);
   v_pdfsha  CONSTANT TEXT := repeat('a', 64);
   v_tok_a   CONSTANT TEXT := rpad('tokA', 43, 'x');
@@ -335,6 +340,74 @@ BEGIN
     AND (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND title = 'forged') = 0);
   INSERT INTO _r VALUES ('proposal_report_row_intact',
     (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_proposal' AND title = 'p') = 1);
+
+  -- Review round 3: storage-js does not encode a path and fetch's URL parser turns `\` into `/`,
+  -- deletes TAB/CR/LF and resolves `..`/`%2e%2e`, so each form below passes a raw-string
+  -- `/solar-(reports|proposals)/` test yet names a different object once signed. A session may
+  -- write a report row only on the canonical `<its org>/<its project>/[dir/]file.pdf` shape.
+  v_forged := ARRAY[
+    v_org || '/' || v_p || '/solar-reports\f.pdf',
+    v_org || '/' || v_p || '/solar-rep' || chr(9) || 'orts/f.pdf',
+    v_org || '/' || v_p || '/solar-rep' || chr(13) || chr(10) || 'orts/f.pdf',
+    v_org || '/' || v_p || '/x/..\solar-proposals\f.pdf',
+    v_org || '/' || v_p || '/../../' || v_org2 || '/' || v_p2 || '/valuation-x.pdf',
+    v_org || '/' || v_p || '/%2e%2e/%2e%2e/' || v_org2 || '/' || v_p2 || '/valuation-x.pdf',
+    v_org || '/' || v_p || '/solar-reports%2Ff.pdf',
+    v_org || '/' || v_p || '//solar-reports/f.pdf',
+    v_org2 || '/' || v_p2 || '/valuation-x-v1.pdf'];
+  FOREACH u IN ARRAY ARRAY[v_admin, v_pm] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', u::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    FOREACH v_kind IN ARRAY ARRAY['tenant_schedule', 'solar_technical'] LOOP
+      FOR v_i IN 1 .. array_length(v_forged, 1) LOOP
+        BEGIN
+          INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+          VALUES (v_org, v_p, v_kind, 'forged', v_forged[v_i], 'issued', 9);
+          v_ok := false;
+        EXCEPTION
+          WHEN insufficient_privilege THEN v_ok := true;
+          WHEN OTHERS THEN v_ok := false;
+        END;
+        INSERT INTO _r VALUES ('forged_path_insert_REFUSED:' || CASE WHEN u = v_admin THEN 'admin' ELSE 'pm' END
+          || ':' || v_kind || ':' || v_i, v_ok);
+      END LOOP;
+    END LOOP;
+    RESET ROLE;
+    PERFORM set_config('request.jwt.claims', '', true);
+  END LOOP;
+  -- Re-pointing the admin's canonical control row at a forged form is refused too (UPDATE WITH CHECK).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  FOR v_i IN 1 .. array_length(v_forged, 1) LOOP
+    BEGIN
+      UPDATE projects.reports SET storage_path = v_forged[v_i] WHERE project_id = v_p AND kind = 'tenant_schedule' AND title = 'ctl';
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_ok := v_n = 0;
+    EXCEPTION
+      WHEN insufficient_privilege THEN v_ok := true;
+      WHEN OTHERS THEN v_ok := false;
+    END;
+    INSERT INTO _r VALUES ('forged_path_repoint_REFUSED:admin:' || v_i, v_ok);
+  END LOOP;
+  -- Controls: the canonical shape still writes, for the admin (update) and the PM (insert).
+  UPDATE projects.reports SET storage_path = v_org || '/' || v_p || '/cable-route-sheets/' || v_run || '-p1-v1.pdf'
+    WHERE project_id = v_p AND kind = 'tenant_schedule' AND title = 'ctl';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('admin_repoints_to_canonical_path_control', v_n = 1);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'equipment_materials', 'ctl-pm', v_org || '/' || v_p || '/equipment-materials-v9.pdf', 'issued', 9);
+    INSERT INTO _r VALUES ('pm_inserts_non_solar_report_control', true);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('pm_inserts_non_solar_report_control:' || left(SQLERRM, 120), false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO _r VALUES ('no_forged_path_row_landed',
+    (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND title = 'forged') = 0);
 
   -- ── 4. Issue family A (service path) ──────────────────────────────────────
   SELECT updated_at INTO v_upd FROM solar.proposals WHERE id = v_prop;
