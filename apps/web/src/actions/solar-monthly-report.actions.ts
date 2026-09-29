@@ -54,7 +54,8 @@ export async function saveMonthlyReportNoteAction(input: {
   const period = monthFirstDay(input.month)
   const { data, error } = input.expectedUpdatedAt === null
     ? await t().insert({ installation_id: input.installationId, period_month: period, section: input.section, body }).select('updated_at')
-    : await t().update({ body }).eq('installation_id', input.installationId).eq('period_month', period).eq('section', input.section)
+    : await t().update({ body }).eq('installation_id', input.installationId).eq('project_id', input.projectId)
+        .eq('period_month', period).eq('section', input.section)
         .eq('updated_at', input.expectedUpdatedAt).select('updated_at')
   if (error) return { error: error.code === '23505' ? STALE_MESSAGE : opsError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }

@@ -15,7 +15,7 @@ import { linkHandoverDocumentAction, saveHandoverTemplateAction, setHandoverNotA
 import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 
 const P = '11111111-1111-4111-8111-111111111111'
-const item = { id: 'h1', installation_id: 'i1', item_key: 'coc', label: 'CoC' }
+const item = { id: 'h1', installation_id: 'i1', project_id: P, item_key: 'coc', label: 'CoC' }
 function setup(extra: Parameters<typeof fakeSupabase>[0] = {}) {
   const f = fakeSupabase({ userId: 'u1', tables: { 'solar.handover_items': [item] }, ...extra })
   h.createClient.mockResolvedValue(f.client)
@@ -40,9 +40,22 @@ describe('handover items', () => {
     const f = setup()
     await expect(setHandoverNotApplicableAction({ projectId: P, itemId: 'h1', notApplicable: true, note: '  No battery  ' })).resolves.toEqual({ ok: true })
     expect(callsTo(f.calls, 'solar.handover_items', 'update')[0]!.payload).toEqual({ not_applicable: true, document_id: null, note: 'No battery' })
+    expect(callsTo(f.calls, 'solar.handover_items', 'update')[0]!.filters).toEqual([['eq', 'id', 'h1'], ['eq', 'project_id', P]])
+  })
+  it('an item of another project, or an update that touched no row, says so with no audit or event (review A2)', async () => {
+    setup({ tables: { 'solar.handover_items': [{ ...item, project_id: 'other' }] } })
+    await expect(linkHandoverDocumentAction({ projectId: P, itemId: 'h1', documentId: 'd1' })).resolves.toEqual({ error: 'That checklist item no longer exists — reload.' })
+    setup({ writes: { 'solar.handover_items:update': { data: [] } } })
+    await expect(linkHandoverDocumentAction({ projectId: P, itemId: 'h1', documentId: 'd1' })).resolves.toEqual({ error: 'That checklist item no longer exists — reload.' })
+    await expect(setHandoverNotApplicableAction({ projectId: P, itemId: 'h1', notApplicable: true, note: '' })).resolves.toEqual({ error: 'That checklist item no longer exists — reload.' })
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.emit).not.toHaveBeenCalled()
+    const f = setup({ tables: { 'solar.handover_items': [item], 'solar.installations': [{ id: 'i1', project_id: 'other', organisation_id: 'o1' }], 'solar.handover_templates': [] } })
+    await expect(syncHandoverItemsAction({ projectId: P, installationId: 'i1' })).resolves.toEqual({ error: 'The installation could not be found — reload.' })
+    expect(callsTo(f.calls, 'solar.handover_items', 'insert')).toHaveLength(0)
   })
   it('adds template items the checklist lacks, never duplicating', async () => {
-    const f = setup({ tables: { 'solar.handover_items': [item], 'solar.installations': [{ id: 'i1', organisation_id: 'o1' }], 'solar.handover_templates': [] } })
+    const f = setup({ tables: { 'solar.handover_items': [item], 'solar.installations': [{ id: 'i1', project_id: P, organisation_id: 'o1' }], 'solar.handover_templates': [] } })
     await expect(syncHandoverItemsAction({ projectId: P, installationId: 'i1' })).resolves.toEqual({ ok: true, added: 8 })
     const rows = callsTo(f.calls, 'solar.handover_items', 'insert')[0]!.payload as Array<Record<string, unknown>>
     expect(rows.map((r) => r.item_key)).not.toContain('coc')

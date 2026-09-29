@@ -95,7 +95,7 @@ export async function saveInstallationAction(input: {
 
   const { data, error } = await g.supabase.schema('solar').from('installations')
     .update({ commissioning_date: date, as_built: ab.ok ? ab.value : null, notes: notes || null })
-    .eq('id', input.installationId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+    .eq('id', input.installationId).eq('project_id', input.projectId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
   if (error) return { error: opsError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'installation_saved', objectRef: { installationId: input.installationId } })
@@ -103,6 +103,12 @@ export async function saveInstallationAction(input: {
   done(input.projectId)
   return { ok: true, updatedAt: String((data[0] as Row).updated_at) }
 }
+
+// Every update/delete addressed by row id is also scoped to the GATED project, and a write that
+// touched no row (another project's ids, or already gone) returns a sentence with no audit (review A2).
+const NOT_LINKED = 'That meter is not linked to this installation — reload.'
+const NO_IRRADIATION = 'There is no irradiation entry for that month — reload.'
+const NO_DOWNTIME = 'That downtime entry no longer exists — reload.'
 
 // ── Meters ────────────────────────────────────────────────────────────────
 const ROLES = ['generation', 'consumption'] as const
@@ -122,9 +128,10 @@ export async function linkMeterAction(input: { projectId: string; installationId
 export async function unlinkMeterAction(input: { projectId: string; installationId: string; meterId: string }): Promise<{ ok: true } | Err> {
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
-  const { error } = await g.supabase.schema('solar').from('installation_meters').delete()
-    .eq('installation_id', input.installationId).eq('meter_id', input.meterId)
+  const { data, error } = await g.supabase.schema('solar').from('installation_meters').delete()
+    .eq('installation_id', input.installationId).eq('meter_id', input.meterId).eq('project_id', input.projectId).select('meter_id')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NOT_LINKED }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'meter_unlinked', objectRef: { meterId: input.meterId } })
   done(input.projectId)
   return { ok: true }
@@ -134,9 +141,10 @@ export async function setMeterShareAction(input: { projectId: string; installati
   if (input.sharePct !== null && !(typeof input.sharePct === 'number' && input.sharePct > 0 && input.sharePct <= 100)) return { error: 'A share is between 0 and 100 %.' }
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
-  const { error } = await g.supabase.schema('solar').from('installation_meters').update({ expected_share_pct: input.sharePct })
-    .eq('installation_id', input.installationId).eq('meter_id', input.meterId)
+  const { data, error } = await g.supabase.schema('solar').from('installation_meters').update({ expected_share_pct: input.sharePct })
+    .eq('installation_id', input.installationId).eq('meter_id', input.meterId).eq('project_id', input.projectId).select('meter_id')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NOT_LINKED }
   done(input.projectId)
   return { ok: true }
 }
@@ -153,7 +161,8 @@ export async function saveGuaranteeAction(input: { projectId: string; installati
   const t = () => g.supabase.schema('solar').from('guarantees')
   const { data, error } = input.expectedUpdatedAt === null
     ? await t().insert({ installation_id: input.installationId, ...values }).select('updated_at')
-    : await t().update(values).eq('installation_id', input.installationId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+    : await t().update(values).eq('installation_id', input.installationId).eq('project_id', input.projectId)
+        .eq('updated_at', input.expectedUpdatedAt).select('updated_at')
   if (error) return { error: error.code === '23505' ? STALE_MESSAGE : opsError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'guarantee_saved', objectRef: { basis: v.basis } })
@@ -177,12 +186,13 @@ export async function saveIrradiationAction(input: {
   if ('error' in g) return g
   const t = () => g.supabase.schema('solar').from('ops_irradiation')
   const month = monthFirstDay(input.month)
-  const { data: existing } = await t().select('month').eq('installation_id', input.installationId).eq('month', month).maybeSingle()
+  const { data: existing } = await t().select('month').eq('installation_id', input.installationId).eq('month', month).eq('project_id', input.projectId).maybeSingle()
   const values = { plane: input.plane, kwh_per_m2: input.kwhPerM2, source_note: note }
-  const { error } = existing
-    ? await t().update(values).eq('installation_id', input.installationId).eq('month', month)
-    : await t().insert({ installation_id: input.installationId, month, ...values })
-  if (error) return { error: opsError(error) }
+  const { data, error } = existing
+    ? await t().update(values).eq('installation_id', input.installationId).eq('month', month).eq('project_id', input.projectId).select('month')
+    : await t().insert({ installation_id: input.installationId, month, ...values }).select('month')
+  if (error) return { error: error.code === '23505' ? STALE_MESSAGE : opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NO_IRRADIATION }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'irradiation_saved', objectRef: { month: input.month, plane: input.plane } })
   done(input.projectId)
   return { ok: true }
@@ -192,9 +202,10 @@ export async function deleteIrradiationAction(input: { projectId: string; instal
   if (!isMonthKey(input.month)) return { error: 'Choose a month.' }
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
-  const { error } = await g.supabase.schema('solar').from('ops_irradiation').delete()
-    .eq('installation_id', input.installationId).eq('month', monthFirstDay(input.month))
+  const { data, error } = await g.supabase.schema('solar').from('ops_irradiation').delete()
+    .eq('installation_id', input.installationId).eq('month', monthFirstDay(input.month)).eq('project_id', input.projectId).select('month')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NO_IRRADIATION }
   done(input.projectId)
   return { ok: true }
 }
@@ -261,7 +272,7 @@ export async function updateDowntimeAction(input: {
   const { data, error } = await g.supabase.schema('solar').from('downtime').update({
     starts_at: c.startsAt, ends_at: c.endsAt, cause: input.cause, description: c.description,
     excluded_from_guarantee: input.excludedFromGuarantee === true,
-  }).eq('id', input.id).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+  }).eq('id', input.id).eq('project_id', input.projectId).eq('updated_at', input.expectedUpdatedAt).select('updated_at')
   if (error) return { error: opsError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'downtime_updated', objectRef: { id: input.id } })
@@ -273,8 +284,9 @@ export async function updateDowntimeAction(input: {
 export async function deleteDowntimeAction(input: { projectId: string; id: string }): Promise<{ ok: true } | Err> {
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
-  const { error } = await g.supabase.schema('solar').from('downtime').delete().eq('id', input.id)
+  const { data, error } = await g.supabase.schema('solar').from('downtime').delete().eq('id', input.id).eq('project_id', input.projectId).select('id')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NO_DOWNTIME }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'downtime_deleted', objectRef: { id: input.id } })
   done(input.projectId)
   return { ok: true }

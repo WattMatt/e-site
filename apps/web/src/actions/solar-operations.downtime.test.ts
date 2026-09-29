@@ -59,12 +59,18 @@ describe('update / delete', () => {
       .resolves.toEqual({ ok: true, updatedAt: 'D2' })
     const u = callsTo(f.calls, 'solar.downtime', 'update')[0]!
     expect(u.payload).toMatchObject({ cause: 'grid_outage', description: 'Eskom', excluded_from_guarantee: true })
-    expect(u.filters).toEqual([['eq', 'id', D], ['eq', 'updated_at', 'D1']])
+    expect(u.filters).toEqual([['eq', 'id', D], ['eq', 'project_id', P], ['eq', 'updated_at', 'D1']])
   })
   it('deletes (the history trigger keeps the old row)', async () => {
-    const f = setup()
+    const f = setup({ writes: { 'solar.downtime:delete': { data: [{ id: D }] } } })
     await expect(deleteDowntimeAction({ projectId: P, id: D })).resolves.toEqual({ ok: true })
-    expect(callsTo(f.calls, 'solar.downtime', 'delete')[0]!.filters).toEqual([['eq', 'id', D]])
+    expect(callsTo(f.calls, 'solar.downtime', 'delete')[0]!.filters).toEqual([['eq', 'id', D], ['eq', 'project_id', P]])
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'downtime_deleted', objectRef: { id: D } })
+  })
+  it('a delete that touched no row says so, with no audit (review A2)', async () => {
+    setup({ writes: { 'solar.downtime:delete': { data: [] } } })
+    await expect(deleteDowntimeAction({ projectId: P, id: D })).resolves.toEqual({ error: 'That downtime entry no longer exists — reload.' })
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 })

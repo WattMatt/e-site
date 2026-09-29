@@ -83,7 +83,7 @@ describe('saveInstallationAction', () => {
       .resolves.toEqual({ ok: true, updatedAt: 'T2' })
     const u = callsTo(f.calls, 'solar.installations', 'update')[0]!
     expect(u.payload).toEqual({ commissioning_date: '2026-02-15', as_built: asBuilt, notes: 'Handed over' })
-    expect(u.filters).toEqual([['eq', 'id', I], ['eq', 'updated_at', 'T1']])
+    expect(u.filters).toEqual([['eq', 'id', I], ['eq', 'project_id', P], ['eq', 'updated_at', 'T1']])
     setup({ writes: { 'solar.installations:update': { data: [] } } })
     await expect(saveInstallationAction({ projectId: P, installationId: I, commissioningDate: null, asBuilt, notes: null, expectedUpdatedAt: 'T1' }))
       .resolves.toEqual({ error: 'Someone else changed this — reload to see their version.' })

@@ -38,12 +38,22 @@ describe('meters', () => {
     expect(f.calls).toHaveLength(0)
   })
   it('unlinks and sets a share (null = equal split)', async () => {
-    const f = setup()
+    const f = setup({ writes: { 'solar.installation_meters:delete': { data: [{ meter_id: M }] } } })
     await expect(unlinkMeterAction({ projectId: P, installationId: I, meterId: M })).resolves.toEqual({ ok: true })
-    expect(callsTo(f.calls, 'solar.installation_meters', 'delete')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'meter_id', M]])
+    expect(callsTo(f.calls, 'solar.installation_meters', 'delete')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'meter_id', M], ['eq', 'project_id', P]])
     await expect(setMeterShareAction({ projectId: P, installationId: I, meterId: M, sharePct: 150 })).resolves.toEqual({ error: 'A share is between 0 and 100 %.' })
     await expect(setMeterShareAction({ projectId: P, installationId: I, meterId: M, sharePct: 60 })).resolves.toEqual({ ok: true })
     expect(callsTo(f.calls, 'solar.installation_meters', 'update')[0]!.payload).toEqual({ expected_share_pct: 60 })
+    expect(callsTo(f.calls, 'solar.installation_meters', 'update')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'meter_id', M], ['eq', 'project_id', P]])
+  })
+  it('a write that touched no row (another project’s ids, or already gone) says so, with no audit (review A2)', async () => {
+    setup({ writes: { 'solar.installation_meters:delete': { data: [] }, 'solar.installation_meters:update': { data: [] } } })
+    await expect(unlinkMeterAction({ projectId: P, installationId: I, meterId: M })).resolves.toEqual({ error: 'That meter is not linked to this installation — reload.' })
+    await expect(setMeterShareAction({ projectId: P, installationId: I, meterId: M, sharePct: 60 })).resolves.toEqual({ error: 'That meter is not linked to this installation — reload.' })
+    setup({ writes: { 'solar.ops_irradiation:delete': { data: [] } } })
+    await expect(deleteIrradiationAction({ projectId: P, installationId: I, month: '2026-03' })).resolves.toEqual({ error: 'There is no irradiation entry for that month — reload.' })
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 })
 
@@ -59,6 +69,7 @@ describe('guarantee', () => {
     const g = { basis: 'manual', pct: null, manualMonthlyKwh: new Array(12).fill(1000), degradationPctPerYear: 0 }
     await expect(saveGuaranteeAction({ projectId: P, installationId: I, guarantee: g, expectedUpdatedAt: 'G1' })).resolves.toEqual({ ok: true, updatedAt: 'G2' })
     expect(callsTo(f.calls, 'solar.guarantees', 'update')[0]!.payload).toEqual({ basis: 'manual', pct: null, manual_monthly_kwh: new Array(12).fill(1000), degradation_pct_per_year: 0 })
+    expect(callsTo(f.calls, 'solar.guarantees', 'update')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'project_id', P], ['eq', 'updated_at', 'G1']])
     const f2 = setup({ writes: { 'solar.guarantees:insert': { data: [{ updated_at: 'G1' }] } } })
     await saveGuaranteeAction({ projectId: P, installationId: I, guarantee: { basis: 'p50', pct: null, manualMonthlyKwh: null, degradationPctPerYear: 0.5 }, expectedUpdatedAt: null })
     expect(callsTo(f2.calls, 'solar.guarantees', 'insert')[0]!.payload).toMatchObject({ installation_id: I, basis: 'p50' })
@@ -68,14 +79,16 @@ describe('guarantee', () => {
 
 describe('irradiation', () => {
   it('validates month, plane, value and source; replaces the month’s entry', async () => {
-    const f = setup({ tables: { 'solar.ops_irradiation': [{ installation_id: I, month: '2026-03-01' }] } })
+    const f = setup({ tables: { 'solar.ops_irradiation': [{ installation_id: I, project_id: P, month: '2026-03-01' }] },
+      writes: { 'solar.ops_irradiation:delete': { data: [{ month: '2026-03-01' }] } } })
     await expect(saveIrradiationAction({ projectId: P, installationId: I, month: '2026-3', plane: 'poa', kwhPerM2: 150, sourceNote: 'Station X' }))
       .resolves.toEqual({ fieldErrors: { month: 'Choose a month.' } })
     await expect(saveIrradiationAction({ projectId: P, installationId: I, month: '2026-03', plane: 'poa', kwhPerM2: 500, sourceNote: 'x' }))
       .resolves.toEqual({ fieldErrors: { kwhPerM2: 'Between 0 and 400 kWh/m².', sourceNote: 'Say where the figure comes from (3–300 characters).' } })
     await expect(saveIrradiationAction({ projectId: P, installationId: I, month: '2026-03', plane: 'poa', kwhPerM2: 150, sourceNote: 'Station X' })).resolves.toEqual({ ok: true })
     expect(callsTo(f.calls, 'solar.ops_irradiation', 'update')[0]!.payload).toEqual({ plane: 'poa', kwh_per_m2: 150, source_note: 'Station X' })
+    expect(callsTo(f.calls, 'solar.ops_irradiation', 'update')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'month', '2026-03-01'], ['eq', 'project_id', P]])
     await expect(deleteIrradiationAction({ projectId: P, installationId: I, month: '2026-03' })).resolves.toEqual({ ok: true })
-    expect(callsTo(f.calls, 'solar.ops_irradiation', 'delete')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'month', '2026-03-01']])
+    expect(callsTo(f.calls, 'solar.ops_irradiation', 'delete')[0]!.filters).toEqual([['eq', 'installation_id', I], ['eq', 'month', '2026-03-01'], ['eq', 'project_id', P]])
   })
 })

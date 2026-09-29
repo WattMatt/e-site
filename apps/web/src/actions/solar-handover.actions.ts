@@ -30,19 +30,23 @@ async function gate(projectId: string): Promise<{ supabase: AnyClient; userId: s
   return { supabase, userId: user.id }
 }
 
-async function itemLabel(supabase: AnyClient, itemId: string): Promise<string | null> {
-  const { data } = await supabase.schema('solar').from('handover_items').select('label').eq('id', itemId).maybeSingle()
+const NO_ITEM = 'That checklist item no longer exists — reload.'
+
+/** The item's label, read within the GATED project (review A2: an id alone may name another project's row). */
+async function itemLabel(supabase: AnyClient, projectId: string, itemId: string): Promise<string | null> {
+  const { data } = await supabase.schema('solar').from('handover_items').select('label').eq('id', itemId).eq('project_id', projectId).maybeSingle()
   return data ? String((data as Row).label) : null
 }
 
 export async function linkHandoverDocumentAction(input: { projectId: string; itemId: string; documentId: string | null }): Promise<{ ok: true } | Err> {
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  const label = await itemLabel(g.supabase, input.itemId)
-  if (!label) return { error: 'That checklist item no longer exists — reload.' }
-  const { error } = await g.supabase.schema('solar').from('handover_items')
-    .update({ document_id: input.documentId, not_applicable: false }).eq('id', input.itemId)
+  const label = await itemLabel(g.supabase, input.projectId, input.itemId)
+  if (!label) return { error: NO_ITEM }
+  const { data, error } = await g.supabase.schema('solar').from('handover_items')
+    .update({ document_id: input.documentId, not_applicable: false }).eq('id', input.itemId).eq('project_id', input.projectId).select('id')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NO_ITEM }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'handover_updated', objectRef: { item: label, documentId: input.documentId } })
   await emitProductEvent({ actorId: g.userId, projectId: input.projectId, event: 'solar_handover_updated', properties: { change: input.documentId ? 'linked' : 'unlinked' } })
   revalidatePath(`/projects/${input.projectId}/solar`, 'layout')
@@ -54,11 +58,13 @@ export async function setHandoverNotApplicableAction(input: { projectId: string;
   if (note.length > 1000) return { error: 'The note is at most 1000 characters.' }
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  const label = await itemLabel(g.supabase, input.itemId)
-  if (!label) return { error: 'That checklist item no longer exists — reload.' }
+  const label = await itemLabel(g.supabase, input.projectId, input.itemId)
+  if (!label) return { error: NO_ITEM }
   const payload = input.notApplicable === true ? { not_applicable: true, document_id: null, note: note || null } : { not_applicable: false, note: note || null }
-  const { error } = await g.supabase.schema('solar').from('handover_items').update(payload).eq('id', input.itemId)
+  const { data, error } = await g.supabase.schema('solar').from('handover_items').update(payload)
+    .eq('id', input.itemId).eq('project_id', input.projectId).select('id')
   if (error) return { error: opsError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: NO_ITEM }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'handover_updated', objectRef: { item: label, notApplicable: input.notApplicable === true } })
   await emitProductEvent({ actorId: g.userId, projectId: input.projectId, event: 'solar_handover_updated', properties: { change: input.notApplicable ? 'not_applicable' : 'applicable' } })
   revalidatePath(`/projects/${input.projectId}/solar`, 'layout')
@@ -69,7 +75,7 @@ export async function syncHandoverItemsAction(input: { projectId: string; instal
   const g = await gate(input.projectId)
   if ('error' in g) return g
   const solar = () => g.supabase.schema('solar')
-  const { data: inst } = await solar().from('installations').select('id, organisation_id').eq('id', input.installationId).maybeSingle()
+  const { data: inst } = await solar().from('installations').select('id, organisation_id').eq('id', input.installationId).eq('project_id', input.projectId).maybeSingle()
   if (!inst) return { error: 'The installation could not be found — reload.' }
   const [{ data: tpl }, { data: have }] = await Promise.all([
     solar().from('handover_templates').select('name, items').eq('organisation_id', String((inst as Row).organisation_id)).maybeSingle(),
