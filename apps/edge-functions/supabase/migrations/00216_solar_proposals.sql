@@ -23,8 +23,10 @@
 --   * projects.project_settings.notify_solar_email; two notification types; six product events.
 --   * Solar PDFs in bucket 'reports' (<org>/<project>/solar-reports/ and /solar-proposals/) are
 --     SERVICE-ONLY: per-verb RESTRICTIVE storage.objects policies refuse them to every session
---     role (00117's bucket policies admit any org member). The solar_proposal report row cannot
---     be inserted, updated or deleted through a session (00117 reports_write is FOR ALL).
+--     role (00117's bucket policies admit any org member). No session inserts or updates a Solar
+--     report row (kind solar_*) or any row whose storage_path is a Solar PDF (00117 reports_write
+--     is FOR ALL, and the report-URL action service-signs a row's path after gating on its kind);
+--     the solar_proposal row cannot be deleted through a session either.
 --   * A study or case that an issued proposal depends on cannot be deleted directly; a project
 --     delete (an FK cascade, trigger depth > 1) still removes everything.
 -- RULES
@@ -75,8 +77,8 @@
 -- policy: solar_pdfs_service_only_insert ON storage.objects RESTRICTIVE
 -- policy: solar_pdfs_service_only_update ON storage.objects RESTRICTIVE
 -- policy: solar_pdfs_service_only_delete ON storage.objects RESTRICTIVE
--- policy: reports_solar_proposal_insert_authz ON projects.reports RESTRICTIVE
--- policy: reports_solar_proposal_update_authz ON projects.reports RESTRICTIVE
+-- policy: reports_solar_service_only_insert ON projects.reports RESTRICTIVE
+-- policy: reports_solar_service_only_update ON projects.reports RESTRICTIVE
 -- policy: reports_solar_proposal_delete_authz ON projects.reports RESTRICTIVE
 -- policy: proposal_templates_select ON solar.proposal_templates PERMISSIVE
 -- policy: proposal_templates_insert ON solar.proposal_templates PERMISSIVE
@@ -129,6 +131,7 @@
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_proposal_accepted%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_declined%' AND pg_get_constraintdef(oid) LIKE '%solar_access_declined%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%' FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check')
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%solar_narrative_drafted%' AND pg_get_constraintdef(oid) LIKE '%solar_equipment_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- sql: (SELECT count(DISTINCT cmd) = 4 AND count(*) = 4 AND bool_and(strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar-(reports|proposals)') > 0) FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'solar_pdfs_service_only_%' AND permissive = 'RESTRICTIVE' AND cmd <> 'ALL')
+-- sql: (SELECT count(*) = 2 AND bool_and(strpos(coalesce(with_check, ''), 'solar-(reports|proposals)') > 0 AND strpos(coalesce(with_check, ''), 'solar\_%') > 0) AND bool_and(cmd = 'INSERT' OR strpos(coalesce(qual, ''), 'solar-(reports|proposals)') > 0) FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'reports' AND policyname LIKE 'reports_solar_service_only_%' AND permissive = 'RESTRICTIVE' AND cmd IN ('INSERT', 'UPDATE'))
 -- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'public.solar_issue_proposal(uuid, timestamptz, uuid, jsonb, text, text, text, timestamptz, uuid, uuid)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%family_accepted%' FROM pg_proc WHERE oid = 'solar.proposal_record_response(uuid, text, uuid, text, text, text, boolean, text, text, text, text)'::regprocedure)
 -- sql: (SELECT prosrc LIKE '%uo.organisation_id%' FROM pg_proc WHERE oid = 'solar.is_portal_member(uuid, uuid)'::regprocedure)
@@ -829,12 +832,19 @@ DROP POLICY IF EXISTS solar_pdfs_service_only_delete ON storage.objects;
 CREATE POLICY solar_pdfs_service_only_delete ON storage.objects AS RESTRICTIVE FOR DELETE TO authenticated, anon
     USING (bucket_id IS DISTINCT FROM 'reports' OR coalesce(name, '') !~ '/solar-(reports|proposals)/');
 
--- The solar_proposal report row is written only by the service-role issue path; 00117's reports_write
--- (FOR ALL, owner/admin/PM) would otherwise let a session forge, rewrite or delete it.
-CREATE POLICY reports_solar_proposal_insert_authz ON projects.reports AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (kind IS DISTINCT FROM 'solar_proposal');
-CREATE POLICY reports_solar_proposal_update_authz ON projects.reports AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (kind IS DISTINCT FROM 'solar_proposal') WITH CHECK (kind IS DISTINCT FROM 'solar_proposal');
+-- Every Solar report row (feasibility, technical, layout sheet, proposal) is inserted and superseded
+-- only by the service client after the Solar gate. 00117's reports_write (FOR ALL, owner/admin/PM)
+-- would otherwise let a session forge a row: getProjectReportUrlAction gates on the row's KIND and
+-- then service-signs its storage_path, so a technical (View) or open-kind row pointed at a
+-- deterministic feasibility path would hand money PDFs to a user without financials. So no session
+-- inserts or updates a row whose kind is solar_* OR whose path is a Solar PDF (USING and WITH CHECK).
+-- DELETE stays narrow: deleteProjectReportAction removes feasibility/technical rows through the
+-- session (OWNER_ADMIN + Solar Edit); only the proposal row is evidence.
+CREATE POLICY reports_solar_service_only_insert ON projects.reports AS RESTRICTIVE FOR INSERT TO authenticated
+    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/');
+CREATE POLICY reports_solar_service_only_update ON projects.reports AS RESTRICTIVE FOR UPDATE TO authenticated
+    USING (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/')
+    WITH CHECK (coalesce(kind, '') NOT LIKE 'solar\_%' AND coalesce(storage_path, '') !~ '/solar-(reports|proposals)/');
 CREATE POLICY reports_solar_proposal_delete_authz ON projects.reports AS RESTRICTIVE FOR DELETE TO authenticated
     USING (kind IS DISTINCT FROM 'solar_proposal');
 

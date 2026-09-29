@@ -21,6 +21,7 @@ DECLARE
   v_client  UUID := gen_random_uuid();   -- client_viewer on v_p (FORGED edit_financials grant)
   v_foreign UUID := gen_random_uuid();   -- admin of v_org2
   v_cvx     UUID := gen_random_uuid();   -- client_viewer of v_org2 ONLY; contractor member of v_p (review M1)
+  v_pm      UUID := gen_random_uuid();   -- project_manager of v_org + v_p, Solar EDIT only (review round 2, C1)
   v_study   UUID;
   v_study2  UUID;
   v_w       UUID;
@@ -49,7 +50,7 @@ DECLARE
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-6-probe'), (v_org2, 'solar-6-probe-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_edit, v_money, v_view, v_nogrant, v_client, v_foreign, v_cvx] LOOP
+  FOREACH u IN ARRAY ARRAY[v_admin, v_edit, v_money, v_view, v_nogrant, v_client, v_foreign, v_cvx, v_pm] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -59,19 +60,19 @@ BEGIN
     (v_admin, v_org, 'admin', TRUE), (v_edit, v_org, 'contractor', TRUE), (v_money, v_org, 'contractor', TRUE),
     (v_view, v_org, 'contractor', TRUE), (v_nogrant, v_org, 'contractor', TRUE),
     (v_client, v_org, 'client_viewer', TRUE), (v_foreign, v_org2, 'admin', TRUE),
-    (v_cvx, v_org2, 'client_viewer', TRUE);
+    (v_cvx, v_org2, 'client_viewer', TRUE), (v_pm, v_org, 'project_manager', TRUE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
     (v_p, v_org, 'solar-6-probe-p', v_admin), (v_p2, v_org2, 'solar-6-probe-p2', v_foreign);
   INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES
     (v_p, v_edit, v_org, 'contractor', TRUE), (v_p, v_money, v_org, 'contractor', TRUE),
     (v_p, v_view, v_org, 'contractor', TRUE), (v_p, v_nogrant, v_org, 'contractor', TRUE),
     (v_p, v_client, v_org, 'client_viewer', TRUE),
-    (v_p, v_cvx, v_org2, 'contractor', TRUE);
+    (v_p, v_cvx, v_org2, 'contractor', TRUE), (v_p, v_pm, v_org, 'project_manager', TRUE);
   INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo, current_period_end) VALUES
     (v_org, 'solar', 'active', 199900, now() + interval '30 days'),
     (v_org2, 'solar', 'active', 199900, now() + interval '30 days');
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES
-    (v_p, v_edit, 'edit'), (v_p, v_money, 'edit_financials'), (v_p, v_view, 'view');
+    (v_p, v_edit, 'edit'), (v_p, v_money, 'edit_financials'), (v_p, v_view, 'view'), (v_p, v_pm, 'edit');
   SET LOCAL session_replication_role = replica;
   INSERT INTO solar.project_access (project_id, user_id, organisation_id, level) VALUES (v_p, v_client, v_org, 'edit_financials');
   SET LOCAL session_replication_role = origin;
@@ -254,11 +255,84 @@ BEGIN
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_insert_proposal_report_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_insert_proposal_report_REFUSED', false);
   END;
+  -- Review round 2 (C1): no session writes ANY Solar report row, nor any row pointing at a Solar PDF
+  -- path. getProjectReportUrlAction service-signs a row's storage_path after gating on its KIND, so a
+  -- forged row (a Solar View/Edit kind, or an open kind) aimed at a feasibility path is a money leak.
   UPDATE projects.reports SET title = 't2' WHERE project_id = v_p AND kind = 'solar_technical';
   GET DIAGNOSTICS v_n = ROW_COUNT;
-  INSERT INTO _r VALUES ('admin_updates_technical_report_control', v_n = 1);
+  INSERT INTO _r VALUES ('admin_update_technical_report_REFUSED', v_n = 0
+    AND (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_technical') = 1);
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'solar_technical', 'forged', v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-' || v_run || '.pdf', 'issued', 9);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_insert_technical_solar_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_insert_technical_solar_path_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'tenant_schedule', 'forged', v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-' || v_run || '.pdf', 'issued', 9);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_insert_open_kind_solar_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_insert_open_kind_solar_path_REFUSED', false);
+  END;
+  -- Control: a non-Solar row on a non-Solar path still inserts; re-pointing it at a Solar PDF does not.
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'tenant_schedule', 'ctl', v_org || '/' || v_p || '/tenant-schedule-v9.pdf', 'issued', 9);
+    INSERT INTO _r VALUES ('admin_inserts_non_solar_report_control', true);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('admin_inserts_non_solar_report_control:' || left(SQLERRM, 120), false);
+  END;
+  BEGIN
+    UPDATE projects.reports SET storage_path = v_org || '/' || v_p || '/solar-proposals/probe-v1.pdf'
+      WHERE project_id = v_p AND kind = 'tenant_schedule' AND title = 'ctl';
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed:%', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_repoint_open_row_to_solar_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_repoint_open_row_to_solar_path_REFUSED', false);
+  END;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);
+  -- A project manager holding only Solar EDIT (reports_write admits PMs; no money access).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('pm_sees_technical_report_precondition',
+    (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_technical') = 1
+    AND (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind IN ('solar_feasibility', 'solar_proposal')) = 0);
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'solar_technical', 'forged', v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-' || v_run || '.pdf', 'issued', 9);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('pm_insert_technical_solar_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('pm_insert_technical_solar_path_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO projects.reports (organisation_id, project_id, kind, title, storage_path, status, version)
+    VALUES (v_org, v_p, 'tenant_schedule', 'forged', v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-' || v_run || '.pdf', 'issued', 9);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('pm_insert_open_kind_solar_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('pm_insert_open_kind_solar_path_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.reports SET storage_path = v_org || '/' || v_p || '/solar-reports/solar_feasibility-v1-' || v_run || '.pdf'
+      WHERE project_id = v_p AND kind = 'solar_technical';
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('pm_update_technical_storage_path_REFUSED', v_n = 0);
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('pm_update_technical_storage_path_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('pm_update_technical_storage_path_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  INSERT INTO _r VALUES ('technical_report_row_intact',
+    (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_technical' AND title = 't' AND storage_path = 'x/t.pdf') = 1
+    AND (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND title = 'forged') = 0);
   INSERT INTO _r VALUES ('proposal_report_row_intact',
     (SELECT count(*) FROM projects.reports WHERE project_id = v_p AND kind = 'solar_proposal' AND title = 'p') = 1);
 
