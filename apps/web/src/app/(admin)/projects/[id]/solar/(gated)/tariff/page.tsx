@@ -122,7 +122,7 @@ export default async function SolarTariffPage({ params, searchParams }: {
           <Card>
             <CardHeader><span className="data-panel-title">Export / SSEG rule</span></CardHeader>
             <CardBody>
-              <p style={{ ...NOTE, marginBottom: 8 }}>{`Export rule: ${NOT_IN_FINANCIALS}`}</p>
+              {study.exportRule?.method !== 'linked_tariff' && <p style={{ ...NOTE, marginBottom: 8 }}>{`A manual or “none” export rule: ${NOT_IN_FINANCIALS}`}</p>}
               <ExportRulePanel projectId={id} updatedAt={study.updatedAt} rule={study.exportRule} rates={d.exportRates} sourceNote={d.exportSourceNote}
                 linkedExportTariff={pinned.exportTariff} sseg={pinned.sseg} ssegFromLibrary={pinned.ssegFromLibrary} />
             </CardBody>
