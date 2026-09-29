@@ -68,11 +68,16 @@ describe('SiteProfilePanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save and rebuild' }))
     expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedUpdatedAt: 'T8', form: expect.objectContaining({ loadGrowthPct: '2' }) }))
   })
-  it('the bills section follows the SAVED basis prop, not the form copy', () => {
+  it('the bills section follows the SAVED basis prop, not the form copy', async () => {
     const { rerender } = render(<SiteProfilePanel projectId="p1" view={view} canEdit />)
     expect(screen.queryByLabelText('January kWh')).toBeNull()
-    // The bar saved S4; the refreshed view carries it (same study version seen by this panel is irrelevant).
+    // Dirty the panel first: an unsaved edit keeps the FORM copy (loadBasis S2) across the refresh, so
+    // only a section keyed on the saved prop can show the bills. Clean, the form re-seeds and a
+    // form-keyed section would pass too — this test could not fail.
+    await userEvent.type(screen.getByLabelText('Load growth'), '2')
+    // The bar saved S4; the refreshed view carries it and nothing this panel owns changed.
     rerender(<SiteProfilePanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T9', form: { ...view.form, loadBasis: 'S4' } }} canEdit />)
+    expect((screen.getByLabelText('Load growth') as HTMLInputElement).value).toBe('2')
     expect(screen.getByLabelText('January kWh')).toBeTruthy()
   })
   it('a refused save shows the field sentence and does not rebuild', async () => {
