@@ -1,7 +1,9 @@
 /**
  * Lost energy during a downtime window (spec §10 monthly report: "downtime table with lost kWh and lost
  * revenue"): per interval, the SHAPED expectation (shape.ts) minus what the meter recorded, clipped at
- * zero. The step is the data's own interval (default 30 min when the window has no data at all). The
+ * zero. The step is the data's own interval (default 30 min when the window has no data at all); what
+ * the meters recorded is counted by overlap with each step, so neither the step grid nor the window
+ * has to line up with the data. The
  * hourly series places each step's loss on the bill engine's 365-day hour index so the pinned
  * tariff's TOU calendar values it (lost-revenue.ts in the web app).
  */
@@ -32,13 +34,27 @@ export function lostSteps(
 ): LostStep[] {
   const inside = points.filter((p) => p.endMs > w.startMs && p.endMs - p.intervalMin * 60_000 < w.endMs)
   const stepMs = dominantInterval(inside, defaultIntervalMin) * 60_000
-  const byEnd = new Map(inside.map((p) => [p.endMs, p.kw]))
+  const n = Math.ceil((w.endMs - w.startMs) / stepMs)
+  // Actual energy per step by OVERLAP (review B2): every point covers [end - interval, end) and adds
+  // kW × the hours it shares with each step. A window off the data grid still sees its output, and
+  // points sharing an end time (meters on different intervals) are summed, never collapsed.
+  const actualKwhMs = new Float64Array(n)
+  for (const p of inside) {
+    const s0 = Math.max(p.endMs - p.intervalMin * 60_000, w.startMs)
+    const s1 = Math.min(p.endMs, w.endMs)
+    for (let k = Math.floor((s0 - w.startMs) / stepMs); k < n; k++) {
+      const t0 = w.startMs + k * stepMs
+      if (t0 >= s1) break
+      const ov = Math.min(s1, t0 + stepMs, w.endMs) - Math.max(s0, t0)
+      if (ov > 0) actualKwhMs[k] = actualKwhMs[k]! + p.kw * ov
+    }
+  }
   const out: LostStep[] = []
-  for (let t = w.startMs; t < w.endMs; t += stepMs) {
+  for (let k = 0; k < n; k++) {
+    const t = w.startMs + k * stepMs
     const segEnd = Math.min(t + stepMs, w.endMs)
     const expectedKwh = expectedKwhBetween(b, fullKwhFor, t, segEnd)
-    const kw = byEnd.get(t + stepMs)
-    const actualKwh = kw === undefined ? 0 : (kw * (segEnd - t)) / 3_600_000
+    const actualKwh = actualKwhMs[k]! / 3_600_000
     out.push({ startMs: t, endMs: segEnd, expectedKwh: r6(expectedKwh), actualKwh: r6(actualKwh), lostKwh: r6(Math.max(0, expectedKwh - actualKwh)) })
   }
   return out

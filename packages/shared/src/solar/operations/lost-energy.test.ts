@@ -20,6 +20,22 @@ describe('lost energy = shaped expected minus actual, per interval', () => {
     const steps = lostSteps({ startMs: at('2026-03-10T11:00:00+02:00'), endMs: at('2026-03-10T12:00:00+02:00') }, pts, b, full)
     expect(steps.map((s) => s.lostKwh)).toEqual([3, 0])
   })
+  it('a window off the data grid counts recorded output by overlap (review B2)', () => {
+    // Plant steady at the expected 10 kW, 30-minute data ending 10:30 … 14:00; manual window 10:10–13:10.
+    const pts = Array.from({ length: 8 }, (_, k) => ({ endMs: at('2026-03-10T10:30:00+02:00') + k * 1_800_000, kw: 10, intervalMin: 30 }))
+    const steps = lostSteps({ startMs: at('2026-03-10T10:10:00+02:00'), endMs: at('2026-03-10T13:10:00+02:00') }, pts, b, full)
+    expect(steps.reduce((s, x) => s + x.expectedKwh, 0)).toBeCloseTo(30, 6)
+    expect(steps.reduce((s, x) => s + x.actualKwh, 0)).toBeCloseTo(30, 6)
+    expect(lostKwh(steps)).toBeCloseTo(0, 6)
+  })
+  it('sums meters on different intervals instead of collapsing points that share an end time (review B2)', () => {
+    // Meter A: 30-min, 6 kW. Meter B: 15-min, 4 kW. Together 10 kW = the expectation, so nothing is lost.
+    const a = Array.from({ length: 4 }, (_, k) => ({ endMs: at('2026-03-10T10:30:00+02:00') + k * 1_800_000, kw: 6, intervalMin: 30 }))
+    const bb = Array.from({ length: 8 }, (_, k) => ({ endMs: at('2026-03-10T10:15:00+02:00') + k * 900_000, kw: 4, intervalMin: 15 }))
+    const steps = lostSteps({ startMs: at('2026-03-10T10:00:00+02:00'), endMs: at('2026-03-10T12:00:00+02:00') }, [...a, ...bb], b, full)
+    expect(steps.reduce((s, x) => s + x.actualKwh, 0)).toBeCloseTo(20, 6)
+    expect(lostKwh(steps)).toBeCloseTo(0, 6)
+  })
   it('uses the data’s own interval for the step', () => {
     const pts = [{ endMs: at('2026-03-10T11:15:00+02:00'), kw: 0, intervalMin: 15 }]
     expect(lostSteps({ startMs: at('2026-03-10T11:00:00+02:00'), endMs: at('2026-03-10T12:00:00+02:00') }, pts, b, full)).toHaveLength(4)
