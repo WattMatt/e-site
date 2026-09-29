@@ -22,6 +22,12 @@ describe('ActivityList', () => {
     expect(screen.getByRole('link', { name: 'Solar access granted (View)' }).getAttribute('href')).toBe('/projects/p1/solar/access')
   })
 
+  it('links schedule activity to the Schedule tab for everyone', () => {
+    render(<ActivityList projectId="p1" isGrantor={false}
+      items={[{ id: 3, at: '2026-09-28T10:00:00Z', actorName: 'Cas', text: '3 schedule tasks added', target: 'schedule' as const }]} />)
+    expect(screen.getByRole('link', { name: '3 schedule tasks added' }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
+  })
+
   it('shows who and when', () => {
     render(<ActivityList projectId="p1" items={items} isGrantor={false} />)
     expect(screen.getByText('28 Sep 2026 · Ann')).toBeDefined()

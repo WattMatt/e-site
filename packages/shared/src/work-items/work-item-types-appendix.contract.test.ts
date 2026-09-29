@@ -86,6 +86,18 @@ function spineMigration(): { name: string; sql: string } {
   throw new Error(`No migration seeds projects.work_item_types (no file in ${MIG_DIR} contains "${SEED_NEEDLE}")`)
 }
 
+/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed,
+ *  then add-on types such as 00212's solar_task). */
+function registrySeedMigrations(): Array<{ name: string; sql: string }> {
+  return readdirSync(MIG_DIR).sort()
+    .filter((n) => n.endsWith('.sql'))
+    .map((name) => ({ name, sql: readFileSync(join(MIG_DIR, name), 'utf8') }))
+    .filter(({ sql }) => stripSqlLineComments(sql).includes(SEED_NEEDLE))
+}
+
+/** Quarters whose A(b) rows are registered by a migration today (Q2–Q4 rows are not yet). */
+const REGISTERED_QUARTERS = new Set(['Q1', 'Solar'])
+
 interface RegistryRow {
   key: string
   sourceTable: string | null
@@ -324,7 +336,7 @@ function appendixQ1Rows(): AppendixRow[] {
     return i
   }
   return rows
-    .filter((r) => r[idx('Quarter')] === 'Q1')
+    .filter((r) => REGISTERED_QUARTERS.has(r[idx('Quarter')]))
     .map((r) => {
       const raw = r[idx('Key')]
       const km = raw.match(/^`([a-z_]+)`$/)
@@ -332,7 +344,7 @@ function appendixQ1Rows(): AppendixRow[] {
       const key = km[1]
       return {
         key,
-        quarter: 'Q1',
+        quarter: r[idx('Quarter')],
         resolved: {
           sourceTable: resolveSourceTable(key, r[idx('Source')]),
           days: resolveDays(key, r[idx('Default due')]),
@@ -348,7 +360,7 @@ function appendixQ1Rows(): AppendixRow[] {
 describe('work-item type registry — Appendix A(b) prose <-> the registry the migrations declare', () => {
   const { name: seedName, sql } = spineMigration()
   const amendments = registryAmendments(seedName)
-  const registry = applyAmendments(seededRows(sql), amendments)
+  const registry = applyAmendments(registrySeedMigrations().flatMap((m) => seededRows(m.sql)), amendments)
   const seedRel = `apps/edge-functions/supabase/migrations/${seedName}`
   // Both sources parsed ONCE, here, so an unreadable cell reports itself a
   // single time at collection rather than four identical times across the

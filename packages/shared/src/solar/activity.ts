@@ -2,7 +2,7 @@
 import { isSolarAccessLevel } from './access'
 import { SOLAR_LEVEL_LABELS } from './entry'
 
-export type SolarActivityTarget = 'access' | 'site' | null
+export type SolarActivityTarget = 'access' | 'site' | 'schedule' | null
 
 export function describeSolarAuditEvent(
   verb: string,
@@ -47,6 +47,20 @@ export function describeSolarAuditEvent(
       return { text: 'Bill check deleted', target: null }
     case 'tariff_error_reported':
       return { text: 'Tariff error reported to the library', target: null }
+    case 'schedule_tasks_added': {
+      const n = Number(ref.count ?? 1)
+      return { text: n === 1 ? 'Schedule task added' : `${n} schedule tasks added`, target: 'schedule' }
+    }
+    case 'schedule_tasks_removed': {
+      const n = Number(ref.count ?? 1)
+      return { text: n === 1 ? 'Schedule task removed' : `${n} schedule tasks removed`, target: 'schedule' }
+    }
+    case 'schedule_imported':
+      return { text: `Schedule imported (${Number(ref.count ?? 0)} tasks${ref.mode === 'replace' ? ', replaced the programme' : ''})`, target: 'schedule' }
+    case 'schedule_template_applied':
+      return { text: `Standard programme added (${Number(ref.count ?? 0)} tasks)`, target: 'schedule' }
+    case 'schedule_baseline_saved':
+      return { text: typeof ref.name === 'string' ? `Baseline “${ref.name}” saved` : 'Baseline saved', target: 'schedule' }
     default:
       return { text: verb.replace(/_/g, ' '), target: null }
   }

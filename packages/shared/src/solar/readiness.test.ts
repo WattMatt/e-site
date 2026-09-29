@@ -12,8 +12,8 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('built tabs: Overview, Site & Supply, Load, Schematics (3b), Tariff (2b), Layout (5), Yield & Scenarios and Financials (4b)', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials'])
+  it('built tabs: every tab but Reports and Operations (phases 1–5b)', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'schedule'])
   })
   it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
@@ -65,6 +65,21 @@ describe('computeSolarReadiness', () => {
   })
   it('includes Tariff and Financials for Edit + financials', () => {
     expect(computeSolarReadiness(null, 'edit_financials').map((s) => s.slug)).toContain('tariff')
+  })
+})
+
+describe('schedule readiness', () => {
+  it('grey with no tasks, green with any, and the tab is built', () => {
+    const none = computeSolarReadiness(null, 'edit', { scheduleTaskCount: 0 }).find((s) => s.slug === 'schedule')!
+    expect(none).toMatchObject({ status: 'grey', reason: 'Not started', live: true })
+    const some = computeSolarReadiness(null, 'view', { scheduleTaskCount: 3 }).find((s) => s.slug === 'schedule')!
+    expect(some).toMatchObject({ status: 'green', reason: '3 tasks scheduled', live: true })
+    expect(computeSolarReadiness(null, 'view', { scheduleTaskCount: 1 }).find((s) => s.slug === 'schedule')!.reason).toBe('1 task scheduled')
+    expect(SOLAR_TABS.find((t) => t.slug === 'schedule')!.built).toBe(true)
+  })
+  it('an unknown count reads as not started (callers that do not load it)', () => {
+    expect(computeSolarReadiness(null, 'view').find((s) => s.slug === 'schedule')!.status).toBe('grey')
+    expect(computeSolarReadiness(null, 'view', { scheduleTaskCount: null }).find((s) => s.slug === 'schedule')!.reason).toBe('Not started')
   })
 })
 

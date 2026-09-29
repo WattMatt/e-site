@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -24,13 +24,14 @@ vi.mock('@/lib/solar/load/views', () => ({ loadLoadReadiness: h.loadReadiness })
 import SolarGatedLayout from './layout'
 import { fakeSupabase } from '@/test/fake-supabase'
 
-function setup(grantor: boolean, level: string, ownOrg = true) {
+function setup(grantor: boolean, level: string, ownOrg = true, scheduleTasks = 0) {
   const { client } = fakeSupabase({
     userId: 'u1',
     rpc: { solar_is_grantor: { data: grantor, error: null } },
     tables: {
       'projects.projects': [{ id: 'p1', name: 'Kings Mall', organisation_id: 'org-1' }],
       'public.user_organisations': ownOrg ? [{ user_id: 'u1', organisation_id: 'org-1', is_active: true }] : [],
+      'solar.schedule_tasks': Array.from({ length: scheduleTasks }, (_, i) => ({ id: `t${i}`, project_id: 'p1' })),
     },
   })
   h.createClient.mockResolvedValue(client)
@@ -122,5 +123,21 @@ describe('Solar gated layout — Load readiness dot', () => {
     render(await SolarGatedLayout(args))
     expect(h.loadReadiness).toHaveBeenCalledWith(expect.anything(), 'p1')
     expect(screen.getByLabelText(/1 accepted import\(s\) carry a validation error/)).toBeDefined()
+  })
+})
+
+describe('Solar gated layout — Schedule tab', () => {
+  it('the Schedule tab is a link, grey until a task exists', async () => {
+    setup(false, 'view')
+    render(await SolarGatedLayout(args))
+    const tab = screen.getByRole('link', { name: /Schedule/ })
+    expect(tab.getAttribute('href')).toBe('/projects/p1/solar/schedule')
+    expect(within(tab).getByRole('img').getAttribute('aria-label')).toBe('Not started: Not started')
+  })
+  it('turns green from the live task count', async () => {
+    setup(false, 'view', true, 2)
+    render(await SolarGatedLayout(args))
+    const tab = screen.getByRole('link', { name: /Schedule/ })
+    expect(within(tab).getByRole('img').getAttribute('aria-label')).toBe('Complete: 2 tasks scheduled')
   })
 })

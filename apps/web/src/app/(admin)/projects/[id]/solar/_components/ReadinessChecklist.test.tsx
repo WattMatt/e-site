@@ -11,5 +11,6 @@ describe('ReadinessChecklist', () => {
     expect(screen.getByRole('link', { name: 'Yield & Scenarios' }).getAttribute('href')).toBe('/projects/p1/solar/yield')
     expect(screen.getAllByText('Not started — available in a later phase').length).toBe(5)
     expect(screen.getByText('Not started')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Schedule' }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
   })
 })
