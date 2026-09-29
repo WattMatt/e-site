@@ -9,6 +9,7 @@ import type { TariffSeason, TariffUnit, Tariff } from '../types'
 import type { TariffIssue } from '../validators'
 import { detectSeason, labelUnit } from './labels'
 import { normaliseCharge, type Unresolved } from './normalise'
+import { parseRfdColumns } from './rfd-columns'
 import { finishDraft, newDraft, type TariffDraft } from './tariff-draft'
 
 export interface ParsedRfd {
@@ -46,7 +47,19 @@ function mode(xs: number[]): number | null {
   return [...counts.entries()].sort((p, q) => q[1] - p[1] || q[0] - p[0])[0][0]
 }
 
+/**
+ * The City Power reader below first. Only when it finds no tariff at all is the
+ * column-aware reader (rfd-columns.ts) used: the 33 RfDs this reader already
+ * handles were loaded from it, and must keep parsing byte-for-byte the same.
+ * When it finds nothing, its own issues (rows it could not attach to a header in
+ * a layout it does not read) are noise and are not carried over.
+ */
 export function parseRfdText(text: string, opts: { fileSha256: string }): ParsedRfd {
+  const first = parseRfdCityPower(text, opts)
+  return first.tariffs.length > 0 ? first : parseRfdColumns(text, opts)
+}
+
+function parseRfdCityPower(text: string, opts: { fileSha256: string }): ParsedRfd {
   const out: ParsedRfd = { tariffs: [], increasePct: null, issues: [], unresolved: [] }
   const taken = new Set<string>()
   const pcts: number[] = []

@@ -1,0 +1,31 @@
+                                                                                                                      NERSA
+                                                                                          Proposed %    NERSA         2026/27
+                                                                   2025/26    2026/27     Increase      2026/27       Recommended %
+11. Residential: Small-Scale Embedded Generation   2025/26 NERSA   Actual     Proposed    2026/27       Recommended   increase
+                                                   c/kWh
+                                                       101.23        101.23      107.98      6.67%         107.98          6.67%
+SSEG Feed-in Tariff (c/kWh)
+SSEG Feed-in Incentive (c/kWh)                          25.00         25.00       25.00      0.00%          25.00          0.00%
+
+
+
+                                                                                                                      NERSA
+                                                                                          Proposed %   NERSA          2026/27
+12. Non-Residential Small-Scale Embedded                           2025/26    2026/27     Increase     2026/27        Recommended %
+Generation                                         2025/26 NERSA   Actual     Proposed    2026/27      Recommended    increase
+
+
+SSEG Feed-in Tariff 1 (c/kWh)                           90.17         90.17       96.18      6.67%         96.18           6.67%
+SSEG Feed-in Tariff 2 (c/kWh)                           71.37         71.37      768.46      -4.08%        768.46          -4.08%
+High Demand (June to August):
+ Peak                                                  586.62        586.62      625.73      6.67%         625.73          6.67%
+ Standard                                              133.84        133.84      135.65      1.35%         135.65          1.35%
+ Off-peak                                               83.51         83.51       91.18      9.19%         91.18           9.19%
+Low Demand (September to May)
+ Peak                                                  233.45        233.45      243.47      4.29%         243.47          4.29%
+ Standard                                              123.76        123.76      124.74      0.79%         124.74          0.79%
+ Off-peak                                               83.51         83.51       81.18      -2.79%        81.18           -2.79%
+SSEG Feed-in Incentive c/kWh                            25.00         25.00       25.00      0.00%         25.00           0.00%
+
+
+
