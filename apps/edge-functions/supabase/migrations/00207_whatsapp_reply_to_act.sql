@@ -33,6 +33,8 @@
 -- function: whatsapp.claim_outbox(int)
 -- function: whatsapp.claim_inbound(int,int)
 -- function: whatsapp.receive_check(uuid,uuid)
+-- function: whatsapp.inbound_immutable()
+-- function: projects.bind_work_item_child()
 -- trigger: whatsapp_enqueue_trg ON projects.work_item_events
 -- trigger: inbound_immutable_trg ON whatsapp.inbound
 -- trigger: work_item_notes_bind ON projects.work_item_notes

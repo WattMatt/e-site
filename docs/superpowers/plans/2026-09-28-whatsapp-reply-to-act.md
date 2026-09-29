@@ -1765,6 +1765,8 @@ with this block:
 -- function: whatsapp.claim_outbox(int)
 -- function: whatsapp.claim_inbound(int,int)
 -- function: whatsapp.receive_check(uuid,uuid)
+-- function: whatsapp.inbound_immutable()
+-- function: projects.bind_work_item_child()
 -- trigger: whatsapp_enqueue_trg ON projects.work_item_events
 -- trigger: inbound_immutable_trg ON whatsapp.inbound
 -- trigger: work_item_notes_bind ON projects.work_item_notes
@@ -5060,7 +5062,7 @@ and, immediately after `const { to, subject, html } = renderAuthEmail(payload)`:
 ```ts
     // WhatsApp-invited externals carry a placeholder address on a no-MX
     // domain (spec §9.8). Never hand it to Resend: that is a guaranteed bounce.
-    if (isPlaceholderEmail(Array.isArray(to) ? to[0] : to)) {
+    if (isPlaceholderEmail(to)) {
       console.warn('auth-email-hook: skipped placeholder address')
       return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } })
     }
