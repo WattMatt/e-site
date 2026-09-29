@@ -37,6 +37,11 @@ export const PRODUCT_EVENTS = [
   'solar_proposal_withdrawn',
   'solar_proposal_responded',
   'solar_narrative_drafted',
+  'solar_installation_saved',
+  'solar_guarantee_saved',
+  'solar_downtime_saved',
+  'solar_monthly_report_generated',
+  'solar_handover_updated',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 
