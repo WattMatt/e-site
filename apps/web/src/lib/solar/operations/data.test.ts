@@ -41,7 +41,7 @@ function user(over: Record<string, unknown[]> = {}) {
       ...over,
     },
     rpc: {
-      solar_ops_monthly_kwh: (args) => ({ data: args.p_role === 'generation' ? { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } } : {}, error: null }),
+      solar_ops_monthly_kwh: (args) => ({ data: args.p_role === 'generation' ? { m1: { '2026-03': { kwh: 900, n: 1488, minutes: 44640, intervalMin: 30 } } } : {}, error: null }),
       solar_ops_series: { data: { points }, error: null },
     },
   })
@@ -100,7 +100,7 @@ describe('loadOperationsView', () => {
     const base = user()
     base.client.rpc = (async (name: string, args: Record<string, unknown>) =>
       name === 'solar_ops_series' ? { data: { points: mixed }, error: null }
-        : { data: args.p_role === 'generation' ? { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } } : {}, error: null }) as never
+        : { data: args.p_role === 'generation' ? { m1: { '2026-03': { kwh: 900, n: 1488, minutes: 44640, intervalMin: 30 } } } : {}, error: null }) as never
     const v = await loadOperationsView({ user: base.client as never, svc: svc().client as never, projectId: 'p1', level: 'edit', month: null })
     expect(v.candidates).toEqual([])
   })

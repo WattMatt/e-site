@@ -5,8 +5,8 @@ import { loadMeterMonths, loadMonthSeries, monthsWithData } from './series'
 describe('RPC wrappers', () => {
   it('parses the per-meter monthly totals (numbers may arrive as strings)', async () => {
     const f = fakeSupabase({ rpc: { solar_ops_monthly_kwh: (args) => ({ data: args.p_role === 'generation'
-      ? { m1: { '2026-03': { kwh: '900.5', n: 1488, intervalMin: 30 }, bogus: { kwh: 1, n: 1, intervalMin: 30 } } } : {}, error: null }) } })
-    await expect(loadMeterMonths(f.client as never, 'i1', 'generation')).resolves.toEqual({ m1: { '2026-03': { kwh: 900.5, n: 1488, intervalMin: 30 } } })
+      ? { m1: { '2026-03': { kwh: '900.5', n: 1488, minutes: 44640, intervalMin: 30 }, bogus: { kwh: 1, n: 1, minutes: 30, intervalMin: 30 } } } : {}, error: null }) } })
+    await expect(loadMeterMonths(f.client as never, 'i1', 'generation')).resolves.toEqual({ m1: { '2026-03': { kwh: 900.5, n: 1488, minutes: 44640, intervalMin: 30 } } })
     await expect(loadMeterMonths(f.client as never, 'i1', 'consumption')).resolves.toEqual({})
     expect(f.client.rpc).toHaveBeenCalledWith('solar_ops_monthly_kwh', { p_installation_id: 'i1', p_role: 'generation' })
   })
@@ -20,7 +20,7 @@ describe('RPC wrappers', () => {
     await expect(loadMeterMonths(f.client as never, 'i1', 'generation')).rejects.toThrow('could not be read')
   })
   it('months with data, sorted, across meters', () => {
-    expect(monthsWithData({ a: { '2026-04': { kwh: 1, n: 1, intervalMin: 30 } }, b: { '2026-02': { kwh: 1, n: 1, intervalMin: 30 }, '2026-04': { kwh: 1, n: 1, intervalMin: 30 } } }))
+    expect(monthsWithData({ a: { '2026-04': { kwh: 1, n: 1, minutes: 30, intervalMin: 30 } }, b: { '2026-02': { kwh: 1, n: 1, minutes: 30, intervalMin: 30 }, '2026-04': { kwh: 1, n: 1, minutes: 30, intervalMin: 30 } } }))
       .toEqual(['2026-02', '2026-04'])
   })
 })

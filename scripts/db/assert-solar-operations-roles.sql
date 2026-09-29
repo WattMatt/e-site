@@ -172,6 +172,15 @@ BEGIN
     FROM generate_series(timestamptz '2026-04-01 08:30+02', timestamptz '2026-04-01 10:00+02', interval '30 minutes') AS t;
   INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality) VALUES
     (v_c5, v_org, '2026-06-01 08:15+02', 10, 0), (v_c5, v_org, '2026-06-01 08:30+02', 10, 0);
+  -- A COMPLETE July at two intervals (review round 2): 1-15 July only in the older 15-minute file,
+  -- 16-31 July only in the newer 30-minute file. Covered minutes = 31 x 1440 = 44640; readings =
+  -- 15 x 96 + 16 x 48 = 2208, and 2208 x the month's smallest interval (15) = 33120 (74 %).
+  INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality)
+  SELECT v_c5, v_org, t, 10, 0
+    FROM generate_series(timestamptz '2026-07-01 00:15+02', timestamptz '2026-07-16 00:00+02', interval '15 minutes') AS t;
+  INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality)
+  SELECT v_c6, v_org, t, 10, 0
+    FROM generate_series(timestamptz '2026-07-16 00:30+02', timestamptz '2026-08-01 00:00+02', interval '30 minutes') AS t;
   INSERT INTO tenants.documents (id, organisation_id, project_id, name, storage_path) VALUES
     (v_doc1, v_org, v_p, 'CoC.pdf', v_org || '/' || v_p || '/coc.pdf'),
     (v_doc2, v_org2, v_p2, 'Other.pdf', v_org2 || '/' || v_p2 || '/other.pdf');
@@ -327,6 +336,9 @@ BEGIN
     AND (v_j -> v_mov::text -> '2026-04' ->> 'n')::int = 4);
   INSERT INTO _r VALUES ('uncovered_older_reading_kept', (v_j -> v_mov::text -> '2026-06' ->> 'kwh')::numeric = 5
     AND (v_j -> v_mov::text -> '2026-06' ->> 'n')::int = 2);
+  -- Coverage is the minutes the kept readings SPAN, not count x one interval (review round 2).
+  INSERT INTO _r VALUES ('mixed_interval_month_minutes_covered', (v_j -> v_mov::text -> '2026-07' ->> 'minutes')::int = 44640
+    AND (v_j -> v_mov::text -> '2026-07' ->> 'n')::int = 2208);
   v_j := public.solar_ops_series(v_inst, 'generation', DATE '2026-04-01');
   INSERT INTO _r VALUES ('series_reimport_other_interval_one_value_per_newer_interval', jsonb_array_length(v_j -> 'points') = 4
     AND (SELECT bool_and((p ->> 1)::numeric = 20 AND (p ->> 2)::int = 30) FROM jsonb_array_elements(v_j -> 'points') AS p));

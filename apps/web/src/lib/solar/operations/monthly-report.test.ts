@@ -40,7 +40,7 @@ beforeEach(() => {
   h.view.mockResolvedValue(view())
   h.series.mockResolvedValue([])
   h.months.mockImplementation(async (_c: unknown, _i: string, role: string) => role === 'consumption'
-    ? { m2: { '2026-03': { kwh: 12000, n: 1488, intervalMin: 30 } } } : { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } })
+    ? { m2: { '2026-03': { kwh: 12000, n: 1488, minutes: 44640, intervalMin: 30 } } } : { m1: { '2026-03': { kwh: 900, n: 1488, minutes: 44640, intervalMin: 30 } } })
   h.value.mockResolvedValue({ ok: true, tariffName: 'Business 1 (City of Tshwane, 2026/27)', perEventZar: [42.5], totalZar: 42.5 })
   h.brand.mockResolvedValue({ orgName: 'Sun Co', orgLogoDataUri: null, orgAccent: '#0055AA', projectAccent: null, clientLogoDataUri: null, projectName: 'Acme Mall' })
 })

@@ -18,7 +18,7 @@ const input = (over: Partial<BuildMonthlyInput> = {}): BuildMonthlyInput => ({
     equipment: [{ kind: 'module', make: 'Acme Ω', model: 'M-550', rating: 550, unit: 'W', quantity: 182 }, { kind: 'inverter', make: 'Volt', model: 'I-80', rating: 80, unit: 'kW', quantity: 1 }] },
   baseline: flatBaseline(), guarantee: perfIn.guarantee,
   performance: rows[1]!,
-  sources: sourceRows([{ meterId: 'm1', label: 'PV main', sharePct: null }], { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } }, '2026-03', rows[1]!.guaranteeKwh),
+  sources: sourceRows([{ meterId: 'm1', label: 'PV main', sharePct: null }], { m1: { '2026-03': { kwh: 900, n: 1488, minutes: 44640, intervalMin: 30 } } }, '2026-03', rows[1]!.guaranteeKwh),
   downtime: [{ startsAt: '2026-03-10T09:00:00.000Z', endsAt: '2026-03-10T11:00:00.000Z', cause: 'inverter_fault', description: 'Trip ✓',
     excludedFromGuarantee: false, source: 'detected', lostKwh: 16.13, lostZar: 42.5 }],
   lostZarTotal: 42.5,

@@ -18,7 +18,7 @@ const snapshot = (hostile: boolean) => buildMonthlySnapshot({
   asBuilt: { dcKwp: 100, acKw: 80, batteryKwh: null, batteryKw: null, tiltDeg: 15, azimuthDeg: 0,
     equipment: [{ kind: 'module', make: hostile ? 'Acme Ω' : 'Acme', model: 'M-550', rating: 550, unit: 'W', quantity: 182 }, { kind: 'inverter', make: 'Volt', model: 'I-80', rating: 80, unit: 'kW', quantity: 1 }] },
   baseline, guarantee, performance: rows[1]!,
-  sources: sourceRows([{ meterId: 'm1', label: 'PV main', sharePct: null }], { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } }, '2026-03', rows[1]!.guaranteeKwh),
+  sources: sourceRows([{ meterId: 'm1', label: 'PV main', sharePct: null }], { m1: { '2026-03': { kwh: 900, n: 1488, minutes: 44640, intervalMin: 30 } } }, '2026-03', rows[1]!.guaranteeKwh),
   downtime: [{ startsAt: '2026-03-10T09:00:00.000Z', endsAt: '2026-03-10T11:00:00.000Z', cause: 'inverter_fault', description: hostile ? 'Trip ✓ → reset' : 'Trip',
     excludedFromGuarantee: false, source: 'detected', lostKwh: 16.13, lostZar: 42.5 }],
   lostZarTotal: 42.5, tariff: { name: 'Business 1 (City of Tshwane, 2026/27)' }, ytd: yearToDate(rows, '2026-03'),

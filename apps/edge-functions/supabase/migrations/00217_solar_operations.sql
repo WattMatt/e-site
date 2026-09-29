@@ -776,12 +776,15 @@ RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
                to_char((ts_end - make_interval(mins => interval_min)) AT TIME ZONE 'Africa/Johannesburg', 'YYYY-MM') AS month,
                sum(value * interval_min / 60.0) AS kwh,
                count(*) AS n,
+               -- Minutes the kept readings SPAN. A month re-imported at a second interval holds
+               -- readings of both, so count x one interval misstates coverage (review round 2).
+               sum(interval_min) AS minutes,
                min(interval_min) AS interval_min
           FROM one
          GROUP BY 1, 2
     ), per_meter AS (
         SELECT meter_id,
-               jsonb_object_agg(month, jsonb_build_object('kwh', round(kwh::numeric, 3), 'n', n, 'intervalMin', interval_min)) AS months
+               jsonb_object_agg(month, jsonb_build_object('kwh', round(kwh::numeric, 3), 'n', n, 'minutes', minutes, 'intervalMin', interval_min)) AS months
           FROM bucketed
          GROUP BY meter_id
     )

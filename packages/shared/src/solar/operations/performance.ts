@@ -9,7 +9,12 @@ import { expectedForMonth, TMY_DAYS, type Guarantee } from './guarantee'
 import { expectedKwhBetween } from './shape'
 import { daysInMonth, monthEndMs, monthParts, monthStartMs, type MonthKey } from './time'
 
-export interface MonthActual { kwh: number; n: number; intervalMin: number }
+/**
+ * One meter's month from solar_ops_monthly_kwh. `minutes` is the time its kept readings SPAN (sum
+ * of each reading's interval) and is the coverage figure: a month re-imported at a second interval
+ * holds readings of both, so n x intervalMin (the smallest) understates it (review round 2).
+ */
+export interface MonthActual { kwh: number; n: number; minutes: number; intervalMin: number }
 export type MeterMonths = Record<string, Record<MonthKey, MonthActual>>
 export interface MonthTotal { kwh: number; coverageMinutes: number }
 
@@ -63,7 +68,7 @@ export function totalsByMonth(m: MeterMonths): Record<MonthKey, MonthTotal> {
     for (const [k, v] of Object.entries(months)) {
       const t = (out[k] ??= { kwh: 0, coverageMinutes: 0 })
       t.kwh = r3(t.kwh + Number(v.kwh))
-      t.coverageMinutes += Number(v.n) * Number(v.intervalMin)
+      t.coverageMinutes += Number(v.minutes)
     }
   }
   return out

@@ -58,15 +58,24 @@ describe('yearToDate — real sums, never the month repeated (WM M4)', () => {
 })
 
 describe('helpers', () => {
+  it('coverage is the minutes the readings span, so a complete mixed-interval month is 100 % (review round 2)', () => {
+    // July 2026: 1-15 at 15 minutes (1440 readings) + 16-31 at 30 minutes (768): 2208 readings
+    // spanning 44640 minutes. 2208 x 15 would read as 74 %.
+    const t = totalsByMonth({ a: { '2026-07': { kwh: 7440, n: 2208, minutes: 44640, intervalMin: 15 } } })
+    expect(t['2026-07']!.coverageMinutes).toBe(44640)
+    expect(t['2026-07']!.coverageMinutes / (31 * 1440)).toBe(1)
+    const row = performanceRows(base({ months: ['2026-07'], actual: t }))[0]!
+    expect(row.coveragePct).toBe(100)
+  })
   it('sums meters per month and counts downtime hours inside the month only', () => {
-    expect(totalsByMonth({ a: { '2026-03': { kwh: 10, n: 2, intervalMin: 30 } }, b: { '2026-03': { kwh: 5, n: 4, intervalMin: 15 } } }))
+    expect(totalsByMonth({ a: { '2026-03': { kwh: 10, n: 2, minutes: 60, intervalMin: 30 } }, b: { '2026-03': { kwh: 5, n: 4, minutes: 60, intervalMin: 15 } } }))
       .toEqual({ '2026-03': { kwh: 15, coverageMinutes: 120 } })
     const d = [{ id: 'x', startsAt: '2026-03-31T20:00:00.000Z', endsAt: '2026-04-01T02:00:00.000Z', cause: 'other', description: null, excludedFromGuarantee: false, source: 'manual' as const }]
     expect(downtimeHoursInMonth(d, '2026-03')).toEqual({ total: 2, excluded: 0 })
     expect(downtimeHoursInMonth(d, '2026-04')).toEqual({ total: 4, excluded: 0 })
   })
   it('splits expected per source by share, or equally when no share is set', () => {
-    const mm = { m1: { '2026-03': { kwh: 600, n: 1, intervalMin: 30 } }, m2: { '2026-03': { kwh: 300, n: 1, intervalMin: 30 } } }
+    const mm = { m1: { '2026-03': { kwh: 600, n: 1, minutes: 30, intervalMin: 30 } }, m2: { '2026-03': { kwh: 300, n: 1, minutes: 30, intervalMin: 30 } } }
     expect(sourceRows([{ meterId: 'm1', label: 'A', sharePct: null }, { meterId: 'm2', label: 'B', sharePct: null }], mm, '2026-03', 1000))
       .toEqual([
         { meterId: 'm1', label: 'A', sharePct: 50, expectedKwh: 500, actualKwh: 600, allocatedEqually: true },
