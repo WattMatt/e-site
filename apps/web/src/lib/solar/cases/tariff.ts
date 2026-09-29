@@ -1,6 +1,8 @@
 import 'server-only'
 /**
- * The study's pinned tariff as an engine BillCalculator — READ-ONLY. Pinning (solar.studies.tariff_id,
+ * The study's pricing as an engine BillCalculator — READ-ONLY. Built from `loadStudyPricing` (the one
+ * pricing loader the Tariff tab bill check also uses, I-1): override applied, the export rule's tariff and
+ * the effective SSEG rule ('none' = crediting none). Pinning (solar.studies.tariff_id,
  * TOU calendars) is Phase 2b; until it is on the base the select fails with 42703 / PGRST204 and every
  * path returns a named reason, so Run financials is disabled with a sentence instead of guessing.
  *
@@ -10,13 +12,13 @@ import 'server-only'
  * SA public holidays of that same year (`referenceYearHolidays`).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { DEFAULT_REFERENCE_YEAR, type SsegRule, type Tariff, type TouCalendar } from '@esite/shared'
-import { tariffFromRows } from '@esite/shared/tariffs/ingest'
+import { DEFAULT_REFERENCE_YEAR, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
 import {
   SOLAR_ENGINE_DEFAULTS, referenceYearHolidays, tariffBillCalculator,
   type BillCalculator, type TariffBillCalculatorOptions,
 } from '@esite/shared/solar-engine'
 import type { TariffRef } from '@esite/shared/solar-cases'
+import { loadStudyPricing, ssegFromRow } from '../pricing/load-study-pricing'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -30,7 +32,11 @@ export const TARIFF_REASONS = {
 } as const
 
 export type StudyTariff =
-  | { ok: true; calc: BillCalculator; calendar: TouCalendar; holidays: ReadonlySet<string>; tariffRef: TariffRef; year: number }
+  | {
+      ok: true; calc: BillCalculator; calendar: TouCalendar; holidays: ReadonlySet<string>; tariffRef: TariffRef; year: number
+      /** The resolved study pricing the calculator was built from, and its canonical hash (I-1). */
+      pricing: ResolvedStudyPricing; pricingHash: string
+    }
   | { ok: false; reason: string }
 
 /**
@@ -44,15 +50,7 @@ export function isMissingTariffColumn(error: { code?: string; message?: string }
   return /column .*tariff_id.* does not exist/i.test(error.message ?? '')
 }
 
-export function ssegFromRow(r: Row): SsegRule {
-  return {
-    crediting: r.crediting as SsegRule['crediting'], carryForward: r.carry_forward as SsegRule['carryForward'],
-    fyEndMonth: Number(r.fy_end_month), capRule: r.cap_rule as SsegRule['capRule'], offsets: 'energy_only',
-    forfeitOnOwnershipChange: Boolean(r.forfeit_on_ownership_change), maxKva: Number(r.max_kva),
-    requiresTou: Boolean(r.requires_tou), requiresBidirectionalMeter: Boolean(r.requires_bidirectional_meter),
-    locator: (r.locator ?? {}) as Record<string, string>,
-  }
-}
+export { ssegFromRow }
 
 type WindowT = TouCalendar['windows'][number]
 export function calendarFromRows(cal: Row, windows: Row[], rule: Row | null): TouCalendar {
@@ -69,57 +67,42 @@ export function calendarFromRows(cal: Row, windows: Row[], rule: Row | null): To
 
 export type BuildBillCalculator = (t: Tariff, o: TariffBillCalculatorOptions) => BillCalculator
 
-async function loadTariff(svc: AnyClient, id: string): Promise<{ row: Row; tariff: Tariff } | null> {
-  const t = svc.schema('tariffs')
-  const { data: row } = await t.from('tariff').select('*').eq('id', id).maybeSingle()
-  if (!row) return null
-  const { data: charges } = await t.from('charge').select('*').eq('tariff_id', id)
-  return { row: row as Row, tariff: tariffFromRows(row as Row, (charges ?? []) as Row[]) }
-}
-
 export async function resolveStudyTariff(svc: AnyClient, projectId: string, opts: { year?: number; build?: BuildBillCalculator } = {}): Promise<StudyTariff> {
   const year = opts.year ?? DEFAULT_REFERENCE_YEAR
-  const { data: study, error } = await svc.schema('solar').from('studies').select('tariff_id, nmd_kva').eq('project_id', projectId).maybeSingle()
-  if (error) {
-    if (isMissingTariffColumn(error)) return { ok: false, reason: TARIFF_REASONS.notPinned }
-    console.error('[solar-tariff] study read failed', { projectId, code: error.code })
-    return { ok: false, reason: TARIFF_REASONS.unreadable }
+  // The ONE pricing loader (I-1): override, export rule + rates, SSEG rule, escalation, load growth.
+  const loaded = await loadStudyPricing(svc, projectId)
+  if (!loaded.ok) {
+    if (loaded.code === 'studyReadFailed') {
+      if (isMissingTariffColumn(loaded.error)) return { ok: false, reason: TARIFF_REASONS.notPinned }
+      console.error('[solar-tariff] study read failed', { projectId, code: loaded.error.code })
+      return { ok: false, reason: TARIFF_REASONS.unreadable }
+    }
+    return { ok: false, reason: loaded.code === 'noStudy' || loaded.code === 'notPinned' ? TARIFF_REASONS.notPinned : TARIFF_REASONS.unreadable }
   }
-  const tariffId = (study as Row | null)?.tariff_id as string | null | undefined
-  if (!tariffId) return { ok: false, reason: TARIFF_REASONS.notPinned }
-
+  if (loaded.tariffYear.state !== 'published') return { ok: false, reason: TARIFF_REASONS.notPublished }
   const t = svc.schema('tariffs')
-  const main = await loadTariff(svc, tariffId)
-  if (!main) return { ok: false, reason: TARIFF_REASONS.unreadable }
-  const { data: y } = await t.from('tariff_year').select('id, licensee_id, financial_year, state').eq('id', main.row.tariff_year_id as string).maybeSingle()
-  if (!y) return { ok: false, reason: TARIFF_REASONS.unreadable }
-  if ((y as Row).state !== 'published') return { ok: false, reason: TARIFF_REASONS.notPublished }
-  const licenseeId = (y as Row).licensee_id as string
-  const { data: lic } = await t.from('licensee').select('name').eq('id', licenseeId).maybeSingle()
-
-  const { data: cals } = await t.from('tou_calendar').select('id, valid_from, valid_to, high_season_months, source').eq('licensee_id', licenseeId)
+  const { data: cals } = await t.from('tou_calendar').select('id, valid_from, valid_to, high_season_months, source').eq('licensee_id', loaded.tariffYear.licenseeId)
   const cal = ((cals ?? []) as Row[])
     .filter((c) => String(c.valid_from) <= `${year}-12-31` && (c.valid_to === null || c.valid_to === undefined || String(c.valid_to) >= `${year}-01-01`))
     .sort((a, b) => String(b.valid_from).localeCompare(String(a.valid_from)))[0]
   if (!cal) return { ok: false, reason: TARIFF_REASONS.noCalendar }
-  const [{ data: windows }, { data: rule }, { data: sseg }] = await Promise.all([
+  const [{ data: windows }, { data: rule }] = await Promise.all([
     t.from('tou_window').select('season, day_type, start_minute, end_minute, period').eq('calendar_id', cal.id as string),
     t.from('holiday_rule').select('treated_as').eq('calendar_id', cal.id as string).maybeSingle(),
-    t.from('sseg_rule').select('*').eq('tariff_year_id', (y as Row).id as string).maybeSingle(),
   ])
   const calendar = calendarFromRows(cal, (windows ?? []) as Row[], (rule as Row | null) ?? null)
   const holidays = referenceYearHolidays(year)
-  const exportTariff = main.row.export_tariff_id ? (await loadTariff(svc, main.row.export_tariff_id as string))?.tariff ?? null : null
-  const nmd = (study as Row).nmd_kva
+  const { pricing } = loaded
+  const nmd = loaded.study.nmdKva
   const build: BuildBillCalculator = opts.build ?? tariffBillCalculator
-  const calc = build(main.tariff, {
+  const calc = build(pricing.tariff, {
     calendar, referenceYear: year, holidays,
-    sseg: sseg ? ssegFromRow(sseg as Row) : null, exportTariff,
+    sseg: pricing.ssegRule, exportTariff: pricing.exportTariff,
     powerFactor: SOLAR_ENGINE_DEFAULTS.load.powerFactor,
-    ...(nmd !== null && nmd !== undefined ? { demandForMonth: () => ({ nmdKva: Number(nmd) }) } : {}),
+    ...(nmd !== null ? { demandForMonth: () => ({ nmdKva: nmd }) } : {}),
   })
   return {
-    ok: true, calc, calendar, holidays, year,
-    tariffRef: { tariffId, tariffName: main.tariff.name, financialYear: String((y as Row).financial_year), licenseeName: String((lic as Row | null)?.name ?? '') },
+    ok: true, calc, calendar, holidays, year, pricing, pricingHash: loaded.pricingHash,
+    tariffRef: { tariffId: loaded.study.tariffId, tariffName: pricing.tariff.name, financialYear: loaded.tariffYear.financialYear, licenseeName: loaded.licenseeName },
   }
 }

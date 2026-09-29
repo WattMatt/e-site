@@ -38,7 +38,12 @@ describe('resolveStudyTariff', () => {
     expect(r.calendar).toEqual(calendar)
     expect([...opts.holidays].sort()).toEqual([...referenceYearHolidays(2026)].sort())
     expect(opts.holidays.has('2026-12-25')).toBe(true)
-    expect(opts).toMatchObject({ referenceYear: 2026, sseg: null, exportTariff: null, powerFactor: 0.95 })
+    // No library SSEG row: the Net-Billing Rules default the Tariff tab shows; no linked export tariff and
+    // no stored rule → 'none', i.e. crediting none (I-1: was sseg null regardless of the rule).
+    expect(opts).toMatchObject({ referenceYear: 2026, exportTariff: null, powerFactor: 0.95 })
+    expect((opts.sseg as { crediting: string }).crediting).toBe('none')
+    expect(r.pricing.exportMethod).toBe('none')
+    expect(r.pricingHash).toMatch(/^[0-9a-f]{64}$/)
     expect(opts.demandForMonth(1)).toEqual({ nmdKva: 500 })
   })
 
