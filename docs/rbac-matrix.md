@@ -361,6 +361,24 @@ Storage bucket `solar-meter-raw` (private): read needs the path's org in the cal
 
 Nothing is granted to `anon` anywhere: every public path uses the service client to call a service-only definer function.
 
+### Solar operations (Phase 7, 00217)
+
+| Route / action | Needs | Notes |
+|---|---|---|
+| `/projects/[id]/solar/operations` (page) | Solar View (`requireSolarLevel 'view'`) | Technical reads for View; Edit sees write controls; the monthly report panel renders only at Edit + financials. Reads through the caller's session (00217 RLS). |
+| `createInstallationAction` | Solar Edit | Only from the study's ACCEPTED proposal (00217 bind trigger re-checks). Seeds a P50 guarantee and the handover checklist. Service client only to read the accepted proposal's run after the gate. |
+| `saveInstallationAction` | Solar Edit | Commissioning date, as-built, notes; stale-guarded. The baseline is immutable (trigger). |
+| `linkMeterAction` / `unlinkMeterAction` / `setMeterShareAction` | Solar Edit | Generation = meter kind `solar`; consumption = `council`/`bulk` (00217 refuses anything else, and a meter of another organisation). |
+| `saveGuaranteeAction` | Solar Edit | Basis fields mirror the 00217 CHECKs. |
+| `saveIrradiationAction` / `deleteIrradiationAction` | Solar Edit | Monthly POA/GHI with a mandatory source note. |
+| `addDowntimeAction` / `updateDowntimeAction` / `deleteDowntimeAction` | Solar Edit | No overlap, never before commissioning; every direct edit/delete copied to `solar.downtime_history` (append-only, no grant). |
+| `linkHandoverDocumentAction` / `setHandoverNotApplicableAction` / `syncHandoverItemsAction` | Solar Edit | A document must be a `tenants.documents` row of the same project (trigger). |
+| `saveHandoverTemplateAction` | Org owner/admin (`requireRole OWNER_ADMIN`) | `/settings/solar`; 00217 RESTRICTIVE policies use `library_orgs('admin')`. |
+| `generateSolarMonthlyReportAction` | Solar Edit + financials | Writes `projects.reports` (kind `solar_monthly`, PDF under `<org>/<project>/solar-reports/`, inside 00216's service-only report path rules) and `solar.monthly_reports` with the SERVICE role after the gate; `monthly_reports` has no user write policy and no UPDATE/DELETE grant. Disabled with the reason when no tariff is pinned. |
+| `saveMonthlyReportNoteAction` | Solar Edit + financials | `solar.monthly_report_notes` read and write on `solar_can_see_money`. |
+| Saved report kind `solar_monthly` (list / signed URL) | Solar Edit + financials | `SOLAR_READ_REPORT_KINDS` + `user_can_read_report_kind()` (00217). Never deletable: `deleteProjectReportAction` refuses and the RESTRICTIVE `reports_solar_monthly_delete_authz` policy (00217) refuses a direct PostgREST delete. |
+| `public.solar_ops_monthly_kwh` / `public.solar_ops_series` (RPC) | `authenticated`, SECURITY INVOKER | RLS on meters/channels/readings decides; anon has no EXECUTE. |
+
 ## Server actions (`apps/web/src/actions/*`)
 
 Read-only actions require project access (any project member). Write/export actions are gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`, enforced in-app on top of RLS.
