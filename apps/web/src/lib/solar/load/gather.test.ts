@@ -1,3 +1,5 @@
+// @vitest-environment node
+// gather.ts is server-only; under jsdom on Node 20 its Uint8Array fails WebCrypto's realm check (CI).
 import { describe, it, expect } from 'vitest'
 import { fakeSupabase, type FakeOptions } from '@/test/fake-supabase'
 import { gatherLoadInputs, mergeChannelData, pickChannels, type ChannelRow } from './gather'
