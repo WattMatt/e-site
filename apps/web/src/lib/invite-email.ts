@@ -129,8 +129,10 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
     // PKCE browser client never consumes — that path dead-ends on /login
     // (browser-verified during the 2026-07-07 invite incident). action_link
     // is kept only as a fallback if hashed_token is ever absent.
+    // email rides along so a failed verify (burnt/expired token) lands on the
+    // code-entry page with the address prefilled.
     const buttonLink = props?.hashed_token
-      ? `${APP_URL}/auth/callback?token_hash=${encodeURIComponent(props.hashed_token)}&type=recovery&next=${encodeURIComponent('/reset-password/confirm')}`
+      ? `${APP_URL}/auth/callback?token_hash=${encodeURIComponent(props.hashed_token)}&type=recovery&next=${encodeURIComponent('/reset-password/confirm')}&email=${encodeURIComponent(args.email)}`
       : actionLink
 
     // 2. Render branded email. The email_otp code is the same single-use token
