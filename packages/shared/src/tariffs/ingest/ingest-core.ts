@@ -243,7 +243,12 @@ export async function runIngest(
       } else {
         yearId = await store.insertYear(meta)
       }
-      const ids = await store.insertTariffs(yearId, sourceDocumentId, draft.tariffs)
+      // A backwards block is already a blocking issue (block_range_inverted); clear its bounds so the
+      // year still loads for review instead of failing tariffs.charge CHECK charge_block_order mid-file.
+      const insertable = draft.tariffs.map((t) => ({ ...t, charges: t.charges.map((c) =>
+        c.blockMaxKwh !== null && (c.blockMinKwh === null || c.blockMaxKwh <= c.blockMinKwh)
+          ? { ...c, blockMinKwh: null, blockMaxKwh: null } : c) }))
+      const ids = await store.insertTariffs(yearId, sourceDocumentId, insertable)
       const links = draft.tariffs.flatMap((t) => {
         if (!t.exportTariffCode) return []
         const target = draft.tariffs.find((x) => x.code === t.exportTariffCode)

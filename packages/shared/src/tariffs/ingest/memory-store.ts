@@ -129,6 +129,12 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
     },
     async insertTariffs(yearId, _doc, tariffs) {
       maybeFail('insertTariffs')
+      // Mirror of tariffs.charge CHECK charge_block_order, so tests fail where production would.
+      for (const t of tariffs) for (const c of t.charges) {
+        if (c.blockMaxKwh !== null && (c.blockMinKwh === null || c.blockMaxKwh <= c.blockMinKwh)) {
+          throw new Error('charge insert: new row for relation "charge" violates check constraint "charge_block_order"')
+        }
+      }
       const ids = new Map<string, string>()
       const rows = tariffs.map((t) => {
         const tid = id('tariff')

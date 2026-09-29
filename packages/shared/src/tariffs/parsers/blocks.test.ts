@@ -5,6 +5,8 @@ import { makeCharge } from '../types'
 describe('parseBlockRange', () => {
   it.each([
     ['Block 1 (0-350kWh)', 0, 350],
+    // Northern Cape 2025/26: the opening bracket is missing, so "3 351" must not read as 3351.
+    ['Block 3 351 – 600) kWh', 351, 600],
     ['Block 2 (501-1000kWh)', 501, 1000],
     ['Block 5 (>3000kWh)', 3000, null],
     ['Block 1 (0 to 50 kWh)', 0, 50],
