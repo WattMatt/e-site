@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { costMonth } from './bill-engine'
 import { makeCharge, makeTariff, type Charge, type ChargeComponent, type MonthUsage, type TariffSeason, type TariffUnit, type TouOrAll } from './types'
+import { GOLDEN_BILLS, goldenCostOptions } from './__fixtures__/golden-bills'
 
 function usage(p: Partial<MonthUsage> & { kwh?: number } = {}): MonthUsage {
   const { kwh, ...rest } = p
@@ -174,4 +175,14 @@ describe('engine rules', () => {
     // 1000 kWh, 500 kVArh: 500 - 300 = 200 chargeable x R0.40
     expect(costMonth(t, usage({ kwh: 1000, kvarh: 500 })).totalExclVat).toBe(80)
   })
+})
+
+describe('golden fixture (tariffs/__fixtures__/golden-bills.ts) reproduces cases 1-8 and 10', () => {
+  // The fixture feeds other suites (solar/tariff/pricing.test.ts); this proves it IS the golden set.
+  for (const g of GOLDEN_BILLS) {
+    it(`case ${g.id} -> R${g.totalExclVat}`, () => {
+      expect(costMonth(g.tariff, g.usage, goldenCostOptions(g)).totalExclVat).toBe(g.totalExclVat)
+    })
+  }
+  it('holds ten cases', () => expect(GOLDEN_BILLS).toHaveLength(10))
 })
