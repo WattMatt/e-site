@@ -31,6 +31,7 @@ const sampleRow = {
   notify_diary_email: false,
   notify_qc_email: true,
   notify_form_email: true,
+  notify_solar_email: false,
   created_at: '2026-05-26T10:00:00.000Z',
   updated_at: '2026-05-26T10:00:00.000Z',
   updated_by: null,
@@ -116,6 +117,13 @@ describe('patchToRow', () => {
 
   it('returns an empty object for an empty patch', () => {
     expect(patchToRow({})).toEqual({})
+  })
+
+  it('maps notify_solar_email in both directions, never crossed with a sibling toggle (00216)', () => {
+    expect(rowToProjectSettings(sampleRow).notifySolarEmail).toBe(false)
+    expect(rowToProjectSettings({ ...sampleRow, notify_solar_email: true, notify_form_email: false }).notifySolarEmail).toBe(true)
+    expect(patchToRow({ notifySolarEmail: false })).toEqual({ notify_solar_email: false })
+    expect(patchToRow({ notifySolarEmail: true })).toEqual({ notify_solar_email: true })
   })
 
   it('maps notifyQcEmail to notify_qc_email (both directions of the toggle)', () => {
