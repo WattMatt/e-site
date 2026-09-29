@@ -11,7 +11,7 @@ import {
 import type { MetaClient } from './meta-client.ts'
 import type { InboundMessage } from './parse.ts'
 import { expireStalePost, handleChannelContent, handleChannelPayload, pickPrefixRows } from './channel.ts'
-import { linkByInboundCode, type PendingOtpLink } from './link-code.ts'
+import { LINK_REPLIES, linkByInboundCode, type PendingOtpLink } from './link-code.ts'
 
 export interface LinkRow {
   id: string
@@ -242,6 +242,14 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
     return result('applied', 'restarted', link.user_id, null)
   }
   if (link?.status === 'opted_out') return result('refused', 'opted_out', link.user_id, null)   // they said stop: silence
+  // Mid-link: people type the digits they see, without "LINK". Only a number with a
+  // link in progress gets this reading, so six digits from anyone else stay plain text.
+  if (link?.status === 'pending_otp') {
+    const bare = msg.type === 'text' && msg.text ? /^\s*(\d{6})\s*$/.exec(msg.text)?.[1] ?? null : null
+    if (bare) return linkByInboundCode(deps, from, bare)
+    await meta.sendText(from, LINK_REPLIES.sendCode)
+    return result('refused', 'awaiting_link_code', link.user_id, null)
+  }
   if (!link || (link.status !== 'active' && link.status !== 'pending_optin')) {
     if (!(await store.unknownSenderRecentlyAnswered(from, now()))) await meta.sendText(from, REPLIES.notLinked)
     return result('unknown_sender', link ? `link_${link.status}` : 'no_link', null, null)

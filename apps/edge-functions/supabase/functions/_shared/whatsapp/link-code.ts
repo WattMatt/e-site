@@ -18,6 +18,7 @@ export const LINK_REPLIES = {
   locked: 'Too many wrong codes. Get a new one on the E-Site page (Settings → Account → WhatsApp).',
   noPending: "There's no link request for this number. Start on the E-Site page (Settings → Account → WhatsApp), and send the code from the number you entered there.",
   taken: 'This number is already linked to another E-Site account.',
+  sendCode: "You're part-way through linking this number. Send the 6-digit code shown on the E-Site page (Settings → Account → WhatsApp).",
 } as const
 
 export interface PendingOtpLink {
