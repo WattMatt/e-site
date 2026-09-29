@@ -28,7 +28,7 @@ const schema = z.object({
 
 export type DataRequestInput = z.infer<typeof schema>
 
-const INFO_OFFICER_EMAIL = 'arno@watsonmattheus.com'
+const INFO_OFFICER_EMAIL = 'support@e-site.live'
 
 const LABELS: Record<DataRequestInput['requestType'], string> = {
   access:     'Access request (POPIA §23)',

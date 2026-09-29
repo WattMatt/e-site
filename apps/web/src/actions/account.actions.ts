@@ -31,7 +31,7 @@ import { verifyPasswordIsolated } from '@/lib/auth-reauth'
 import { logAuthEvent } from '@esite/shared'
 import { z } from 'zod'
 
-const INFO_OFFICER_EMAIL = 'arno@watsonmattheus.com'
+const INFO_OFFICER_EMAIL = 'support@e-site.live'
 
 const schema = z.object({
   confirmEmail: z.string().email('Please enter a valid email address.'),

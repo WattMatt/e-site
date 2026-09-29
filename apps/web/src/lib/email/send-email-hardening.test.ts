@@ -119,7 +119,7 @@ function post(body: unknown, authorization?: string): Request {
 /** The exact shape the production POPIA form action sends. */
 function dsrPayload(over: Record<string, unknown> = {}) {
   return {
-    to: 'arno@watsonmattheus.com',
+    to: 'support@e-site.live',
     subject: '[POPIA] Access request (POPIA §23) from Jane',
     requester: { name: 'Jane Doe', email: 'jane@example.com' },
     requestType: 'access',
@@ -147,7 +147,7 @@ describe('unauthenticated caller cannot use the DSR branch as a relay', () => {
 
     expect(res.status).toBe(200)
     expect(h.sends).toHaveLength(1)
-    expect(h.sends[0].body.to).toBe('arno@watsonmattheus.com')
+    expect(h.sends[0].body.to).toBe('support@e-site.live')
     expect(JSON.stringify(h.sends[0].body)).not.toContain('victim@target.example')
   })
 

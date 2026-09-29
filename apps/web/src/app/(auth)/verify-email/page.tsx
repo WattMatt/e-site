@@ -113,7 +113,7 @@ export default function VerifyEmailPage() {
         >
           Sign out
         </button>
-        <Link href="mailto:arno@watsonmattheus.com" className="auth-link">
+        <Link href="mailto:support@e-site.live" className="auth-link">
           Need help? <span className="auth-link-accent">Contact support</span>
         </Link>
       </div>

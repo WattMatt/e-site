@@ -127,7 +127,7 @@ export default function SignupPage() {
           <input
             {...register('fullName')}
             className={`auth-input${errors.fullName ? ' auth-input-error' : ''}`}
-            placeholder="Arno Watson"
+            placeholder="Thandi Nkosi"
             autoComplete="name"
           />
           {errors.fullName && <p className="auth-error-text">{errors.fullName.message}</p>}

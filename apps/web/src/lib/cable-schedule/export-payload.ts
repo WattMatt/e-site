@@ -32,7 +32,7 @@ export interface ExportPayload {
    * Branding accent hex, resolved project → org → default #E69500 — the same
    * precedence the react-pdf reports use (lib/reports/theme.ts resolveAccent).
    * Optional so hand-built payloads (tests, fixtures) fall back to the
-   * Watson Mattheus amber via accentColor() in the renderers; when unset the
+   * E-Site amber via accentColor() in the renderers; when unset the
    * output is byte-identical to the pre-accent hard-coded amber.
    */
   accent?: string

@@ -74,7 +74,7 @@ export default function SignupScreen() {
         <Text style={styles.subtitle}>Join E-Site to manage your projects</Text>
 
         {[
-          { label: 'Full name', value: fullName, onChange: setFullName, placeholder: 'Arno Watson' },
+          { label: 'Full name', value: fullName, onChange: setFullName, placeholder: 'Thandi Nkosi' },
           { label: 'Email', value: email, onChange: setEmail, placeholder: 'you@company.co.za', keyboard: 'email-address' as const },
           { label: 'Password', value: password, onChange: setPassword, secure: true },
           { label: 'Confirm password', value: confirmPassword, onChange: setConfirmPassword, secure: true },
