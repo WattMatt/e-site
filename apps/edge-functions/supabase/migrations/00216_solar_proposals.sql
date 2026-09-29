@@ -344,12 +344,14 @@ CREATE POLICY proposals_delete_authz ON solar.proposals AS RESTRICTIVE FOR DELET
 -- An issued proposal's study and case are its provenance. Deleting either directly would cascade the
 -- evidence away (study) or null its case reference (case) through the depth > 1 bypass above, so both
 -- are refused while a non-draft proposal depends on them. Depth > 1 (a project-delete cascade) passes.
+-- The messages are NEUTRAL: a user below Edit + financials can attempt the delete, and must not learn
+-- from the refusal that an issued proposal exists.
 CREATE OR REPLACE FUNCTION solar.studies_keep_issued_proposals()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
     IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;
     IF EXISTS (SELECT 1 FROM solar.proposals p WHERE p.study_id = OLD.id AND p.status <> 'draft') THEN
-        RAISE EXCEPTION 'solar.studies: an issued proposal depends on this study and is kept as evidence' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'solar.studies: this study is kept as evidence and cannot be deleted' USING ERRCODE = '42501';
     END IF;
     RETURN OLD;
 END $$;
@@ -363,7 +365,7 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
     IF pg_trigger_depth() > 1 THEN RETURN OLD; END IF;
     IF EXISTS (SELECT 1 FROM solar.proposals p WHERE p.case_id = OLD.id AND p.status <> 'draft') THEN
-        RAISE EXCEPTION 'solar.cases: an issued proposal depends on this case and is kept as evidence' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'solar.cases: this case is kept as evidence and cannot be deleted' USING ERRCODE = '42501';
     END IF;
     RETURN OLD;
 END $$;

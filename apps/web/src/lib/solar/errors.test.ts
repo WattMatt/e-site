@@ -30,11 +30,13 @@ describe('humanSolarError', () => {
     expect(humanSolarError({ code: '42501', message: 'solar.equipment: the platform catalogue is maintained by E-Site' }))
       .toBe('You do not have permission to do that.')
   })
-  it('words the 00216 issued-proposal delete guards (review I1, M2)', () => {
-    expect(humanSolarError({ code: '42501', message: 'solar.cases: an issued proposal depends on this case and is kept as evidence' }))
-      .toBe('An issued proposal was made from this case — it is kept as evidence and cannot be deleted.')
-    expect(humanSolarError({ code: '42501', message: 'solar.studies: an issued proposal depends on this study and is kept as evidence' }))
-      .toBe('This study has an issued proposal — it is kept as evidence and cannot be deleted.')
+  it('words the 00216 issued-proposal delete guards neutrally (review I1, M2; round 2 M4)', () => {
+    // The refusal reaches users below Edit + financials, so neither sentence may reveal a proposal.
+    const c = humanSolarError({ code: '42501', message: 'solar.cases: this case is kept as evidence and cannot be deleted' })
+    const s = humanSolarError({ code: '42501', message: 'solar.studies: this study is kept as evidence and cannot be deleted' })
+    expect(c).toBe('This case can’t be deleted because it is referenced by issued client documents.')
+    expect(s).toBe('This study can’t be deleted because it is referenced by issued client documents.')
+    expect(`${c} ${s}`).not.toMatch(/proposal/i)
   })
   it('never leaks a raw message', () => {
     expect(humanSolarError({ code: 'XX000', message: 'internal error at pg_foo.c:12' })).toBe('Something went wrong — try again.')

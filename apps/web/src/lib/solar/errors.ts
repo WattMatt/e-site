@@ -26,12 +26,13 @@ export function humanSolarError(err: { code?: string; message?: string } | null 
     const kind = (['module', 'inverter', 'battery'] as const).find((k) => m.includes(`the ${k} `)) ?? 'equipment'
     return `Pick the ${kind} again — it is not in your catalogue.`
   }
-  // 00216: a study or case an issued proposal depends on is kept as evidence (fixed messages).
-  if (err?.code === '42501' && m.startsWith('solar.cases: an issued proposal depends on this case')) {
-    return 'An issued proposal was made from this case — it is kept as evidence and cannot be deleted.'
+  // 00216: a study or case an issued proposal depends on is kept as evidence (fixed, neutral messages:
+  // the caller may be below Edit + financials, so neither the DB nor this sentence names a proposal).
+  if (err?.code === '42501' && m.startsWith('solar.cases: this case is kept as evidence')) {
+    return 'This case can’t be deleted because it is referenced by issued client documents.'
   }
-  if (err?.code === '42501' && m.startsWith('solar.studies: an issued proposal depends on this study')) {
-    return 'This study has an issued proposal — it is kept as evidence and cannot be deleted.'
+  if (err?.code === '42501' && m.startsWith('solar.studies: this study is kept as evidence')) {
+    return 'This study can’t be deleted because it is referenced by issued client documents.'
   }
   if (err?.code === '42501') return 'You do not have permission to do that.'
   return GENERIC_ERROR

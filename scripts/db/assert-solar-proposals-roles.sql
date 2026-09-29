@@ -588,7 +588,8 @@ BEGIN
     DELETE FROM solar.cases WHERE id = v_case;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
-    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('case_delete_with_issued_REFUSED', true);
+    -- Review round 2 (M4): the refusal reaches users below financials, so it must not reveal a proposal.
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('case_delete_with_issued_REFUSED', SQLERRM NOT ILIKE '%proposal%' AND SQLERRM LIKE '%kept as evidence%');
     WHEN OTHERS THEN INSERT INTO _r VALUES ('case_delete_with_issued_REFUSED', false);
   END;
   RESET ROLE;
@@ -598,7 +599,8 @@ BEGIN
     DELETE FROM solar.studies WHERE id = v_study;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
-    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('study_delete_with_issued_REFUSED', true);
+    -- Review round 2 (M4): the refusal reaches users below financials, so it must not reveal a proposal.
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('study_delete_with_issued_REFUSED', SQLERRM NOT ILIKE '%proposal%' AND SQLERRM LIKE '%kept as evidence%');
     WHEN OTHERS THEN INSERT INTO _r VALUES ('study_delete_with_issued_REFUSED', false);
   END;
   RESET ROLE;
