@@ -51,6 +51,8 @@ function mode(xs: number[]): number | null {
  * The City Power reader below first. Only when it finds no tariff at all is the
  * column-aware reader (rfd-columns.ts) used: the 33 RfDs this reader already
  * handles were loaded from it, and must keep parsing byte-for-byte the same.
+ * When it finds nothing, its own issues (rows it could not attach to a header in
+ * a layout it does not read) are noise and are not carried over.
  */
 export function parseRfdText(text: string, opts: { fileSha256: string }): ParsedRfd {
   const first = parseRfdCityPower(text, opts)

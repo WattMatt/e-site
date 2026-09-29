@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { Tariff } from '../types'
 import { validateTariffYear } from '../validators'
-import { checkRow, classifyColumn, parseRfdColumns, segmentLine } from './rfd-columns'
+import { checkRow, classifyColumn, decimalStyle, parseRfdColumns, segmentLine } from './rfd-columns'
 import { parseRfdText } from './rfd-text'
 
 // pdftotext -layout excerpts of real NERSA 2026/27 RfDs (one or two pages each).
@@ -72,28 +73,123 @@ describe('classifyColumn', () => {
 })
 
 describe('checkRow (Recommended ≈ Approved × (1 + Recommended %))', () => {
-  it('passes within 0.02 absolute or 0.1 % relative', () => {
-    expect(checkRow(270.15, 302.03, 11.8).kind).toBe('ok')
-    expect(checkRow(3.29, 3.66, 11.3).kind).toBe('ok') // 3.6618
-    expect(checkRow(1125.75, 1227.18, 9.01).kind).toBe('ok')
+  const dp2 = { prior: 2, recommended: 2, pct: 1 }
+  it('passes within the rounding the row prints, never looser than 0.02 / 0.1 %', () => {
+    expect(checkRow(270.15, 302.03, 11.8, dp2).kind).toBe('ok')
+    expect(checkRow(3.29, 3.66, 11.3, dp2).kind).toBe('ok') // 3.6618
+    expect(checkRow(1125.75, 1227.18, 9.01, { prior: 2, recommended: 2, pct: 2 }).kind).toBe('ok')
+    expect(checkRow(2.16, 2.3738, 9.9, { prior: 2, recommended: 4, pct: 1 }).kind).toBe('ok') // Centlec
+  })
+  it('does not let a Proposed value hide inside 0.02 on a rate printed to four places', () => {
+    // 1.5000 x 1.1132 = 1.6698; 1.6800 is the value at 12 % (Proposed)
+    expect(checkRow(1.5, 1.68, 11.32, { prior: 4, recommended: 4, pct: 2 }).kind).toBe('mismatch')
+    // 197 x 1.125 = 221.625 printed as 222: within its rounding, but beyond 0.02 / 0.1 %, so flagged
+    expect(checkRow(197, 222, 12.5, { prior: 2, recommended: 0, pct: 1 }).kind).toBe('mismatch')
   })
   it('reviews a small mismatch, blocks a gross one, and never passes a row it cannot check', () => {
-    expect(checkRow(406, 449.9, 10).kind).toBe('mismatch') // Stellenbosch: 446.60 expected
-    expect(checkRow(71.37, 768.46, -4.08).kind).toBe('gross') // Cape Town feed-in tariff 2
+    expect(checkRow(406, 449.9, 10, dp2).kind).toBe('mismatch') // Stellenbosch: 446.60 expected
+    expect(checkRow(71.37, 768.46, -4.08, dp2).kind).toBe('gross') // Cape Town feed-in tariff 2
     expect(checkRow(null, 302.03, 11.8).kind).toBe('unverified')
     expect(checkRow(270.15, 302.03, null).kind).toBe('unverified')
     expect(checkRow(0, 302.03, 11.8).kind).toBe('unverified')
   })
 })
 
+describe('classifyColumn never takes "Amended" or "Extended" for Recommended', () => {
+  it('needs a word starting "recom"', () => {
+    expect(classifyColumn('2026/27 Amended')).not.toBe('recommended')
+    expect(classifyColumn('Extended tariff')).not.toBe('recommended')
+    expect(classifyColumn('2026/27 Recommen ded')).toBe('recommended')
+  })
+})
+
+describe('decimalStyle and an ambiguous "1,050"', () => {
+  it('reads a table\'s decimal mark from the numbers that can only be read one way', () => {
+    expect(decimalStyle(['1,050', '230.67', '9.26%'])).toBe('point')
+    expect(decimalStyle(['1,050', '230,67', '9,26%'])).toBe('comma')
+    expect(decimalStyle(['1,050', '1,155'])).toBe('unknown')
+  })
+  it('refuses a Recommended "1,155" it cannot read, and reads it as thousands in a table of points', () => {
+    const head = [
+      '                        2025/26    2026/27   Proposed %     2026/27     Recommended     Analysis and Key',
+      'Business               Approved     Proposed    Increase    Recommended   % increase      Findings',
+    ]
+    const unknown = parseRfdColumns([...head, 'Basic charge (R/month)   1,050      1,176         12%       1,155        10%'].join('\n'), { fileSha256: 'x' })
+    expect(unknown.tariffs.flatMap((t) => t.charges)).toEqual([])
+    expect(unknown.issues.find((i) => i.code === 'rfd_row_dropped')).toMatchObject({ severity: 'block' })
+    const points = parseRfdColumns([...head,
+      'Basic charge (R/month)   1,050      1,176      12.00%       1,155        10.00%',
+      'Energy charge (c/kWh)    230.67     258.35     12.00%      253.74        10.00%',
+    ].join('\n'), { fileSha256: 'x' })
+    expect(points.tariffs[0].charges.map((c) => [c.component, c.amountExclVat])).toEqual([['basic', 1155], ['energy', 253.74]])
+  })
+})
+
 describe('the City Power reader keeps its files', () => {
-  it('uses the column reader only when the City Power reader finds no tariff', () => {
+  it('parses the City Power excerpt exactly as it did before the column reader existed', () => {
+    // sha256(JSON.stringify(parse)) taken with rfd-text.ts as it was on main before this change.
     const cp = readFileSync(new URL('../__fixtures__/city-power-rfd-2026-27.excerpt.txt', import.meta.url), 'utf8')
-    const viaText = parseRfdText(cp, { fileSha256: 'fixture' })
-    expect(viaText.issues.map((i) => i.code)).not.toContain('rfd_row_unverified')
-    expect(viaText.tariffs.every((t) => t.charges.every((c) => !c.sourceLocator.raw_text?.includes('undefined')))).toBe(true)
-    // The column reader is not what produced it: it reads the same text differently (no row checks elsewhere).
-    expect(viaText).not.toEqual(parseRfdColumns(cp, { fileSha256: 'fixture' }))
+    const digest = createHash('sha256').update(JSON.stringify(parseRfdText(cp, { fileSha256: 'fixture' }))).digest('hex')
+    expect(digest).toBe('c526acd355a6c4850ecd1a40ff55672a259994e3219adffbe7e38bda60ab1210')
+  })
+})
+
+describe('Mantsopa: "R 2,686" under "2.4198 … 11.00%" (two decimal marks in one table)', () => {
+  it('lets the row\'s own arithmetic decide the comma, and only then', () => {
+    const r = parseRfdColumns([
+      'Tariff II: IBT -        2025/26         Proposed       2026/27       2026/27            Recommende         Analysis',
+      'Domestic     (Pre-      Approved        % Increase     Proposed      Recommended        d % Increase       and      Key',
+      'paid            or                                                                                         findings',
+      'Conventional)',
+      'SUMMER',
+      'Block      1    (0-',
+      '350kWh)                 2.4198          11.00%         R 2,686       R 2,686            11.00%             N/A',
+      'Block     2   (351-',
+      '600kWh)                 3.4049          11.00%         R 3,779       R 3,779            11.00%             N/A',
+      'Block 3 (>600kWh)       3.9737          11.00%         R 4,411       R 4,411            11.00%             N/A',
+    ].join('\n'), { fileSha256: 'x' })
+    expect(r.tariffs[0].charges.map((c) => [c.season, c.blockMinKwh, c.blockMaxKwh, c.amountExclVat, c.unit])).toEqual([
+      ['low', 0, 350, 2.686, 'R_per_kWh'], ['low', 350, 600, 3.779, 'R_per_kWh'], ['low', 600, null, 4.411, 'R_per_kWh'],
+    ])
+    expect(codes(r.issues)).not.toContain('rfd_row_increase_mismatch')
+  })
+})
+
+describe('hostile rows under a real header (Tsantsabane)', () => {
+  const head = [
+    '                                FY2025/26      FY2026/27   FY2026/27      FY2026/27        FY2026/27',
+    ' Domestic Conventional          Approved      Proposed %   Approved     Recommended      Recommended',
+    '                                 Increase       Increase    Increase       Increase       % Increase',
+    '',
+  ]
+  const row = (label: string, a: string, p: string, r: string) =>
+    `${label.padEnd(37)}${a.padStart(4)}         9.01%        ${p.padStart(4)}             ${r.padStart(4)}                9.01%`
+  const go = (lines: string[]) => parseRfdColumns([...head, ...lines].join('\n'), { fileSha256: 'x' })
+
+  it('starts a tariff named inside the table with no season carried over', () => {
+    const r = go([
+      ' Summer', row(' Block 1 (0 – 50 kWh)', '1.96', '2.14', '2.14'), row(' Block 2 (>50 kWh)', '2.49', '2.71', '2.71'),
+      ' Winter', row(' Block 1 (0 – 50 kWh)', '2.96', '3.23', '3.23'), row(' Block 2 (>50 kWh)', '3.49', '3.80', '3.80'),
+      ' Commercial Prepaid', row(' Energy charge', '3.48', '3.79', '3.79'),
+    ])
+    expect(r.tariffs.map((t) => [t.name, t.charges.map((c) => c.season)])).toEqual([
+      ['Domestic Conventional', ['low', 'low', 'high', 'high']],
+      ['Commercial Prepaid', ['all']],
+    ])
+  })
+  it('takes a season word under a label-first row as the next heading once a season heading was seen', () => {
+    const r = go([
+      ' Summer', ' Block 1 (0 – 50 kWh)', row('', '1.96', '2.14', '2.14'), ' Block 2 (>50 kWh)', row('', '2.49', '2.71', '2.71'),
+      ' Winter', ' Block 1 (0 – 50 kWh)', row('', '2.96', '3.23', '3.23'), ' Block 2 (>50 kWh)', row('', '3.49', '3.80', '3.80'),
+    ])
+    expect(r.tariffs[0].charges.map((c) => [c.season, c.blockMinKwh, c.amountExclVat])).toEqual([
+      ['low', 0, 2.14], ['low', 50, 2.71], ['high', 0, 3.23], ['high', 50, 3.8],
+    ])
+    expect(r.issues.filter((i) => i.severity === 'block')).toEqual([])
+  })
+  it('blocks a tariff whose energy is priced for one season only', () => {
+    const r = go([' Winter', row(' Block 1 (0 – 50 kWh)', '2.96', '3.23', '3.23'), row(' Block 2 (>50 kWh)', '3.49', '3.80', '3.80')])
+    expect(r.issues.find((i) => i.code === 'rfd_season_incomplete')).toMatchObject({ severity: 'block', tariff: 'Domestic Conventional' })
   })
 })
 

@@ -126,9 +126,9 @@ interface Column {
 export function classifyColumn(text: string): ColumnKind | 'commentary' {
   const t = text.toLowerCase().replace(/\s+/g, ' ')
   if (/analysis|finding|comment|remark|motivation/.test(t)) return 'commentary'
-  const joined = t.replace(/\s/g, '')
-  const recommended = /recom|mended|nded/.test(joined)
-  const proposed = /propos/.test(joined)
+  // "Recomme / nded" and "Recommen / ded" still start with "recom"; "Amended" or "Extended" never do.
+  const recommended = /\brecom/.test(t)
+  const proposed = /\bpropos/.test(t)
   const newYear = /2026\/27|2026-27|26\/27/.test(t)
   const pct = /%/.test(t) || (/increase/.test(t) && !/tariff/.test(t))
   if (pct) {
@@ -160,7 +160,7 @@ interface Header {
 
 /** "1.1 Prepaid", "7. Tariff…": a heading number at the left margin is not an amount. */
 const isHeadingNumber = (l: Line, s: Seg): boolean =>
-  s === l.segs[0] && s.x0 <= 8 && /^\d{1,2}(?:\.\d{1,2}){0,2}\.?$/.test(s.text) && l.segs.length > 1 && !isNum(l.segs[1].text)
+  s === l.segs[0] && s.x0 <= 8 && /^\d{1,2}(?:\.\d{1,2})*\.$|^\d{1,2}(?:\.\d)+$/.test(s.text) && l.segs.length > 1 && !isNum(l.segs[1].text)
 const hasAmount = (l: Line): boolean => l.segs.some((s) => isAmountTok(s.text) && !isHeadingNumber(l, s))
 const vocabSegs = (l: Line): Seg[] => l.segs.filter((s) => isVocabSeg(s.text) && !isNum(s.text))
 const isBlank = (l: Line | undefined): boolean => !l || l.segs.length === 0
@@ -247,7 +247,7 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   const multi: Seg[] = []
   const single: Seg[] = []
   for (let k = end + 1; k < Math.min(lines.length, end + 60); k++) {
-    if (isAnchor(lines[k])) break
+    if (tableEnds(lines[k])) break
     const ns = lines[k].segs.filter((x) => isNum(x.text) && x.x0 < commentX - 1 && x.x1 > firstVocabX - 4)
     if (ns.length >= 2) multi.push(...ns)
     // A lone number that opens a sentence ("11.8% phased increase…") is findings prose.
@@ -266,8 +266,9 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   // its row finishing on the next line) adds a column only where it touches none of them: it may
   // never bridge two.
   const base = merge(multi.map((x) => ({ x0: x.x0, x1: x.x1 })))
-  const extra = merge(single.map((x) => ({ x0: x.x0, x1: x.x1 })).filter((bx) => !base.some((c) => bx.x0 < c.x1 && c.x0 < bx.x1)))
-    .filter((bx) => !base.some((c) => bx.x0 < c.x1 && c.x0 < bx.x1))
+  const touches = (bx: Box): boolean => base.some((c) => bx.x0 < c.x1 && c.x0 < bx.x1)
+  // Merged lone numbers can grow to touch a column: check again after merging.
+  const extra = merge(single.map((x) => ({ x0: x.x0, x1: x.x1 })).filter((bx) => !touches(bx))).filter((bx) => !touches(bx))
   const clusters: (Box & { words: { line: number; x: number; w: string }[] })[] = [...base, ...extra]
     .sort((p, q) => p.x0 - q.x0).map((c) => ({ ...c, words: [] }))
   const groups: { x0: number; x1: number; text: string }[] = []
@@ -339,7 +340,7 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
     let pct = 0
     let amt = 0
     for (let k = end + 1; k < Math.min(lines.length, end + 40); k++) {
-      if (k > end + 1 && isAnchor(lines[k])) break
+      if (tableEnds(lines[k])) break
       for (const s of lines[k].segs) {
         if (!isNum(s.text) || s.x1 < c.x0 - 2 || s.x0 > c.x1 + 2) continue
         if (s.text.endsWith('%')) pct++
@@ -367,7 +368,7 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
   let recs = cols.filter((c) => c.kind === 'recommended')
   // "FY2026/27 Approved" beside "FY2026/27 Recommended" (Northern Cape template): the column that
   // says Recommended is the decision; the other is left unread rather than guessed at.
-  const named = recs.filter((c) => /recom|mended|nded/i.test(c.text.replace(/\s/g, '')))
+  const named = recs.filter((c) => /\brecom/i.test(c.text))
   if (recs.length > 1 && named.length === 1) {
     for (const c of recs) if (c !== named[0]) c.kind = 'other'
     recs = named
@@ -389,6 +390,13 @@ function readHeader(lines: Line[], anchor: number): Header | { error: string; en
 function lineOf(lines: Line[], s: Seg, start: number, end: number): number {
   for (let i = start; i <= end; i++) if (lines[i].segs.includes(s)) return i
   return end
+}
+
+/** The next header, a table caption or a section heading: where a table's body stops. */
+function tableEnds(l: Line): boolean {
+  if (isAnchor(l) || /^\s*table\s+\d+/i.test(l.text)) return true
+  const hd = asHeading(l)
+  return hd !== null && SECTION.test(hd)
 }
 
 /** A heading that ends the tariff tables rather than naming a tariff. */
@@ -450,7 +458,13 @@ interface BodyLine {
 /** Place each number of a line into a header column: all of them in order, or by position. */
 function place(nums: Seg[], cols: Column[], learned: ({ x0: number; x1: number } | null)[]): Cells | null {
   const cells: Cells = new Map()
-  if (nums.length === cols.length) {
+  const near = (s: Seg, k: number): boolean => {
+    const box = learned[k] ?? cols[k]
+    return Math.min(s.x1, box.x1) - Math.max(s.x0, box.x0) > 0 || Math.max(box.x0 - s.x1, s.x0 - box.x1) <= 6
+  }
+  // As many numbers as columns: in order, but only if each sits over (or beside) its column; a blank
+  // cell plus a stray number would otherwise shift every value one column over.
+  if (nums.length === cols.length && nums.every((s, k) => near(s, k))) {
     nums.forEach((s, k) => cells.set(k, s))
     return cells
   }
@@ -475,12 +489,45 @@ function place(nums: Seg[], cols: Column[], learned: ({ x0: number; x1: number }
   return cells
 }
 
-const cellValue = (s: Seg | undefined): number | null => {
+/** How a table writes decimals, from the numbers that can only be read one way. */
+export type DecimalStyle = 'point' | 'comma' | 'unknown'
+
+/** "1,050" is one thousand fifty in a table of points, one point zero five in a table of commas. */
+const AMBIGUOUS_COMMA = /^-?\d{1,3},\d{3}%?$/
+
+export function decimalStyle(tokens: readonly string[]): DecimalStyle {
+  let point = 0
+  let comma = 0
+  for (const raw of tokens) {
+    const t = raw.replace(/^R\s?/, '').replace('%', '').trim()
+    if (/^-?\d[\d ]*\.\d+$/.test(t) || /^-?\d{1,3}(?:,\d{3})+\.\d+$/.test(t)) point++
+    else if (/^-?\d[\d ]*,(?:\d{1,2}|\d{4,})$/.test(t)) comma++
+  }
+  if (point > 0 && comma === 0) return 'point'
+  if (comma > 0 && point === 0) return 'comma'
+  return 'unknown'
+}
+
+/** A cell's number. An ambiguous "1,050" in a table whose style is unknown is null, never a guess. */
+function cellValue(s: Seg | undefined, style: DecimalStyle): number | null {
   if (!s || DASH.test(s.text)) return null
-  const t = s.text.replace(/^R\s?/, '').replace('%', '').trim()
+  let t = s.text.replace(/^R\s?/, '').replace('%', '').trim()
+  if (AMBIGUOUS_COMMA.test(s.text.replace(/^R\s?/, '').trim())) {
+    if (style === 'unknown') return null
+    if (style === 'point') t = t.replace(',', '')
+  }
   const neg = t.startsWith('-')
   const v = parseNumberText(neg ? t.slice(1) : t)
   return v === null ? null : neg ? -v : v
+}
+
+/** Decimals printed in a cell ("2,3738" → 4); an ambiguous comma read as thousands has none. */
+function printedDecimals(s: Seg | undefined, style: DecimalStyle): number {
+  if (!s) return 0
+  const t = s.text.replace(/^R\s?/, '').replace('%', '').trim()
+  if (AMBIGUOUS_COMMA.test(t) && style === 'point') return 0
+  const m = /[.,](\d+)$/.exec(t)
+  return m ? m[1].length : 0
 }
 
 // ---------------------------------------------------------------------------
@@ -569,9 +616,7 @@ export function parseRfdColumns(text: string, opts: { fileSha256: string }): Par
     const body: Line[] = []
     while (j < lines.length) {
       const b = lines[j]
-      if (isAnchor(b) || /^\s*table\s+\d+/i.test(b.text)) break
-      const hd = asHeading(b)
-      if (hd && SECTION.test(hd)) break
+      if (tableEnds(b)) break
       body.push(b)
       j++
     }
@@ -655,12 +700,18 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
   })
 
   const recIdx = cols.findIndex((c) => c.kind === 'recommended')
+  // Amounts only: percentages are often printed with a point in a table of comma amounts (Polokwane).
+  const style = decimalStyle(whole.flatMap((l) => l.segs.filter((s) => isAmountTok(s.text)).map((s) => s.text)))
   let season: TariffSeason = 'all'
   let contextUnit: TariffUnit | null = null
   let open: Row | null = null
   let pendingLabel: string[] = []
 
   const complete = (r: Row | null): boolean => r !== null && r.cells.has(recIdx)
+  const unclosedLabel = (r: Row): boolean => {
+    const j = r.label.join(' ')
+    return (j.match(/\(/g) ?? []).length > (j.match(/\)/g) ?? []).length
+  }
   const collides = (r: Row, c: Cells): boolean => [...c.keys()].some((k) => r.cells.has(k))
   const heading = (t: string): void => {
     const s = detectSeason(t)
@@ -695,7 +746,7 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     const r = open
     open = null
     if (!r) return
-    emitRow(r, { cols, recIdx, draft: target.get(), sha, out, pcts, season, contextUnit, tableUnit: h.unit })
+    emitRow(r, { cols, recIdx, draft: target.get(), sha, out, pcts, season, contextUnit, tableUnit: h.unit, style })
   }
   const nextMeaningful = (k: number): BodyLine | undefined => {
     for (let m = k + 1; m < lines.length; m++) {
@@ -733,8 +784,9 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     }
 
     if (b.cells && hasLabel) {
-      // Numbers waiting for their label (above it), or a row finishing on this line.
-      if (open && (!complete(open) || open.label.length === 0) && !collides(open, b.cells)) {
+      // Numbers waiting for their label (above it), a row finishing on this line, or a label whose
+      // bracket is still open ("Block 2 (51 –" / numbers / "350 c/kWh  197.80", Hessequa).
+      if (open && (!complete(open) || open.label.length === 0 || unclosedLabel(open)) && !collides(open, b.cells)) {
         for (const [c, s] of b.cells) open.cells.set(c, s)
         if (b.cells.has(recIdx)) open.recLine = b.line.no
         open.label.push(b.label)
@@ -758,6 +810,9 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
       if (nextNamesCharge && (cur === null || cur.charges.length > 0 || complete(open))) {
         finish()
         target.switchTo(t.replace(/\s*[:;,-]\s*$/, ''), b.line)
+        // A new tariff starts with no season or unit carried over from the last one.
+        season = 'all'
+        contextUnit = null
         return
       }
     }
@@ -772,7 +827,8 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
       // Text under a complete row continues its label when it is a fragment ("(c/kWh)"), or when the
       // row's label began above its numbers and this is the season or period it straddles
       // ("Energy charge (c/kWh)" / numbers / "High Season", eThekwini, Damplaas).
-      const straddle = open.labelFirst && !b.overCols && (open.below ?? 0) === 0
+      // Once a season heading has been seen ("Summer" over rows), a season word is the next heading.
+      const straddle = open.labelFirst && !b.overCols && (open.below ?? 0) === 0 && season === 'all'
         && (detectSeason(t) !== null || detectTou(t) !== null) && t.split(/\s+/).length <= 5
       // A label whose bracket is still open ("Block 3 (351 -") is finished by the next line.
       const joined = open.label.join(' ')
@@ -790,6 +846,15 @@ function readBody(body: Line[], whole: Line[], h: Header, target: DraftTarget, s
     pendingLabel.push(t)
   })
   finish()
+  // A charge label left with no numbers at the end of a table: a value is missing, or labels and
+  // numbers are out of step somewhere above (every row after the slip carries the wrong label).
+  for (const t of pendingLabel) {
+    if (!rowLike(t) || detectSeason(t)) continue
+    const at = body[body.length - 1]
+    // "Charge:" or "(c/kWh)" alone is the tail of a label wrapped below its numbers: review.
+    const names = parseBlockRange(t) !== null || /^part\s*\d|\bblock\s*\d/i.test(t) || (!isFragment(t) && t.trim().split(/\s+/).length >= 2)
+    dropRow(out, target.get(), { label: t, raw: '', reason: 'charge label with no numbers at the end of the table', locator: { file_sha256: sha, page: at.page, line: at.no } }, names ? 'block' : 'review')
+  }
 }
 
 interface EmitCtx {
@@ -802,6 +867,7 @@ interface EmitCtx {
   season: TariffSeason
   contextUnit: TariffUnit | null
   tableUnit: TariffUnit | null
+  style: DecimalStyle
 }
 
 function emitRow(r: Row, x: EmitCtx): void {
@@ -817,9 +883,35 @@ function emitRow(r: Row, x: EmitCtx): void {
     }
     return
   }
-  const recommended = cellValue(recSeg)
+  const priorIdx = checkColumn(x.cols, 'prior', x.recIdx)
+  const pctIdx = checkColumn(x.cols, 'recommended_pct', x.recIdx)
+  const priorSeg = priorIdx >= 0 ? r.cells.get(priorIdx) : undefined
+  const pctSeg = pctIdx >= 0 ? r.cells.get(pctIdx) : undefined
+  const dp = { prior: printedDecimals(priorSeg, x.style), recommended: printedDecimals(recSeg, x.style), pct: printedDecimals(pctSeg, x.style) }
+  const prior = cellValue(priorSeg, x.style)
+  const pct = cellValue(pctSeg, x.style)
+  let recommended = cellValue(recSeg, x.style)
+  // "R 2,686" under "2.4198 … 11.00%" (Mantsopa mixes marks in one table): when the Recommended
+  // cell is an ambiguous comma, the row's own arithmetic decides — only if exactly one reading fits.
+  const bare = recSeg.text.replace(/^R\s?/, '').trim()
+  if (AMBIGUOUS_COMMA.test(bare) && prior !== null && pct !== null && !AMBIGUOUS_COMMA.test(priorSeg?.text.replace(/^R\s?/, '').trim() ?? '')) {
+    const asDecimal = Number(bare.replace(',', '.'))
+    const asThousands = Number(bare.replace(',', ''))
+    const fits = [
+      checkRow(prior, asDecimal, pct, { ...dp, recommended: 3 }).kind === 'ok' ? asDecimal : null,
+      checkRow(prior, asThousands, pct, { ...dp, recommended: 0 }).kind === 'ok' ? asThousands : null,
+    ].filter((v): v is number => v !== null)
+    if (fits.length === 1) {
+      recommended = fits[0]
+      dp.recommended = fits[0] === asDecimal ? 3 : 0
+    }
+  }
   if (recommended === null || recSeg.text.endsWith('%')) {
-    if (!DASH.test(recSeg.text)) dropRow(x.out, x.draft, { label: label || '(no label)', raw: recSeg.text, reason: 'Recommended cell is not an amount', locator }, 'review')
+    if (AMBIGUOUS_COMMA.test(recSeg.text.replace(/^R\s?/, ''))) {
+      dropRow(x.out, x.draft, { label: label || '(no label)', raw: recSeg.text, reason: 'the table does not show whether its comma is a decimal or a thousands separator', locator }, 'block')
+    } else if (!DASH.test(recSeg.text)) {
+      dropRow(x.out, x.draft, { label: label || '(no label)', raw: recSeg.text, reason: 'Recommended cell is not an amount', locator }, 'review')
+    }
     return
   }
   if (label === '') {
@@ -850,13 +942,8 @@ function emitRow(r: Row, x: EmitCtx): void {
   x.out.issues.push(...res.issues)
 
   // Self-consistency: Recommended ≈ 2025/26 Approved × (1 + Recommended %).
-  const priorIdx = x.cols.findIndex((c) => c.kind === 'prior')
-  const pctIdx = x.cols.findIndex((c) => c.kind === 'recommended_pct')
-  const prior = priorIdx >= 0 ? cellValue(r.cells.get(priorIdx)) : null
-  const pctSeg = pctIdx >= 0 ? r.cells.get(pctIdx) : undefined
-  const pct = cellValue(pctSeg)
   if (pct !== null) x.pcts.push(pct)
-  const verdict = checkRow(prior, recommended, pct)
+  const verdict = checkRow(prior, recommended, pct, dp)
   if (verdict.kind !== 'ok') {
     x.out.issues.push({
       code: verdict.kind === 'unverified' ? 'rfd_row_unverified' : 'rfd_row_increase_mismatch',
@@ -883,13 +970,32 @@ function dropRow(out: ParsedRfd, draft: TariffDraft | null, u: Unresolved, sever
   })
 }
 
+/**
+ * The column a row is checked against. Two candidates (2024/25 and 2025/26 Approved; two "%"
+ * columns) are resolved only by the 2025/26 year or by sitting right beside Recommended; otherwise
+ * the row is left unchecked rather than checked against the wrong number.
+ */
+function checkColumn(cols: Column[], kind: 'prior' | 'recommended_pct', recIdx: number): number {
+  const idx = cols.flatMap((c, k) => (c.kind === kind ? [k] : []))
+  if (idx.length <= 1) return idx[0] ?? -1
+  const pick = kind === 'prior'
+    ? idx.filter((k) => /2025\/26|2025-26|25\/26/.test(cols[k].text))
+    : idx.filter((k) => k === recIdx + 1)
+  return pick.length === 1 ? pick[0] : -1
+}
+
 export type RowVerdict = { kind: 'ok' } | { kind: 'unverified' | 'mismatch' | 'gross'; message: string }
 
 /**
- * Recommended against Approved × (1 + Recommended %), within rounding: 0.02
- * absolute or 0.1 % relative. More than 5 % off (relative) is gross.
+ * Recommended against Approved × (1 + Recommended %), within rounding: never looser than 0.02
+ * absolute or 0.1 % relative, and no looser than the decimals the row prints allow (so on an R/kWh
+ * rate printed to 2 places the allowance is ~0.01, not 0.02 — a Proposed value 1 % away cannot hide
+ * in it). More than 5 % off (relative) is gross.
  */
-export function checkRow(prior: number | null, recommended: number, pct: number | null): RowVerdict {
+export function checkRow(
+  prior: number | null, recommended: number, pct: number | null,
+  dp: { prior: number; recommended: number; pct: number } = { prior: 4, recommended: 4, pct: 4 },
+): RowVerdict {
   if (prior === null || pct === null) {
     return { kind: 'unverified', message: `recommended ${recommended} could not be checked (the row gives ${prior === null ? 'no 2025/26 approved value' : 'no recommended % increase'})` }
   }
@@ -898,7 +1004,10 @@ export function checkRow(prior: number | null, recommended: number, pct: number 
   }
   const expected = prior * (1 + pct / 100)
   const diff = Math.abs(recommended - expected)
-  if (diff <= 0.02 || diff <= Math.abs(expected) * 0.001) return { kind: 'ok' }
+  const half = (d: number): number => 0.5 * 10 ** -d
+  const rounding = half(dp.recommended) + Math.abs(1 + pct / 100) * half(dp.prior) + (Math.abs(prior) * half(dp.pct)) / 100
+  const allowed = Math.min(rounding, Math.max(0.02, Math.abs(expected) * 0.001))
+  if (diff <= allowed + 1e-9) return { kind: 'ok' }
   const computed = (recommended / prior - 1) * 100
   const message = `${prior} -> ${recommended} is ${computed.toFixed(2)}%, the row says ${pct}% (expected ${expected.toFixed(4)})`
   return { kind: diff > Math.abs(expected) * 0.05 ? 'gross' : 'mismatch', message }
@@ -918,12 +1027,21 @@ function dedupe(d: TariffDraft, issues: TariffIssue[]): void {
       continue
     }
     if (first.amountExclVat === c.amountExclVat) {
-      issues.push({ code: 'rfd_duplicate_charge', severity: 'warn', message: `"${c.label}" repeats "${first.label}" (${c.amountExclVat}); kept once`, tariff: d.name, locator: c.sourceLocator })
+      issues.push({ code: 'rfd_duplicate_charge', severity: first.label === c.label ? 'warn' : 'review', message: `"${c.label}" repeats "${first.label}" (${c.amountExclVat}); kept once`, tariff: d.name, locator: c.sourceLocator })
       continue
     }
     issues.push({ code: 'rfd_duplicate_charge', severity: 'block', message: `"${c.label}" (${c.amountExclVat}) and "${first.label}" (${first.amountExclVat}) are the same ${c.component} charge to a bill: the table's season/TOU/block context was not read`, tariff: d.name, locator: c.sourceLocator })
     keep.push(c)
   }
   d.charges = keep
+  // Energy priced for one season only (a lost "Summer"/"Winter" heading) bills the other at nothing.
+  const energy = keep.filter((c) => c.component === 'energy')
+  const has = (s: TariffSeason): boolean => energy.some((c) => c.season === s)
+  if (has('high') !== has('low')) {
+    issues.push({
+      code: 'rfd_season_incomplete', severity: 'block', tariff: d.name, locator: energy.find((c) => c.season !== 'all')?.sourceLocator,
+      message: `energy is priced for the ${has('high') ? 'high' : 'low'} season only: the other season's rows were not read`,
+    })
+  }
 }
 
