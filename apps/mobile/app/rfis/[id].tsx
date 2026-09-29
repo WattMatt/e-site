@@ -85,7 +85,19 @@ export default function RfiDetailScreen() {
       }
       return response
     },
-    onSuccess: () => {
+    onSuccess: (response: any) => {
+      // The answer saved but the status did not move: the responder holds no
+      // role on this RFI's project, so migration 00201's RESTRICTIVE policy
+      // matched no row — silently, because a policy that matches nothing
+      // raises nothing. Said out loud rather than left as an RFI that reads
+      // `open` with an answer under it.
+      if (response?.status_moved === false) {
+        Alert.alert(
+          'Response saved',
+          response.status_error
+            ?? 'The RFI could not be moved to Responded — you have no role on this project. Ask a project manager to add you.',
+        )
+      }
       setResponseBody('')
       setResponseAttachments([])
       queryClient.invalidateQueries({ queryKey: ['rfi', id] })
@@ -138,7 +150,18 @@ export default function RfiDetailScreen() {
 
   const isClosed = rfi.status === 'closed'
   const canRespond = !isClosed
-  const canClose = rfi.status === 'responded'
+  // Only the raiser, or a governing role on the project, may close — the rule
+  // migration 00201 enforces at the database. The ORG role is what mobile
+  // carries (the same membership the screen reads its orgId from); an org
+  // owner/admin/project_manager wins on every project in the org (00107), so
+  // this is every governing case mobile can resolve without another round
+  // trip. A per-project promotion the org role does not cover still reaches
+  // the database, which answers with the same sentence.
+  const orgRole = (profile as any)?.user_organisations?.[0]?.role
+  const mayClose =
+    !!profile && (rfi.raised_by === profile.id
+      || ['owner', 'admin', 'project_manager'].includes(orgRole))
+  const canClose = rfi.status === 'responded' && mayClose
   const status = RFI_STATUS[rfi.status] ?? RFI_STATUS.draft
   const canEdit = !!profile
 
