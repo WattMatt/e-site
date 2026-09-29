@@ -241,6 +241,24 @@ describe('deleteProjectReportAction', () => {
     expect(service.storageFrom).toHaveBeenCalledWith('reports')
   })
 
+  it('a failed delete returns a fixed sentence, logs the raw error, and keeps the file (review round 2, M3)', async () => {
+    const raw = 'new row violates row-level security policy for table "reports" (42501)'
+    const { client } = makeSupabase({ reportRow: REPORT_ROW, deleteError: { message: raw } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { deleteProjectReportAction } = await import('./project-reports.actions')
+    const result = await deleteProjectReportAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ error: 'The report could not be deleted — try again.' })
+    expect(JSON.stringify(log.mock.calls)).toContain('row-level security policy')
+    expect(service.remove).not.toHaveBeenCalled()
+    log.mockRestore()
+  })
+
   it('removes kind=qc objects from the dedicated qc-reports bucket', async () => {
     const qcRow = { ...REPORT_ROW, kind: 'qc', storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-x-v1.pdf` }
     const { client } = makeSupabase({ reportRow: qcRow })

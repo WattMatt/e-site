@@ -293,7 +293,11 @@ export async function deleteProjectReportAction(
     .eq('id', reportId)
     .eq('project_id', projectId)
 
-  if (deleteErr) return { error: deleteErr.message ?? 'Failed to delete report' }
+  if (deleteErr) {
+    // The raw database message can name tables, policies and triggers — log it, show a sentence.
+    console.error('deleteProjectReportAction: delete failed', { projectId, reportId, kind: report.kind, error: deleteErr.message ?? deleteErr })
+    return { error: 'The report could not be deleted — try again.' }
+  }
 
   // Best-effort object removal — an orphaned private object is harmless.
   const service = createServiceClient()
