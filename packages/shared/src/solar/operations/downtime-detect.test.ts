@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { detectDowntimeCandidates, isDaylight, zeroThresholdKw, type SeriesPoint } from './downtime-detect'
+import { detectDowntimeCandidates, isDaylight, plantSeries, zeroThresholdKw, type SeriesPoint } from './downtime-detect'
+
+describe('plantSeries: one point per end time on the coarsest interval (review B1)', () => {
+  const t = (hhmm: string) => Date.parse(`2026-03-10T${hhmm}:00+02:00`)
+  it('is the identity when every point has the same interval', () => {
+    const pts = [{ endMs: t('08:30'), kw: 5, intervalMin: 30 }, { endMs: t('09:00'), kw: 7, intervalMin: 30 }]
+    expect(plantSeries(pts)).toEqual(pts)
+  })
+  // Per interval group, kW = energy / the time that group actually covers in the slot, so a missing
+  // reading is a gap, never a zero (WM G14); groups are then summed.
+  it('folds a 15-minute meter into the 30-minute grid of another, energy-weighted', () => {
+    const pts = [
+      { endMs: t('08:30'), kw: 10, intervalMin: 30 },
+      { endMs: t('08:15'), kw: 4, intervalMin: 15 },
+      { endMs: t('08:30'), kw: 6, intervalMin: 15 },
+      { endMs: t('08:45'), kw: 2, intervalMin: 15 },
+    ]
+    expect(plantSeries(pts)).toEqual([
+      { endMs: t('08:30'), kw: 15, intervalMin: 30 },
+      { endMs: t('09:00'), kw: 2, intervalMin: 30 },
+    ])
+  })
+})
 
 const PTA = { latitude: -25.75, longitude: 28.19, elevationM: 1339 }
 const at = (iso: string) => Date.parse(iso)

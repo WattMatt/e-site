@@ -150,6 +150,28 @@ BEGIN
   INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality)
   SELECT v_c4, v_org, t, 1, 0
     FROM generate_series(timestamptz '2026-05-01 00:15+02', timestamptz '2026-06-01 00:00+02', interval '15 minutes') AS t;
+  -- Re-import at a DIFFERENT interval (review B1): PV roof C first arrives as a 15-minute export
+  -- (older channel c5), then the same April morning arrives again as a 30-minute export (newer
+  -- channel c6). The 15-minute readings ending 08:15/08:45/09:15/09:45 share no end time with the
+  -- newer file, so an end-time-only dedupe would keep them beside it. June's older reading has no
+  -- newer reading over its span and must be kept.
+  INSERT INTO solar.meters (organisation_id, label, kind) VALUES (v_org, 'PV roof C', 'solar') RETURNING id INTO v_mov;
+  INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
+                                    interval_min, tz_convention, is_primary, parser_version, created_at)
+  VALUES (v_mov, v_f1, 'kW 15', 'active_power', 'export', 'kW', 'kW', 15, 'end', TRUE, 'probe', now() - interval '2 days')
+  RETURNING id INTO v_c5;
+  INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
+                                    interval_min, tz_convention, is_primary, parser_version, created_at)
+  VALUES (v_mov, v_f2, 'kW 30', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now() - interval '12 hours')
+  RETURNING id INTO v_c6;
+  INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality)
+  SELECT v_c5, v_org, t, 10, 0
+    FROM generate_series(timestamptz '2026-04-01 08:15+02', timestamptz '2026-04-01 10:00+02', interval '15 minutes') AS t;
+  INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality)
+  SELECT v_c6, v_org, t, 20, 0
+    FROM generate_series(timestamptz '2026-04-01 08:30+02', timestamptz '2026-04-01 10:00+02', interval '30 minutes') AS t;
+  INSERT INTO solar.meter_readings (channel_id, organisation_id, ts_end, value, quality) VALUES
+    (v_c5, v_org, '2026-06-01 08:15+02', 10, 0), (v_c5, v_org, '2026-06-01 08:30+02', 10, 0);
   INSERT INTO tenants.documents (id, organisation_id, project_id, name, storage_path) VALUES
     (v_doc1, v_org, v_p, 'CoC.pdf', v_org || '/' || v_p || '/coc.pdf'),
     (v_doc2, v_org2, v_p2, 'Other.pdf', v_org2 || '/' || v_p2 || '/other.pdf');
@@ -289,6 +311,7 @@ BEGIN
     WHEN unique_violation THEN INSERT INTO _r VALUES ('meter_linked_twice_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('meter_linked_twice_REFUSED', false);
   END;
+  INSERT INTO solar.installation_meters (installation_id, meter_id, role) VALUES (v_inst, v_mov, 'generation');
 
   -- ── 3. Generation aggregation ─────────────────────────────────────────────
   v_j := public.solar_ops_monthly_kwh(v_inst, 'generation');
@@ -298,6 +321,15 @@ BEGIN
   INSERT INTO _r VALUES ('month_from_interval_start', (v_j -> v_msolar::text -> '2025-12' ->> 'kwh')::numeric = 2.0
     AND v_j -> v_msolar::text -> '2026-01' IS NULL);
   INSERT INTO _r VALUES ('council_never_in_generation', v_j -> v_mcouncil::text IS NULL);
+  -- 4 × 20 kW × 0.5 h from the newer 30-minute file only; keeping the four 15-minute readings whose
+  -- end times the newer file lacks would add 10 kWh (50) and 4 readings (n = 8).
+  INSERT INTO _r VALUES ('reimport_other_interval_does_not_double', (v_j -> v_mov::text -> '2026-04' ->> 'kwh')::numeric = 40
+    AND (v_j -> v_mov::text -> '2026-04' ->> 'n')::int = 4);
+  INSERT INTO _r VALUES ('uncovered_older_reading_kept', (v_j -> v_mov::text -> '2026-06' ->> 'kwh')::numeric = 5
+    AND (v_j -> v_mov::text -> '2026-06' ->> 'n')::int = 2);
+  v_j := public.solar_ops_series(v_inst, 'generation', DATE '2026-04-01');
+  INSERT INTO _r VALUES ('series_reimport_other_interval_one_value_per_newer_interval', jsonb_array_length(v_j -> 'points') = 4
+    AND (SELECT bool_and((p ->> 1)::numeric = 20 AND (p ->> 2)::int = 30) FROM jsonb_array_elements(v_j -> 'points') AS p));
   v_j := public.solar_ops_series(v_inst, 'generation', DATE '2026-05-01');
   INSERT INTO _r VALUES ('series_not_capped_at_1000', jsonb_array_length(v_j -> 'points') = 2976);
   v_j := public.solar_ops_series(v_inst, 'generation', DATE '2026-03-01');
@@ -386,6 +418,24 @@ BEGIN
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('history_forge_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('history_forge_REFUSED', false);
   END;
+  -- Moving the commissioning date later than recorded downtime would leave that downtime before
+  -- commissioning, which the downtime insert refuses (review A6/B10): the move is refused too.
+  INSERT INTO solar.downtime (installation_id, starts_at, ends_at, cause) VALUES (v_inst, '2026-03-20 10:00+02', '2026-03-20 11:00+02', 'other')
+  RETURNING id INTO v_d2;
+  BEGIN
+    UPDATE solar.installations SET commissioning_date = '2026-03-25' WHERE id = v_inst;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.installations SET commissioning_date = '2026-03-20' WHERE id = v_inst;
+    UPDATE solar.installations SET commissioning_date = '2026-02-15' WHERE id = v_inst;
+    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', (SELECT commissioning_date = '2026-02-15' FROM solar.installations WHERE id = v_inst));
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', false);
+  END;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_view::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
@@ -419,24 +469,6 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_writes_note_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_writes_note_REFUSED', false);
-  END;
-  -- Moving the commissioning date later than recorded downtime would leave that downtime before
-  -- commissioning, which the downtime insert refuses (review A6/B10): the move is refused too.
-  INSERT INTO solar.downtime (installation_id, starts_at, ends_at, cause) VALUES (v_inst, '2026-03-20 10:00+02', '2026-03-20 11:00+02', 'other')
-  RETURNING id INTO v_d2;
-  BEGIN
-    UPDATE solar.installations SET commissioning_date = '2026-03-25' WHERE id = v_inst;
-    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
-  EXCEPTION
-    WHEN check_violation THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', true);
-    WHEN OTHERS THEN INSERT INTO _r VALUES ('commissioning_after_downtime_REFUSED', false);
-  END;
-  BEGIN
-    UPDATE solar.installations SET commissioning_date = '2026-03-20' WHERE id = v_inst;
-    UPDATE solar.installations SET commissioning_date = '2026-02-15' WHERE id = v_inst;
-    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', (SELECT commissioning_date = '2026-02-15' FROM solar.installations WHERE id = v_inst));
-  EXCEPTION WHEN OTHERS THEN
-    INSERT INTO _r VALUES ('commissioning_on_downtime_day_allowed', false);
   END;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);

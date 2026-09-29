@@ -10,7 +10,7 @@ import type { OperationsReadinessInput, SolarAccessLevel } from '@esite/shared'
 import {
   dateMonthKey, detectDowntimeCandidates, equipmentComplete, expectedForMonth, guaranteeFromRow, handoverCompletion,
   isMonthKey, lostKwh, lostSteps, monthEndMs, monthParts, monthRange, monthStartMs, NOTE_SECTIONS, parseAsBuilt,
-  performanceRows, readBaseline, templateFromRow, totalsByMonth,
+  performanceRows, plantSeries, readBaseline, templateFromRow, totalsByMonth,
   type AsBuilt, type DowntimeCandidate, type DowntimeRecord, type Guarantee, type HandoverCompletion,
   type IrradiationRecord, type MonthKey, type NoteSection, type OpsBaseline, type PerformanceRow,
 } from '@esite/shared/solar-operations'
@@ -169,7 +169,8 @@ export async function loadOperationsView(a: {
     const lat = num(s.latitude)
     const lng = num(s.longitude)
     if (canEdit && lat !== null && lng !== null) {
-      candidates = detectDowntimeCandidates(points, { latitude: lat, longitude: lng, elevationM: num(s.elevation_m) ?? 0 }, asBuilt.acKw,
+      // One plant series: meters on different intervals arrive as separate spans (review B1).
+      candidates = detectDowntimeCandidates(plantSeries(points), { latitude: lat, longitude: lng, elevationM: num(s.elevation_m) ?? 0 }, asBuilt.acKw,
         downtimeBase.map((d) => ({ startMs: Date.parse(d.startsAt), endMs: Date.parse(d.endsAt) })))
     }
     if (guarantee && commissioningDate) {

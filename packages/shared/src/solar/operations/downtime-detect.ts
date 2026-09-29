@@ -28,6 +28,41 @@ export function zeroThresholdKw(acKw: number): number {
   return Math.max(ZERO_OUTPUT_FRACTION * acKw, 0.01)
 }
 
+const r6 = (x: number) => Math.round(x * 1e6) / 1e6
+
+/**
+ * The plant's output as ONE series (review B1). 00217's solar_ops_series returns one point per SPAN
+ * (end, interval): generation meters on the same interval are summed, meters on different intervals
+ * stay separate points with their own span. This folds them onto the coarsest interval's grid, energy
+ * weighted by overlap. Within a slot each interval group's kW is its energy over the time IT covers,
+ * so a missing reading is a gap and never a zero (WM G14); the groups are then summed. One interval
+ * in, the same points out.
+ */
+export function plantSeries(points: readonly SeriesPoint[]): SeriesPoint[] {
+  const sorted = [...points].sort((a, b) => a.endMs - b.endMs || a.intervalMin - b.intervalMin)
+  const intervals = new Set(sorted.map((p) => p.intervalMin))
+  if (intervals.size <= 1) return sorted
+  const coarse = Math.max(...intervals)
+  const slotMs = coarse * 60_000
+  const slots = new Map<number, Map<number, { kwMs: number; coveredMs: number }>>()
+  for (const p of sorted) {
+    const s0 = p.endMs - p.intervalMin * 60_000
+    for (let a = Math.floor(s0 / slotMs) * slotMs; a < p.endMs; a += slotMs) {
+      const ov = Math.min(p.endMs, a + slotMs) - Math.max(s0, a)
+      if (ov <= 0) continue
+      const groups = slots.get(a + slotMs) ?? new Map<number, { kwMs: number; coveredMs: number }>()
+      const g = groups.get(p.intervalMin) ?? { kwMs: 0, coveredMs: 0 }
+      g.kwMs += p.kw * ov
+      g.coveredMs += ov
+      groups.set(p.intervalMin, g)
+      slots.set(a + slotMs, groups)
+    }
+  }
+  return [...slots.entries()].sort((x, y) => x[0] - y[0]).map(([endMs, groups]) => ({
+    endMs, intervalMin: coarse, kw: r6([...groups.values()].reduce((s, g) => s + g.kwMs / g.coveredMs, 0)),
+  }))
+}
+
 export function detectDowntimeCandidates(
   points: readonly SeriesPoint[],
   site: SiteLocation,

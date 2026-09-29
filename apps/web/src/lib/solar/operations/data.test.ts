@@ -81,6 +81,18 @@ describe('loadOperationsView', () => {
     expect(v.monthly).toBeNull()
     expect(v.readiness).toEqual({ installed: true, commissioningDate: '2026-02-15', monthsWithData: 1 })
   })
+  it('meters on different intervals are one plant for detection: a 15-minute meter at zero beside a producing 30-minute meter is no outage (review B1)', async () => {
+    const mixed = [
+      ...Array.from({ length: 48 }, (_, k) => [at('2026-03-10T00:30:00+02:00') + k * 1_800_000, 40, 30]),
+      ...Array.from({ length: 96 }, (_, k) => [at('2026-03-10T00:15:00+02:00') + k * 900_000, 0, 15]),
+    ].sort((x, y) => (x[0] as number) - (y[0] as number) || (y[2] as number) - (x[2] as number))
+    const base = user()
+    base.client.rpc = (async (name: string, args: Record<string, unknown>) =>
+      name === 'solar_ops_series' ? { data: { points: mixed }, error: null }
+        : { data: args.p_role === 'generation' ? { m1: { '2026-03': { kwh: 900, n: 1488, intervalMin: 30 } } } : {}, error: null }) as never
+    const v = await loadOperationsView({ user: base.client as never, svc: svc().client as never, projectId: 'p1', level: 'edit', month: null })
+    expect(v.candidates).toEqual([])
+  })
   it('a View user gets no candidates; a money user gets notes and the reason Generate is disabled', async () => {
     const view = await loadOperationsView({ user: user().client as never, svc: svc().client as never, projectId: 'p1', level: 'view', month: null })
     expect(view.candidates).toEqual([])

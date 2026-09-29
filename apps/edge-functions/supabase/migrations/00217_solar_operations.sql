@@ -742,8 +742,10 @@ CREATE POLICY handover_items_delete_authz ON solar.handover_items AS RESTRICTIVE
     USING (public.solar_can_edit(project_id));
 
 -- ── 11. Generation / consumption aggregation (SECURITY INVOKER: RLS decides) ─
--- One reading per (meter, ts_end): the most recently created channel wins, so a second file
--- covering the same dates REPLACES rather than adds. Month = SAST month of the interval START.
+-- A reading is kept only when no NEWER channel (created_at, id) of the same meter has a reading
+-- overlapping its span [ts_end - interval, ts_end), and then one per (meter, ts_end): a second file
+-- covering the same dates REPLACES rather than adds, at the same or a different interval (review
+-- B1). Month = SAST month of the interval START.
 -- One jsonb document per call, so no PostgREST row cap can truncate a month.
 CREATE OR REPLACE FUNCTION public.solar_ops_monthly_kwh(p_installation_id UUID, p_role TEXT)
 RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
@@ -760,6 +762,14 @@ RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
                ch.meter_id, r.ts_end, r.value, ch.interval_min
           FROM ch JOIN solar.meter_readings r ON r.channel_id = ch.id
          WHERE r.value IS NOT NULL
+           -- A reading survives only if no NEWER channel of the same meter has a reading whose span
+           -- [ts_end - interval, ts_end) overlaps its own: a re-import at another interval replaces.
+           AND NOT EXISTS (
+               SELECT 1 FROM ch n JOIN solar.meter_readings nr ON nr.channel_id = n.id
+                WHERE n.meter_id = ch.meter_id AND (n.created_at, n.id) > (ch.created_at, ch.id)
+                  AND nr.value IS NOT NULL
+                  AND nr.ts_end > r.ts_end - make_interval(mins => ch.interval_min)
+                  AND nr.ts_end < r.ts_end + make_interval(mins => n.interval_min))
          ORDER BY ch.meter_id, r.ts_end, ch.created_at DESC, ch.id DESC
     ), bucketed AS (
         SELECT meter_id,
@@ -804,8 +814,18 @@ RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
            AND r.ts_end > b.t0 AND r.ts_end <= b.t1 + interval '1 day'
            AND r.ts_end - make_interval(mins => ch.interval_min) >= b.t0
            AND r.ts_end - make_interval(mins => ch.interval_min) < b.t1
+           AND NOT EXISTS (
+               SELECT 1 FROM ch n JOIN solar.meter_readings nr ON nr.channel_id = n.id
+                WHERE n.meter_id = ch.meter_id AND (n.created_at, n.id) > (ch.created_at, ch.id)
+                  AND nr.value IS NOT NULL
+                  AND nr.ts_end > r.ts_end - make_interval(mins => ch.interval_min)
+                  AND nr.ts_end < r.ts_end + make_interval(mins => n.interval_min))
          ORDER BY ch.meter_id, r.ts_end, ch.created_at DESC, ch.id DESC
     ), summed AS (
+        -- One point per SPAN (end, interval): meters on the same interval are summed; meters on
+        -- different intervals stay separate points with their own span, so a point never mixes
+        -- spans. TS consumers weigh points by overlap (lost-energy.ts) or resample them onto one
+        -- grid (plantSeries) before treating the series as the plant's output.
         SELECT ts_end, interval_min, sum(value) AS kw FROM one GROUP BY ts_end, interval_min
     )
     SELECT jsonb_build_object('points', COALESCE(jsonb_agg(jsonb_build_array(

@@ -1,6 +1,11 @@
 /**
  * Wrappers for 00217's two aggregation functions. They return ONE jsonb document, so no PostgREST
  * row cap can truncate a month (WM M3/G12), and they run as the caller (RLS decides).
+ *
+ * loadMonthSeries returns one point per SPAN (end, interval): meters on different intervals are
+ * separate points, possibly with the same end time. Consumers either weigh points by overlap
+ * (lostSteps) or fold them onto one grid first (plantSeries, before downtime detection); nothing
+ * may key the series by end time alone.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isMonthKey, monthFirstDay, type MeterMonths, type MonthKey, type SeriesPoint } from '@esite/shared/solar-operations'
