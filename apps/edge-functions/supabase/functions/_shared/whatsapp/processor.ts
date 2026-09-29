@@ -5,11 +5,12 @@
 // (migration 00222 part B). This file decides WHICH item and WHICH action;
 // it never decides whether the user is ALLOWED — the database does.
 import {
-  BURST_WINDOW_MS, CONSENT_TEXT_VERSION, WRONG_ITEM_WINDOW_MS, classifyKeyword, decodePayload,
+  ACTIVE_ITEM_TTL_MS, BURST_WINDOW_MS, CONSENT_TEXT_VERSION, WRONG_ITEM_WINDOW_MS, classifyKeyword, decodePayload,
   encodePayload, isWithin, resolveTarget,
 } from './core.ts'
 import type { MetaClient } from './meta-client.ts'
 import type { InboundMessage } from './parse.ts'
+import { expireStalePost, handleChannelContent, handleChannelPayload, pickPrefixRows } from './channel.ts'
 
 export interface LinkRow {
   id: string
@@ -24,6 +25,9 @@ export interface LinkRow {
   pending_inbound_id: string | null
   last_confirm_item_id: string | null
   last_confirm_at: string | null
+  current_project_id?: string | null
+  current_project_at?: string | null
+  pending_post?: unknown
 }
 
 export interface ItemInfo {
@@ -256,6 +260,14 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
   }
 
   // ── active link ──
+  const notice = await expireStalePost(deps, link)
+  if (notice) await meta.sendText(from, notice)
+
+  if (payload) {
+    const handled = await handleChannelPayload(payload, link, inbound, deps)
+    if (handled) return handled
+  }
+
   if (payload?.kind === 'optin') return result('refused', 'already_active', link.user_id, null)
 
   if (payload?.kind === 'ack') {
@@ -284,6 +296,12 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
     return result('applied', 'picked', link.user_id, payload.itemId)
   }
 
+  if (!payload) {
+    const hasActiveItem = Boolean(link.active_item_id && isWithin(link.active_item_at, now(), ACTIVE_ITEM_TTL_MS))
+    const handled = await handleChannelContent(msg, link, inbound, deps, hasActiveItem)
+    if (handled) return handled
+  }
+
   if (msg.type !== 'text' && msg.type !== 'image') {
     await meta.sendText(from, REPLIES.unsupported)
     return result('refused', 'unsupported_type', link.user_id, null)
@@ -300,15 +318,18 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
 
   if (target.kind === 'pick') {
     const open = await store.call('wa_open_items', { p_user: link.user_id })
-    const rows = Array.isArray(open) ? open : []
-    if (rows.length === 0) {
+    const items = Array.isArray(open) ? open : []
+    const prefix = await pickPrefixRows(deps, link)
+    if (items.length === 0 && prefix.length === 0) {
       await meta.sendText(from, REPLIES.noOpen)
       return result('unmatched', 'no_open_items', link.user_id, null)
     }
     await store.updateLink(link.id, { pending_inbound_id: inbound.id })
-    await meta.sendList(from, REPLIES.pickPrompt, REPLIES.pickButton,
-      rows.map((x: { id: string; ref: string; title: string; project_name: string }) =>
-        ({ id: encodePayload({ kind: 'pick', itemId: x.id }), title: x.ref, description: `${x.project_name} · ${x.title}` })))
+    await meta.sendList(from, REPLIES.pickPrompt, REPLIES.pickButton, [
+      ...prefix,
+      ...items.slice(0, 10 - prefix.length).map((x: { id: string; ref: string; title: string; project_name: string }) =>
+        ({ id: encodePayload({ kind: 'pick', itemId: x.id }), title: x.ref, description: `${x.project_name} · ${x.title}` })),
+    ])
     return result('unmatched', 'picking', link.user_id, null)
   }
 

@@ -11,6 +11,8 @@ Deploy **Phase 1 dark**, with `whatsapp.settings.sending_enabled = false` (the m
 
 ## 1. Claim the migration number immediately before applying
 
+> **Two files, one number block.** The project channel migration (`00223_whatsapp_project_channel.sql`, written as `00208`; PR stacked on #221) is renumbered **together with** the foundation to N and N+1, and dry-run as their concatenation (`cat` both into one file). Never apply the channel migration without the foundation.
+
 Check all three places. A number checked at write time can be taken before merge.
 
 ```bash
