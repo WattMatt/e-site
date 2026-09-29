@@ -36,7 +36,7 @@ describe('loadReportsPageData', () => {
     expect(d.feasibility).toEqual({ ok: true, reason: null })
     expect(d.layoutSheet).toEqual({ available: false, reason: 'This case uses a manual system size.' })
     expect(d.proposals.map((p) => [p.id, p.effectiveStatus, p.controls.canRevise, p.controls.canWithdraw])).toEqual([['a2', 'draft', false, false], ['a1', 'issued', false, true]])
-    expect(d.proposals[1]!.offerExclVat).toBe('R 1 150 000')
+    expect(d.proposals[1]!.offerExclVat).toBe('R 1 150 000.00') // zarCents, as the PDF and portal print it (review round 2, M1)
     expect(d.proposals[1]!.events[0]).toEqual({ kind: 'accepted', via: 'token', at: '2026-09-03T00:00:00Z', actorName: 'C', actorEmail: 'c@x.co', ip: '1.2.3.4', userAgent: 'ua', pdfSha256: 'a'.repeat(64), authority: true, reason: null, hasSignature: true })
     expect(d.clientContacts).toEqual([{ userId: 'cv1', name: 'Client Viewer', email: 'cv@acme.example' }])
     expect(d.narrative).toEqual({ available: false, reason: 'no key' })

@@ -3,7 +3,7 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SolarAccessLevel } from '@esite/shared'
 import {
-  effectiveProposalStatus, proposalControls, readProposalDraft, zar,
+  effectiveProposalStatus, proposalControls, readProposalDraft, zarCents,
   type EffectiveProposalStatus, type ProposalControls, type ProposalDraft, type ProposalStatus,
 } from '@esite/shared/solar-reports'
 import { latestMoney } from '@/lib/solar/cases/page-data'
@@ -86,7 +86,7 @@ export async function loadReportsPageData(user: AnyClient, svc: AnyClient, proje
           effectiveStatus: effectiveProposalStatus(status, expiresAt, now),
           expiresAt, issuedAt: (r.issued_at as string | null) ?? null, updatedAt: String(r.updated_at),
           draft: readProposalDraft(r.draft),
-          offerExclVat: typeof price === 'number' ? zar(price) : null,
+          offerExclVat: typeof price === 'number' ? zarCents(price) : null,
           controls: proposalControls({
             status, expiresAt,
             isLatest: Number(r.version) === Math.max(...fam.map((f) => Number(f.version))),
