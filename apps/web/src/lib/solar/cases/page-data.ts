@@ -12,6 +12,7 @@ import {
   caseStatus, capexTotals, parseCaseConfig, parseFinanceConfig, resetLossesToDefaults,
   type CaseConfig, type CaseLosses, type CaseRunOutputs, type CaseStatus, type RunKpis,
 } from '@esite/shared/solar-cases'
+import { loadOperationsReadiness } from '@/lib/solar/operations/data'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -254,10 +255,13 @@ export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, p
       reports = { hasCurrentFeasibility: Array.isArray(data) && data.length > 0 }
     }
   }
+  // Operations (Phase 7): technical, so every level carries it; null until an installation exists.
+  const operations = await loadOperationsReadiness(user, projectId)
   return {
     yield: { caseCount: rows.length, selectedCaseId: sel?.id ?? null, selectedStatus },
     financials,
     reports,
+    operations,
     layoutManual: sel?.pv_source === 'manual',
     stale: sel && selectedStatus === 'stale' ? { caseId: sel.id, caseName: sel.name } : null,
   }

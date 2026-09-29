@@ -12,8 +12,11 @@ import { join, resolve } from 'node:path'
  */
 const ROOT = resolve(__dirname, '../../')
 const DIRS = ['app/(admin)/projects/[id]/solar', 'app/(admin)/settings/solar', 'components/solar']
-const FORBIDDEN_MODULES = ['@esite/shared/solar-engine', '@esite/shared/solar-cases', '@esite/shared/tariffs/ingest']
-const FORBIDDEN_PREFIXES = ['@/lib/solar/cases/']
+// Phase 7: '@esite/shared/solar-operations' re-exports the SPA-based downtime detector, so a client file
+// takes runtime values only from its engine-free '/client' subpath (a different specifier, so allowed).
+// The server-only Operations libs (lib/solar/operations/*) are type-only from a client file too.
+const FORBIDDEN_MODULES = ['@esite/shared/solar-engine', '@esite/shared/solar-cases', '@esite/shared/tariffs/ingest', '@esite/shared/solar-operations']
+const FORBIDDEN_PREFIXES = ['@/lib/solar/cases/', '@/lib/solar/operations/']
 const forbidden = (mod: string) => FORBIDDEN_MODULES.includes(mod) || FORBIDDEN_PREFIXES.some((p) => mod.startsWith(p))
 
 function files(dir: string): string[] {
@@ -77,5 +80,10 @@ describe('no Solar result is computed in the browser', () => {
     expect(runtimeImportsOf(`import type { RunView } from '@/lib/solar/cases/page-data'`)).toHaveLength(0)
     expect(runtimeImportsOf(`export type { DayType } from '@esite/shared/solar-cases'`)).toHaveLength(0)
     expect(runtimeImportsOf(`import { num } from '@/components/solar/format'`)).toHaveLength(0)
+    expect(runtimeImportsOf(`import { detectDowntimeCandidates } from '@esite/shared/solar-operations'`)).toHaveLength(1)
+    expect(runtimeImportsOf(`import { loadOperationsView } from '@/lib/solar/operations/data'`)).toHaveLength(1)
+    expect(runtimeImportsOf(`import type { IrradiationRecord } from '@esite/shared/solar-operations'`)).toHaveLength(0)
+    expect(runtimeImportsOf(`import type { OperationsView } from '@/lib/solar/operations/data'`)).toHaveLength(0)
+    expect(runtimeImportsOf(`import { monthLabel } from '@esite/shared/solar-operations/client'`)).toHaveLength(0)
   })
 })
