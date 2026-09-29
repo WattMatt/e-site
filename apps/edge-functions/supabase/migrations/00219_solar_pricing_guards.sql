@@ -12,12 +12,14 @@
 --       'manual' if and only if it has at least one solar.study_export_rates row. Deferred, because
 --       save_export_rule deletes and re-inserts the rates and writes the rule last in ONE
 --       transaction; the check runs once, at commit, on the final state. SECURITY DEFINER so the
---       count is exact whatever the caller can read (the rate rows are money, 00213).
+--       count is exact whatever the caller can read (the rate rows are money, 00213). The study row is
+--       locked (FOR NO KEY UPDATE) so concurrent writers are checked in turn. Existing mismatches are
+--       backfilled first (manual without rates -> 'none'; stray rates removed): neither was priced.
 --   (b) solar.layouts.module_id REFERENCES solar.equipment(id) ON DELETE RESTRICT (the FK 00211
 --       deferred to the Financials phase). Existing ids that are not a module of the layout's org
 --       or of the platform catalogue are set NULL first ("generic presets": nothing in apps/web
---       writes module_id today). layouts_module_bind refuses another org's row or a non-module
---       (23514). module_spec stays the snapshot the design was made with and never follows the
+--       writes module_id today). layouts_module_bind refuses an unknown id, another org's row or a
+--       non-module with ONE code (23514), so the error is not an existence oracle across orgs. module_spec stays the snapshot the design was made with and never follows the
 --       catalogue: the FK only stops the referenced row disappearing under a layout.
 -- RULES
 --   * No transaction control here: the runner wraps the file.
@@ -61,7 +63,9 @@ BEGIN
     END IF;
     FOREACH v_id IN ARRAY v_ids LOOP
         v_found := NULL;
-        SELECT TRUE, s.export_rule->>'method' INTO v_found, v_method FROM solar.studies s WHERE s.id = v_id;
+        -- Lock the study so two concurrent transactions (e.g. two DELETEs of different rate rows) are
+        -- checked one after the other: the second one's count then sees the first one's commit.
+        SELECT TRUE, s.export_rule->>'method' INTO v_found, v_method FROM solar.studies s WHERE s.id = v_id FOR NO KEY UPDATE;
         -- The study is gone (a study or project delete cascading through its rates): nothing to match.
         CONTINUE WHEN v_found IS NOT TRUE;
         SELECT count(*) INTO v_rates FROM solar.study_export_rates r WHERE r.study_id = v_id;
@@ -78,6 +82,17 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION solar.export_rule_rates_check() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.export_rule_rates_check() FROM anon;
+
+-- Backfill BEFORE the triggers (a constraint trigger never re-checks existing rows, and the @verify
+-- invariant above is re-evaluated on every later deploy). 00213's save_export_rule accepted a manual
+-- rule with no rates, and I-2 could write one directly: such a rule priced nothing, so it becomes
+-- 'none' (resolveStudyPricing already priced it so). Stray rates under a non-manual rule were never
+-- priced either; they go.
+UPDATE solar.studies s SET export_rule = jsonb_set(s.export_rule, '{method}', '"none"')
+ WHERE s.export_rule->>'method' = 'manual'
+   AND NOT EXISTS (SELECT 1 FROM solar.study_export_rates r WHERE r.study_id = s.id);
+DELETE FROM solar.study_export_rates r USING solar.studies s
+ WHERE r.study_id = s.id AND s.export_rule->>'method' IS DISTINCT FROM 'manual';
 
 DROP TRIGGER IF EXISTS studies_export_rule_rates ON solar.studies;
 CREATE CONSTRAINT TRIGGER studies_export_rule_rates
@@ -117,9 +132,9 @@ BEGIN
     IF NEW.module_id IS NULL THEN RETURN NEW; END IF;
     IF TG_OP = 'UPDATE' AND NEW.module_id IS NOT DISTINCT FROM OLD.module_id THEN RETURN NEW; END IF;
     SELECT TRUE, e.kind, e.organisation_id INTO v_found, v_kind, v_org FROM solar.equipment e WHERE e.id = NEW.module_id;
-    -- No such row: the FK refuses it (23503).
-    IF v_found IS NOT TRUE THEN RETURN NEW; END IF;
-    IF v_kind <> 'module' OR (v_org IS NOT NULL AND v_org IS DISTINCT FROM NEW.organisation_id) THEN
+    -- One answer for "no such row", "another org's row" and "not a module", so the error code is not an
+    -- oracle for which equipment ids exist in other organisations (the FK stays as the backstop).
+    IF v_found IS NOT TRUE OR v_kind <> 'module' OR (v_org IS NOT NULL AND v_org IS DISTINCT FROM NEW.organisation_id) THEN
         RAISE EXCEPTION 'solar.layouts: the module must be a module from this organisation''s catalogue or the platform''s'
             USING ERRCODE = '23514';
     END IF;

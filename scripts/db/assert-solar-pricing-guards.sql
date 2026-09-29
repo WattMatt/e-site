@@ -150,8 +150,9 @@ BEGIN
     UPDATE solar.layouts SET module_id = gen_random_uuid() WHERE id = v_lay;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
-    WHEN foreign_key_violation THEN INSERT INTO _r VALUES ('m_nonexistent_module_REFUSED_23503', true);
-    WHEN OTHERS THEN INSERT INTO _r VALUES ('m_nonexistent_module_REFUSED_23503', false);
+    -- The same code as another org's module: no existence oracle across organisations.
+    WHEN check_violation THEN INSERT INTO _r VALUES ('m_nonexistent_module_REFUSED_same_code_as_foreign', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('m_nonexistent_module_REFUSED_same_code_as_foreign', false);
   END;
   BEGIN
     UPDATE solar.layouts SET module_id = v_mod2 WHERE id = v_lay;
@@ -187,6 +188,23 @@ BEGIN
     WHEN foreign_key_violation THEN INSERT INTO _r VALUES ('m_delete_used_module_REFUSED_23503', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('m_delete_used_module_REFUSED_23503', false);
   END;
+  -- An organisation cannot be deleted while it has projects (project_members / project_settings do not
+  -- cascade), so the real order is: projects first (layouts cascade), then equipment. Prove that once
+  -- the project is gone the module it pinned deletes (RESTRICT only ever protects a LIVE layout).
+  BEGIN
+    DELETE FROM projects.projects WHERE id = v_p;
+    DELETE FROM solar.equipment WHERE id = v_mod;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    SET CONSTRAINTS ALL IMMEDIATE;
+    -- Carried out of the block in the message: the RAISE rolls back everything inside it.
+    RAISE EXCEPTION 'undo %', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_t = MESSAGE_TEXT;
+      INSERT INTO _r VALUES ('m_module_deletes_once_its_project_is_gone', v_t = 'undo 1');
+    WHEN OTHERS THEN GET STACKED DIAGNOSTICS v_t = MESSAGE_TEXT;
+      INSERT INTO _r VALUES ('m_module_deletes_once_its_project_is_gone (' || v_t || ')', false);
+  END;
+  SET CONSTRAINTS ALL DEFERRED;
   -- Deleting the study (and the project) still cascades through layouts.
   BEGIN
     DELETE FROM projects.projects WHERE id = v_p;
