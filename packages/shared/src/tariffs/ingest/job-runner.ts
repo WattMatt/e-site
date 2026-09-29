@@ -41,7 +41,10 @@ export interface IngestJobOutcome {
   status: 'succeeded' | 'failed'
   report: IngestReport | null
   runId: string | null
+  /** A fixed sentence for ingest_job.error (the admin page shows it). Never exception text. */
   error: string | null
+  /** The raw exception, for the worker's console only; never stored. */
+  detail: string | null
 }
 
 /** What the admin UI shows and ingest_job.report stores: per-year counts and the first 25 issues. */
@@ -75,7 +78,14 @@ export function summariseIngestReport(r: IngestReport): IngestReportSummary {
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-export const SOURCE_CHECKSUM_MISMATCH = 'The stored file no longer matches the checksum it was registered with. Upload it again as a new document.'
+export const SOURCE_CHECKSUM_MISMATCH = "The file's checksum no longer matches the registered document. Upload it again as a new document."
+export const INGEST_JOB_ERRORS = {
+  sourceGone: 'The source document no longer exists.',
+  download: 'The stored file could not be downloaded.',
+  pdf: 'The PDF could not be read.',
+  checksum: SOURCE_CHECKSUM_MISMATCH,
+  ingest: 'The ingest failed — run it again or check the worker log.',
+} as const
 
 /** Hex sha256 via Web Crypto (Node 18+ and browsers; no node:crypto import in a shared module). */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -85,23 +95,23 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 export async function runIngestJob(job: IngestJob, deps: IngestJobDeps): Promise<IngestJobOutcome> {
   const src = await deps.loadSource(job.sourceDocumentId)
-  if (!src) return { status: 'failed', report: null, runId: null, error: 'The source document no longer exists.' }
+  if (!src) return { status: 'failed', report: null, runId: null, error: INGEST_JOB_ERRORS.sourceGone, detail: null }
   let bytes: Uint8Array
   try {
     bytes = await deps.download(src.storagePath)
   } catch (e) {
-    return { status: 'failed', report: null, runId: null, error: `Could not download the source: ${messageOf(e)}` }
+    return { status: 'failed', report: null, runId: null, error: INGEST_JOB_ERRORS.download, detail: messageOf(e) }
   }
   // The registered sha256 is the provenance every ingested charge cites: never parse other bytes under it.
   if ((await sha256Hex(bytes)) !== src.sha256.toLowerCase()) {
-    return { status: 'failed', report: null, runId: null, error: SOURCE_CHECKSUM_MISMATCH }
+    return { status: 'failed', report: null, runId: null, error: INGEST_JOB_ERRORS.checksum, detail: null }
   }
   let pdfText: string | undefined
   if (job.parser === 'rfd_pdf') {
     try {
       pdfText = await deps.pdfToText(bytes)
     } catch (e) {
-      return { status: 'failed', report: null, runId: null, error: `Could not read text from the PDF: ${messageOf(e)}` }
+      return { status: 'failed', report: null, runId: null, error: INGEST_JOB_ERRORS.pdf, detail: messageOf(e) }
     }
   }
   try {
@@ -111,8 +121,8 @@ export async function runIngestJob(job: IngestJob, deps: IngestJobDeps): Promise
       netBillingRulesSha256: deps.netBillingRulesSha256 ?? null,
     })
     const report = await runIngest(plan, deps.store, { apply: true, createMissingLicensees: job.createLicensees, startedBy: job.requestedBy })
-    return { status: 'succeeded', report, runId: report.runId, error: null }
+    return { status: 'succeeded', report, runId: report.runId, error: null, detail: null }
   } catch (e) {
-    return { status: 'failed', report: null, runId: null, error: messageOf(e) }
+    return { status: 'failed', report: null, runId: null, error: INGEST_JOB_ERRORS.ingest, detail: messageOf(e) }
   }
 }

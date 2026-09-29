@@ -1,6 +1,7 @@
 /** Loaded year rows + checks -> the JSON the client review queue renders. */
 import type { ChargeComponent, SourceLocator, TariffIssue, TariffUnit } from '@esite/shared'
 import type { LoadedTariff } from '@/lib/tariffs/load-year'
+import type { ChargeSeen } from '@/actions/tariff-review.actions'
 
 export interface ReviewIssue { severity: 'block' | 'review' | 'warn'; message: string }
 
@@ -22,6 +23,8 @@ export interface ReviewCharge {
   sourceDocumentId: string | null
   locator: SourceLocator
   issues: ReviewIssue[]
+  /** The row as loaded: the stale guard for Approve / Edit / Reject (the charge has no updated_at). */
+  seen: ChargeSeen
 }
 
 export interface ReviewTariff {
@@ -50,6 +53,7 @@ export function buildReviewModel(loaded: LoadedTariff[], issues: TariffIssue[]):
           sourceDocumentId: (row.source_document_id ?? null) as string | null,
           locator: (row.source_locator ?? {}) as SourceLocator,
           issues: mine.filter((i) => i.chargeIndex === k).map((i) => ({ severity: i.severity, message: i.message })),
+          seen: { amount: String(row.amount_excl_vat ?? c.amountExclVat), unit: ((row.unit ?? c.unit) as TariffUnit), reviewedAt },
         }
       }),
     }

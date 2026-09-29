@@ -133,12 +133,23 @@ describe('tariff library actions', () => {
     })
   })
 
-  it('resolves an error report; rejecting needs a note', async () => {
+  it('resolves an error report; rejecting needs a note; the write is conditioned on the report as the admin saw it', async () => {
+    const seen = { status: 'open' as const, resolutionNote: null }
     const { calls } = admin({ writes: { 'tariffs.error_report:update': { data: [{ id: 'r1' }] } } })
-    expect(await resolveErrorReportAction({ id: 'r1', status: 'rejected', resolutionNote: '' }))
+    expect(await resolveErrorReportAction({ id: 'r1', status: 'rejected', resolutionNote: '', expected: seen }))
       .toEqual({ error: 'Say why the report is rejected.' })
-    expect(await resolveErrorReportAction({ id: 'r1', status: 'resolved', resolutionNote: 'Fixed in 2026/27' })).toEqual({ ok: true })
-    expect(callsTo(calls, 'tariffs.error_report', 'update')[0].payload).toEqual({ status: 'resolved', resolution_note: 'Fixed in 2026/27' })
+    expect(await resolveErrorReportAction({ id: 'r1', status: 'resolved', resolutionNote: 'Fixed in 2026/27', expected: seen })).toEqual({ ok: true })
+    const u = callsTo(calls, 'tariffs.error_report', 'update')[0]
+    expect(u.payload).toEqual({ status: 'resolved', resolution_note: 'Fixed in 2026/27' })
+    expect(u.filters).toEqual([['eq', 'id', 'r1'], ['eq', 'status', 'open'], ['is', 'resolution_note', null]])
+  })
+
+  it('an error report another admin handled since the page loaded is refused as stale', async () => {
+    const { calls } = admin({ writes: { 'tariffs.error_report:update': { data: [] } } })
+    expect(await resolveErrorReportAction({ id: 'r1', status: 'open', resolutionNote: 'x', expected: { status: 'resolved', resolutionNote: 'Fixed' } }))
+      .toEqual({ error: 'Someone else changed this report since you loaded the page. Reload to see their version.' })
+    expect(callsTo(calls, 'tariffs.error_report', 'update')[0].filters).toEqual([['eq', 'id', 'r1'], ['eq', 'status', 'resolved'], ['eq', 'resolution_note', 'Fixed']])
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 
   it('runs the due-year monitor through the service role after the gate', async () => {

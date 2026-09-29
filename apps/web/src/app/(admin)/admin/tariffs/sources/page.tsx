@@ -1,5 +1,7 @@
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
-import { formatSolarDate } from '@esite/shared'
+import {
+  INGEST_JOB_STATUS_LABELS, SOURCE_DOCUMENT_KIND_LABELS, SOURCE_DOCUMENT_STATUS_LABELS, formatSolarDate, labelOf,
+} from '@esite/shared'
 import { requirePlatformTariffAdminPage } from '@/lib/tariffs/admin-gate'
 import { contentTypeFor } from '@/lib/tariffs/source-files'
 import { SourceUpload } from './SourceUpload'
@@ -37,10 +39,10 @@ export default async function SourcesPage() {
                   return (
                     <div key={String(d.id)} style={{ borderTop: '1px solid var(--c-border)', paddingTop: 8 }}>
                       <div style={{ fontSize: 13 }}>
-                        <strong>{String(d.title)}</strong> · {String(d.kind)} · {(d.financial_year as string | null) ?? 'no year'} · {String(d.status)}
+                        <strong>{String(d.title)}</strong> · {labelOf(SOURCE_DOCUMENT_KIND_LABELS, d.kind as string)} · {(d.financial_year as string | null) ?? 'no year'} · {labelOf(SOURCE_DOCUMENT_STATUS_LABELS, d.status as string)}
                         {' · '}{(d.licensee as { name: string } | null)?.name ?? 'many licensees'} · added {formatSolarDate(String(d.created_at))}
                       </div>
-                      {job && <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>Last queued ingest: {String(job.status)}{job.error ? ` — ${String(job.error)}` : ''}</div>}
+                      {job && <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>Last queued ingest: {labelOf(INGEST_JOB_STATUS_LABELS, job.status as string)}{job.error ? ` — ${String(job.error)}` : ''}</div>}
                       {type && (d.financial_year as string | null) && (
                         <IngestPanel source={{
                           id: String(d.id), fileKind: type === 'application/pdf' ? 'pdf' : 'xlsx',

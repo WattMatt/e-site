@@ -27,7 +27,8 @@ export default async function ReportsPage() {
   const list: ErrorReportRow[] = rows.map((r) => {
     const t = r.tariff as { name: string; tariff_year: { financial_year: string; licensee: { name: string } | null } | null } | null
     return {
-      id: String(r.id), note: String(r.note), status: String(r.status), resolutionNote: (r.resolution_note as string | null) ?? '',
+      id: String(r.id), note: String(r.note), status: String(r.status) as ErrorReportRow['status'], resolutionNote: (r.resolution_note as string | null) ?? '',
+      storedResolutionNote: (r.resolution_note as string | null) ?? null,
       createdAt: String(r.created_at), project: names.get(String(r.project_id)) ?? 'Unknown project',
       tariff: t ? `${t.tariff_year?.licensee?.name ?? ''} ${t.tariff_year?.financial_year ?? ''} · ${t.name}` : 'Unknown tariff',
     }

@@ -9,7 +9,7 @@
  *     writes: { 'solar.project_access:update': { data: [] } },   // 0 rows affected
  *   })
  *
- * SELECTs filter `tables[schema.table]` by eq / neq / in / gte (string order). Writes are recorded
+ * SELECTs filter `tables[schema.table]` by eq / is / neq / in / gte / lte (string order). Writes are recorded
  * in `calls` and resolve to `writes['schema.table:op']` (default: the payload
  * echoed back as one row; delete → []). `client.from(t)` is schema `public`.
  */
@@ -17,7 +17,7 @@ import { vi } from 'vitest'
 
 export type FakeError = { message: string; code?: string }
 export type FakeResult = { data: unknown; error: FakeError | null }
-type Filter = ['eq' | 'neq' | 'in' | 'gte', string, unknown]
+type Filter = ['eq' | 'neq' | 'in' | 'gte' | 'lte' | 'is', string, unknown]
 
 export interface FakeCall {
   table: string
@@ -40,8 +40,10 @@ export function fakeSupabase(opts: FakeOptions = {}) {
   const matches = (row: Record<string, unknown>, filters: Filter[]) =>
     filters.every(([op, col, val]) =>
       op === 'eq' ? row[col] === val
+        : op === 'is' ? (row[col] ?? null) === val
         : op === 'neq' ? row[col] !== val
           : op === 'gte' ? String(row[col] ?? '') >= String(val)
+            : op === 'lte' ? String(row[col] ?? '') <= String(val)
             : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
@@ -65,9 +67,11 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       update: (p: unknown) => { state.op = 'update'; state.payload = p; return b },
       delete: () => { state.op = 'delete'; return b },
       eq: (c: string, v: unknown) => { state.filters.push(['eq', c, v]); return b },
+      is: (c: string, v: unknown) => { state.filters.push(['is', c, v]); return b },
       neq: (c: string, v: unknown) => { state.filters.push(['neq', c, v]); return b },
       in: (c: string, v: unknown[]) => { state.filters.push(['in', c, v]); return b },
       gte: (c: string, v: unknown) => { state.filters.push(['gte', c, v]); return b },
+      lte: (c: string, v: unknown) => { state.filters.push(['lte', c, v]); return b },
       order: () => b,
       limit: (n: number) => { state.limit = n; return b },
       maybeSingle: first,

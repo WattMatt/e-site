@@ -204,17 +204,27 @@ export async function runDueYearCheckAction(input: { regime: 'eskom' | 'municipa
 }
 
 // ── Error reports ───────────────────────────────────────────────────────────
-export async function resolveErrorReportAction(input: { id: string; status: 'open' | 'resolved' | 'rejected'; resolutionNote: string }): Promise<Ok> {
+type ReportStatus = 'open' | 'resolved' | 'rejected'
+/**
+ * tariffs.error_report has no updated_at, so the write is conditioned on the
+ * status and resolution note the admin saw: another admin's decision changes
+ * one of them and this update then matches no row.
+ */
+export async function resolveErrorReportAction(input: {
+  id: string; status: ReportStatus; resolutionNote: string; expected: { status: ReportStatus; resolutionNote: string | null }
+}): Promise<Ok> {
   const gate = await requirePlatformTariffAdmin()
   if (!gate.ok) return { error: gate.error }
   if (!['open', 'resolved', 'rejected'].includes(input.status)) return { error: 'Choose a status' }
   const note = String(input.resolutionNote ?? '').trim()
   if (input.status === 'rejected' && !note) return { error: 'Say why the report is rejected.' }
   if (note.length > 1000) return { error: 'Keep the note under 1000 characters.' }
-  const { data, error } = await gate.supabase.schema('tariffs').from('error_report')
-    .update({ status: input.status, resolution_note: note || null }).eq('id', input.id).select('id')
+  const seenNote = input.expected?.resolutionNote ?? null
+  const q = gate.supabase.schema('tariffs').from('error_report')
+    .update({ status: input.status, resolution_note: note || null }).eq('id', input.id).eq('status', String(input.expected?.status ?? ''))
+  const { data, error } = await (seenNote === null ? q.is('resolution_note', null) : q.eq('resolution_note', seenNote)).select('id')
   if (error) return { error: humanTariffError(error) }
-  if (!Array.isArray(data) || data.length === 0) return { error: 'That report no longer exists.' }
+  if (!Array.isArray(data) || data.length === 0) return { error: 'Someone else changed this report since you loaded the page. Reload to see their version.' }
   revalidatePath('/admin/tariffs/reports')
   return { ok: true }
 }

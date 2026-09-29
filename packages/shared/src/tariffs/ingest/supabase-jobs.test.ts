@@ -7,7 +7,9 @@ describe('ingest job rows', () => {
       .toEqual({ id: 'j', sourceDocumentId: 'd', parser: 'rfd_pdf', financialYear: '2026/27', licenseeName: 'City Power', createLicensees: false, requestedBy: 'u' })
   })
   it('the finish patch stores the summary, never the raw bytes', () => {
-    const p = jobFinishPatch({ status: 'failed', report: null, runId: null, error: 'x' }, '2026-09-28T00:00:00Z')
+    const p = jobFinishPatch({ status: 'failed', report: null, runId: null, error: 'x', detail: 'ECONNRESET at 10.0.0.4:5432' }, '2026-09-28T00:00:00Z')
     expect(p).toEqual({ status: 'failed', finished_at: '2026-09-28T00:00:00Z', ingest_run_id: null, report: null, error: 'x' })
+    // The raw exception is for the worker's console, never the row the admin page renders.
+    expect(JSON.stringify(p)).not.toContain('ECONNRESET')
   })
 })

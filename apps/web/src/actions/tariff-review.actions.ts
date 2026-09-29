@@ -21,25 +21,39 @@ type AnyClient = SupabaseClient<any, any, any>
 type Ok = { ok: true } | { error: string }
 
 const GONE = 'That charge no longer exists. Reload the page.'
+const CHARGE_STALE = 'That charge changed or was removed since you loaded the page. Reload to see the current version.'
+
+/**
+ * What the reviewer saw of a charge. tariffs.charge has no updated_at, so a
+ * write is conditioned on the reviewable facts themselves: an edit changes the
+ * amount or unit, an approval sets reviewed_at (charge_review_bind), and either
+ * one makes this filter match no row.
+ */
+export interface ChargeSeen { amount: string; unit: TariffUnit; reviewedAt: string | null }
+
+function asSeen<Q extends { eq: (c: string, v: unknown) => Q; is: (c: string, v: null) => Q }>(q: Q, chargeId: string, seen: ChargeSeen): Q {
+  const base = q.eq('id', chargeId).eq('amount_excl_vat', String(seen.amount)).eq('unit', seen.unit)
+  return seen.reviewedAt === null ? base.is('reviewed_at', null) : base.eq('reviewed_at', seen.reviewedAt)
+}
 
 function done(yearPath?: string): void {
   revalidatePath('/admin/tariffs', 'layout')
   if (yearPath) revalidatePath(yearPath)
 }
 
-export async function approveChargeAction(input: { chargeId: string }): Promise<Ok> {
+export async function approveChargeAction(input: { chargeId: string; expected: ChargeSeen }): Promise<Ok> {
   const gate = await requirePlatformTariffAdmin()
   if (!gate.ok) return { error: gate.error }
   // Any non-null stamp: tariffs.charge_review_bind rewrites it to (caller, now).
-  const { data, error } = await gate.supabase.schema('tariffs').from('charge')
-    .update({ reviewed_at: new Date().toISOString() }).eq('id', input.chargeId).select('id')
+  const { data, error } = await asSeen(gate.supabase.schema('tariffs').from('charge')
+    .update({ reviewed_at: new Date().toISOString() }), input.chargeId, input.expected).select('id')
   if (error) return { error: humanTariffError(error) }
-  if (!Array.isArray(data) || data.length === 0) return { error: GONE }
+  if (!Array.isArray(data) || data.length === 0) return { error: CHARGE_STALE }
   done()
   return { ok: true }
 }
 
-export async function editChargeAction(input: { chargeId: string; amount: string; unit: TariffUnit | ''; unitConfirmed: boolean }): Promise<
+export async function editChargeAction(input: { chargeId: string; expected: ChargeSeen; amount: string; unit: TariffUnit | ''; unitConfirmed: boolean }): Promise<
   { ok: true } | { error: string } | { fieldErrors: Partial<Record<'amount' | 'unit', string>> }
 > {
   const gate = await requirePlatformTariffAdmin()
@@ -51,24 +65,63 @@ export async function editChargeAction(input: { chargeId: string; amount: string
   const rate = validateRateEdit({ component: c.component, season: c.season }, { amount: input.amount, unit: input.unit })
   if ('errors' in rate) return { fieldErrors: rate.errors }
   const confirmed = Boolean(input.unitConfirmed)
-  const { data, error } = await t.from('charge').update({
+  const { data, error } = await asSeen(t.from('charge').update({
     amount_excl_vat: rate.amountExclVat, unit: rate.unit,
     unit_inferred: confirmed ? false : c.unit_inferred, inference_reason: confirmed ? null : c.inference_reason,
     extraction_method: 'manual',
-  }).eq('id', input.chargeId).select('id')
+  }), input.chargeId, input.expected).select('id')
   if (error) return { error: humanTariffError(error) }
-  if (!Array.isArray(data) || data.length === 0) return { error: GONE }
+  if (!Array.isArray(data) || data.length === 0) return { error: CHARGE_STALE }
   done()
   return { ok: true }
 }
 
-export async function rejectChargeAction(input: { chargeId: string }): Promise<Ok> {
+export async function rejectChargeAction(input: { chargeId: string; expected: ChargeSeen }): Promise<Ok> {
   const gate = await requirePlatformTariffAdmin()
   if (!gate.ok) return { error: gate.error }
-  const { error } = await gate.supabase.schema('tariffs').from('charge').delete().eq('id', input.chargeId)
+  const { data, error } = await asSeen(gate.supabase.schema('tariffs').from('charge').delete(), input.chargeId, input.expected).select('id')
   if (error) return { error: humanTariffError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: CHARGE_STALE }
   done()
   return { ok: true }
+}
+
+const TARIFF_STALE = 'Someone else changed this tariff. Reload to see their version.'
+
+/**
+ * Point one tariff at its export (Gen-offset) tariff (spec §5 linked_tariff).
+ * The choice must be another tariff of the SAME tariff year (so the same
+ * licensee and financial year); 00209's year_child_guard refuses a published
+ * year, and the page's updated_at conditions the write.
+ */
+export async function setExportTariffAction(input: { tariffId: string; exportTariffId: string | null; expectedUpdatedAt: string }): Promise<
+  { ok: true; updatedAt: string } | { error: string }
+> {
+  const gate = await requirePlatformTariffAdmin()
+  if (!gate.ok) return { error: gate.error }
+  const t = gate.supabase.schema('tariffs')
+  const { data: row } = await t.from('tariff').select('id, tariff_year_id').eq('id', String(input.tariffId ?? '')).maybeSingle()
+  const tariff = row as { id: string; tariff_year_id: string } | null
+  if (!tariff) return { error: 'That tariff no longer exists. Reload the page.' }
+  const exportId = input.exportTariffId ? String(input.exportTariffId) : null
+  if (exportId !== null) {
+    if (exportId === tariff.id) return { error: 'A tariff cannot be its own export tariff.' }
+    // A malformed id is a PostgREST error with no row: the same sentence.
+    const { data: e } = await t.from('tariff').select('id, tariff_year_id').eq('id', exportId).maybeSingle()
+    if (!e || (e as { tariff_year_id: string }).tariff_year_id !== tariff.tariff_year_id) {
+      return { error: 'Choose an export tariff from this same tariff year.' }
+    }
+  }
+  const { data: y } = await t.from('tariff_year').select('id, state').eq('id', tariff.tariff_year_id).maybeSingle()
+  const state = (y as { state: string } | null)?.state
+  if (state !== 'ingesting' && state !== 'in_review') return { error: 'This year is published: its export links are read-only.' }
+  const res = await t.from('tariff').update({ export_tariff_id: exportId })
+    .eq('id', tariff.id).eq('updated_at', String(input.expectedUpdatedAt ?? '')).select('id, updated_at')
+  if (res.error) return { error: humanTariffError(res.error) }
+  const saved = (Array.isArray(res.data) ? res.data[0] : null) as { updated_at?: string } | null
+  if (!saved) return { error: TARIFF_STALE }
+  done(`/admin/tariffs/years/${tariff.tariff_year_id}/sseg`)
+  return { ok: true, updatedAt: String(saved.updated_at ?? '') }
 }
 
 export async function deleteTariffAction(input: { tariffId: string }): Promise<Ok> {

@@ -7,6 +7,7 @@ import { useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   COMPONENT_LABELS, SEASON_LABELS, TARIFF_UNITS, TOU_LABELS, UNIT_LABELS, formatChargeAmount,
+  TARIFF_CHECK_SEVERITY_LABELS, TARIFF_DAY_TYPE_LABELS, TARIFF_STRUCTURE_LABELS, TARIFF_VAT_BASIS_LABELS, labelOf,
   type TariffSeason, type TariffUnit, type TouOrAll,
 } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
@@ -34,10 +35,10 @@ export function ReviewQueue({ tariffs, editable }: { tariffs: ReviewTariff[]; ed
       {shown.map((t) => (
         <section key={t.id} aria-label={t.name} style={{ border: '1px solid var(--c-border)', borderRadius: 6, padding: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <strong style={{ fontSize: 14 }}>{t.name}{t.code ? ` (${t.code})` : ''} · {t.structure}</strong>
+            <strong style={{ fontSize: 14 }}>{t.name}{t.code ? ` (${t.code})` : ''} · {labelOf(TARIFF_STRUCTURE_LABELS, t.structure)}</strong>
             {editable && <DeleteTariff tariffId={t.id} />}
           </div>
-          {t.issues.map((i, k) => <p key={k} style={{ margin: '4px 0', fontSize: 12 }}><Badge variant={SEV[i.severity]}>{i.severity}</Badge> <span>{i.message}</span></p>)}
+          {t.issues.map((i, k) => <p key={k} style={{ margin: '4px 0', fontSize: 12 }}><Badge variant={SEV[i.severity]}>{TARIFF_CHECK_SEVERITY_LABELS[i.severity]}</Badge> <span>{i.message}</span></p>)}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr><th style={TH}>Component</th><th style={TH}>Season</th><th style={TH}>Period</th><th style={TH}>Block (kWh)</th><th style={TH}>Amount</th><th style={TH}>VAT</th><th style={TH}>Checks</th><th style={TH} /></tr></thead>
@@ -83,7 +84,7 @@ function ChargeRow({ charge: c, editable, onView }: { charge: ReviewCharge; edit
     <tr>
       <td style={TD}>{COMPONENT_LABELS[c.component]}</td>
       <td style={TD}>{SEASON_LABELS[c.season as TariffSeason] ?? c.season}</td>
-      <td style={TD}>{TOU_LABELS[c.tou as TouOrAll] ?? c.tou}{c.dayType !== 'all' ? ` (${c.dayType})` : ''}</td>
+      <td style={TD}>{TOU_LABELS[c.tou as TouOrAll] ?? c.tou}{c.dayType !== 'all' ? ` (${labelOf(TARIFF_DAY_TYPE_LABELS, c.dayType)})` : ''}</td>
       <td style={TD}>{c.blockMin === null ? '—' : `${c.blockMin}–${c.blockMax ?? '∞'}`}</td>
       <td style={TD}>
         {editing
@@ -96,28 +97,28 @@ function ChargeRow({ charge: c, editable, onView }: { charge: ReviewCharge; edit
             </span>
           : formatChargeAmount(c.amount, c.unit)}
       </td>
-      <td style={TD}>{c.vatBasis}</td>
+      <td style={TD}>{labelOf(TARIFF_VAT_BASIS_LABELS, c.vatBasis)}</td>
       <td style={TD}>
         {c.unitInferred && <div style={{ fontSize: 12 }}><Badge variant={c.reviewedAt ? 'success' : 'warning'}>{c.reviewedAt ? 'reviewed' : 'inferred unit'}</Badge> <span>{c.inferenceReason}</span></div>}
-        {c.issues.map((i, k) => <div key={k} style={{ fontSize: 12 }}><Badge variant={SEV[i.severity]}>{i.severity}</Badge> <span>{i.message}</span></div>)}
+        {c.issues.map((i, k) => <div key={k} style={{ fontSize: 12 }}><Badge variant={SEV[i.severity]}>{TARIFF_CHECK_SEVERITY_LABELS[i.severity]}</Badge> <span>{i.message}</span></div>)}
         {error && <div role="alert" style={{ fontSize: 12, color: 'var(--c-red)' }}>{error}</div>}
       </td>
       <td style={{ ...TD, whiteSpace: 'nowrap' }}>
         <Button variant="ghost" size="sm" onClick={onView}>View source</Button>
         {editable && !editing && <>
-          {!c.reviewedAt && <Button variant="secondary" size="sm" isLoading={busy} onClick={() => act(() => approveChargeAction({ chargeId: c.id }))}>Approve</Button>}
+          {!c.reviewedAt && <Button variant="secondary" size="sm" isLoading={busy} onClick={() => act(() => approveChargeAction({ chargeId: c.id, expected: c.seen }))}>Approve</Button>}
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
           <Button variant="danger" size="sm" isLoading={busy}
             onClick={() => {
               if (!reject.armed) return reject.arm()
               reject.disarm()
-              void act(() => rejectChargeAction({ chargeId: c.id }))
+              void act(() => rejectChargeAction({ chargeId: c.id, expected: c.seen }))
             }}>
             {reject.armed ? 'Confirm reject' : 'Reject'}
           </Button>
         </>}
         {editable && editing && <>
-          <Button size="sm" isLoading={busy} onClick={() => act(() => editChargeAction({ chargeId: c.id, amount, unit, unitConfirmed: confirmed }))}>Save</Button>
+          <Button size="sm" isLoading={busy} onClick={() => act(() => editChargeAction({ chargeId: c.id, expected: c.seen, amount, unit, unitConfirmed: confirmed }))}>Save</Button>
           <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
         </>}
       </td>
@@ -128,13 +129,16 @@ function ChargeRow({ charge: c, editable, onView }: { charge: ReviewCharge; edit
 function DeleteTariff({ tariffId }: { tariffId: string }) {
   const router = useRouter()
   const armed = useArmedConfirm()
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
     <span>
-      <Button variant="danger" size="sm" onClick={async () => {
+      <Button variant="danger" size="sm" isLoading={busy} onClick={async () => {
         if (!armed.armed) return armed.arm()
         armed.disarm()
+        setBusy(true); setError(null)
         const r = await deleteTariffAction({ tariffId })
+        setBusy(false)
         if ('error' in r) setError(r.error); else router.refresh()
       }}>{armed.armed ? 'Confirm delete tariff' : 'Delete tariff'}</Button>
       {error && <span role="alert" style={{ fontSize: 12, color: 'var(--c-red)' }}> {error}</span>}

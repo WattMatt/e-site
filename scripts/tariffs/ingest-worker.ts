@@ -68,6 +68,8 @@ async function main(): Promise<void> {
     })
     await queue.finish(job.id, outcome)
     console.log(`job ${job.id}: ${outcome.status}${outcome.error ? ` (${outcome.error})` : ''}`)
+    // The raw cause stays here: ingest_job.error holds only the fixed sentence the admin page shows.
+    if (outcome.detail) console.error(`job ${job.id}: detail: ${outcome.detail}`)
   }
 }
 

@@ -2,7 +2,7 @@
 /** Licensee registry (spec §12): add/edit name, kind, MDB code, province, NERSA licence no., aliases. */
 import { useMemo, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
-import { LICENSEE_KINDS } from '@esite/shared'
+import { LICENSEE_KINDS, LICENSEE_KIND_LABELS, labelOf } from '@esite/shared'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { addLicenseeAliasAction, removeLicenseeAliasAction, saveLicenseeAction } from '@/actions/tariff-library.actions'
@@ -43,14 +43,17 @@ export function LicenseeEditor({ rows }: { rows: LicenseeRow[] }) {
           </span>
         </CardHeader>
         <CardBody>
+          {rows.length > 0 && shown.length === 0 && (
+            <p style={{ fontSize: 13 }}>{`No licensee matches "${q.trim()}". Check the spelling, or add it.`}</p>
+          )}
           {rows.length === 0
             ? <p style={{ fontSize: 13 }}>No licensees yet. Seed the registry with <code>scripts/tariffs/seed-licensee-registry.ts</code>, or add one.</p>
-            : <div style={{ overflowX: 'auto' }}>
+            : shown.length > 0 && <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={TH}>Name</th><th style={TH}>Kind</th><th style={TH}>MDB</th><th style={TH}>Province</th><th style={TH}>NERSA licence</th><th style={TH}>Aliases</th><th style={TH} /></tr></thead>
                   <tbody>{shown.map((r) => (
                     <tr key={r.id}>
-                      <td style={TD}>{r.name}</td><td style={TD}>{r.kind}</td><td style={TD}>{r.mdbCode || '—'}</td>
+                      <td style={TD}>{r.name}</td><td style={TD}>{labelOf(LICENSEE_KIND_LABELS, r.kind)}</td><td style={TD}>{r.mdbCode || '—'}</td>
                       <td style={TD}>{r.province || '—'}</td><td style={TD}>{r.nersaLicenceNo || '—'}</td>
                       <td style={TD}><Aliases licenseeId={r.id} aliases={r.aliases} /></td>
                       <td style={TD}><Button variant="secondary" size="sm" onClick={() => setEditing(r)}>Edit</Button></td>
@@ -121,6 +124,7 @@ function AliasChip({ alias, onError }: { alias: string; onError: (m: string | nu
 function Aliases({ licenseeId, aliases }: { licenseeId: string; aliases: string[] }) {
   const router = useRouter()
   const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
     <div style={{ display: 'grid', gap: 4 }}>
@@ -129,11 +133,12 @@ function Aliases({ licenseeId, aliases }: { licenseeId: string; aliases: string[
       ))}
       <span style={{ display: 'flex', gap: 4 }}>
         <input aria-label="New alias" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Sheet name as printed" style={{ fontSize: 12 }} />
-        <button type="button" onClick={async () => {
-          setError(null)
+        <Button size="sm" variant="secondary" isLoading={busy} onClick={async () => {
+          setBusy(true); setError(null)
           const r = await addLicenseeAliasAction({ licenseeId, alias: value })
+          setBusy(false)
           if ('error' in r) setError(r.error); else { setValue(''); router.refresh() }
-        }}>Add</button>
+        }}>Add</Button>
       </span>
       {error && <span role="alert" style={{ fontSize: 12, color: 'var(--c-red)' }}>{error}</span>}
     </div>

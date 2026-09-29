@@ -50,6 +50,11 @@ export default async function CalendarsPage({ searchParams }: { searchParams: Pr
           </form>
         </CardBody>
       </Card>
+      {calendars.length === 0 && (
+        <Card><CardBody><p style={{ fontSize: 13, margin: 0 }}>
+          {selected.name} has no TOU calendar yet{selected.kind !== 'eskom' && eskom ? ": its studies use Eskom's hours, flagged as assumed" : ''}. Add one below.
+        </p></CardBody></Card>
+      )}
       {calendars.map((c) => {
         const holidayRule = (c.holiday_rule as { treated_as: 'saturday' | 'sunday' } | null)
         const editable: EditableCalendar = {

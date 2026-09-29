@@ -8,6 +8,7 @@ vi.mock('@/lib/tariffs/load-year', () => ({ loadYearTariffs: h.loadYear, loadPre
 
 import {
   approveChargeAction, editChargeAction, rejectChargeAction, validateTariffYearAction, publishTariffYearAction, saveSsegRuleAction,
+  setExportTariffAction,
 } from './tariff-review.actions'
 import { EMPTY_SSEG_FORM } from '@/lib/tariffs/sseg-form'
 import { fakeSupabase, callsTo } from '@/test/fake-supabase'
@@ -22,10 +23,25 @@ function admin(extra: Parameters<typeof fakeSupabase>[0] = {}) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('tariff review actions', () => {
-  it('approve sets a review stamp through the admin session (the trigger binds who/when)', async () => {
+  const SEEN = { amount: '247.76', unit: 'c_per_kWh' as const, reviewedAt: null }
+  const STALE = 'That charge changed or was removed since you loaded the page. Reload to see the current version.'
+  const GUARD = [['eq', 'id', 'c1'], ['eq', 'amount_excl_vat', '247.76'], ['eq', 'unit', 'c_per_kWh'], ['is', 'reviewed_at', null]]
+
+  it('approve sets a review stamp through the admin session (the trigger binds who/when), only on the charge the reviewer saw', async () => {
     const { calls } = admin({ writes: { 'tariffs.charge:update': { data: [{ id: 'c1' }] } } })
-    expect(await approveChargeAction({ chargeId: 'c1' })).toEqual({ ok: true })
-    expect(Object.keys(callsTo(calls, 'tariffs.charge', 'update')[0].payload as object)).toEqual(['reviewed_at'])
+    expect(await approveChargeAction({ chargeId: 'c1', expected: SEEN })).toEqual({ ok: true })
+    const u = callsTo(calls, 'tariffs.charge', 'update')[0]
+    expect(Object.keys(u.payload as object)).toEqual(['reviewed_at'])
+    expect(u.filters).toEqual(GUARD)
+  })
+
+  it('approve: a charge edited or approved by someone else since the page loaded is refused as stale', async () => {
+    admin({ writes: { 'tariffs.charge:update': { data: [] } } })
+    expect(await approveChargeAction({ chargeId: 'c1', expected: SEEN })).toEqual({ error: STALE })
+    const { calls } = admin({ writes: { 'tariffs.charge:update': { data: [] } } })
+    await approveChargeAction({ chargeId: 'c1', expected: { ...SEEN, reviewedAt: '2026-09-28T10:00:00+00:00' } })
+    expect(callsTo(calls, 'tariffs.charge', 'update')[0].filters).toContainEqual(['eq', 'reviewed_at', '2026-09-28T10:00:00+00:00'])
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 
   it('edit validates amount and unit against the component, and confirming the unit clears the inference', async () => {
@@ -33,18 +49,79 @@ describe('tariff review actions', () => {
       tables: { 'tariffs.charge': [{ id: 'c1', component: 'energy', season: 'all', unit: 'R_per_kWh', unit_inferred: true, inference_reason: 'magnitude' }] },
       writes: { 'tariffs.charge:update': { data: [{ id: 'c1' }] } },
     })
-    expect(await editChargeAction({ chargeId: 'c1', amount: '5', unit: 'R_per_month', unitConfirmed: true }))
+    expect(await editChargeAction({ chargeId: 'c1', expected: SEEN, amount: '5', unit: 'R_per_month', unitConfirmed: true }))
       .toEqual({ fieldErrors: { unit: 'Not a valid unit for Energy: R/month' } })
-    expect(await editChargeAction({ chargeId: 'c1', amount: '247,76', unit: 'c_per_kWh', unitConfirmed: true })).toEqual({ ok: true })
-    expect(callsTo(calls, 'tariffs.charge', 'update')[0].payload).toEqual({
+    expect(await editChargeAction({ chargeId: 'c1', expected: SEEN, amount: '247,76', unit: 'c_per_kWh', unitConfirmed: true })).toEqual({ ok: true })
+    const u = callsTo(calls, 'tariffs.charge', 'update')[0]
+    expect(u.payload).toEqual({
       amount_excl_vat: 247.76, unit: 'c_per_kWh', unit_inferred: false, inference_reason: null, extraction_method: 'manual',
     })
+    expect(u.filters).toEqual(GUARD)
   })
 
-  it('reject deletes the charge row', async () => {
+  it('edit: 0 rows changed is a stale sentence, not success', async () => {
+    admin({
+      tables: { 'tariffs.charge': [{ id: 'c1', component: 'energy', season: 'all', unit: 'c_per_kWh', unit_inferred: false, inference_reason: null }] },
+      writes: { 'tariffs.charge:update': { data: [] } },
+    })
+    expect(await editChargeAction({ chargeId: 'c1', expected: SEEN, amount: '250', unit: 'c_per_kWh', unitConfirmed: false })).toEqual({ error: STALE })
+  })
+
+  it('reject deletes the charge row only as the reviewer saw it', async () => {
     const { calls } = admin({ writes: { 'tariffs.charge:delete': { data: [{ id: 'c1' }] } } })
-    expect(await rejectChargeAction({ chargeId: 'c1' })).toEqual({ ok: true })
-    expect(callsTo(calls, 'tariffs.charge', 'delete')).toHaveLength(1)
+    expect(await rejectChargeAction({ chargeId: 'c1', expected: SEEN })).toEqual({ ok: true })
+    expect(callsTo(calls, 'tariffs.charge', 'delete')[0].filters).toEqual(GUARD)
+    admin({ writes: { 'tariffs.charge:delete': { data: [] } } })
+    expect(await rejectChargeAction({ chargeId: 'c1', expected: SEEN })).toEqual({ error: STALE })
+  })
+
+  const YEAR_TARIFFS = [
+    { id: 't1', tariff_year_id: 'y1', updated_at: 'U1', name: 'Homeflex 1' },
+    { id: 'e1', tariff_year_id: 'y1', updated_at: 'U9', name: 'Gen-offset' },
+    { id: 'x1', tariff_year_id: 'y2', updated_at: 'U3', name: 'Other year' },
+  ]
+
+  it('export tariff: links a tariff to an export tariff of the same year, conditioned on the updated_at the page loaded', async () => {
+    const { calls } = admin({
+      tables: { 'tariffs.tariff': YEAR_TARIFFS, 'tariffs.tariff_year': [{ id: 'y1', state: 'in_review' }] },
+      writes: { 'tariffs.tariff:update': { data: [{ id: 't1', updated_at: 'U2' }] } },
+    })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 'e1', expectedUpdatedAt: 'U1' })).toEqual({ ok: true, updatedAt: 'U2' })
+    const u = callsTo(calls, 'tariffs.tariff', 'update')[0]
+    expect(u.payload).toEqual({ export_tariff_id: 'e1' })
+    expect(u.filters).toEqual([['eq', 'id', 't1'], ['eq', 'updated_at', 'U1']])
+  })
+
+  it('export tariff: clearing the link writes null', async () => {
+    const { calls } = admin({
+      tables: { 'tariffs.tariff': YEAR_TARIFFS, 'tariffs.tariff_year': [{ id: 'y1', state: 'in_review' }] },
+      writes: { 'tariffs.tariff:update': { data: [{ id: 't1', updated_at: 'U2' }] } },
+    })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: null, expectedUpdatedAt: 'U1' })).toEqual({ ok: true, updatedAt: 'U2' })
+    expect(callsTo(calls, 'tariffs.tariff', 'update')[0].payload).toEqual({ export_tariff_id: null })
+  })
+
+  it('export tariff: refuses another year, itself, a published year, and a stale page', async () => {
+    const tables = { 'tariffs.tariff': YEAR_TARIFFS, 'tariffs.tariff_year': [{ id: 'y1', state: 'in_review' }] }
+    let f = admin({ tables })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 'x1', expectedUpdatedAt: 'U1' }))
+      .toEqual({ error: 'Choose an export tariff from this same tariff year.' })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 't1', expectedUpdatedAt: 'U1' }))
+      .toEqual({ error: 'A tariff cannot be its own export tariff.' })
+    expect(callsTo(f.calls, 'tariffs.tariff', 'update')).toHaveLength(0)
+    f = admin({ tables: { ...tables, 'tariffs.tariff_year': [{ id: 'y1', state: 'published' }] } })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 'e1', expectedUpdatedAt: 'U1' }))
+      .toEqual({ error: 'This year is published: its export links are read-only.' })
+    expect(callsTo(f.calls, 'tariffs.tariff', 'update')).toHaveLength(0)
+    admin({ tables, writes: { 'tariffs.tariff:update': { data: [] } } })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 'e1', expectedUpdatedAt: 'U1' }))
+      .toEqual({ error: 'Someone else changed this tariff. Reload to see their version.' })
+  })
+
+  it('export tariff: a non-admin is refused before any read', async () => {
+    h.gate.mockResolvedValue({ ok: false, error: 'Only platform tariff admins can do this.' })
+    expect(await setExportTariffAction({ tariffId: 't1', exportTariffId: 'e1', expectedUpdatedAt: 'U1' }))
+      .toEqual({ error: 'Only platform tariff admins can do this.' })
   })
 
   it('validate: fingerprint first, then checks, then records the verdict with that fingerprint', async () => {

@@ -25,4 +25,13 @@ describe('PublishPanel', () => {
     expect((screen.getByRole('button', { name: 'Publish year' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/2 inferred unit\(s\) still need review/)).toBeDefined()
   })
+  it('checked but with blocking issues: Publish stays disabled even with every unit reviewed', () => {
+    render(<PublishPanel yearId="y1" state="in_review" validatedAt="2026-09-28T00:00:00Z" blocking={2} unreviewedInferred={0} />)
+    expect((screen.getByRole('button', { name: 'Publish year' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('Checked: 2 blocking issue(s).')).toBeDefined()
+  })
+  it('checked clean but one inferred unit unreviewed: still disabled', () => {
+    render(<PublishPanel yearId="y1" state="in_review" validatedAt="2026-09-28T00:00:00Z" blocking={0} unreviewedInferred={1} />)
+    expect((screen.getByRole('button', { name: 'Publish year' }) as HTMLButtonElement).disabled).toBe(true)
+  })
 })

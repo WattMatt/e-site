@@ -9,13 +9,16 @@ export const dynamic = 'force-dynamic'
 export default async function TariffLibraryOverview() {
   const { supabase } = await requirePlatformTariffAdminPage()
   const t = supabase.schema('tariffs')
-  const [inReview, openReports, jobs, alerts] = await Promise.all([
+  const [inReview, openReports, jobs, alerts, latest] = await Promise.all([
     t.from('tariff_year').select('id', { count: 'exact', head: true }).eq('state', 'in_review'),
     t.from('error_report').select('id', { count: 'exact', head: true }).eq('status', 'open'),
     t.from('ingest_job').select('id', { count: 'exact', head: true }).in('status', ['queued', 'running']),
     t.from('due_year_alert').select('id, regime, missing_financial_year, latest_published_fy, checked_on, licensee:licensee_id(name)')
       .is('resolved_at', null).order('checked_on', { ascending: false }).limit(50),
+    // A check records only licensees MISSING a year, so this is the latest alert, not the latest run.
+    t.from('due_year_alert').select('created_at').order('created_at', { ascending: false }).limit(1),
   ])
+  const latestAlertAt = (((latest.data ?? []) as Array<{ created_at: string }>)[0]?.created_at) ?? null
   const alertRows = (alerts.data ?? []) as unknown as Array<{ id: string; regime: string; missing_financial_year: string; latest_published_fy: string | null; checked_on: string; licensee: { name: string } | null }>
   const tiles = [
     { label: 'Years waiting for review', value: inReview.count ?? 0, href: '/admin/tariffs/years?state=in_review' },
@@ -35,10 +38,16 @@ export default async function TariffLibraryOverview() {
         <CardHeader><span className="data-panel-title">Due-year alerts</span></CardHeader>
         <CardBody>
           <p style={{ fontSize: 13, margin: '0 0 8px' }}>
-            Checked automatically on 1 April (Eskom) and 1 July (municipal). <RunMonitorButton regime="eskom" /> <RunMonitorButton regime="municipal" />
+            The automatic schedule (1 April for Eskom, 1 July for municipal) starts once the owner enables it; until then, run a check here.{' '}
+            <RunMonitorButton regime="eskom" /> <RunMonitorButton regime="municipal" />
+          </p>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c-text-dim)' }}>
+            {latestAlertAt
+              ? `Latest alert recorded ${formatSolarDate(latestAlertAt)}. A check records only licensees that are missing a year.`
+              : 'No check has recorded a missing year yet — run a check now. A check records only licensees that are missing a year.'}
           </p>
           {alertRows.length === 0
-            ? <p style={{ fontSize: 13, color: 'var(--c-text-dim)' }}>Every watched licensee has a published year covering today.</p>
+            ? <p style={{ fontSize: 13, color: 'var(--c-text-dim)' }}>No open alerts.</p>
             : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
                 {alertRows.map((a) => (
                   <li key={a.id}>

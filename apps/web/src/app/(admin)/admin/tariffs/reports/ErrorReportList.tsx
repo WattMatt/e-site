@@ -1,15 +1,17 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatSolarDate } from '@esite/shared'
+import { ERROR_REPORT_STATUS_LABELS, formatSolarDate, labelOf } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
 import { resolveErrorReportAction } from '@/actions/tariff-library.actions'
 
 export interface ErrorReportRow {
   id: string
   note: string
-  status: string
+  status: 'open' | 'resolved' | 'rejected'
   resolutionNote: string
+  /** The note as stored (null when none): with status, the stale guard. */
+  storedResolutionNote: string | null
   createdAt: string
   project: string
   tariff: string
@@ -26,13 +28,13 @@ function ReportRow({ row }: { row: ErrorReportRow }) {
   const [busy, setBusy] = useState(false)
   const set = async (status: 'open' | 'resolved' | 'rejected') => {
     setBusy(true); setError(null)
-    const r = await resolveErrorReportAction({ id: row.id, status, resolutionNote: note })
+    const r = await resolveErrorReportAction({ id: row.id, status, resolutionNote: note, expected: { status: row.status, resolutionNote: row.storedResolutionNote } })
     setBusy(false)
     if ('error' in r) setError(r.error); else router.refresh()
   }
   return (
     <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 8, fontSize: 13 }}>
-      <div><strong>{row.tariff}</strong> · {row.project} · {formatSolarDate(row.createdAt)} · <em>{row.status}</em></div>
+      <div><strong>{row.tariff}</strong> · {row.project} · {formatSolarDate(row.createdAt)} · <em>{labelOf(ERROR_REPORT_STATUS_LABELS, row.status)}</em></div>
       <p style={{ margin: '4px 0' }}>{row.note}</p>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input aria-label="Resolution note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was done" style={{ minWidth: 260 }} />

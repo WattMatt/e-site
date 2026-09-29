@@ -9,8 +9,8 @@ describe('buildReviewModel', () => {
       makeCharge({ component: 'basic', unit: 'R_per_month', amountExclVat: 400, unitInferred: true, inferenceReason: 'no unit' }),
     ] })
     const chargeRows = [
-      { id: 'c-energy', source_document_id: 'd1', source_locator: { page: 3 }, reviewed_at: null },
-      { id: 'c-basic', source_document_id: 'd1', source_locator: { page: 3 }, reviewed_at: null },
+      { id: 'c-energy', source_document_id: 'd1', source_locator: { page: 3 }, reviewed_at: null, amount_excl_vat: 2500.0000, unit: 'c_per_kWh' },
+      { id: 'c-basic', source_document_id: 'd1', source_locator: { page: 3 }, reviewed_at: '2026-09-28T10:00:00+00:00', amount_excl_vat: 400, unit: 'R_per_month' },
     ]
     const m = buildReviewModel([{ id: 't1', row: { code: 'C1' }, tariff, chargeRows }], [
       { code: 'energy_out_of_range', severity: 'block', message: '2500 c/kWh is outside 50-1500 c/kWh', tariff: 'Commercial', chargeIndex: 0 },
@@ -18,6 +18,9 @@ describe('buildReviewModel', () => {
     ])
     expect(m[0].issues).toEqual([{ severity: 'review', message: 'Commercial energy: 30%' }])
     expect(m[0].charges[0]).toMatchObject({ id: 'c-energy', amount: 2500, unit: 'c_per_kWh', issues: [{ severity: 'block', message: '2500 c/kWh is outside 50-1500 c/kWh' }] })
-    expect(m[0].charges[1]).toMatchObject({ id: 'c-basic', unitInferred: true, inferenceReason: 'no unit', needsReview: true, sourceDocumentId: 'd1' })
+    expect(m[0].charges[1]).toMatchObject({ id: 'c-basic', unitInferred: true, inferenceReason: 'no unit', needsReview: false, sourceDocumentId: 'd1' })
+    // The stale guard is the row as stored, not the converted model.
+    expect(m[0].charges[0].seen).toEqual({ amount: '2500', unit: 'c_per_kWh', reviewedAt: null })
+    expect(m[0].charges[1].seen).toEqual({ amount: '400', unit: 'R_per_month', reviewedAt: '2026-09-28T10:00:00+00:00' })
   })
 })

@@ -7,8 +7,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { IngestReportSummary } from '@esite/shared/tariffs/ingest'
+import { INGEST_YEAR_ACTION_LABELS, labelOf } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
 import { queueIngestJobAction } from '@/actions/tariff-library.actions'
+import { useArmedConfirm } from '@/app/(admin)/projects/[id]/solar/_components/useArmedConfirm'
 
 export interface IngestSource {
   id: string
@@ -26,6 +28,25 @@ export function IngestPanel({ source }: { source: IngestSource }) {
   const [busy, setBusy] = useState<'dry' | 'apply' | 'queue' | null>(null)
   const [report, setReport] = useState<IngestReportSummary | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  const applyConfirm = useArmedConfirm()
+  const queueConfirm = useArmedConfirm()
+  const replacing = report?.years.filter((y) => y.action === 'replace_draft').length ?? 0
+
+  async function queue() {
+    if (!licensee.trim()) { setMsg('An RfD covers one licensee: enter its name as the registry spells it.'); return }
+    if (!queueConfirm.armed) { setMsg(null); queueConfirm.arm(); return }
+    queueConfirm.disarm()
+    setBusy('queue'); setMsg(null)
+    const r = await queueIngestJobAction({ sourceDocumentId: source.id, parser: 'rfd_pdf', financialYear: fy, licenseeName: licensee, createLicensees })
+    setBusy(null)
+    if ('error' in r) setMsg(r.error); else { setMsg('Queued. The staff ingest worker will pick it up.'); router.refresh() }
+  }
+
+  function apply() {
+    if (replacing > 0 && !applyConfirm.armed) { applyConfirm.arm(); return }
+    applyConfirm.disarm()
+    void run(true)
+  }
 
   async function run(apply: boolean) {
     setBusy(apply ? 'apply' : 'dry'); setMsg(null)
@@ -52,24 +73,33 @@ export function IngestPanel({ source }: { source: IngestSource }) {
         {parser === 'rfd_pdf' && <label>Licensee <input value={licensee} onChange={(e) => setLicensee(e.target.value)} /></label>}
         <label><input type="checkbox" checked={createLicensees} onChange={(e) => setCreateLicensees(e.target.checked)} /> Create unknown licensees</label>
         {source.fileKind === 'pdf'
-          ? <Button size="sm" isLoading={busy === 'queue'} onClick={async () => {
-              setBusy('queue'); setMsg(null)
-              const r = await queueIngestJobAction({ sourceDocumentId: source.id, parser: 'rfd_pdf', financialYear: fy, licenseeName: licensee, createLicensees })
-              setBusy(null)
-              if ('error' in r) setMsg(r.error); else { setMsg('Queued. The staff ingest worker will pick it up.'); router.refresh() }
-            }}>Queue ingest</Button>
+          ? <Button size="sm" isLoading={busy === 'queue'} onClick={queue}>{queueConfirm.armed ? 'Confirm queue ingest' : 'Queue ingest'}</Button>
           : <>
               <Button size="sm" variant="secondary" isLoading={busy === 'dry'} onClick={() => run(false)}>Dry run</Button>
-              {report?.status === 'dry_run' && <Button size="sm" isLoading={busy === 'apply'} onClick={() => run(true)}>Apply (lands in review)</Button>}
+              {report?.status === 'dry_run' && (
+                <Button size="sm" isLoading={busy === 'apply'} onClick={apply}>
+                  {applyConfirm.armed ? `Replace ${replacing} draft year${replacing === 1 ? '' : 's'}?` : 'Apply (lands in review)'}
+                </Button>
+              )}
             </>}
       </div>
+      {queueConfirm.armed && (
+        <p role="status" style={{ fontSize: 13, margin: 0 }}>
+          When the worker runs, it replaces any draft {fy} year {licensee.trim()} already has (a published year is never touched). Press again to queue.
+        </p>
+      )}
+      {applyConfirm.armed && (
+        <p role="status" style={{ fontSize: 13, margin: 0 }}>
+          Applying replaces the draft years marked below; anything edited in them so far is lost. Press again to apply.
+        </p>
+      )}
       {msg && <p role="status" style={{ fontSize: 13, margin: 0 }}>{msg}</p>}
       {report && (
         <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
           <thead><tr>{['Licensee', 'Action', 'Tariffs', 'Charges', 'Blocking', 'Review', 'Unresolved', 'YoY'].map((h) => <th key={h} style={{ textAlign: 'left', padding: '4px 8px' }}>{h}</th>)}</tr></thead>
           <tbody>{report.years.map((y, i) => (
             <tr key={i}>
-              <td style={{ padding: '4px 8px' }}>{y.licensee}</td><td style={{ padding: '4px 8px' }}>{y.action}</td>
+              <td style={{ padding: '4px 8px' }}>{y.licensee}</td><td style={{ padding: '4px 8px' }}>{labelOf(INGEST_YEAR_ACTION_LABELS, y.action)}</td>
               <td style={{ padding: '4px 8px' }}>{y.tariffs}</td><td style={{ padding: '4px 8px' }}>{y.charges}</td>
               <td style={{ padding: '4px 8px' }}>{y.blocking}</td><td style={{ padding: '4px 8px' }}>{y.review}</td>
               <td style={{ padding: '4px 8px' }}>{y.unresolved}</td>

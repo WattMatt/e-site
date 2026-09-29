@@ -6,7 +6,7 @@
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { SOURCE_DOCUMENT_KINDS, SOURCE_DOCUMENT_STATUSES } from '@esite/shared'
+import { SOURCE_DOCUMENT_KINDS, SOURCE_DOCUMENT_KIND_LABELS, SOURCE_DOCUMENT_STATUSES, SOURCE_DOCUMENT_STATUS_LABELS } from '@esite/shared'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { createClient } from '@/lib/supabase/client'
@@ -54,10 +54,10 @@ export function SourceUpload({ licensees }: { licensees: Array<{ id: string; nam
       <CardBody>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
           <label>File (PDF, XLSX, XLSM, up to 50 MB)<input type="file" accept=".pdf,.xlsx,.xlsm" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-          <label>Kind<select value={kind} onChange={(e) => setKind(e.target.value)}>{SOURCE_DOCUMENT_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}</select></label>
+          <label>Kind<select value={kind} onChange={(e) => setKind(e.target.value)}>{SOURCE_DOCUMENT_KINDS.map((k) => <option key={k} value={k}>{SOURCE_DOCUMENT_KIND_LABELS[k]}</option>)}</select></label>
           <label>Title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="City Power RfD 2026/27" /></label>
           <label>Financial year<input value={fy} onChange={(e) => setFy(e.target.value)} placeholder="2026/27" /></label>
-          <label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}>{SOURCE_DOCUMENT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+          <label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}>{SOURCE_DOCUMENT_STATUSES.map((s) => <option key={s} value={s}>{SOURCE_DOCUMENT_STATUS_LABELS[s]}</option>)}</select></label>
           <label>Licensee (one-licensee documents)<select value={licenseeId} onChange={(e) => setLicenseeId(e.target.value)}>
             <option value="">Many / not specific</option>{licensees.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select></label>
