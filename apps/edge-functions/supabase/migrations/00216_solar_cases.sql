@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00215: Solar cases, stored runs, weather cache, equipment, case financials (Phase 4b)
+-- Migration 00216: Solar cases, stored runs, weather cache, equipment, case financials (Phase 4b)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §7, §8, §11; docs/solar/03-data-model-and-security.md
 -- §3, §3.1, §3.2; decisions D-05, D-07, D-14, D-15, D-16, D-19 (docs/solar/06-open-decisions.md).
@@ -23,9 +23,9 @@
 --     solar_financials_run, solar_equipment_saved.
 -- RULES
 --   * Money tables: every verb on public.solar_can_see_money (03 §3.1).
---   * layout_id has no FK yet: solar.layouts is 00211 on feat/solar-phase-5; the Phase 5
+--   * layout_id has no FK yet: solar.layouts is 00212 on feat/solar-phase-5; the Phase 5
 --     integration merge adds it. pv_source='layout' is refused by the app until then.
---   * The 00207 schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE
+--   * The 00208 schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE
 --     read policy in schema solar, every SECURITY DEFINER function revoked from anon.
 -- ---------------------------------------------------------------------------
 
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS solar.cases (
     organisation_id  UUID NOT NULL REFERENCES public.organisations(id),
     name             TEXT NOT NULL CONSTRAINT cases_name_not_blank CHECK (length(btrim(name)) BETWEEN 1 AND 120),
     pv_source        TEXT NOT NULL DEFAULT 'manual' CHECK (pv_source IN ('manual', 'layout')),
-    layout_id        UUID,   -- FK to solar.layouts added by the Phase 5 integration merge (00211)
+    layout_id        UUID,   -- FK to solar.layouts added by the Phase 5 integration merge (00212)
     config           JSONB NOT NULL CONSTRAINT cases_config_is_object CHECK (jsonb_typeof(config) = 'object'),
     config_version   INTEGER NOT NULL DEFAULT 1 CHECK (config_version >= 1),
     created_by       UUID REFERENCES auth.users(id),
@@ -564,7 +564,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Deliberately NO storage.objects policy for either bucket: every read and write goes through a
 -- gated server route/action using the service client; downloads are short-lived signed URLs.
 
--- ── 9. Product events (re-declared in full: 00208's list + Phase 4b) ────────
+-- ── 9. Product events (re-declared in full: 00209's list + Phase 4b) ────────
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
     'rfi_created',
@@ -591,7 +591,7 @@ ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHEC
     'solar_equipment_saved'
 ));
 
--- ── 10. Table privileges (00207's default privileges granted too much) ──────
+-- ── 10. Table privileges (00208's default privileges granted too much) ──────
 GRANT SELECT, INSERT, UPDATE, DELETE ON solar.cases, solar.case_financials TO authenticated;
 GRANT SELECT, INSERT ON solar.case_runs TO authenticated;
 REVOKE UPDATE, DELETE, TRUNCATE ON solar.case_runs FROM authenticated;

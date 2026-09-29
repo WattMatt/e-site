@@ -1,4 +1,4 @@
-// solar_schematic_sheet reads on the Solar level (00214). Kept in its own file,
+// solar_schematic_sheet reads on the Solar level (00215). Kept in its own file,
 // not Phase 5's project-reports.solar-gate.test.ts, so the two branches merge
 // without an add/add conflict; Phase 5's file covers solar_layout_sheet.
 import { describe, it, expect, vi, beforeEach } from 'vitest'

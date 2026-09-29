@@ -46,7 +46,7 @@ describe('createMeterImportRepo', () => {
     expect(await createMeterImportRepo(c as never).downloadRaw('o/p/x.csv')).toBeNull()
   })
 
-  it('audit goes through the service-role recorder with the caller as actor, never a user-session INSERT (00218)', async () => {
+  it('audit goes through the service-role recorder with the caller as actor, never a user-session INSERT (00219)', async () => {
     const c = client({ auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'u-1' } } })) } })
     await createMeterImportRepo(c as never).audit('p-1', 'meter_file_imported', { file_id: 'f-1' })
     expect(audit.recordSolarAudit).toHaveBeenCalledWith({ projectId: 'p-1', actorId: 'u-1', verb: 'meter_file_imported', objectRef: { file_id: 'f-1' } })

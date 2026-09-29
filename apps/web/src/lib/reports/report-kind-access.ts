@@ -64,7 +64,7 @@ export const OPEN_READ_REPORT_KINDS: readonly string[] = [
 
 /**
  * Kinds whose read follows the Solar module's own gate: the caller's per-user
- * Solar level on the project (00207, decision D-04), not an E-Site role. A
+ * Solar level on the project (00208, decision D-04), not an E-Site role. A
  * contractor with a View grant reads a layout sheet, a schematic sheet or a
  * technical report; a project manager with no grant does not. Mirrored in
  * public.user_can_read_report_kind() and pinned by

@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * Client-side access to an issued proposal (spec §9.4, D-18): by secure token (no login) or as a
- * portal user. Everything goes through 00216's SERVICE-ONLY definer functions — the raw token is
+ * portal user. Everything goes through 00217's SERVICE-ONLY definer functions — the raw token is
  * hashed in SQL, only the frozen snapshot is returned. The caller has already applied its own gate
  * (token shape + rate limit, or requirePortalAccess). `ClientProposalView` is what reaches the
  * browser: no storage path, no project id, and only the client projection of the snapshot

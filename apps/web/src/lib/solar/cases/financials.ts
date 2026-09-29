@@ -4,7 +4,7 @@ import 'server-only'
  * hourly CSV and KPIs, the case config snapshot the run used, the saved financials and the study's
  * tariff. Every read of the saved financials goes through the caller's session (money RLS — the DB half
  * of the edit_financials gate); the immutable solar.case_run_financials row is written by the SERVICE
- * client with run_by set explicitly (00215: authenticated has no INSERT there, so a money user cannot
+ * client with run_by set explicitly (00216: authenticated has no INSERT there, so a money user cannot
  * post figures of their own over PostgREST). Call only AFTER the action's edit_financials gate.
  * The tariff is priced on the run's stored load reference year (provenance.loadReferenceYear), the
  * same year the run's load was aligned to.

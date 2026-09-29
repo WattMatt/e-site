@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * One run, end to end (functional spec §7.2 Run). The running row is INSERTed through the caller's
- * session (00215 RLS: Solar Edit); the result is written by the service client, which is the only
+ * session (00216 RLS: Solar Edit); the result is written by the service client, which is the only
  * role allowed to UPDATE a run, and only while it is running (freeze trigger). Every failure is kept
  * on the row with a sentence and logged with the run id.
  */

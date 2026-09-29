@@ -1,6 +1,6 @@
--- BEHAVIOURAL assertions for 00216_solar_proposals (Solar Phase 6), run as real roles.
---   RED:   scripts/db/dry-run-migration.sh <00207..00210 (+00213) + 00215> scripts/db/assert-solar-proposals-roles.sql
---   GREEN: scripts/db/dry-run-migration.sh <00207..00210 (+00213) + 00215 + 00216> scripts/db/assert-solar-proposals-roles.sql
+-- BEHAVIOURAL assertions for 00217_solar_proposals (Solar Phase 6), run as real roles.
+--   RED:   scripts/db/dry-run-migration.sh <00208..00211 (+00214) + 00216> scripts/db/assert-solar-proposals-roles.sql
+--   GREEN: scripts/db/dry-run-migration.sh <00208..00211 (+00214) + 00216 + 00217> scripts/db/assert-solar-proposals-roles.sql
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it
 -- bypasses the paywall, so it has no negative case).
 

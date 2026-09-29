@@ -1,7 +1,7 @@
 -- ---------------------------------------------------------------------------
--- Migration 00219: Solar pricing guards (I-2) + solar.layouts.module_id FK
+-- Migration 00220: Solar pricing guards (I-2) + solar.layouts.module_id FK
 -- ---------------------------------------------------------------------------
--- 00216 / 00217 are claimed by Solar phases 6 / 7 (in flight). Re-check the number against the
+-- 00217 / 00218 are claimed by Solar phases 6 / 7 (in flight). Re-check the number against the
 -- ledger, origin/main and every open PR's migration filenames AT APPLY TIME.
 --
 -- WHAT
@@ -12,11 +12,11 @@
 --       'manual' if and only if it has at least one solar.study_export_rates row. Deferred, because
 --       save_export_rule deletes and re-inserts the rates and writes the rule last in ONE
 --       transaction; the check runs once, at commit, on the final state. SECURITY DEFINER so the
---       count is exact whatever the caller can read (the rate rows are money, 00213). The study row is
+--       count is exact whatever the caller can read (the rate rows are money, 00214). The study row is
 --       locked (FOR NO KEY UPDATE) so concurrent writers are checked in turn (this relies on READ
 --       COMMITTED, PostgREST's level: the count after the lock takes a fresh snapshot). Existing mismatches are
 --       backfilled first (manual without rates -> 'none'; stray rates removed): neither was priced.
---   (b) solar.layouts.module_id REFERENCES solar.equipment(id) ON DELETE RESTRICT (the FK 00211
+--   (b) solar.layouts.module_id REFERENCES solar.equipment(id) ON DELETE RESTRICT (the FK 00212
 --       deferred to the Financials phase). Existing ids that are not a module of the layout's org
 --       or of the platform catalogue are set NULL first ("generic presets": nothing in apps/web
 --       writes module_id today). layouts_module_bind refuses an unknown id, another org's row or a
@@ -85,7 +85,7 @@ REVOKE ALL ON FUNCTION solar.export_rule_rates_check() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.export_rule_rates_check() FROM anon;
 
 -- Backfill BEFORE the triggers (a constraint trigger never re-checks existing rows, and the @verify
--- invariant above is re-evaluated on every later deploy). 00213's save_export_rule accepted a manual
+-- invariant above is re-evaluated on every later deploy). 00214's save_export_rule accepted a manual
 -- rule with no rates, and I-2 could write one directly: such a rule priced nothing, so it becomes
 -- 'none' (resolveStudyPricing already priced it so). Stray rates under a non-manual rule were never
 -- priced either; they go.

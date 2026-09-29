@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00209: Tariff library schema (Solar Phase 2a)
+-- Migration 00210: Tariff library schema (Solar Phase 2a)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §4; source reality in
 -- docs/solar/as-is/09-nersa-tariff-source.md; decisions D-03 (E-Site runs the
@@ -36,7 +36,7 @@
 -- anyone, the service role included (triggers are not bypassed by BYPASSRLS).
 -- Corrections are a new version through review.
 --
--- DEPENDS ON 00207 (solar.org_subscription_active).
+-- DEPENDS ON 00208 (solar.org_subscription_active).
 -- NEW SCHEMA CHECKLIST (00126): grants below (no anon), config.toml, AND the
 -- production PostgREST db_schema PATCH at apply time (else PGRST002).
 -- The "[mutation-probe Mn]" comments mark lines the red/green mutation runs
@@ -169,7 +169,7 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
 $$;
 
 -- D-03b: the caller is active in at least one org with a live Solar
--- subscription (WM-Consulting counts, through the 00207 bypass).
+-- subscription (WM-Consulting counts, through the 00208 bypass).
 CREATE OR REPLACE FUNCTION public.caller_has_any_solar_org()
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT auth.uid() IS NOT NULL AND EXISTS (

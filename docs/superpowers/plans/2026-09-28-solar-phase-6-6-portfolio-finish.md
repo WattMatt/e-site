@@ -91,7 +91,7 @@ export function portfolioKpis(rows: PortfolioRow[]) {
 `apps/web/src/lib/solar/portfolio.ts`:
 ```ts
 import 'server-only'
-/** Rows from public.solar_portfolio (00216): only projects the CALLER may view; saving only with money. */
+/** Rows from public.solar_portfolio (00217): only projects the CALLER may view; saving only with money. */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PortfolioRow, PortfolioStage } from './portfolio-model'
 
@@ -344,13 +344,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | `/proposal/[token]` (public, no login) | — | — | — | — | — | — | anyone holding a live link: R + Accept / Decline / Download |
 | `/portal/[projectId]/proposals`, `…/proposals/[proposalId]` | — | — | — | — | — | — | client_viewer project member: R + Accept / Decline / Download |
 ```
-And add a note under the table: "Reports & Proposal is live (Phase 6). Feasibility reports, proposals and the acceptance record need Edit + financials; technical reports need View. Report reads follow the Solar level in `public.user_can_read_report_kind()` (00216), not an E-Site role; `solar_proposal` PDFs are never deletable."
+And add a note under the table: "Reports & Proposal is live (Phase 6). Feasibility reports, proposals and the acceptance record need Edit + financials; technical reports need View. Report reads follow the Solar level in `public.user_can_read_report_kind()` (00217), not an E-Site role; `solar_proposal` PDFs are never deletable."
 
 - [ ] **Step 2: Action rows** in "Solar server actions":
 
 ```markdown
 | `generateSolarReportAction` (`solar-reports.actions.ts`) | feasibility: `requireSolarLevel(project, 'edit_financials')`; technical: `'edit'` — FIRST; `rateLimit('solar-report:<user>', 6, 60 s)`; refused while the selected case is Stale/running/failed | Reads the stored run (`case_runs`) and, for feasibility, `case_run_financials` for THAT run under money RLS; writes `projects.reports` (kind `solar_feasibility` / `solar_technical`, source = the run) and the `reports` bucket with the service client after the gate |
-| `createSolarProposalAction` / `saveSolarProposalDraftAction` / `deleteSolarProposalDraftAction` / `reviseSolarProposalAction` (`solar-proposals.actions.ts`) | `requireSolarLevel(project, 'edit_financials')` FIRST; save stale-guarded | `proposals_*` (00216): permissive membership + RESTRICTIVE `solar_can_see_money` per verb; `proposals_guard` forces drafts, versions revisions, refuses revising an accepted family and any user change once issued |
+| `createSolarProposalAction` / `saveSolarProposalDraftAction` / `deleteSolarProposalDraftAction` / `reviseSolarProposalAction` (`solar-proposals.actions.ts`) | `requireSolarLevel(project, 'edit_financials')` FIRST; save stale-guarded | `proposals_*` (00217): permissive membership + RESTRICTIVE `solar_can_see_money` per verb; `proposals_guard` forces drafts, versions revisions, refuses revising an accepted family and any user change once issued |
 | `issueSolarProposalAction` / `withdrawSolarProposalAction` / `newSolarProposalLinkAction` | `requireSolarLevel(project, 'edit_financials')` FIRST; the proposal is read through the caller's session (RLS) before any service call; `rateLimit('solar-issue:<user>', 5, 60 s)` | Service-only `solar_issue_proposal` / `solar_withdraw_proposal` / `solar_rotate_proposal_link` (EXECUTE: `service_role` only). Issue stores PDF + SHA-256 + snapshot and the token's SHA-256 (the raw 32-byte token is returned once); client email only when ticked AND `notify_solar_email` is on, and only to the project's client viewers |
 | `draftSolarProposalNarrativeAction` | `requireSolarLevel(project, 'edit_financials')` FIRST; disabled without `ANTHROPIC_API_KEY`; `rateLimit('solar-narrative:<org>', 10, 10 min)` | Anthropic called server-side with the proposal's figures only; text saved into the draft (stale-guarded) |
 | `saveSolarProposalTemplatesAction` (`solar-proposal-templates.actions.ts`) | `requireRole(active org, OWNER_ADMIN)` (`.ok`); stale-guarded | `solar.proposal_templates` RESTRICTIVE writes on `solar.library_orgs('admin')`; reads on `library_orgs('edit_financials')` |
@@ -408,18 +408,18 @@ Expected: every suite green with counts above the Task 0 baseline; 0 type errors
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 S=/private/tmp/claude-501/solar-6; M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql \
-    $(ls $M/00213_*.sql 2>/dev/null) $M/00215_solar_cases.sql $M/00216_solar_proposals.sql > $S/green.sql
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql \
+    $(ls $M/00214_*.sql 2>/dev/null) $M/00216_solar_cases.sql $M/00217_solar_proposals.sql > $S/green.sql
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-proposals-roles.sql 2>&1 | grep -cE '\| *t *$|true'
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-cases-roles.sql scripts/db/assert-solar-foundation-roles.sql \
   scripts/db/assert-solar-org-settings-roles.sql scripts/db/assert-solar-meter-data-roles.sql 2>&1 | grep -iE 'false|error' || echo "earlier Solar assertions still green"
 ```
-Expected: `67`; `earlier Solar assertions still green`. If Phase 5 (`00211`) is on the base by now, insert it in number order and also run `scripts/db/assert-solar-layouts-roles.sql`.
+Expected: `67`; `earlier Solar assertions still green`. If Phase 5 (`00212`) is on the base by now, insert it in number order and also run `scripts/db/assert-solar-layouts-roles.sql`.
 
 - [ ] **Step 3: Teeth check** — confirm each of these was seen RED during its task (re-run the mutation if not recorded):
   - SQL: the seven Task 3 mutations.
   - `render-report.render.test.ts` glyph test (Task 13 Step 4) and `render-proposal.render.test.ts` figure test (Task 14 Step 4).
-  - `report-kind-access.contract.test.ts`: temporarily delete the `solar_feasibility` line from `00216`'s `user_can_read_report_kind()` → the "FINAL definition" test fails naming it; revert.
+  - `report-kind-access.contract.test.ts`: temporarily delete the `solar_feasibility` line from `00217`'s `user_can_read_report_kind()` → the "FINAL definition" test fails naming it; revert.
   - `notification-toggles.contract.test.ts`: temporarily remove `solarEmail: s.notifySolarEmail,` from `getNotificationConfig` → "every toggle drives a column something actually reads" still passes but the email-toggle test fails; remove the `TOGGLES` entry instead → "every notify_* boolean column either has a toggle or a reason" fails. Revert both.
   - `tamper.render.test.ts`: temporarily make `loadProposalByToken` return a snapshot rebuilt from `proposalSnapshotInput({ price: offerPrice(2_000_000, 15) })` → red. Revert.
 
@@ -436,7 +436,7 @@ Expected: `67`; `earlier Solar assertions still green`. If Phase 5 (`00211`) is 
 Reviewer A — security and evidence integrity:
 ```
 Review branch feat/solar-phase-6 against origin/feat/solar-phase-4b in /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6.
-Focus: apps/edge-functions/supabase/migrations/00216_solar_proposals.sql; apps/web/src/{actions/solar-*.actions.ts,actions/project-reports.actions.ts,lib/solar/proposals,lib/solar/reports,app/api/solar,app/api/projects/[id]/solar/proposals,app/(proposal),app/(portal)/portal/[projectId]/proposals,middleware.ts}.
+Focus: apps/edge-functions/supabase/migrations/00217_solar_proposals.sql; apps/web/src/{actions/solar-*.actions.ts,actions/project-reports.actions.ts,lib/solar/proposals,lib/solar/reports,app/api/solar,app/api/projects/[id]/solar/proposals,app/(proposal),app/(portal)/portal/[projectId]/proposals,middleware.ts}.
 Check: (1) anon holds NO table or function privilege; every client-facing/state-changing definer function is service_role-only and re-checks what it needs (token shape+hash, expiry, status, portal membership); (2) only the SHA-256 of the token is stored, the raw token leaves the server once, and a stored hash cannot be replayed as a token; (3) the snapshot served to a client contains nothing beyond the client price and client-facing text (no capex, no margin, no internal ids beyond what is necessary); (4) an issued proposal, its PDF path/hash and its events cannot be changed or deleted by any user path, and events are append-only for everyone; (5) IP/UA/time/PDF hash are stamped server-side and cannot come from a request body; (6) every action/route gates BEFORE any service-client call; public routes are rate-limited; the middleware opens exactly the intended paths; (7) per-verb RLS, no RESTRICTIVE FOR ALL, FORCE RLS, money on solar_can_see_money; (8) no email or LLM call can happen in tests or without the toggle/key; (9) @verify directives are predicates this migration alone satisfies, no em dash in sql payloads; (10) no raw Postgres error reaches a user.
 Report confirmed defects only, each with file:line, the failing scenario and a proposed fix. Do not edit files.
 ```
@@ -473,14 +473,14 @@ Spec: docs/solar/01 §9 (not solar_monthly, not "Ask a question"), §15, §2.2; 
 Plan: docs/superpowers/plans/2026-09-28-solar-phase-6-*.md
 
 ### What
-- Migration `00216_solar_proposals.sql` (claim the number at APPLY time — ledger, origin/main and open-PR filenames): `solar.proposals` (money; frozen once issued), append-only `solar.proposal_events`, `solar.proposal_templates`, SERVICE-ONLY definer functions for token/portal access and for issue/withdraw/new link (the raw token is hashed in SQL; only its SHA-256 is stored), `solar_portfolio()`, Solar report kinds in `user_can_read_report_kind()`, `notify_solar_email`, 2 notification types, 6 product events.
+- Migration `00217_solar_proposals.sql` (claim the number at APPLY time — ledger, origin/main and open-PR filenames): `solar.proposals` (money; frozen once issued), append-only `solar.proposal_events`, `solar.proposal_templates`, SERVICE-ONLY definer functions for token/portal access and for issue/withdraw/new link (the raw token is hashed in SQL; only its SHA-256 is stored), `solar_portfolio()`, Solar report kinds in `user_can_read_report_kind()`, `notify_solar_email`, 2 notification types, 6 product events.
 - `@esite/shared/solar-reports`: locale-free formatting, offer price, draft schema, engine finance options at the offer price, the frozen snapshot + key figures (one source for PDF and page), report model, proposal status.
 - Feasibility (money) and technical (no money) PDFs from the selected case's stored run, with revision note, layout-sheet and 8760 options; neutral branding fallback; every string through winAnsiSafe.
 - Proposals: draft editor, optional server-side AI narrative, preview, issue (snapshot + PDF + SHA-256 + 30-day hashed link), withdraw, revise, new link, acceptance record; public token page and portal tab with evidential accept/decline and 7-day download.
 - `/solar` portfolio (table, filters, KPIs — no map component exists in apps/web), Overview shortcut live.
 
 ### Proof
-- DB: `scripts/db/assert-solar-proposals-roles.sql` — RED without 00216, GREEN <67/67> with it; earlier Solar assertion files still green. Mutations: <paste the Task 3 ledger>.
+- DB: `scripts/db/assert-solar-proposals-roles.sql` — RED without 00217, GREEN <67/67> with it; earlier Solar assertion files still green. Mutations: <paste the Task 3 ledger>.
 - PDFs: real renders decoded as WinAnsi; glyph and figure tests shown red by mutation; tamper test (case changed after issue → client served the frozen snapshot, whose figures are those in the issued PDF, hash unchanged).
 - Suites: shared <n> / web <n> / db <n>; type-check 0; lint 0; `next build` exit 0.
 - Reviews: <findings and fixes>.

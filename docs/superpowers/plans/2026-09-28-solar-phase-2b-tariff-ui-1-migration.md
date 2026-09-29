@@ -1,4 +1,4 @@
-# Solar Phase 2b — Part 1 of 5: Worktree, migration `00213_solar_tariff_selection.sql`, behavioural assertions
+# Solar Phase 2b — Part 1 of 5: Worktree, migration `00214_solar_tariff_selection.sql`, behavioural assertions
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Read the index `2026-09-28-solar-phase-2b-tariff-ui.md` first (decisions D2b-1 … D2b-9 and the ground rules apply to every task here).
 
@@ -32,7 +32,7 @@ test -f packages/shared/src/services/solar/finance/factors.ts && echo engine-ok
 test -f "apps/web/src/app/(admin)/projects/[id]/solar/(gated)/layout.tsx" && echo gated-layout-ok
 test -f apps/web/src/lib/solar/api-gate.ts && echo api-gate-ok
 ```
-Expected: `00207_solar_foundation.sql`, `00208_solar_org_settings.sql`, `00209_tariffs_schema.sql`, `00210_solar_meter_data.sql` listed and **no** `00213_*`; the four `…-ok` lines. If `00213` already exists on the base, STOP: another branch claimed the number — re-check the ledger, `origin/main` and open-PR filenames (index, ground rule G3) and pick the next free number everywhere this plan says `00213`.
+Expected: `00208_solar_foundation.sql`, `00209_solar_org_settings.sql`, `00210_tariffs_schema.sql`, `00211_solar_meter_data.sql` listed and **no** `00214_*`; the four `…-ok` lines. If `00214` already exists on the base, STOP: another branch claimed the number — re-check the ledger, `origin/main` and open-PR filenames (index, ground rule G3) and pick the next free number everywhere this plan says `00214`.
 
 - [ ] **Step 3: Record the baseline of the three suites + type-check + lint**
 
@@ -58,18 +58,18 @@ The file follows `scripts/db/assert-solar-foundation-roles.sql` exactly: one `DO
 - [ ] **Step 1: Write the assertions file**
 
 ```sql
--- BEHAVIOURAL assertions for 00213_solar_tariff_selection, run as real roles.
---   00207…00210 are not in the production ledger yet, so dry-run the chain:
+-- BEHAVIOURAL assertions for 00214_solar_tariff_selection, run as real roles.
+--   00208…00211 are not in the production ledger yet, so dry-run the chain:
 --     S=/private/tmp/claude-501/solar-2b; M=apps/edge-functions/supabase/migrations
---     cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql \
---         $M/00210_solar_meter_data.sql > "$S/chain-without-00213.sql"
---     scripts/db/dry-run-migration.sh "$S/chain-without-00213.sql" scripts/db/assert-solar-tariff-selection-roles.sql   (RED: aborts)
---     cat "$S/chain-without-00213.sql" $M/00213_solar_tariff_selection.sql > "$S/chain.sql"
+--     cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql \
+--         $M/00211_solar_meter_data.sql > "$S/chain-without-00214.sql"
+--     scripts/db/dry-run-migration.sh "$S/chain-without-00214.sql" scripts/db/assert-solar-tariff-selection-roles.sql   (RED: aborts)
+--     cat "$S/chain-without-00214.sql" $M/00214_solar_tariff_selection.sql > "$S/chain.sql"
 --     scripts/db/dry-run-migration.sh "$S/chain.sql" scripts/db/assert-solar-tariff-selection-roles.sql               (GREEN)
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is
 -- deliberately NOT used (it bypasses the paywall, so it has no negative case).
 --
--- REFUSAL PATTERN (as the 00207/00209 assertion files): a "…_REFUSED" check
+-- REFUSAL PATTERN (as the 00208/00210 assertion files): a "…_REFUSED" check
 -- catches ONLY the SQLSTATE the design promises. When the statement is
 -- (wrongly) allowed, the block raises P0001 itself so the subtransaction rolls
 -- the write back and a mutation run cannot corrupt later checks. Any other
@@ -207,7 +207,7 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('edit_set_escalation_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('edit_set_escalation_REFUSED', false);
   END;
-  -- …but Site & Supply edits (other columns) still work for Edit (00207 unchanged).
+  -- …but Site & Supply edits (other columns) still work for Edit (00208 unchanged).
   UPDATE solar.studies SET nmd_kva = 600 WHERE id = v_study;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO _r VALUES ('edit_still_saves_site_columns', v_n = 1);
@@ -493,40 +493,40 @@ END $$;
 SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 ```
 
-- [ ] **Step 2: Run it RED against the chain WITHOUT 00213**
+- [ ] **Step 2: Run it RED against the chain WITHOUT 00214**
 
 ```bash
 cd ~/.config/superpowers/worktrees/esite/solar-phase-2b
 S=/private/tmp/claude-501/solar-2b; M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql \
-    $M/00210_solar_meter_data.sql > "$S/chain-without-00213.sql"
-grep -n -i -E '^\s*(BEGIN|COMMIT)\s*;' "$S/chain-without-00213.sql" || echo "no-txn-control-ok"
-scripts/db/dry-run-migration.sh "$S/chain-without-00213.sql" scripts/db/assert-solar-tariff-selection-roles.sql 2>&1 | tee "$S/dry-red.txt" | tail -8
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql \
+    $M/00211_solar_meter_data.sql > "$S/chain-without-00214.sql"
+grep -n -i -E '^\s*(BEGIN|COMMIT)\s*;' "$S/chain-without-00214.sql" || echo "no-txn-control-ok"
+scripts/db/dry-run-migration.sh "$S/chain-without-00214.sql" scripts/db/assert-solar-tariff-selection-roles.sql 2>&1 | tee "$S/dry-red.txt" | tail -8
 ```
-Expected: `no-txn-control-ok`, then the file reported as ONE failed assertion (it aborts: `column "tariff_id" of relation "studies" does not exist` or `relation "solar.bill_checks" does not exist`). Keep `$S/dry-red.txt` for the PR body. If the chain itself fails to apply (e.g. a later apply put 00207…00210 into the ledger), drop the applied files from the `cat` and note which in the task log.
+Expected: `no-txn-control-ok`, then the file reported as ONE failed assertion (it aborts: `column "tariff_id" of relation "studies" does not exist` or `relation "solar.bill_checks" does not exist`). Keep `$S/dry-red.txt` for the PR body. If the chain itself fails to apply (e.g. a later apply put 00208…00211 into the ledger), drop the applied files from the `cat` and note which in the task log.
 
 - [ ] **Step 3: Commit the assertions**
 
 ```bash
 git add scripts/db/assert-solar-tariff-selection-roles.sql
-git commit -m "test(solar-tariff): behavioural assertions for 00213 (red)
+git commit -m "test(solar-tariff): behavioural assertions for 00214 (red)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: Migration `00213_solar_tariff_selection.sql` (GREEN)
+### Task 3: Migration `00214_solar_tariff_selection.sql` (GREEN)
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00213_solar_tariff_selection.sql`
+- Create: `apps/edge-functions/supabase/migrations/00214_solar_tariff_selection.sql`
 
 Design notes the implementer must keep (they are what the assertions pin):
-- **Money write guard on `solar.studies` is a trigger, not a policy.** 00207 pins "exactly ONE policy covering SELECT on `solar.studies`" and "no RESTRICTIVE read policy in `solar`"; a column-level policy is not expressible anyway. `studies_tariff_guard` (INVOKER, BEFORE INSERT OR UPDATE) fires only when one of `licensee_id, tariff_id, tariff_override_id, export_rule, escalation` changes, and refuses a signed-in caller without `solar_can_see_money` with `42501`. The service path (`auth.uid()` NULL) is allowed, as every other Solar bind trigger.
+- **Money write guard on `solar.studies` is a trigger, not a policy.** 00208 pins "exactly ONE policy covering SELECT on `solar.studies`" and "no RESTRICTIVE read policy in `solar`"; a column-level policy is not expressible anyway. `studies_tariff_guard` (INVOKER, BEFORE INSERT OR UPDATE) fires only when one of `licensee_id, tariff_id, tariff_override_id, export_rule, escalation` changes, and refuses a signed-in caller without `solar_can_see_money` with `42501`. The service path (`auth.uid()` NULL) is allowed, as every other Solar bind trigger.
 - **Only a published or superseded tariff can be pinned; `licensee_id` is derived from it** (a forged licensee is overwritten). An override must belong to THIS study AND to the pinned tariff — so a tariff change under an override is refused (`23514`), and the UI says "Revert the project override first".
 - **Money tables** keep `project_id` + `organisation_id` bound from the parent by `solar.money_row_bind()` (SECURITY DEFINER, as `studies_bind`), because RLS keys on `project_id` and a client-supplied one would be a cross-project write (the 00051 shape). SELECT: exactly one PERMISSIVE policy on `solar_can_see_money`. Writes: PERMISSIVE `user_has_project_access` + RESTRICTIVE `solar_can_see_money`, **one per verb** (never `FOR ALL`: it would narrow reads — the 00205 bug).
 - **A changed override rate needs a reason** — trigger raises `23514` and a CHECK backs it; `edited_by/edited_at` bound to the caller.
-- `tariffs.*` additions conform to 00209's schema-wide directives (FORCE RLS on every table; no `FOR ALL`, no RESTRICTIVE policy in `tariffs`).
+- `tariffs.*` additions conform to 00210's schema-wide directives (FORCE RLS on every table; no `FOR ALL`, no RESTRICTIVE policy in `tariffs`).
 - Service-only functions (`record_year_validation`, `year_content_fingerprint`, `claim_ingest_job`, `record_due_year_alerts`): `REVOKE ALL … FROM PUBLIC, anon, authenticated` spelled out per function (the repo-wide anon-EXECUTE guard reads the migration TEXT).
 - The `[mutation-probe Mn]` comments mark the lines Task 4 mutates; they are inert.
 
@@ -534,7 +534,7 @@ Design notes the implementer must keep (they are what the assertions pin):
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00213: Solar tariff selection + tariff-library operations (Phase 2b)
+-- Migration 00214: Solar tariff selection + tariff-library operations (Phase 2b)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §5 (Tariff tab) and §12 (platform
 -- tariff library); docs/solar/03-data-model-and-security.md §3 (studies
@@ -584,14 +584,14 @@ Design notes the implementer must keep (they are what the assertions pin):
 --          $c$SELECT tariffs.record_due_year_alerts('municipal')$c$);
 --   05:00 UTC = 07:00 SAST on 1 April (Eskom year) and 1 July (municipal year).
 --
--- 00207's and 00209's schema-wide @verify directives are re-checked on every
+-- 00208's and 00210's schema-wide @verify directives are re-checked on every
 -- deploy and this migration conforms to each: FORCE RLS on every new table in
 -- solar and tariffs; exactly one SELECT policy on solar.studies (unchanged);
 -- no RESTRICTIVE policy covering SELECT anywhere in solar; no FOR ALL and no
 -- RESTRICTIVE policy anywhere in tariffs; every SECURITY DEFINER function
 -- revokes EXECUTE from PUBLIC and anon.
 --
--- DEPENDS ON 00207 (solar helpers, studies), 00209 (tariffs schema).
+-- DEPENDS ON 00208 (solar helpers, studies), 00210 (tariffs schema).
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that dry run permanent.
 -- The "[mutation-probe Mn]" comments mark lines the red/green mutation runs
@@ -796,7 +796,7 @@ ALTER TABLE solar.studies ADD CONSTRAINT studies_escalation_shape CHECK (
     escalation IS NULL OR (jsonb_typeof(escalation) = 'object' AND jsonb_typeof(escalation->'overrides') = 'object'));
 
 -- INVOKER: every read below is one the caller may already make (published
--- tariffs via 00209's reader policy; the study's own override via the money
+-- tariffs via 00210's reader policy; the study's own override via the money
 -- SELECT policy). A draft tariff or a foreign override is invisible and reads
 -- as "not found", which refuses the same way.
 CREATE OR REPLACE FUNCTION solar.studies_tariff_guard()
@@ -832,14 +832,14 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION solar.studies_tariff_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.studies_tariff_guard() FROM anon;
--- Fires after 00207's studies_bind (triggers fire in name order).
+-- Fires after 00208's studies_bind (triggers fire in name order).
 CREATE TRIGGER studies_tariff_guard BEFORE INSERT OR UPDATE ON solar.studies
     FOR EACH ROW EXECUTE FUNCTION solar.studies_tariff_guard();
 
 -- ── 3. Binding for the money tables ─────────────────────────────────────────
 -- project_id and organisation_id come from the parent row, never the client
 -- (RLS keys on project_id). The parent is immutable. Attribution is bound.
--- SECURITY DEFINER like 00207's studies_bind: the parent lookup must not
+-- SECURITY DEFINER like 00208's studies_bind: the parent lookup must not
 -- depend on what the caller can see (a hidden parent would otherwise surface
 -- as a NOT NULL error instead of the named refusal).
 CREATE OR REPLACE FUNCTION solar.money_row_bind()
@@ -1089,7 +1089,7 @@ ALTER TABLE tariffs.error_report ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tariffs.error_report FORCE ROW LEVEL SECURITY;
 CREATE POLICY error_report_select ON tariffs.error_report FOR SELECT TO authenticated
     USING (reporter_id = (SELECT auth.uid()) OR (SELECT public.is_platform_tariff_admin()));
--- The tariff must be one the reporter can read (the subquery is under 00209's RLS).
+-- The tariff must be one the reporter can read (the subquery is under 00210's RLS).
 CREATE POLICY error_report_insert ON tariffs.error_report FOR INSERT TO authenticated
     WITH CHECK (public.solar_can_see_money(project_id) AND EXISTS (SELECT 1 FROM tariffs.tariff t WHERE t.id = error_report.tariff_id));  -- [mutation-probe M7]
 CREATE POLICY error_report_update ON tariffs.error_report FOR UPDATE TO authenticated
@@ -1157,7 +1157,7 @@ $$;
 
 -- ── 8. Validation fingerprint (the 2b Validate action) ──────────────────────
 -- The year's content as the validators see it. Review stamps are not content
--- (the same rule as 00209's invalidate_year_validation).
+-- (the same rule as 00210's invalidate_year_validation).
 CREATE OR REPLACE FUNCTION tariffs.year_content_fingerprint(p_year_id UUID)
 RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
     SELECT md5(
@@ -1174,7 +1174,7 @@ $$;
 -- Records the verdict only if the content is still what was checked. The year
 -- row is locked first, so a content write racing this call either changed the
 -- fingerprint already (refused here) or waits for this commit and then clears
--- the record through 00209's invalidate_year_validation trigger.
+-- the record through 00210's invalidate_year_validation trigger.
 CREATE OR REPLACE FUNCTION tariffs.record_year_validation(p_year_id UUID, p_blocking INTEGER, p_fingerprint TEXT)
 RETURNS VOID LANGUAGE plpgsql SET search_path = '' AS $$
 DECLARE
@@ -1282,12 +1282,12 @@ NOTIFY pgrst, 'reload schema';
 ```bash
 cd ~/.config/superpowers/worktrees/esite/solar-phase-2b
 S=/private/tmp/claude-501/solar-2b; M=apps/edge-functions/supabase/migrations
-cat "$S/chain-without-00213.sql" $M/00213_solar_tariff_selection.sql > "$S/chain.sql"
+cat "$S/chain-without-00214.sql" $M/00214_solar_tariff_selection.sql > "$S/chain.sql"
 scripts/db/dry-run-migration.sh "$S/chain.sql" scripts/db/assert-solar-tariff-selection-roles.sql 2>&1 | tee "$S/dry-green.txt" | tail -60
 ```
 Expected: every check `✓`, `0 failed`, **61** checks (51 literal `INSERT INTO _r` rows + 10 from the five-user loop in section 4). Any `✗` → fix the migration, never the assertion, unless the assertion contradicts this plan's design notes (then stop and ask).
 
-- [ ] **Step 3: Prove 00213 changes nothing the earlier assertion files pin**
+- [ ] **Step 3: Prove 00214 changes nothing the earlier assertion files pin**
 
 ```bash
 for f in scripts/db/assert-solar-foundation-roles.sql scripts/db/assert-solar-org-settings-roles.sql scripts/db/assert-tariffs-schema-roles.sql; do
@@ -1298,9 +1298,9 @@ ls scripts/db/assert-solar-meter*.sql 2>/dev/null && for f in scripts/db/assert-
 ```
 Expected: each `0 failed`.
 
-- [ ] **Step 4: Evaluate every `@verify` block of the chain under the post-00213 state**
+- [ ] **Step 4: Evaluate every `@verify` block of the chain under the post-00214 state**
 
-The post-push verifier re-runs every block ≥ `00185` on every deploy, so 00207's and 00209's schema-wide directives must hold AFTER 00213 (the 00204/00206 rule). Write this helper to the scratch dir (not committed):
+The post-push verifier re-runs every block ≥ `00185` on every deploy, so 00208's and 00210's schema-wide directives must hold AFTER 00214 (the 00204/00206 rule). Write this helper to the scratch dir (not committed):
 
 ```bash
 cat > "$S/verify-chain.mts" <<'EOF'
@@ -1337,10 +1337,10 @@ process.exit(failed ? 1 : 0)
 EOF
 test -f packages/shared/src/lib/migrations/verify-header.ts || { echo "verify-header.ts moved: find parseVerifyBlock with grep -rn 'export function parseVerifyBlock' packages scripts"; exit 1; }
 node --experimental-strip-types "$S/verify-chain.mts" "$PWD" "$S/chain.sql" \
-  $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql \
-  $M/00210_solar_meter_data.sql $M/00213_solar_tariff_selection.sql
+  $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql \
+  $M/00211_solar_meter_data.sql $M/00214_solar_tariff_selection.sql
 ```
-Expected: five lines, each `failed=0`, exit 0. A failure in 00207/00209/00210 means 00213 broke a schema-wide directive: fix 00213 (never weaken the earlier block).
+Expected: five lines, each `failed=0`, exit 0. A failure in 00208/00210/00211 means 00214 broke a schema-wide directive: fix 00214 (never weaken the earlier block).
 
 - [ ] **Step 5: Parse the block with the repo's own contract test**
 
@@ -1352,8 +1352,8 @@ Expected: PASS (the parser rejects an unknown directive word, a prose-only line,
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00213_solar_tariff_selection.sql
-git commit -m "feat(solar-tariff): 00213 tariff selection, money tables, library operations
+git add apps/edge-functions/supabase/migrations/00214_solar_tariff_selection.sql
+git commit -m "feat(solar-tariff): 00214 tariff selection, money tables, library operations
 
 studies gains licensee_id/tariff_id/tariff_override_id/export_rule/escalation,
 written at Edit + financials only (studies_tariff_guard). Money tables
@@ -1381,9 +1381,9 @@ cat > "$S/mutate.sh" <<'EOF'
 # usage: mutate.sh <id> <sed-expression>   (run from the worktree root)
 set -euo pipefail
 S=/private/tmp/claude-501/solar-2b; M=apps/edge-functions/supabase/migrations
-sed "$2" $M/00213_solar_tariff_selection.sql > "$S/00213-$1.sql"
-if cmp -s "$S/00213-$1.sql" $M/00213_solar_tariff_selection.sql; then echo "MUTATION $1 CHANGED NOTHING"; exit 1; fi
-cat "$S/chain-without-00213.sql" "$S/00213-$1.sql" > "$S/chain-$1.sql"
+sed "$2" $M/00214_solar_tariff_selection.sql > "$S/00214-$1.sql"
+if cmp -s "$S/00214-$1.sql" $M/00214_solar_tariff_selection.sql; then echo "MUTATION $1 CHANGED NOTHING"; exit 1; fi
+cat "$S/chain-without-00214.sql" "$S/00214-$1.sql" > "$S/chain-$1.sql"
 scripts/db/dry-run-migration.sh "$S/chain-$1.sql" scripts/db/assert-solar-tariff-selection-roles.sql > "$S/mut-$1.txt" 2>&1 || true
 grep -E '✗|failed' "$S/mut-$1.txt" | tail -20
 EOF
@@ -1413,15 +1413,15 @@ Expected (each must include at least the listed `✗`; anything else red is reco
 | M6 | RESTRICTIVE insert on `bill_checks` | `edit_insert_bill_check_REFUSED` |
 | M7 | money requirement on `error_report_insert` | `edit_report_error_REFUSED` |
 
-M4 note: with the check deleted, `v_state` for a draft tariff is visible to `v_fin`? No — a draft year is invisible to a customer under 00209's reader policy, so `v_state` is NULL and the pin sets `licensee_id := NULL`… and **succeeds**, turning `fin_pin_draft_tariff_REFUSED` red. That is the point: the invisible-draft case is only refused by the deleted line.
+M4 note: with the check deleted, `v_state` for a draft tariff is visible to `v_fin`? No — a draft year is invisible to a customer under 00210's reader policy, so `v_state` is NULL and the pin sets `licensee_id := NULL`… and **succeeds**, turning `fin_pin_draft_tariff_REFUSED` red. That is the point: the invisible-draft case is only refused by the deleted line.
 
 If a mutation leaves its named check green, the assertion is decorative: STOP, fix the assertion so it can fail, re-run GREEN (Task 3 Step 2) and all seven mutations.
 
 - [ ] **Step 3: Record the evidence**
 
 ```bash
-{ echo "RED (no 00213):"; tail -3 "$S/dry-red.txt"; echo; echo "GREEN:"; tail -3 "$S/dry-green.txt";
-  for m in M1 M2 M3 M4 M5 M6 M7; do echo; echo "$m:"; grep '✗' "$S/mut-$m.txt"; done; } > "$S/evidence-00213.md"
-cat "$S/evidence-00213.md"
+{ echo "RED (no 00214):"; tail -3 "$S/dry-red.txt"; echo; echo "GREEN:"; tail -3 "$S/dry-green.txt";
+  for m in M1 M2 M3 M4 M5 M6 M7; do echo; echo "$m:"; grep '✗' "$S/mut-$m.txt"; done; } > "$S/evidence-00214.md"
+cat "$S/evidence-00214.md"
 ```
 Expected: the file lists the red run, the green total, and ≥ 1 `✗` per mutation. No commit (evidence goes into the PR body in Part 5).

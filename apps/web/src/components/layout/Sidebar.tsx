@@ -256,7 +256,7 @@ interface SidebarProps {
   /** Dark-launch: hide the Medium Voltage entry entirely (defaults hidden). */
   mvVisible?: boolean
   role?: OrgRole | null
-  /** Platform tariff admins (00209 allow-list) see the Tariff library link. The pages gate themselves. */
+  /** Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves. */
   tariffAdmin?: boolean
 }
 

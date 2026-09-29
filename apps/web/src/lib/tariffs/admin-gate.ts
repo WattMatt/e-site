@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * Platform tariff library gate (D-03). Asks public.is_platform_tariff_admin()
- * (00209: an explicit allow-list, service-role writes only) — the same
+ * (00210: an explicit allow-list, service-role writes only) — the same
  * question the tariffs.* write policies ask. Fails closed. Pages 404 for
  * non-admins so the route is not advertised; actions return a sentence;
  * API routes return JSON 401/404.

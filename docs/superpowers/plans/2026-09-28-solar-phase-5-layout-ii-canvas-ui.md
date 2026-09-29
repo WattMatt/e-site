@@ -4,7 +4,7 @@
 
 **Goal:** Ship the Solar Layout tab (functional spec §6) on top of plan 5-i: roof sources on Site & Supply (drawing picker, calibrate via the existing `calibrateFloorPlanAction`, north, server-side Mapbox satellite capture), the layout list, a Konva `SolarCanvas` with every §6.3 tool, properties + summary + BOM CSV, undo/redo, IndexedDB drafts, stale-refusing save, the `solar_layout_sheet` PDF, an optional read-only 3D preview, readiness wiring, the RBAC matrix, and the draft PR.
 
-**Architecture:** Server pages load everything as JSON (never a function prop across the server → client boundary — the PR #201 rule). A client `LayoutWorkspace` owns the object list, snapshot history and draft; `SolarCanvas` (sibling of `RouteCanvas`, built on `lib/sheet/use-sheet-image`, `use-sheet-viewport`, `draft-store`) only renders and emits intents. All editing rules are pure functions in `@esite/shared` (`solar/layout/doc.ts`) or `apps/web/src/lib/solar/*` and are unit-tested; Konva is not (the same gap `RouteCanvas` carries). Every action re-checks `requireSolarLevel` and writes through the caller's session so 00211's RLS and bind triggers decide.
+**Architecture:** Server pages load everything as JSON (never a function prop across the server → client boundary — the PR #201 rule). A client `LayoutWorkspace` owns the object list, snapshot history and draft; `SolarCanvas` (sibling of `RouteCanvas`, built on `lib/sheet/use-sheet-image`, `use-sheet-viewport`, `draft-store`) only renders and emits intents. All editing rules are pure functions in `@esite/shared` (`solar/layout/doc.ts`) or `apps/web/src/lib/solar/*` and are unit-tested; Konva is not (the same gap `RouteCanvas` carries). Every action re-checks `requireSolarLevel` and writes through the caller's session so 00212's RLS and bind triggers decide.
 
 **Tech Stack:** Next.js 15 (App Router, server actions), React 19, Konva/react-konva, pdf-lib, Vitest + Testing Library, optional three + @react-three/fiber 9.
 
@@ -12,7 +12,7 @@
 
 ## Read this first
 
-- **Prerequisite:** plan 5-i is complete on `feat/solar-phase-5` in `~/.config/superpowers/worktrees/esite/solar-phase-5` (shared geometry, `00211`, `isAnnotated()`, report gate). Run every command from that worktree root.
+- **Prerequisite:** plan 5-i is complete on `feat/solar-phase-5` in `~/.config/superpowers/worktrees/esite/solar-phase-5` (shared geometry, `00212`, `isAnnotated()`, report gate). Run every command from that worktree root.
 - **Mirror these, do not reinvent:** sheet loading `apps/web/src/lib/sheet/use-sheet-image.ts:33-134` (fixed `scale: 2` raster = image space; signed URL through a ref), viewport `apps/web/src/lib/sheet/use-sheet-viewport.ts:26-349` (wheel/pinch/middle-drag/space-drag; F/0 fit — Task 3 makes the fit keys configurable because Solar's `F` is Auto-fill), drafts `apps/web/src/lib/sheet/draft-store.ts` (same DB/store names; keys are the caller's), the canvas shape `apps/web/src/app/(admin)/projects/[id]/cables/[revisionId]/measure/RouteCanvas.tsx` (select on `mousedown`, `getRelativePointerPosition()` for image coords, `isPrimaryDrawPress`/`isTouchEvent`/`rollbackPinchVertex` from `floor-plans/[planId]/canvas-input`, export by resetting stage scale then `toDataURL` at lines 350-376), snapshot undo/redo `apps/web/src/lib/cable-route/route-history.ts`, `next/dynamic` with `ssr: false` for Konva (`RouteMeasureWorkspace.tsx:21-28`), stale writes conditioned on `updated_at` (`apps/web/src/actions/solar-site.actions.ts:44-58`), report versioning (`apps/web/src/actions/cable-route.actions.ts:861-930`), the two-step inline confirm `solar/_components/useArmedConfirm.ts` (never `window.confirm` — Safari suppresses it), `useSolarDirtyGuard` (`lib/solar/dirty-store.ts`).
 - **Calibration stays where it is.** `calibrateFloorPlanAction` (`apps/web/src/actions/cable-route.actions.ts:506-600`) is gated on `ORG_WRITE_ROLES` (owner/admin/PM) and writes page 1 to `tenants.floor_plans` and page ≥ 2 to `tenants.floor_plan_page_scales`. A Solar Edit contractor sees its refusal sentence. That is deliberate (a scale is a property of the drawing that cable routes share) — see Open question 3.
 - **Konva `click` is not synthesised reliably** — select on `onMouseDown`/`onTouchStart`. `Konva.stages[0]` may be a destroyed stage — always use the component's own `stageRef`.
@@ -25,7 +25,7 @@
 |---|---|
 | `packages/shared/src/solar/layout/doc.ts` | Pure editing ops: remove objects/modules with string re-indexing, translate, rotate about a pivot, diff, apply delta, clone with id remap, string colours |
 | `packages/shared/src/solar/layout/scene3d.ts` | Pure 3D scene: roof planes at height (pitched along the fall line), tilted module quads, obstruction prisms (Task 14) |
-| `apps/web/src/lib/solar/layout-errors.ts` | Postgres/PostgREST errors from 00211 → one sentence |
+| `apps/web/src/lib/solar/layout-errors.ts` | Postgres/PostgREST errors from 00212 → one sentence |
 | `apps/web/src/lib/solar/layout-history.ts` | Generic snapshot undo/redo (route-history pattern) |
 | `apps/web/src/lib/sheet/viewport-math.ts` | + `viewportKeyAction` (configurable fit keys) |
 | `apps/web/src/lib/sheet/use-sheet-viewport.ts` | + `fitKeys` option |
@@ -350,7 +350,7 @@ export function diffObjects(saved: LayoutObject[], current: LayoutObject[]): { u
 
 /**
  * The object list the database will hold after a save — used server-side to
- * compute layouts.summary. Existing objects keep their stored scale (00211 pins
+ * compute layouts.summary. Existing objects keep their stored scale (00212 pins
  * it); new ones take `newObjectPixelsPerMeter` (the sheet's current scale).
  */
 export function applyObjectDelta(
@@ -423,7 +423,7 @@ import { describe, it, expect } from 'vitest'
 import { humanLayoutError } from './layout-errors'
 
 describe('humanLayoutError', () => {
-  it('maps every 00211 sentence and never echoes a raw message', () => {
+  it('maps every 00212 sentence and never echoes a raw message', () => {
     expect(humanLayoutError({ code: '40001', message: 'solar.layouts: stale layout' })).toBe('Someone else changed this — reload to see their version.')
     expect(humanLayoutError({ code: '23514', message: 'solar.layout_objects: the roof source has no scale; calibrate this page first' }))
       .toBe('This drawing page has no scale yet — calibrate it before drawing.')
@@ -486,7 +486,7 @@ Expected: FAIL — modules not found.
 
 ```ts
 /**
- * Errors from 00211 (roof sources, layouts, layout objects, the save RPC) → one
+ * Errors from 00212 (roof sources, layouts, layout objects, the save RPC) → one
  * human sentence (spec §0.4 rule 5). Keyed on SQLSTATE plus the exact sentences
  * the bind triggers raise. Falls back to humanSolarError EXCEPT for 23505, whose
  * generic mapping there is the access-request sentence.
@@ -571,7 +571,7 @@ Expected: PASS.
 
 ```bash
 git add apps/web/src/lib/solar/layout-errors.ts apps/web/src/lib/solar/layout-errors.test.ts apps/web/src/lib/solar/layout-history.ts apps/web/src/lib/solar/layout-history.test.ts
-git commit -m "feat(solar-layout): error sentences for 00211 and snapshot undo/redo
+git commit -m "feat(solar-layout): error sentences for 00212 and snapshot undo/redo
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -806,7 +806,7 @@ import 'server-only'
  * Loaders for the Layout tab. Everything returned is JSON: a page hands it to a
  * 'use client' component, and a function prop across that boundary compiles
  * and fails at render (the PR #201 lesson). Reads go through the CALLER's
- * session so 00211's solar_can_view decides; only solar.org_settings (owner/
+ * session so 00212's solar_can_view decides; only solar.org_settings (owner/
  * admin RLS, not secret) is read with the service client.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -838,7 +838,7 @@ type SourceDb = {
 const SOURCE_COLS = 'id, kind, floor_plan_id, page_index, file_path, north_bearing_deg, storage_path, m_per_px, attribution, updated_at'
 const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null)
 
-/** The scale 00211's layout_objects_bind would stamp: page scale, else page 1 → drawing, satellite → 1 / m per px. */
+/** The scale 00212's layout_objects_bind would stamp: page scale, else page 1 → drawing, satellite → 1 / m per px. */
 export function scaleForSource(
   s: { kind: string; page_index: number; floor_plan_id: string | null; m_per_px: number | string | null },
   drawingScale: Map<string, number | null>,
@@ -993,7 +993,7 @@ export async function loadLayoutEditor(
 import 'server-only'
 /**
  * The Layout readiness step from solar.layouts.summary (a server-computed cache,
- * 00211) and the roof sources' north — never the geometry, so the tab dot costs
+ * 00212) and the roof sources' north — never the geometry, so the tab dot costs
  * two small reads on every Solar page. Returns null on a read error (the step
  * then stays grey rather than guessing).
  */
@@ -1141,7 +1141,7 @@ Expected: FAIL — module not found.
 /**
  * Roof sources (functional spec §3.2 C). Each action re-checks Edit itself
  * (requireSolarLevel redirects a lower level to /solar/locked) and writes
- * through the caller's session: 00211's RLS decides who, roof_sources_bind
+ * through the caller's session: 00212's RLS decides who, roof_sources_bind
  * stamps the drawing anchor and binds the org. Calibration is NOT here — it is
  * calibrateFloorPlanAction (cable-route.actions.ts), role-gated per page.
  */
@@ -1357,7 +1357,7 @@ Expected: FAIL — `./route` not found.
  * Order: token (503, before the session, so an unconfigured server is obvious
  * and cheap) → session (401) → Solar Edit (403) → rate limit (429) → site
  * location (409) → Mapbox (502) → service-role upload under <org>/<project>/ →
- * roof source row written through the CALLER's session so 00211's RLS and bind
+ * roof source row written through the CALLER's session so 00212's RLS and bind
  * trigger decide. A refused row removes its orphaned image.
  */
 import { NextResponse } from 'next/server'
@@ -1874,7 +1874,7 @@ Expected: FAIL — module not found.
 /**
  * Layouts (functional spec §6.2) and the save (§6.3 "Save"). Each action
  * re-checks Edit itself and writes through the caller's session. The save
- * goes through public.solar_save_layout_objects (00211): one transaction,
+ * goes through public.solar_save_layout_objects (00212): one transaction,
  * refused when updated_at moved (another tab / person), scale and anchor
  * stamped by the database. The summary stored with it is computed HERE from
  * the resulting object list — never taken from the browser.
@@ -2054,7 +2054,7 @@ export async function saveLayoutObjectsAction(input: {
 /**
  * Duplicate (§6.2): a new layout on the same roof source with every object
  * copied under fresh ids. Objects are re-stamped with the sheet's CURRENT scale
- * (00211 never trusts a scale from a caller); if the page was recalibrated since
+ * (00212 never trusts a scale from a caller); if the page was recalibrated since
  * the original was drawn, the copy measures against the new scale.
  */
 export async function duplicateLayoutAction(input: { projectId: string; layoutId: string; name: string }): Promise<LayoutResult<{ id: string }>> {
@@ -4142,7 +4142,7 @@ describe('exportLayoutSheetAction', () => {
  * Export layout sheet (functional spec §6.3): the browser's rasterised crop +
  * a legend/title block computed HERE from the stored layout, saved as the next
  * version in projects.reports kind 'solar_layout_sheet' (source solar.layouts).
- * Writing needs Solar Edit; reading follows the Solar level (00211 +
+ * Writing needs Solar Edit; reading follows the Solar level (00212 +
  * report-kind-access.ts SOLAR_READ_REPORT_KINDS).
  */
 import { revalidatePath } from 'next/cache'
@@ -4579,7 +4579,7 @@ In the "Solar server actions" table add:
 | `addDrawingRoofSourceAction` / `removeRoofSourceAction` / `setRoofNorthAction` (`solar-roof-sources.actions.ts`) | `requireSolarLevel(project, 'edit')`; north conditioned on `updated_at` | `roof_sources_*_authz` (RESTRICTIVE, `solar_can_edit`); `roof_sources_bind` stamps `file_path`/`source_revision_id`, binds the org, refuses another project's drawing; `layouts.roof_source_id` NO ACTION refuses removing a used source |
 | `createLayoutAction` / `duplicateLayoutAction` / `renameLayoutAction` / `deleteLayoutAction` (`solar-layout.actions.ts`) | `requireSolarLevel(project, 'edit')`; name validated before save; rename conditioned on `updated_at` | `layouts_*_authz`; `layouts_bind` pins study + roof source |
 | `saveLayoutObjectsAction` | `requireSolarLevel(project, 'edit')`; payload shape-checked (`validateObjectInput`); summary computed server-side | `public.solar_save_layout_objects` (SECURITY INVOKER): `solar_can_edit` + `FOR UPDATE` + `updated_at` compare (40001 = stale); `layout_objects_bind` stamps scale/anchor on insert and pins them on update; DB symbols must link to a board of the project |
-| `exportLayoutSheetAction` (`solar-layout-export.actions.ts`) | `requireSolarLevel(project, 'edit')` | writes `projects.reports` with the service client; READ of `solar_layout_sheet` = `solar_can_view` (00211 `user_can_read_report_kind`; `report-kind-access.ts` `SOLAR_READ_REPORT_KINDS`) |
+| `exportLayoutSheetAction` (`solar-layout-export.actions.ts`) | `requireSolarLevel(project, 'edit')` | writes `projects.reports` with the service client; READ of `solar_layout_sheet` = `solar_can_view` (00212 `user_can_read_report_kind`; `report-kind-access.ts` `SOLAR_READ_REPORT_KINDS`) |
 ```
 
 In the API table (next to `POST /api/paystack/solar-subscribe`) add:
@@ -4591,7 +4591,7 @@ In the API table (next to `POST /api/paystack/solar-subscribe`) add:
 and the footnote:
 
 ```markdown
-> **¹⁷ Satellite roof capture (decision D-08).** `503 {"error":"Satellite capture is not configured"}` when the server-only `MAPBOX_ACCESS_TOKEN` is unset — evaluated before the session. Then `401` unauthenticated; `403` below Solar Edit (`getSolarAccessLevel` + `solarLevelAllows`); `429` past `rateLimit('solar-satellite:<user id>', 5, 60_000)`; `409` without a site latitude/longitude; `502` when Mapbox does not answer with an image (the token is never logged). The image is uploaded by the service role to private `solar-roof-images` under `<org>/<project>/`; the roof source row is written through the CALLER's session so 00211 decides, and a refused row deletes its image. Reads of the bucket: `solar_can_view` on the path's project segment.
+> **¹⁷ Satellite roof capture (decision D-08).** `503 {"error":"Satellite capture is not configured"}` when the server-only `MAPBOX_ACCESS_TOKEN` is unset — evaluated before the session. Then `401` unauthenticated; `403` below Solar Edit (`getSolarAccessLevel` + `solarLevelAllows`); `429` past `rateLimit('solar-satellite:<user id>', 5, 60_000)`; `409` without a site latitude/longitude; `502` when Mapbox does not answer with an image (the token is never logged). The image is uploaded by the service role to private `solar-roof-images` under `<org>/<project>/`; the roof source row is written through the CALLER's session so 00212 decides, and a refused row deletes its image. Reads of the bucket: `solar_can_view` on the path's project segment.
 ```
 
 - [ ] **Step 4: Run the web suite**
@@ -4631,9 +4631,9 @@ Expected: all green. Record the counts against the Task 0 baseline for the PR bo
 
 ```bash
 S=$(mktemp -d)
-cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
-    apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql \
-    apps/edge-functions/supabase/migrations/00211_solar_layouts.sql > "$S/combo.sql"
+cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+    apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql \
+    apps/edge-functions/supabase/migrations/00212_solar_layouts.sql > "$S/combo.sql"
 scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-layouts-roles.sql scripts/db/assert-solar-foundation-roles.sql scripts/db/assert-solar-org-settings-roles.sql
 ```
 
@@ -4655,7 +4655,7 @@ gh pr create --draft --base feat/solar-phase-1c --head feat/solar-phase-5 \
 Functional spec §6 (Layout tab) and §3.2 C (roof sources); engine spec §3.1–3.3; data model §3.
 
 - `@esite/shared` `solar/layout/*`: auto-fill packing (setbacks, polygon + circle obstructions with their own setbacks, 0/90° × 8 offsets, tie → fewer partial rows), D-11 row pitch from the 21 June sun at the site latitude (09:00–15:00 solar time, org-configurable), foreshortening along the fall line only (WM's across-the-slope bug pinned), azimuth from the north reference, §3.3 string checks + serpentine auto-string onto MPPTs, summary, BOM CSV, satellite tile maths, 3D scene. Three hand-checked roofs: flat racked 48, pitched flush 27 (WM would give 22), irregular L with plant room + skylight 25.
-- Migration `00211_solar_layouts.sql`: `solar.roof_sources`, `solar.layouts`, `solar.layout_objects`, `public.solar_save_layout_objects` (atomic, stale-refusing, SECURITY INVOKER), private `solar-roof-images`, and `solar_layout_sheet` reads on `solar_can_view`. Per-verb PERMISSIVE `solar_can_view` + RESTRICTIVE `solar_can_edit`, FORCE RLS, bind triggers pin org/project/anchor/scale; drawings cannot be hard-deleted under a layout (NO ACTION). Dry-run 48/48 against 00207+00208+00211; six mutations recorded below.
+- Migration `00212_solar_layouts.sql`: `solar.roof_sources`, `solar.layouts`, `solar.layout_objects`, `public.solar_save_layout_objects` (atomic, stale-refusing, SECURITY INVOKER), private `solar-roof-images`, and `solar_layout_sheet` reads on `solar_can_view`. Per-verb PERMISSIVE `solar_can_view` + RESTRICTIVE `solar_can_edit`, FORCE RLS, bind triggers pin org/project/anchor/scale; drawings cannot be hard-deleted under a layout (NO ACTION). Dry-run 48/48 against 00208+00209+00212; six mutations recorded below.
 - `cloud-sync-project` `isAnnotated()` now queries `solar.roof_sources` and `solar.layout_objects` (the schema-derived contract test named both on its own).
 - Web: Site & Supply section C (drawing picker, Open sheet → calibrate via `calibrateFloorPlanAction` + north, Mapbox capture with a 503 path), layout list, Konva `SolarCanvas` on `lib/sheet` (every §6.3 tool; F = Auto-fill, so the shared viewport's fit keys became configurable), properties, summary + BOM CSV, undo/redo, IndexedDB drafts, versioned layout sheet PDF, optional 3D preview.
 
@@ -4666,8 +4666,8 @@ Functional spec §6 (Layout tab) and §3.2 C (roof sources); engine spec §3.1�
 web <n> (was <n>) · shared <n> (was <n>) · db <n> (was <n>); tsc 0; lint clean; `next build` exit 0.
 
 ## OWNER steps (in this order)
-1. Claim the migration number at apply time (ledger `max(version)`, `origin/main`, open-PR filenames). `00207`/`00208` first. Renumber `00211` if taken.
-2. Apply `00211`; run `scripts/verify-migration-applied.ts` — every block ≥ 00185 green.
+1. Claim the migration number at apply time (ledger `max(version)`, `origin/main`, open-PR filenames). `00208`/`00209` first. Renumber `00212` if taken.
+2. Apply `00212`; run `scripts/verify-migration-applied.ts` — every block ≥ 00185 green.
 3. Pre-deploy check: service-role PostgREST `GET /rest/v1/roof_sources` and `/layout_objects` with `Accept-Profile: solar` → both `200`. A 406 means schema `solar` is not exposed; deploying then makes EVERY drawing read as annotated (fail-closed) and stops Dropbox auto-adopt platform-wide.
 4. `cd apps/edge-functions && ./deploy.sh cloud-sync-project`; read back `version` (+1) and `verify_jwt` (unchanged) from the Management API; confirm `roof_sources` and `layout_objects` appear in the deployed `/functions/cloud-sync-project/body`.
 5. Watch the next `cloud-sync-poll` tick: adopt counts unchanged for projects with no Solar layouts.
@@ -4697,7 +4697,7 @@ Expected: a draft PR URL. Fill the two `<…>` placeholders in the body with the
 
 ## Open questions (each has the default this plan builds)
 
-1. **`solar_layout_sheet` read gate** — the brief suggested `REPORT_KIND_READ_ROLES` / `report_kind_is_sensitive`. Those gate on E-Site roles, which would let a PM with no Solar grant read the sheet and refuse a contractor holding a View grant. **Default built:** a third explicit set, `SOLAR_READ_REPORT_KINDS` (read = `solar_can_view`), mirrored in 00211's `user_can_read_report_kind` and pinned against the FINAL SQL definition by the contract test.
+1. **`solar_layout_sheet` read gate** — the brief suggested `REPORT_KIND_READ_ROLES` / `report_kind_is_sensitive`. Those gate on E-Site roles, which would let a PM with no Solar grant read the sheet and refuse a contractor holding a View grant. **Default built:** a third explicit set, `SOLAR_READ_REPORT_KINDS` (read = `solar_can_view`), mirrored in 00212's `user_can_read_report_kind` and pinned against the FINAL SQL definition by the contract test.
 2. **Where north lives** — the data model lists both `roof_sources.north_bearing_deg` and a `north` object kind. **Default:** north is a property of the SHEET (roof source), shared by every layout on it; `north` stays in the kind CHECK as reserved and `validateObjectInput` refuses it.
 3. **Calibration by Solar Edit contractors** — `calibrateFloorPlanAction` is `ORG_WRITE_ROLES` because cable routes share the scale. **Default:** unchanged; contractors see its refusal sentence and ask an owner/admin/PM.
 4. **Equipment catalogue** — not built until the Financials phase. **Default:** generic 550 W module / 50 kW inverter presets, edited per layout and snapshotted in `layouts.module_spec` / inverter props; `layouts.module_id` is a nullable UUID whose FK the catalogue migration adds.
@@ -4708,4 +4708,4 @@ Expected: a draft PR URL. Fill the two `<…>` placeholders in the body with the
 9. **Roof source created before anything is drawn blocks Dropbox auto-adopt** (fail-closed `isAnnotated`). **Default:** accepted — a sheet chosen as a roof plan is pinned like a calibrated one.
 10. **"Delete refused if a case uses the layout"** — cases do not exist yet. **Default:** enforced later by the cases migration's `layout_id` FK with NO ACTION; the error sentence is already mapped.
 11. **3D preview dependencies** (`three`, `@react-three/fiber` 9) — **Default:** added in the separable Task 14, loaded on demand; skip the task if the owner declines new dependencies.
-12. **Product events** — new `solar_layout_*` verbs would need `product_events_event_check` re-declared in full (00208 did), colliding with sibling migrations. **Default:** `solar.audit_events` only in this phase.
+12. **Product events** — new `solar_layout_*` verbs would need `product_events_event_check` re-declared in full (00209 did), colliding with sibling migrations. **Default:** `solar.audit_events` only in this phase.

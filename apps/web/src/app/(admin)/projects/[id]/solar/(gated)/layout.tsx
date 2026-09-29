@@ -50,7 +50,7 @@ export default async function SolarGatedLayout({
   // own loader and every grantor action re-check solar_is_grantor.
   const isGrantor = !grantorRes.error && grantorRes.data === true
   // A View user may ask for Edit only if they can ever hold it: members of the
-  // project's own organisation. Externals are capped at View (00207).
+  // project's own organisation. Externals are capped at View (00208).
   let isOwnOrgMember = false
   const orgId = (project as { organisation_id?: string } | null)?.organisation_id
   if (level === 'view' && orgId) {

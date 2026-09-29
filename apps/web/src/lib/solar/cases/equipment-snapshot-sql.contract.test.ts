@@ -6,14 +6,14 @@ import { batterySnapshot, inverterSnapshot, moduleSnapshot } from '@esite/shared
 
 /**
  * The equipment snapshot in a case config has TWO writers: the save action (moduleSnapshot /
- * inverterSnapshot / batterySnapshot in @esite/shared) and the DB trigger solar.cases_bind (00215),
+ * inverterSnapshot / batterySnapshot in @esite/shared) and the DB trigger solar.cases_bind (00216),
  * which REBUILDS every written snapshot from solar.equipment so a PATCH cannot forge coefficients.
  * If the two shapes drift, every save produces a config the trigger rewrites into something the
  * strict CaseConfigSchema then refuses (or silently drops a field the engine reads). This pins the
  * trigger's jsonb_build_object keys, and the specs key each one copies, to the TS builders.
  */
 const REPO_ROOT = resolve(__dirname, '../../../../../..')
-const SQL = readFileSync(join(REPO_ROOT, 'apps/edge-functions/supabase/migrations/00215_solar_cases.sql'), 'utf8')
+const SQL = readFileSync(join(REPO_ROOT, 'apps/edge-functions/supabase/migrations/00216_solar_cases.sql'), 'utf8')
 
 function sqlSnapshot(kind: 'module' | 'inverter' | 'battery'): Array<[string, string]> {
   const body = SQL.split('snapshot-rebuild:begin')[1]?.split('snapshot-rebuild:end')[0] ?? ''
@@ -34,7 +34,7 @@ const ts = {
   battery: Object.keys(batterySnapshot(row)),
 }
 
-describe('00215 cases_bind snapshot rebuild ≡ @esite/shared snapshot builders', () => {
+describe('00216 cases_bind snapshot rebuild ≡ @esite/shared snapshot builders', () => {
   for (const kind of ['module', 'inverter', 'battery'] as const) {
     it(`${kind}: same keys, in the same order, each spec key copied from specs->'<same key>'`, () => {
       const pairs = sqlSnapshot(kind)

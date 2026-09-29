@@ -1,5 +1,5 @@
 'use client'
-/** Optional drawn signature (spec §9.4). Emits a PNG data URL (≤ 400 KB, 00216 CHECK) or null. */
+/** Optional drawn signature (spec §9.4). Emits a PNG data URL (≤ 400 KB, 00217 CHECK) or null. */
 import { useRef } from 'react'
 
 export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {

@@ -1,9 +1,9 @@
 'use server'
 /**
  * Operations tab actions (spec §10). Every action gates its Solar level FIRST (requireSolarLevel
- * redirects a lower level), writes through the caller's session so 00217's RESTRICTIVE policies and
+ * redirects a lower level), writes through the caller's session so 00218's RESTRICTIVE policies and
  * bind triggers decide, and reports trigger refusals in their own words (opsError). The one
- * exception is the installation INSERT, which 00217 admits only for the service role.
+ * exception is the installation INSERT, which 00218 admits only for the service role.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -52,7 +52,7 @@ export async function createInstallationAction(input: { projectId: string }): Pr
   const seed = await loadInstallationSeed(svc, String(s.id))
   if (!seed.ok) return { error: seed.reason }
 
-  // 00217 refuses a session insert: the baseline is the guarantee's yardstick and immutable, so only
+  // 00218 refuses a session insert: the baseline is the guarantee's yardstick and immutable, so only
   // this server path (after the Edit gate above, from the run it read itself) writes it. The trigger
   // still binds project/org to the study and pins the baseline to the accepted proposal's run;
   // with no session auth.uid() is NULL, so the author is supplied here.
@@ -224,7 +224,7 @@ export async function deleteIrradiationAction(input: { projectId: string; instal
 }
 
 // ── Downtime ──────────────────────────────────────────────────────────────
-// The same eight causes as 00217's CHECK (CAUSE_LABELS is the shared single source).
+// The same eight causes as 00218's CHECK (CAUSE_LABELS is the shared single source).
 const CAUSES = Object.keys(CAUSE_LABELS)
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/
 

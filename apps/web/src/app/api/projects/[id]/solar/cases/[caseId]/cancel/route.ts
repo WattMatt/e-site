@@ -1,6 +1,6 @@
 /**
  * POST /api/projects/[id]/solar/cases/[caseId]/cancel — spec §7.2 Cancel (while running). Case-level:
- * at most one run per case can be running (00215 case_runs_one_running). Gate: Solar Edit.
+ * at most one run per case can be running (00216 case_runs_one_running). Gate: Solar Edit.
  * Service client: only it may UPDATE a run, and the freeze trigger allows only running → terminal.
  */
 import { NextResponse } from 'next/server'

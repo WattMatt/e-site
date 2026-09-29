@@ -125,7 +125,7 @@ describe('resolveStudyPricing', () => {
       expect(p.exportTariff).toEqual(linked)
     })
 
-    it('a manual rule with no rate rows is priced as "none" (00219 makes it unreachable)', () => {
+    it('a manual rule with no rate rows is priced as "none" (00220 makes it unreachable)', () => {
       const p = resolveStudyPricing(input({ study: { ...input().study, exportRule: { version: 1, method: 'manual' } } }))
       expect(p.exportMethod).toBe('none')
       expect(p.exportCredited).toBe(false)

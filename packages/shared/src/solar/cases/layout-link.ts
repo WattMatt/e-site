@@ -1,6 +1,6 @@
 /**
  * A case built "From layout" (functional spec §7.1, 4b open question Q5 — resolved by the
- * integration merge that brought Phase 5's layouts and 00218's cases.layout_id FK).
+ * integration merge that brought Phase 5's layouts and 00219's cases.layout_id FK).
  *
  * The layout decides the PV SIZE (DC from the placed modules, AC from the placed inverters) and
  * the BILL OF MATERIALS. Everything else on the case (tilt, azimuth, losses, battery, weather)

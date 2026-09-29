@@ -2,7 +2,7 @@
 'use server'
 /**
  * Load tab writes (functional spec §4). Each action re-checks Solar Edit itself and writes with the
- * caller's session, so 00210/00214's RESTRICTIVE solar_can_edit policies and bind triggers decide;
+ * caller's session, so 00211/00215's RESTRICTIVE solar_can_edit policies and bind triggers decide;
  * library writes (meters, register) additionally need the org library at Edit. Saves carry
  * expectedUpdatedAt and a stale write is refused (spec §0.4 rule 2).
  */

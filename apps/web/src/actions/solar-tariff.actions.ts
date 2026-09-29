@@ -2,7 +2,7 @@
 /**
  * Tariff tab actions (spec §5). Every action re-checks Edit + financials
  * (requireSolarLevel redirects lower levels) BEFORE reading money or touching
- * the service client, and writes through the caller's session so 00213
+ * the service client, and writes through the caller's session so 00214
  * decides (studies_tariff_guard; money tables' RESTRICTIVE gates; override
  * functions are SECURITY INVOKER). Saves carry expectedUpdatedAt. Audit rows
  * carry ids, never rand amounts (View users read the activity feed).
@@ -97,7 +97,7 @@ export async function saveSolarExportRuleAction(input: { projectId: string; form
   }
   const v = validateExportRuleForm(input.form, hasLinked)
   if ('errors' in v) return { fieldErrors: v.errors }
-  // One transaction: lock the study, re-check updated_at, replace the rates, set the rule (00213).
+  // One transaction: lock the study, re-check updated_at, replace the rates, set the rule (00214).
   const { data, error } = await solar.rpc('save_export_rule', {
     p_project_id: input.projectId, p_expected_updated_at: input.expectedUpdatedAt, p_rule: v.rule,
     p_rates: v.rates.map((r) => ({ season: r.season, tou: r.tou, unit: r.unit, amount_excl_vat: r.amountExclVat })),
@@ -261,7 +261,7 @@ export async function getSolarTariffSourceUrlAction(input: { projectId: string; 
   Promise<{ url: string; kind: 'pdf' | 'xlsx' | 'link' } | { error: string }> {
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  // Read through the caller's session: 00209 lets subscribed orgs read source documents.
+  // Read through the caller's session: 00210 lets subscribed orgs read source documents.
   const { data } = await g.supabase.schema('tariffs').from('source_document').select('storage_path, url').eq('id', input.sourceDocumentId).maybeSingle()
   const doc = data as { storage_path: string | null; url: string | null } | null
   if (!doc) return { error: 'That source document is not available.' }

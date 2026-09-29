@@ -667,7 +667,7 @@ function InstallationForm({ projectId, canEdit, installation }: Props & { instal
 /**
  * Meters (spec §10): generation meters (kind solar) and the council/bulk meter for realised
  * consumption. The role follows the meter's kind, so a council meter can never be linked as
- * generation (00217 refuses it too).
+ * generation (00218 refuses it too).
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -1788,7 +1788,7 @@ export function HandoverChecklist({ projectId, installationId, canEdit, handover
 `apps/web/src/app/(admin)/settings/solar/HandoverTemplateForm.tsx`:
 ```tsx
 'use client'
-/** Org handover template (spec §10: "template editable in org settings"). Owner/admin; checked again by the action and 00217. */
+/** Org handover template (spec §10: "template editable in org settings"). Owner/admin; checked again by the action and 00218. */
 import { useState } from 'react'
 import type { HandoverTemplate } from '@esite/shared/solar-operations/client'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'

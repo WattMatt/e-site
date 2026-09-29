@@ -2,7 +2,7 @@
 /**
  * Solar entry actions for NON-grantors (and the sidebar). Each re-resolves the
  * caller's state with loadSolarEntry — the locked page's rendering is never
- * trusted. 00207's access_requests_guard is the last word on eligibility
+ * trusted. 00208's access_requests_guard is the last word on eligibility
  * (it binds requester/org/status, clamps the level, and refuses externals'
  * subscribe requests); these actions only decide which button made sense.
  */
@@ -86,7 +86,7 @@ export async function requestSolarAccessAction(input: {
   if (s.kind !== 'request_access' && s.kind !== 'granted') {
     return { error: s.kind === 'pending' ? 'You already have a request waiting for an answer.' : 'There is nothing to request here.' }
   }
-  // Bound the request here rather than let 00207's guard silently clamp it:
+  // Bound the request here rather than let 00208's guard silently clamp it:
   // a clamped row would still email every admin the level that was ASKED for.
   if (rank(level) > rank(s.maxLevel)) {
     return { error: 'That level is higher than you can hold on this project. Members from outside the organisation can have View only.' }

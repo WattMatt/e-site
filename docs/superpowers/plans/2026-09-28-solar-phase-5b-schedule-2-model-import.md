@@ -171,7 +171,7 @@ Expected: FAIL — unresolved imports.
 /**
  * Gantt status (spec §14.1: not started / in progress / done). Stored in
  * solar.schedule_tasks.gantt_status; the work item's universal status is kept
- * in step by the RPCs in 00212. This function is the READ side only.
+ * in step by the RPCs in 00213. This function is the READ side only.
  */
 export const GANTT_STATUSES = ['not_started', 'in_progress', 'done'] as const
 export type GanttStatus = (typeof GANTT_STATUSES)[number]
@@ -686,7 +686,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 /**
  * What a template or an import file becomes before it is committed: tasks
  * keyed by a client key and links between keys. solar.schedule_create_tasks
- * (00212) takes exactly this shape (snake_cased by the action), in ONE
+ * (00213) takes exactly this shape (snake_cased by the action), in ONE
  * transaction — WM inserted row by row with a toast each (as-is/06 B.7 D7).
  */
 import { isCalendarDate, type CalendarDate } from '../dates'

@@ -105,7 +105,7 @@ function SubscriptionCard({
 
 /**
  * Owner default 3 (2026-09-28): "ask an admin to subscribe" requests, org-wide.
- * Mark done closes one (status 'approved' via 00207's guard). Once the org is
+ * Mark done closes one (status 'approved' via 00208's guard). Once the org is
  * subscribed the open ones are listed under "Resolved" — subscribing answered
  * them — and can still be marked done.
  */

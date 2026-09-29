@@ -1,4 +1,4 @@
-/** 00213 errors on the Tariff tab -> sentences; falls back to 1c's humanSolarError. */
+/** 00214 errors on the Tariff tab -> sentences; falls back to 1c's humanSolarError. */
 import { STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 
 export function humanSolarTariffError(err: { code?: string; message?: string } | null | undefined): string {

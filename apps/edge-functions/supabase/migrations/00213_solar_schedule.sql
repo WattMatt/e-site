@@ -1,10 +1,10 @@
 -- ---------------------------------------------------------------------------
--- Migration 00212: Solar schedule (Gantt) — solar_task work items + side tables
+-- Migration 00213: Solar schedule (Gantt) — solar_task work items + side tables
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claimed at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
--- filenames, and the migration filenames in every OPEN PR (tariffs 00209 and
--- the other Solar phases included). If 00212 is taken, renumber this file and
+-- filenames, and the migration filenames in every OPEN PR (tariffs 00210 and
+-- the other Solar phases included). If 00213 is taken, renumber this file and
 -- the header of scripts/db/assert-solar-schedule-roles.sql above the head.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
@@ -69,7 +69,7 @@
 --      (b) the create RPC's no-owner fallback, which skips an ineligible pick
 --      from projects.resolve_work_item_assignee() (a client-viewer triage
 --      owner is legal for the spine, 00196 §7) and gives the task to its
---      creator — a Solar editor, eligible by 00207's grant rule; and (c) the
+--      creator — a Solar editor, eligible by 00208's grant rule; and (c) the
 --      owner picker (schedule_owner_candidates). The spine's own rule —
 --      client_viewer MAY hold other item types — is unchanged for them.
 --      The trigger sorts after work_items_assert_membership_trg ('a' < 's'),
@@ -127,14 +127,14 @@
 -- pg_trigger_depth() bypass needed: no trigger writes a solar_task) nor
 -- section 9's RESTRICTIVE SELECT (definer, row_security off) changes them.
 --
--- 00207's schema-wide @verify directives are re-checked on every deploy and
+-- 00208's schema-wide @verify directives are re-checked on every deploy and
 -- this migration conforms: FORCE RLS on every new relkind 'r' table; no
 -- RESTRICTIVE policy covering SELECT anywhere in solar (restrictive policies
 -- in solar are per write verb only; the one RESTRICTIVE SELECT this file adds
 -- is on projects.work_items, item 9, and is deliberate); every SECURITY DEFINER function in solar has
 -- EXECUTE revoked from PUBLIC and anon.
 --
--- No new schema, so no PostgREST db_schema PATCH (solar is exposed since 00207).
+-- No new schema, so no PostgREST db_schema PATCH (solar is exposed since 00208).
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that dry run permanent.
 -- ---------------------------------------------------------------------------
@@ -246,10 +246,10 @@
 DO $pre$
 BEGIN
     IF to_regclass('projects.work_items') IS NULL OR to_regprocedure('projects.work_items_transition_guard()') IS NULL THEN
-        RAISE EXCEPTION '00212 needs the work-item spine (00196) applied first';
+        RAISE EXCEPTION '00213 needs the work-item spine (00196) applied first';
     END IF;
     IF to_regprocedure('public.solar_can_edit(uuid)') IS NULL THEN
-        RAISE EXCEPTION '00212 needs the Solar foundation (00207) applied first';
+        RAISE EXCEPTION '00213 needs the Solar foundation (00208) applied first';
     END IF;
 END $pre$;
 
@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS solar.schedule_templates (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── 5. Bind triggers (SECURITY DEFINER, search_path '', 00207 pattern) ─────
+-- ── 5. Bind triggers (SECURITY DEFINER, search_path '', 00208 pattern) ─────
 CREATE OR REPLACE FUNCTION solar.schedule_tasks_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_project UUID; v_org UUID; v_type TEXT;
@@ -618,7 +618,7 @@ CREATE TRIGGER schedule_templates_bind BEFORE INSERT OR UPDATE ON solar.schedule
 -- (00107's effective role is non-NULL: org owner/admin/PM, or an active
 -- project_members row) whose effective role is neither client_viewer nor
 -- supplier. Takes another user's id, so it is an oracle: NOT executable by
--- authenticated/anon (00207's user_max_grant_level convention).
+-- authenticated/anon (00208's user_max_grant_level convention).
 CREATE OR REPLACE FUNCTION solar.schedule_owner_is_eligible(p_project_id UUID, p_user_id UUID)
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT COALESCE(public.user_effective_project_role(p_project_id, p_user_id)
@@ -749,7 +749,7 @@ REVOKE ALL ON FUNCTION solar.schedule_work_item_void_cleanup() FROM anon;
 REVOKE ALL ON FUNCTION solar.schedule_work_item_void_cleanup() FROM authenticated;
 
 -- ── 6. RLS: SELECT permissive on solar_can_view; each write verb = permissive
---      membership + RESTRICTIVE solar_can_edit (00207 / 00200 shape). ──────────
+--      membership + RESTRICTIVE solar_can_edit (00208 / 00200 shape). ──────────
 ALTER TABLE solar.schedule_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.schedule_settings FORCE ROW LEVEL SECURITY;
 ALTER TABLE solar.schedule_tasks ENABLE ROW LEVEL SECURITY;
@@ -845,7 +845,7 @@ CREATE POLICY schedule_filter_presets_update_authz ON solar.schedule_filter_pres
 CREATE POLICY schedule_filter_presets_delete_authz ON solar.schedule_filter_presets AS RESTRICTIVE FOR DELETE TO authenticated
     USING (public.solar_can_view(project_id));
 
--- templates: org owners/admins (like solar.org_settings, 00208); seeding reads it via a definer RPC
+-- templates: org owners/admins (like solar.org_settings, 00209); seeding reads it via a definer RPC
 CREATE POLICY schedule_templates_select ON solar.schedule_templates FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.user_organisations uo WHERE uo.user_id = auth.uid()
                      AND uo.organisation_id = schedule_templates.organisation_id AND uo.is_active AND uo.role IN ('owner', 'admin')));
@@ -861,7 +861,7 @@ CREATE POLICY schedule_templates_update ON solar.schedule_templates FOR UPDATE T
 -- ── 6b. A SOLAR-n work item is Solar data (review I1) ──────────────────────
 -- 00196's work_items_select admits every project member except a client
 -- viewer — suppliers, members with no Solar grant, and everyone while the
--- org's Solar subscription has lapsed. 00207's rule is that they never see
+-- org's Solar subscription has lapsed. 00208's rule is that they never see
 -- Solar data. RESTRICTIVE and FOR SELECT ONLY (a RESTRICTIVE FOR ALL would
 -- also narrow the write verbs' visibility in ways 00196 did not intend —
 -- 00205/00206). Every non-solar row passes the first arm untouched, so no
@@ -998,7 +998,7 @@ END $$;
 -- here) AND Solar-eligible (SOL01 from work_items_solar_owner_guard_trg). No
 -- owner → the spine's resolver chain; a pick that is not Solar-eligible (a
 -- client-viewer triage owner is legal for the spine) falls back to the
--- creator, who holds Solar Edit and is therefore eligible by 00207's rule.
+-- creator, who holds Solar Edit and is therefore eligible by 00208's rule.
 -- Gatekeeper (review Spec-I4): an optional per-task "gatekeeper_id" — sent by
 -- Undo of a delete so sign-off stays with the ORIGINAL creator (Q1) instead of
 -- whoever pressed Undo. Honoured only when solar.schedule_owner_is_eligible()

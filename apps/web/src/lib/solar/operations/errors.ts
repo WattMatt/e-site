@@ -1,5 +1,5 @@
 /**
- * 00217's triggers raise "solar.<table>: <sentence>" with SQLSTATE 23514 / 23P01 / 23503 / 42501 / 23505.
+ * 00218's triggers raise "solar.<table>: <sentence>" with SQLSTATE 23514 / 23P01 / 23503 / 42501 / 23505.
  * Those sentences are written for people, so they are shown; anything else goes through
  * humanSolarError, which never echoes database text.
  */

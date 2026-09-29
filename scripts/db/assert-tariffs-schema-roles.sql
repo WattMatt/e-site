@@ -1,9 +1,9 @@
--- BEHAVIOURAL assertions for 00209_tariffs_schema, run as real roles.
---   While 00207 is not in the production ledger, dry-run the pair:
---     cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
---         apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql > "$S/combo.sql"
+-- BEHAVIOURAL assertions for 00210_tariffs_schema, run as real roles.
+--   While 00208 is not in the production ledger, dry-run the pair:
+--     cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+--         apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql > "$S/combo.sql"
 --     scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-tariffs-schema-roles.sql      (GREEN)
---   RED first: 00207 alone (no tariffs schema: the file aborts).
+--   RED first: 00208 alone (no tariffs schema: the file aborts).
 -- Fixtures are minted inside the transaction and rolled back.
 --
 -- PLATFORM TARIFF ADMIN = a row in public.platform_tariff_admins (an explicit

@@ -26,14 +26,14 @@ Tabs other than Overview, Site & Supply and Tariff (Phase 2b) have **no route** 
 
 In "### Solar server actions", after the `saveSolarOrgSettingsAction` row, add:
 ```markdown
-| `selectSolarTariffAction`, `setStudyLicenseeAction` (`solar-tariff.actions.ts`) | `requireSolarLevel(project, 'edit_financials')`; `expectedUpdatedAt` stale guard | `00213` `studies_tariff_guard` (a changed `licensee_id`/`tariff_id`/`tariff_override_id`/`export_rule`/`escalation` needs `solar_can_see_money`, `42501`; only a published/superseded tariff may be pinned; `licensee_id` rebound to the tariff's licensee; an override must belong to this study and tariff) + 00207 `studies_update_authz` |
+| `selectSolarTariffAction`, `setStudyLicenseeAction` (`solar-tariff.actions.ts`) | `requireSolarLevel(project, 'edit_financials')`; `expectedUpdatedAt` stale guard | `00214` `studies_tariff_guard` (a changed `licensee_id`/`tariff_id`/`tariff_override_id`/`export_rule`/`escalation` needs `solar_can_see_money`, `42501`; only a published/superseded tariff may be pinned; `licensee_id` rebound to the tariff's licensee; an override must belong to this study and tariff) + 00208 `studies_update_authz` |
 | `saveSolarExportRuleAction` | `edit_financials`; stale guard checked BEFORE any write; the linked method is decided from the pinned tariff server-side | `studies_export_rule_shape` (manual needs a source note); `solar.study_export_rates` money policies (SELECT and every write on `solar_can_see_money`, parent bound by `money_row_bind`) |
 | `saveSolarEscalationAction` | `edit_financials`; years validated against the org analysis period | `studies_tariff_guard`, `studies_escalation_shape` |
 | `createSolarTariffOverrideAction`, `revertSolarTariffOverrideAction` | `edit_financials` | `solar.create_tariff_override` / `solar.revert_tariff_override` (SECURITY INVOKER, row-locked, `40001` on a stale timestamp); `tariff_overrides_*` money policies |
 | `editSolarOverrideChargeAction` | `edit_financials`; row `updated_at` stale guard; unit compatible with the component and ingestion plausibility ranges | `tariff_override_charges_guard` (a changed rate needs a reason, stamps `edited_by`), `override_charge_edit_has_reason` |
 | `recordSolarBillCheckAction`, `deleteSolarBillCheckAction` | `edit_financials`; costed server-side with the bill engine on the effective (override or published) tariff | `solar.bill_checks` money policies (no UPDATE policy or grant: a record, not a draft) |
 | `reportTariffErrorAction` | `edit_financials`; non-blank note ≤ 2000 | `tariffs.error_report_insert` (`solar_can_see_money(project)` AND the tariff is readable); `error_report_bind` forces reporter = caller, status = open |
-| `getSolarTariffSourceUrlAction` | `edit_financials`; the source row read through the caller's session (00209 reader policy) | 10-minute signed URL minted by the service client AFTER the gate (`tariff-sources` is private, no `storage.objects` policy) |
+| `getSolarTariffSourceUrlAction` | `edit_financials`; the source row read through the caller's session (00210 reader policy) | 10-minute signed URL minted by the service client AFTER the gate (`tariff-sources` is private, no `storage.objects` policy) |
 ```
 And under the audit note paragraph, append:
 ```markdown
@@ -46,7 +46,7 @@ Insert before "## Client portal":
 ```markdown
 ## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
 
-Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00209), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
+Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
 
 | Route | Platform tariff admin | Everyone else |
 |---|---|---|
@@ -59,15 +59,15 @@ Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00209),
 
 | Action / route | Gate | DB layer that decides |
 |---|---|---|
-| `saveLicenseeAction`, `addLicenseeAliasAction`, `removeLicenseeAliasAction` (`tariff-library.actions.ts`) | `requirePlatformTariffAdmin` | 00209 admin write policies; `licensee_alias_normalised` |
-| `createSourceUploadAction` → browser `uploadToSignedUrl` → `registerSourceDocumentAction` | admin; refuses a sha256 already in the library | server re-downloads and re-hashes; a mismatch deletes the object; `source_document` inserted through the admin session (00209 policy; `source_document_guard` pins sha/path) |
+| `saveLicenseeAction`, `addLicenseeAliasAction`, `removeLicenseeAliasAction` (`tariff-library.actions.ts`) | `requirePlatformTariffAdmin` | 00210 admin write policies; `licensee_alias_normalised` |
+| `createSourceUploadAction` → browser `uploadToSignedUrl` → `registerSourceDocumentAction` | admin; refuses a sha256 already in the library | server re-downloads and re-hashes; a mismatch deletes the object; `source_document` inserted through the admin session (00210 policy; `source_document_guard` pins sha/path) |
 | `POST /api/admin/tariffs/ingest` | `requirePlatformTariffAdminAPI` (401/404); workbooks only (PDF → 400) | 2a's `runIngest` through the service-role store; years land `in_review`, never published; Eskom apply needs a stored Rules PDF (409) |
 | `queueIngestJobAction` | admin | `tariffs.ingest_job_insert` (admin); `ingest_job_bind` forces status = queued, requester = caller; no UPDATE/DELETE grant — only the service-role worker (`scripts/tariffs/ingest-worker.ts`, `tariffs.claim_ingest_job()`) moves a job |
-| `approveChargeAction`, `editChargeAction`, `rejectChargeAction`, `deleteTariffAction` (`tariff-review.actions.ts`) | admin | 00209 `year_child_guard` (draft years only), `charge_review_bind` (stamp = caller, now), `invalidate_year_validation` |
+| `approveChargeAction`, `editChargeAction`, `rejectChargeAction`, `deleteTariffAction` (`tariff-review.actions.ts`) | admin | 00210 `year_child_guard` (draft years only), `charge_review_bind` (stamp = caller, now), `invalidate_year_validation` |
 | `validateTariffYearAction` | admin | `tariffs.year_content_fingerprint` then `tariffs.record_year_validation` (service role only; refuses `40001` if the content moved) |
-| `publishTariffYearAction` | admin | 00209 `tariff_year_guard` (charges on every tariff, inferred units reviewed, validated with 0 blocking, signed-in admin; supersedes the previous year) |
-| `saveSsegRuleAction` | admin | 00209 `sseg_rule` admin policies + `year_child_guard` |
-| `saveTouCalendarAction` (`tariff-calendar.actions.ts`) | admin | 00209 admin policies on `tou_calendar`, `tou_window`, `holiday_rule` |
+| `publishTariffYearAction` | admin | 00210 `tariff_year_guard` (charges on every tariff, inferred units reviewed, validated with 0 blocking, signed-in admin; supersedes the previous year) |
+| `saveSsegRuleAction` | admin | 00210 `sseg_rule` admin policies + `year_child_guard` |
+| `saveTouCalendarAction` (`tariff-calendar.actions.ts`) | admin | 00210 admin policies on `tou_calendar`, `tou_window`, `holiday_rule` |
 | `runDueYearCheckAction` | admin | `tariffs.record_due_year_alerts` (service role only; the same function the 1 April / 1 July cron runs) |
 | `resolveErrorReportAction`, `getTariffSourceUrlAdminAction` | admin | `error_report_update` (admin; only status + resolution note are grantable; `error_report_bind` stamps the resolver); signed URL via the service client after the gate |
 ```
@@ -116,11 +116,11 @@ Any red → fix the code (never the assertion unless it contradicts the plan), r
 
 ```bash
 M=apps/edge-functions/supabase/migrations
-cat "$S/chain-without-00213.sql" $M/00213_solar_tariff_selection.sql > "$S/chain.sql"
+cat "$S/chain-without-00214.sql" $M/00214_solar_tariff_selection.sql > "$S/chain.sql"
 scripts/db/dry-run-migration.sh "$S/chain.sql" scripts/db/assert-solar-tariff-selection-roles.sql 2>&1 | tail -3
 node --experimental-strip-types "$S/verify-chain.mts" "$PWD" "$S/chain.sql" \
-  $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql $M/00213_solar_tariff_selection.sql
-grep -n -i -E '^\s*(BEGIN|COMMIT)\s*;' $M/00213_solar_tariff_selection.sql || echo "no-txn-control-ok"
+  $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql $M/00214_solar_tariff_selection.sql
+grep -n -i -E '^\s*(BEGIN|COMMIT)\s*;' $M/00214_solar_tariff_selection.sql || echo "no-txn-control-ok"
 ```
 Expected: `0 failed` (61 checks); five `failed=0` lines; `no-txn-control-ok`. If the migration changed since Task 4, re-run the seven mutations too (Task 4 Step 2).
 
@@ -136,7 +136,7 @@ Expected: `no-client-import-ok`; `service-client-server-only-ok` (the reports pa
 - [ ] **Step 4: Record the evidence**
 
 ```bash
-{ for f in f-shared f-web f-db f-tc-shared f-tc-web f-lint-shared f-lint-web; do echo "== $f"; tail -4 "$S/$f.txt"; done; echo "== build"; tail -5 "$S/f-build.txt"; cat "$S/evidence-00213.md"; } > "$S/evidence-2b.md"
+{ for f in f-shared f-web f-db f-tc-shared f-tc-web f-lint-shared f-lint-web; do echo "== $f"; tail -4 "$S/$f.txt"; done; echo "== build"; tail -5 "$S/f-build.txt"; cat "$S/evidence-00214.md"; } > "$S/evidence-2b.md"
 ```
 
 ---
@@ -155,7 +155,7 @@ origin/feat/solar-integration..HEAD. Lens: security and data integrity ONLY.
 Read docs/solar/03-data-model-and-security.md §3.1 and §5 and the plan index
 docs/superpowers/plans/2026-09-28-solar-phase-2b-tariff-ui.md (decisions D2b-*) first.
 Check, with evidence (file:line), each of:
-1. 00213: every new table FORCE RLS; exactly one SELECT policy per money table and it uses solar_can_see_money;
+1. 00214: every new table FORCE RLS; exactly one SELECT policy per money table and it uses solar_can_see_money;
    no RESTRICTIVE policy covering SELECT anywhere in solar; no FOR ALL / RESTRICTIVE policy in tariffs;
    every SECURITY DEFINER function REVOKEs PUBLIC and anon; service-only functions REVOKE authenticated.
 2. studies_tariff_guard: can an Edit (not financials) user change tariff_id / export_rule / escalation /
@@ -167,7 +167,7 @@ Check, with evidence (file:line), each of:
 7. Every server action and the API route re-checks its gate BEFORE any read of money or any service-client use;
    the service client never reaches a client component; signed URLs ≤ 10 minutes.
 8. Audit rows never carry rand amounts.
-9. The 00207/00209 @verify schema-wide directives still hold (the plan evaluated them; confirm the logic).
+9. The 00208/00210 @verify schema-wide directives still hold (the plan evaluated them; confirm the logic).
 Report: Critical / Important / Minor, each with file:line and a concrete fix. No style comments.
 ```
 
@@ -221,7 +221,7 @@ gh pr list --state open --json number,headRefName --jq '.[].headRefName' | while
   git ls-tree --name-only "origin/$b" apps/edge-functions/supabase/migrations/ 2>/dev/null | grep -E '/0021[3-9]_' | sed "s|^|$b: |"; done
 . scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) FROM supabase_migrations.schema_migrations;"
 ```
-Expected: no other branch or PR carries `00213_*`, and the ledger head is below `00213`. If `00213` is taken, renumber (`git mv`), update every `00213` string in the migration header, the assertions header and `docs/rbac-matrix.md`, re-run Task 31 Step 2, and note it in the PR body. (This branch does **not** apply the migration: the owner applies after the integration merge.)
+Expected: no other branch or PR carries `00214_*`, and the ledger head is below `00214`. If `00214` is taken, renumber (`git mv`), update every `00214` string in the migration header, the assertions header and `docs/rbac-matrix.md`, re-run Task 31 Step 2, and note it in the PR body. (This branch does **not** apply the migration: the owner applies after the integration merge.)
 
 - [ ] **Step 2: Push over SSH**
 
@@ -242,23 +242,23 @@ Plan: docs/superpowers/plans/2026-09-28-solar-phase-2b-tariff-ui*.md (decisions 
 - `/admin/tariffs` (platform tariff admins only, 404 otherwise): licensee registry + aliases; verified source upload
   (browser sha256 → signed upload → server re-hash); ingest (workbooks inline via the 2a core, dry run → apply; RfD PDFs
   queued for `scripts/tariffs/ingest-worker.ts`); review queue with each charge beside its PDF page crop / workbook cell;
-  automatic checks; YoY diff; fingerprinted Validate; Publish (00209 rules); SSEG rule editor; TOU calendars + holiday
+  automatic checks; YoY diff; fingerprinted Validate; Publish (00210 rules); SSEG rule editor; TOU calendars + holiday
   treatment; reported-error queue; due-year alerts (+ "check now").
 - `/projects/[id]/solar/tariff` (Edit + financials): financial year, eligible-tariff picker, charges with View source,
   TOU diagram (assumed_eskom banner), export/SSEG rule incl. manual municipal rate with mandatory source note, project
   override with per-row reason + unit (D-10), escalation path (D-07), bill check (±5 %), report a tariff error.
-- Migration `00213_solar_tariff_selection.sql` (NOT applied): studies tariff columns behind a money-level guard; money
+- Migration `00214_solar_tariff_selection.sql` (NOT applied): studies tariff columns behind a money-level guard; money
   tables on solar_can_see_money; tariffs.error_report / ingest_job / due_year_alert; validation fingerprint; job claim;
   due-year monitor.
 
 ### Evidence
-- Dry run against production, rolled back: RED without 00213 ([paste]); GREEN [61/61]; mutations M1–M7 each red ([paste]).
-- `@verify` blocks of 00207/00208/00209/00210/00213 evaluated under the post-00213 state: all `failed=0`.
+- Dry run against production, rolled back: RED without 00214 ([paste]); GREEN [61/61]; mutations M1–M7 each red ([paste]).
+- `@verify` blocks of 00208/00209/00210/00211/00214 evaluated under the post-00214 state: all `failed=0`.
 - Suites: shared [n], web [n], db [n]; type-check ×2 clean; lint ×2 clean; `next build` exit 0.
 - Reviewers: A (security) [findings → dispositions]; B (spec) [findings → dispositions].
 
 ### Owner steps after merge (in order)
-1. Re-check the ledger / origin/main / open-PR migration numbers; apply 00213 through the deploy workflow; run
+1. Re-check the ledger / origin/main / open-PR migration numbers; apply 00214 through the deploy workflow; run
    `scripts/verify-migration-applied.ts` (it re-checks every block ≥ 00185).
 2. Schedule the due-year monitor (Management API, as the other pg_cron jobs):
    `SELECT cron.schedule('tariffs-due-year-eskom', '0 5 1 4 *', $c$SELECT tariffs.record_due_year_alerts('eskom')$c$);`
@@ -282,7 +282,7 @@ Plan: docs/superpowers/plans/2026-09-28-solar-phase-2b-tariff-ui*.md (decisions 
 
 ```bash
 gh pr create --draft --base feat/solar-integration --head feat/solar-phase-2b \
-  --title "Solar Phase 2b: platform tariff library UI + project Tariff tab (00213)" --body-file "$S/pr-2b.md"
+  --title "Solar Phase 2b: platform tariff library UI + project Tariff tab (00214)" --body-file "$S/pr-2b.md"
 gh pr view --json number,url,isDraft,baseRefName --jq '{number,url,isDraft,baseRefName}'
 ```
 Expected: `isDraft: true`, `baseRefName: feat/solar-integration`. Report the URL.

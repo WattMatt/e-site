@@ -1,41 +1,41 @@
-# Solar Phase 3b-0 — Foundation for the Load tab and Schematics (migration 00214, isAnnotated, pure load library) Implementation Plan
+# Solar Phase 3b-0 — Foundation for the Load tab and Schematics (migration 00215, isAnnotated, pure load library) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Lay everything the Load tab (plan 3b-i) and the Schematics tab (plan 3b-ii) stand on: migration `00214_solar_schematics.sql` (schematics, cards, lines, check acknowledgements, three `solar.studies` columns, two bulk-read functions, the schematic save RPC, the `solar_schematic_sheet` report kind and three product events), `isAnnotated()` coverage for the three drawing-anchored tables, and the pure `@esite/shared` functions that build the site series, derive every chart, guard against double counting and propose meter↔tenant matches.
+**Goal:** Lay everything the Load tab (plan 3b-i) and the Schematics tab (plan 3b-ii) stand on: migration `00215_solar_schematics.sql` (schematics, cards, lines, check acknowledgements, three `solar.studies` columns, two bulk-read functions, the schematic save RPC, the `solar_schematic_sheet` report kind and three product events), `isAnnotated()` coverage for the three drawing-anchored tables, and the pure `@esite/shared` functions that build the site series, derive every chart, guard against double counting and propose meter↔tenant matches.
 
-**Architecture:** One migration, written test-first: behavioural impersonation assertions in `scripts/db/assert-solar-schematics-roles.sql` are run RED (00207–00210 only) then GREEN (00207–00210 + 00214) through `scripts/db/dry-run-migration.sh`, then mutation-proven. The site-load builder is a pure composition of the 3a library (`@esite/shared/solar-load`) — the server reads rows and readings, calls `buildSiteLoad`, and stores the result; the browser never computes load (functional spec §2.4 rule, engine spec §2). Chart data (`siteProfileCharts`), meter-chart downsampling (`minMaxBuckets`, `gapRanges`, `dailyHeatmap`), the supply hierarchy (`doubleCountGuard`, `reconcileParents`) and auto-match (`autoMatchMeters`) are pure and unit-tested.
+**Architecture:** One migration, written test-first: behavioural impersonation assertions in `scripts/db/assert-solar-schematics-roles.sql` are run RED (00208–00211 only) then GREEN (00208–00211 + 00215) through `scripts/db/dry-run-migration.sh`, then mutation-proven. The site-load builder is a pure composition of the 3a library (`@esite/shared/solar-load`) — the server reads rows and readings, calls `buildSiteLoad`, and stores the result; the browser never computes load (functional spec §2.4 rule, engine spec §2). Chart data (`siteProfileCharts`), meter-chart downsampling (`minMaxBuckets`, `gapRanges`, `dailyHeatmap`), the supply hierarchy (`doubleCountGuard`, `reconcileParents`) and auto-match (`autoMatchMeters`) are pure and unit-tested.
 
 **Tech Stack:** Postgres (Supabase) with `@verify` blocks; `scripts/db/dry-run-migration.sh`; Deno edge function (`cloud-sync-project`); TypeScript in `@esite/shared` (Vitest); `@esite/db` contract tests.
 
 **Sequence:** this plan (3b-0) → `2026-09-28-solar-phase-3b-i-load.md` → `2026-09-28-solar-phase-3b-ii-schematics.md` (which ends with the three suites, the build, two reviewers, push and the draft PR). All three run on ONE branch, `feat/solar-phase-3b`.
 
-**Specs:** `docs/solar/01-functional-spec.md` §0.4, §2.3, §4, §13; `docs/solar/02-calculation-engine-spec.md` §2; `docs/solar/03-data-model-and-security.md` §3 (rows `schematics`, `schematic_cards`, `schematic_lines`), §3.1, §5; migrations `00207`, `00210` (every convention is copied from them).
+**Specs:** `docs/solar/01-functional-spec.md` §0.4, §2.3, §4, §13; `docs/solar/02-calculation-engine-spec.md` §2; `docs/solar/03-data-model-and-security.md` §3 (rows `schematics`, `schematic_cards`, `schematic_lines`), §3.1, §5; migrations `00208`, `00211` (every convention is copied from them).
 
 ---
 
 ## Ground rules (read once)
 
 - **Worktree:** `~/.config/superpowers/worktrees/esite/solar-phase-3b`, branch `feat/solar-phase-3b`, created from `origin/feat/solar-integration` (Task 1). Never modify any other branch or worktree. The integration branch is being assembled from `feat/solar-phase-1c` + merges of `4a`, `2a`, `3a`; if `origin/feat/solar-integration` does not exist yet when you start, STOP and ask — do not branch from 1c or 3a.
-- **Migration number:** the file is `00214_solar_schematics.sql`. Numbers are claimed **at apply time**, not now: before the owner applies it, re-check the production ledger `max(version)`, `origin/main`, and the migration filenames in every open PR (CLAUDE.md "Claiming a number is not holding it"). If `00214` is taken, rename the file; every test in these plans finds it by the suffix `_solar_schematics.sql`, not by number.
-- **Do not apply to production.** The dry runs are rolled-back transactions. Applying is an owner step after merge; `solar` is already in PostgREST `db_schema` (00207), so no schema PATCH is needed. **Edge deploy of `cloud-sync-project` is an owner step AFTER the migration applies** — deployed first, the three new lookups would error, and `isAnnotated()` fails CLOSED, i.e. every drawing would read as annotated and auto-adopt would stop platform-wide.
-- **Conventions (00207/00210, mandatory):** no `BEGIN`/`COMMIT` in the file; every SECURITY DEFINER function has `SET search_path = ''` and its own spelled-out `REVOKE … FROM PUBLIC` **and** `REVOKE … FROM anon`; `organisation_id` / `project_id` bound by BEFORE triggers; `ENABLE` + `FORCE ROW LEVEL SECURITY` on every table; exactly one PERMISSIVE policy per verb plus one RESTRICTIVE policy per write verb; **never** a RESTRICTIVE `FOR ALL` or `FOR SELECT` (00207 re-checks that on every deploy); `sql:` payloads contain no em dash.
+- **Migration number:** the file is `00215_solar_schematics.sql`. Numbers are claimed **at apply time**, not now: before the owner applies it, re-check the production ledger `max(version)`, `origin/main`, and the migration filenames in every open PR (CLAUDE.md "Claiming a number is not holding it"). If `00215` is taken, rename the file; every test in these plans finds it by the suffix `_solar_schematics.sql`, not by number.
+- **Do not apply to production.** The dry runs are rolled-back transactions. Applying is an owner step after merge; `solar` is already in PostgREST `db_schema` (00208), so no schema PATCH is needed. **Edge deploy of `cloud-sync-project` is an owner step AFTER the migration applies** — deployed first, the three new lookups would error, and `isAnnotated()` fails CLOSED, i.e. every drawing would read as annotated and auto-adopt would stop platform-wide.
+- **Conventions (00208/00211, mandatory):** no `BEGIN`/`COMMIT` in the file; every SECURITY DEFINER function has `SET search_path = ''` and its own spelled-out `REVOKE … FROM PUBLIC` **and** `REVOKE … FROM anon`; `organisation_id` / `project_id` bound by BEFORE triggers; `ENABLE` + `FORCE ROW LEVEL SECURITY` on every table; exactly one PERMISSIVE policy per verb plus one RESTRICTIVE policy per write verb; **never** a RESTRICTIVE `FOR ALL` or `FOR SELECT` (00208 re-checks that on every deploy); `sql:` payloads contain no em dash.
 - **Three suites before claiming any task done that touches SQL or shared code:** `pnpm --filter @esite/shared test`, `pnpm --filter web test`, `pnpm --filter @esite/db test:ci`; plus `pnpm --filter @esite/shared type-check` and `pnpm --filter web type-check`.
 - Commit after every task, trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Scratch files go in `$SCRATCH` = the session scratchpad (never `/tmp`).
 
 ## Design decisions made in this plan (owner should see them)
 
-1. **One migration also carries the Load tab's remaining storage.** Besides the three schematic tables it adds `solar.studies.load_growth_pct` (spec §4.5, missing from 00210), `solar.studies.monthly_bills` (basis S4 needs twelve bills and there was nowhere to keep them), `solar.studies.schematic_waived` (§13.1), and `solar.load_check_acks` (Checks sub-tab "Mark as acknowledged" records who accepted a warning). The file name stays `_solar_schematics.sql` as the owner specified; the header lists everything.
-2. **Two SECURITY INVOKER read functions, because PostgREST caps a response at 1,000 rows** (`config.toml` `max_rows = 1000`) and a meter holds 17,520 readings a year. `solar.channel_readings(channel_ids[], from, to)` returns ONE row per channel with parallel arrays; `solar.channel_summaries(channel_ids[])` returns first/last/count/usable/max/sum per channel. INVOKER means `meter_readings_select` (00210, including the linked-meter arm for external View members) decides what comes back — nothing is widened.
-3. **Cards and lines denormalise `floor_plan_id`** (bound from the schematic by trigger, never from the client) so `isAnnotated()` and the schema-derived contract test can see them by that column, exactly like `solar.layout_objects` (00211).
+1. **One migration also carries the Load tab's remaining storage.** Besides the three schematic tables it adds `solar.studies.load_growth_pct` (spec §4.5, missing from 00211), `solar.studies.monthly_bills` (basis S4 needs twelve bills and there was nowhere to keep them), `solar.studies.schematic_waived` (§13.1), and `solar.load_check_acks` (Checks sub-tab "Mark as acknowledged" records who accepted a warning). The file name stays `_solar_schematics.sql` as the owner specified; the header lists everything.
+2. **Two SECURITY INVOKER read functions, because PostgREST caps a response at 1,000 rows** (`config.toml` `max_rows = 1000`) and a meter holds 17,520 readings a year. `solar.channel_readings(channel_ids[], from, to)` returns ONE row per channel with parallel arrays; `solar.channel_summaries(channel_ids[])` returns first/last/count/usable/max/sum per channel. INVOKER means `meter_readings_select` (00211, including the linked-meter arm for external View members) decides what comes back — nothing is widened.
+3. **Cards and lines denormalise `floor_plan_id`** (bound from the schematic by trigger, never from the client) so `isAnnotated()` and the schema-derived contract test can see them by that column, exactly like `solar.layout_objects` (00212).
 4. **The drawing FK is `NO ACTION`**, like `solar.roof_sources`: a drawing that anchors a schematic cannot be hard-deleted underneath it (drawings are normally retired by `is_active = false`, which the bind refuses for NEW anchors only). Project deletion still works: the project cascade removes the schematic in the same statement.
 5. **Replace drawing re-anchors in place** (spec §13.1): updating `floor_plan_id`/`page_index` re-stamps `file_path`/`source_revision_id` and an AFTER trigger carries the new `floor_plan_id` onto every card and line; card positions are kept.
 6. **The supply hierarchy is a DAG, never a loop.** A `supply` line that would close a cycle anywhere in the study (across all its schematics) is refused by the database. `check` lines (a check meter beside a supply meter) do not enter the hierarchy.
 7. **Only study meters can be placed** (`study_meters` row required), so a card can never reference another study's or another org's meter.
-8. **Save is one INVOKER RPC** `public.solar_save_schematic(id, expected_updated_at, cards, lines)` — replace-all inside one transaction, stale write refused with SQLSTATE `40001` (the 00211 layout pattern).
-9. **`solar_schematic_sheet` reads at Solar View** (no rand values). `user_can_read_report_kind()` is redefined IN FULL keeping 00183's branches and ALSO the `solar_layout_sheet` branch Phase 5 (00211) adds, so whichever of 00211/00214 applies last, both kinds stay gated.
-10. **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00214 does not touch `product_events_event_check`; the text below is kept as the historical plan.** ~~**Product events** `solar_site_load_built`, `solar_schematic_saved`, `solar_schematic_sheet_exported` (spec §0.4 rule 8). The CHECK is re-declared in full (00208's list + these three).~~
+8. **Save is one INVOKER RPC** `public.solar_save_schematic(id, expected_updated_at, cards, lines)` — replace-all inside one transaction, stale write refused with SQLSTATE `40001` (the 00212 layout pattern).
+9. **`solar_schematic_sheet` reads at Solar View** (no rand values). `user_can_read_report_kind()` is redefined IN FULL keeping 00183's branches and ALSO the `solar_layout_sheet` branch Phase 5 (00212) adds, so whichever of 00212/00215 applies last, both kinds stay gated.
+10. **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00215 does not touch `product_events_event_check`; the text below is kept as the historical plan.** ~~**Product events** `solar_site_load_built`, `solar_schematic_saved`, `solar_schematic_sheet_exported` (spec §0.4 rule 8). The CHECK is re-declared in full (00209's list + these three).~~
 11. **The builder's reading of "Sum of tenants":** the stored basis is `S2`; when no tenant ends up metered the result is recorded as effective `S3` (all synthesised), which is what enables the diversity factor (engine §2.5). Tenants with no `tenant_load_basis` row are synthesised from the tenant schedule and counted as **unassigned** (readiness stays amber until the user chooses).
 13. **Beneficial occupation inside the reference year only.** The 3a `synthesiseTenant` zeroes dates before the BO date *of the reference year*; a BO date in a later calendar year (normal at design stage) would zero the whole year. The builder passes the BO date only when it falls inside the reference year; the year-1 ramp for a later BO belongs to the cashflow (which knows the commercial operation date). **Owner may prefer otherwise — open question.**
 12. **Double-count guard (§13.3):** when a parent meter and any of its descendants are both assigned, the descendants are used and the parent is dropped from the series; a tenant whose only meters were dropped contributes nothing (`covered_by_children`) rather than being re-synthesised.
@@ -44,7 +44,7 @@
 
 | File | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00214_solar_schematics.sql` | The migration |
+| `apps/edge-functions/supabase/migrations/00215_solar_schematics.sql` | The migration |
 | `scripts/db/assert-solar-schematics-roles.sql` | Behavioural impersonation assertions (red → green, mutation-proven) |
 | `apps/edge-functions/supabase/functions/cloud-sync-project/index.ts` | `isAnnotated()` gains three lookups |
 | `packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts` | Known-table list gains the three tables |
@@ -90,7 +90,7 @@ ls "apps/web/src/app/(admin)/projects/[id]/solar/(gated)/layout.tsx" apps/web/sr
 grep -n "SOLAR_READ_REPORT_KINDS" apps/web/src/lib/reports/report-kind-access.ts || echo "phase 5 not merged (expected)"
 ```
 
-Expected: `00207`, `00208`, `00209`, `00210` listed (no `00214`); every `ls` finds its file; the grep prints "phase 5 not merged (expected)". If `SOLAR_READ_REPORT_KINDS` IS present, Phase 5 has been merged into integration: in Task 6 add only the `solar_schematic_sheet` entry and the extra `WHEN` line, and skip the parts marked "(skip if Phase 5 is merged)".
+Expected: `00208`, `00209`, `00210`, `00211` listed (no `00215`); every `ls` finds its file; the grep prints "phase 5 not merged (expected)". If `SOLAR_READ_REPORT_KINDS` IS present, Phase 5 has been merged into integration: in Task 6 add only the `solar_schematic_sheet` entry and the extra `WHEN` line, and skip the parts marked "(skip if Phase 5 is merged)".
 
 - [ ] **Step 3: Record the baseline counts**
 
@@ -113,13 +113,13 @@ Expected: three green summaries. Write the three test counts into the PR body la
 - [ ] **Step 1: Write the assertions file**
 
 ```sql
--- BEHAVIOURAL assertions for 00214_solar_schematics (Solar Phase 3b), run as real roles.
---   cat 00207 00208 00209 00210            > $SCRATCH/3b-red.sql    ; dry-run-migration.sh $SCRATCH/3b-red.sql   <this file>  (expect RED)
---   cat 00207 00208 00209 00210 00214      > $SCRATCH/3b-green.sql  ; dry-run-migration.sh $SCRATCH/3b-green.sql <this file>  (expect GREEN)
+-- BEHAVIOURAL assertions for 00215_solar_schematics (Solar Phase 3b), run as real roles.
+--   cat 00208 00209 00210 00211            > $SCRATCH/3b-red.sql    ; dry-run-migration.sh $SCRATCH/3b-red.sql   <this file>  (expect RED)
+--   cat 00208 00209 00210 00211 00215      > $SCRATCH/3b-green.sql  ; dry-run-migration.sh $SCRATCH/3b-green.sql <this file>  (expect GREEN)
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it bypasses the
 -- paywall, so it has no negative case). All seeding happens as postgres BEFORE the first impersonation:
 -- request.jwt.claims is transaction-local and outlives RESET ROLE; it is cleared before later postgres steps.
--- REFUSAL PATTERN (as 00207/00210): a "..._REFUSED" check catches ONLY the SQLSTATE the design promises;
+-- REFUSAL PATTERN (as 00208/00211): a "..._REFUSED" check catches ONLY the SQLSTATE the design promises;
 -- if the statement is wrongly allowed the block raises P0001 itself so the write is rolled back; any
 -- other error records false instead of aborting the file.
 
@@ -513,11 +513,11 @@ SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 
 ```bash
 M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql > "$SCRATCH/3b-red.sql"
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql > "$SCRATCH/3b-red.sql"
 scripts/db/dry-run-migration.sh "$SCRATCH/3b-red.sql" scripts/db/assert-solar-schematics-roles.sql | tee "$SCRATCH/3b-dry-red.txt"
 ```
 
-Expected: the file ABORTS on `relation "solar.schematics" does not exist` and is reported as one failed assertion. That is the RED state. If 00207–00210 are ALREADY in the production ledger (check first: `scripts/db/mgmt-api.sh`'s `mgmt_query "select max(version) from supabase_migrations.schema_migrations"`), use only the missing ones in the concatenation.
+Expected: the file ABORTS on `relation "solar.schematics" does not exist` and is reported as one failed assertion. That is the RED state. If 00208–00211 are ALREADY in the production ledger (check first: `scripts/db/mgmt-api.sh`'s `mgmt_query "select max(version) from supabase_migrations.schema_migrations"`), use only the missing ones in the concatenation.
 
 - [ ] **Step 3: Commit**
 
@@ -533,13 +533,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: The migration
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00214_solar_schematics.sql`
+- Create: `apps/edge-functions/supabase/migrations/00215_solar_schematics.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00214: Solar schematics (Phase 3b) — and the Load tab's remaining storage
+-- Migration 00215: Solar schematics (Phase 3b) — and the Load tab's remaining storage
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §4.3-§4.6, §13; docs/solar/03-data-model-and-security.md §3, §3.1, §5.
 -- Plan: docs/superpowers/plans/2026-09-28-solar-phase-3b-0-foundation.md
@@ -556,15 +556,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 --     PostgREST caps a response at 1,000 rows and a meter holds 17,520 readings a year.
 --   public.solar_save_schematic — replace-all save in one transaction; stale write = 40001.
 --   public.user_can_read_report_kind — redefined IN FULL: 00183's branches + solar_layout_sheet
---     (00211) + solar_schematic_sheet, both at Solar View.
---   [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Not in 00214 as built.]
---   public.product_events CHECK — re-declared in full (00208's list + three Solar verbs).
+--     (00212) + solar_schematic_sheet, both at Solar View.
+--   [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Not in 00215 as built.]
+--   public.product_events CHECK — re-declared in full (00209's list + three Solar verbs).
 --
--- ACCESS. Every table has the 00207 study shape: SELECT = solar_can_view(project_id); each write verb
+-- ACCESS. Every table has the 00208 study shape: SELECT = solar_can_view(project_id); each write verb
 --   = a PERMISSIVE policy on solar_can_view plus a RESTRICTIVE policy on solar_can_edit. Lapse =
 --   hidden but kept. The supply hierarchy may never contain a loop (refused by the line bind).
 --
--- 00207's schema-wide @verify directives re-run on every deploy and this migration conforms: every
+-- 00208's schema-wide @verify directives re-run on every deploy and this migration conforms: every
 -- table has FORCE RLS; no RESTRICTIVE policy covers SELECT; every SECURITY DEFINER function in solar
 -- has anon EXECUTE revoked.
 --
@@ -648,7 +648,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'solar.channel_summaries(uuid[])'::regprocedure)
 -- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
 -- sql: (SELECT strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_schematic_sheet') > 0 AND strpos(pg_get_functiondef('public.user_can_read_report_kind(uuid, text)'::regprocedure), 'solar_layout_sheet') > 0)
--- [SUPERSEDED 2026-09-29: the next sql: line is NOT in 00214 as built — no product_events change.]
+-- [SUPERSEDED 2026-09-29: the next sql: line is NOT in 00215 as built — no product_events change.]
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_site_load_built%' AND pg_get_constraintdef(oid) LIKE '%solar_schematic_saved%' AND pg_get_constraintdef(oid) LIKE '%solar_schematic_sheet_exported%' AND pg_get_constraintdef(oid) LIKE '%solar_settings_saved%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- behaviour: scripts/db/assert-solar-schematics-roles.sql - every row ok
 -- @verify:end
@@ -910,7 +910,7 @@ CREATE TABLE IF NOT EXISTS solar.load_check_acks (
     acknowledged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT load_check_acks_key UNIQUE (study_id, check_key)
 );
--- 00210's study_scoped_bind binds project + org from the study (and pins study_id on UPDATE).
+-- 00211's study_scoped_bind binds project + org from the study (and pins study_id on UPDATE).
 CREATE TRIGGER load_check_acks_bind BEFORE INSERT ON solar.load_check_acks
     FOR EACH ROW EXECUTE FUNCTION solar.study_scoped_bind();
 
@@ -1107,8 +1107,8 @@ GRANT EXECUTE ON FUNCTION public.solar_save_schematic(UUID, TIMESTAMPTZ, JSONB, 
 
 -- ── 8. Saved schematic sheets read like the Solar module ─────────────────────
 -- Redefines 00183's function IN FULL (a CREATE OR REPLACE replaces the body). Every branch 00183 had
--- is kept byte-for-byte in meaning; solar_layout_sheet is Phase 5's (00211) and is kept here too so
--- the order in which 00211 and 00214 apply cannot drop either gate. A future Solar kind carrying
+-- is kept byte-for-byte in meaning; solar_layout_sheet is Phase 5's (00212) and is kept here too so
+-- the order in which 00212 and 00215 apply cannot drop either gate. A future Solar kind carrying
 -- money must use solar_can_see_money, so this names each kind rather than matching solar_%.
 CREATE OR REPLACE FUNCTION public.user_can_read_report_kind(_project_id UUID, _kind TEXT)
 RETURNS BOOLEAN
@@ -1130,8 +1130,8 @@ $function$;
 REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
 
--- [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Section 9 is NOT in 00214 as built.]
--- ── 9. Product events (re-declared in full: 00208's list + Solar Load/Schematics) ─
+-- [SUPERSEDED 2026-09-29: owner — no new product_events verbs; audit only. Section 9 is NOT in 00215 as built.]
+-- ── 9. Product events (re-declared in full: 00209's list + Solar Load/Schematics) ─
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
     'rfi_created',
@@ -1167,13 +1167,13 @@ grep -ln "ADD CONSTRAINT product_events_event_check" $M/*.sql
 grep -ln "CREATE OR REPLACE FUNCTION public.user_can_read_report_kind" $M/*.sql
 ```
 
-Expected: the constraint's last definer before 00214 is `00208_solar_org_settings.sql`; the function's last definer before 00214 is `00183_…` (or `00211_solar_layouts.sql` if Phase 5 is merged). If any OTHER file between 00208 and 00214 re-declares the CHECK, copy its full list into section 9 and add the three Solar verbs; if another file redefines the function, copy its branches into section 8. Never drop a value or a branch.
+Expected: the constraint's last definer before 00215 is `00209_solar_org_settings.sql`; the function's last definer before 00215 is `00183_…` (or `00212_solar_layouts.sql` if Phase 5 is merged). If any OTHER file between 00209 and 00215 re-declares the CHECK, copy its full list into section 9 and add the three Solar verbs; if another file redefines the function, copy its branches into section 8. Never drop a value or a branch.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00214_solar_schematics.sql
-git commit -m "feat(solar): 00214 schematics, cards, lines, check acks, bulk reads, save RPC, report kind
+git add apps/edge-functions/supabase/migrations/00215_solar_schematics.sql
+git commit -m "feat(solar): 00215 schematics, cards, lines, check acks, bulk reads, save RPC, report kind
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1188,7 +1188,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ```bash
 M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql $M/00214_solar_schematics.sql > "$SCRATCH/3b-green.sql"
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql $M/00215_solar_schematics.sql > "$SCRATCH/3b-green.sql"
 scripts/db/dry-run-migration.sh "$SCRATCH/3b-green.sql" scripts/db/assert-solar-schematics-roles.sql | tee "$SCRATCH/3b-dry-green.txt"
 grep -c "| t" "$SCRATCH/3b-dry-green.txt"; grep "| f" "$SCRATCH/3b-dry-green.txt" || echo "no failing rows"
 ```
@@ -1269,7 +1269,7 @@ Expected: `save_rpc_stale_REFUSED | f` and `stale_save_changed_nothing | f`.
 
 ```bash
 pnpm --filter @esite/db test:ci 2>&1 | tail -6
-npx tsx scripts/verify-migration-applied.ts --parse-only apps/edge-functions/supabase/migrations/00214_solar_schematics.sql 2>&1 | tail -5 || true
+npx tsx scripts/verify-migration-applied.ts --parse-only apps/edge-functions/supabase/migrations/00215_solar_schematics.sql 2>&1 | tail -5 || true
 ```
 
 Expected: `@esite/db` green (its guards read the migration TEXT: anon EXECUTE revokes spelled out, `@verify` grammar, no em dash in `sql:`). If `verify-migration-applied.ts` has no `--parse-only` flag, open it, find the exported parse function, and run it through `npx tsx -e "import('./scripts/verify-migration-applied.ts').then(m => console.log(m.parseVerifyBlock(require('fs').readFileSync(process.argv[1],'utf8'))))" <file>` using the function's real name. Every directive must parse; an unknown directive word is REFUSED by the parser.
@@ -1302,14 +1302,14 @@ Run:
 pnpm --filter @esite/db test:ci -- floor-plan-annotated-predicate 2>&1 | tail -20
 ```
 
-Expected: FAIL — the first `it` lists `solar.schematics (defined in 00214_solar_schematics.sql)`, `solar.schematic_cards …`, `solar.schematic_lines …` as blind. (Discovery passes: 00214's CREATE TABLE bodies name `floor_plan_id`.)
+Expected: FAIL — the first `it` lists `solar.schematics (defined in 00215_solar_schematics.sql)`, `solar.schematic_cards …`, `solar.schematic_lines …` as blind. (Discovery passes: 00215's CREATE TABLE bodies name `floor_plan_id`.)
 
 - [ ] **Step 2: Add the three fail-closed lookups**
 
 In `cloud-sync-project/index.ts`, in `isAnnotated()`, directly before its final `return false`, insert:
 
 ```ts
-  // A Solar schematic (00214): a single-line diagram anchored to this drawing page.
+  // A Solar schematic (00215): a single-line diagram anchored to this drawing page.
   // Its own file_path records the revision it was placed on and the editor warns when
   // they diverge — but, as for markup layers, not adopting silently is the protection.
   const { data: schematic, error: sce } = await supabase
@@ -1321,7 +1321,7 @@ In `cloud-sync-project/index.ts`, in `isAnnotated()`, directly before its final 
     .maybeSingle()
   if (sce || schematic) return true
 
-  // Meter cards and supply lines (00214): x/y and waypoints in raw image pixels of THIS
+  // Meter cards and supply lines (00215): x/y and waypoints in raw image pixels of THIS
   // file. Covered by the schematic above today (the FK chain), queried in their own right
   // so a future path that writes them cannot make the predicate blind.
   const { data: schematicCard, error: scc } = await supabase
@@ -1367,7 +1367,7 @@ Expected: no errors. (If `deno` is not installed locally, record that in the PR 
 git add apps/edge-functions/supabase/functions/cloud-sync-project/index.ts packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts
 git commit -m "feat(solar): isAnnotated() sees schematics, meter cards and supply lines (fail-closed)
 
-Edge deploy is an owner step AFTER 00214 applies: deployed first, the lookups
+Edge deploy is an owner step AFTER 00215 applies: deployed first, the lookups
 error and every drawing reads as annotated (auto-adopt stops platform-wide).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1478,16 +1478,16 @@ After `OPEN_READ_REPORT_KINDS`, add:
 ```ts
 /**
  * Kinds whose read follows the Solar module's own gate: the caller's per-user
- * Solar level on the project (00207, decision D-04), not an E-Site role. A
+ * Solar level on the project (00208, decision D-04), not an E-Site role. A
  * contractor with a View grant reads a schematic sheet; a project manager with
- * no grant does not. Mirrored in public.user_can_read_report_kind() (00211 /
- * 00214) and pinned by report-kind-access.contract.test.ts against the FINAL
+ * no grant does not. Mirrored in public.user_can_read_report_kind() (00212 /
+ * 00215) and pinned by report-kind-access.contract.test.ts against the FINAL
  * definition.
  */
 export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>> = {
-  // A drawing crop with arrays, strings, a legend and a title block — no rand values (Phase 5, 00211).
+  // A drawing crop with arrays, strings, a legend and a title block — no rand values (Phase 5, 00212).
   solar_layout_sheet: 'view',
-  // A single-line diagram with meter cards, supply lines and a legend — no rand values (00214).
+  // A single-line diagram with meter cards, supply lines and a legend — no rand values (00215).
   solar_schematic_sheet: 'view',
 }
 
@@ -1515,7 +1515,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
 
-/** Solar kinds read on the caller's Solar level (00211/00214 mirror this in SQL). Null when allowed or not a Solar kind. */
+/** Solar kinds read on the caller's Solar level (00212/00215 mirror this in SQL). Null when allowed or not a Solar kind. */
 async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
   const need = solarLevelForKind(kind)
   if (!need) return null
@@ -1596,7 +1596,7 @@ If Phase 5 is merged: add only `solar_schematic_sheet: 'view',` to its map (with
 pnpm --filter web test -- project-reports.solar-gate report-kind-access 2>&1 | tail -8
 ```
 
-Expected: PASS. Mutation: change the 00214 `WHEN _kind = 'solar_schematic_sheet' THEN COALESCE(public.solar_can_view…` line to `solar_can_edit`, re-run → the FINAL-definition test FAILS naming `solar_schematic_sheet`; restore → PASS.
+Expected: PASS. Mutation: change the 00215 `WHEN _kind = 'solar_schematic_sheet' THEN COALESCE(public.solar_can_view…` line to `solar_can_edit`, re-run → the FINAL-definition test FAILS naming `solar_schematic_sheet`; restore → PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -1611,7 +1611,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 7: Product-event registry gains the three verbs
 
-> **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00214 does not touch `product_events_event_check`; this task was SKIPPED; its text is kept as the historical plan.**
+> **SUPERSEDED (owner decision 2026-09-29): no new `product_events` verbs — audit only (`recordSolarAudit`). 00215 does not touch `product_events_event_check`; this task was SKIPPED; its text is kept as the historical plan.**
 
 **Files:**
 - Modify: `packages/shared/src/lib/analytics/product-events.ts`
@@ -1622,14 +1622,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 pnpm --filter @esite/shared test -- product-events.contract 2>&1 | tail -8
 ```
 
-Expected: FAIL — the CHECK (now read from 00214, the last migration containing `ADD CONSTRAINT product_events_event_check`) has three values the registry lacks.
+Expected: FAIL — the CHECK (now read from 00215, the last migration containing `ADD CONSTRAINT product_events_event_check`) has three values the registry lacks.
 
 - [ ] **Step 2: Add the verbs**
 
 In `PRODUCT_EVENTS`, after `'solar_settings_saved',` add:
 
 ```ts
-  // Solar Load + Schematics (00214).
+  // Solar Load + Schematics (00215).
   'solar_site_load_built',
   'solar_schematic_saved',
   'solar_schematic_sheet_exported',
@@ -1729,7 +1729,7 @@ Run: `pnpm --filter @esite/shared test -- services/solar/load/hierarchy` → Exp
 /**
  * The meter supply hierarchy drawn on schematics (functional spec §13.3). Supply lines only; a
  * `check` line (a check meter beside a supply meter) never enters it. The database refuses loops
- * (00214 schematic_lines_bind); these functions still survive one, so a legacy row cannot hang them.
+ * (00215 schematic_lines_bind); these functions still survive one, so a legacy row cannot hang them.
  */
 export interface MeterLine {
   fromMeterId: string

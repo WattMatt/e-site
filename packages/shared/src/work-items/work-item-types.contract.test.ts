@@ -66,7 +66,7 @@ function spineMigration(): { path: string; sql: string } {
   throw new Error(`No migration seeds projects.work_item_types (no file in ${MIG_DIR} contains "${SEED_NEEDLE}")`)
 }
 
-/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed, then add-on types such as 00212's solar_task). */
+/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed, then add-on types such as 00213's solar_task). */
 function registrySeedMigrations(): Array<{ path: string; sql: string }> {
   return readdirSync(MIG_DIR).sort()
     .filter((n) => n.endsWith('.sql'))

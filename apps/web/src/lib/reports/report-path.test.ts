@@ -78,7 +78,7 @@ describe('reportPathBelongsTo', () => {
 })
 
 describe('the SQL twin', () => {
-  it('is the same pattern 00207 enforces on session-written report rows', () => {
+  it('is the same pattern 00208 enforces on session-written report rows', () => {
     expect(CANONICAL_REPORT_PATH_SQL).toBe('^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.pdf$')
     const sql = readFileSync(
       resolve(__dirname, '../../../../edge-functions/supabase/migrations/00207_reports_storage_hardening.sql'), 'utf8')
@@ -90,7 +90,7 @@ describe('the SQL twin', () => {
 
   it('is the same pattern the Solar proposals migration enforces on session-written Solar report rows', () => {
     const sql = readFileSync(
-      resolve(__dirname, '../../../../edge-functions/supabase/migrations/00216_solar_proposals.sql'), 'utf8')
+      resolve(__dirname, '../../../../edge-functions/supabase/migrations/00217_solar_proposals.sql'), 'utf8')
     const policies = sql.slice(sql.indexOf('CREATE POLICY reports_solar_service_only_insert'))
     expect(policies).toContain(`storage_path, '') ~ '${CANONICAL_REPORT_PATH_SQL}'`)
   })

@@ -913,7 +913,7 @@ describe('ProposalClientView (§9.4)', () => {
 
 ```tsx
 'use client'
-/** Optional drawn signature (spec §9.4). Emits a PNG data URL (≤ 400 KB, 00216 CHECK) or null. */
+/** Optional drawn signature (spec §9.4). Emits a PNG data URL (≤ 400 KB, 00217 CHECK) or null. */
 import { useRef } from 'react'
 
 export function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
@@ -1522,7 +1522,7 @@ and render, after the settings form (before the LATER cards):
         />
       </div>
 ```
-with `import { ProposalTemplatesForm } from './ProposalTemplatesForm'`. (An owner/admin of a subscribed org reads the row through 00216's SELECT policy; an unsubscribed org simply shows the defaults — saving then fails with the RLS sentence, which is correct: templates are a Solar feature.)
+with `import { ProposalTemplatesForm } from './ProposalTemplatesForm'`. (An owner/admin of a subscribed org reads the row through 00217's SELECT policy; an unsubscribed org simply shows the defaults — saving then fails with the RLS sentence, which is correct: templates are a Solar feature.)
 
 - [ ] **Step 4: Run — PASS; commit.**
 

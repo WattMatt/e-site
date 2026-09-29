@@ -1,6 +1,6 @@
 import 'server-only'
 /**
- * The two Phase 4b buckets are SERVICE-ONLY (00215: no storage.objects policy for authenticated).
+ * The two Phase 4b buckets are SERVICE-ONLY (00216: no storage.objects policy for authenticated).
  * Call these only with the service client and only after the caller's Solar gate has passed.
  */
 import { gunzipSync, gzipSync } from 'node:zlib'

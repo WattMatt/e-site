@@ -1,5 +1,5 @@
 import 'server-only'
-/** Rows from public.solar_portfolio (00216): only projects the CALLER may view; saving only with money. */
+/** Rows from public.solar_portfolio (00217): only projects the CALLER may view; saving only with money. */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PortfolioRow, PortfolioStage } from './portfolio-model'
 

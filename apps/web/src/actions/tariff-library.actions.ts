@@ -2,8 +2,8 @@
 /**
  * Platform tariff library actions (spec §12; D-03). Every action re-checks
  * is_platform_tariff_admin (requirePlatformTariffAdmin) and writes through the
- * admin's session where 00209/00213 give admins a policy. The service client
- * is used only for what 00209/00213 reserve for the service role (Storage in
+ * admin's session where 00210/00214 give admins a policy. The service client
+ * is used only for what 00210/00214 reserve for the service role (Storage in
  * the private tariff-sources bucket, the due-year monitor) and only after the
  * gate. Errors are sentences (spec §0.4 rule 5).
  */

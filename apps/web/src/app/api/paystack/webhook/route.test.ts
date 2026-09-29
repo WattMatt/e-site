@@ -675,7 +675,7 @@ describe('signature', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org add-on subscription — Solar (billing.org_addon_subscriptions, 00207)
+// Org add-on subscription — Solar (billing.org_addon_subscriptions, 00208)
 //
 // The webhook is the ONLY writer of that table. Every assertion below checks
 // the WRITE (or its absence), never just the 200, for the reason given at the

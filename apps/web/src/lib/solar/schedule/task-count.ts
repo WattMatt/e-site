@@ -3,7 +3,7 @@
  * read on solar.schedule_tasks → the number of tasks. A failed read reads as
  * "Not started" (grey) rather than inventing a green.
  *
- * Void tasks are never counted, and not by a filter here: 00212's
+ * Void tasks are never counted, and not by a filter here: 00213's
  * work_items_solar_void_cleanup_trg deletes a task's side row the moment its
  * work item becomes void, by any path (schedule delete, My Work, service).
  * A status filter could not live here anyway — PostgREST will not embed

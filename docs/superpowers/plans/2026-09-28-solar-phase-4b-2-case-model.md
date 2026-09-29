@@ -787,7 +787,7 @@ describe('snapshots', () => {
 ```ts
 /**
  * Equipment catalogue specs (functional spec §11) and the CSV import. PAN/OND import is deferred (D-19).
- * The DB CHECK (00215 equipment_specs_shape) guards the minimum; these schemas are the full contract.
+ * The DB CHECK (00216 equipment_specs_shape) guards the minimum; these schemas are the full contract.
  */
 import { z } from 'zod'
 

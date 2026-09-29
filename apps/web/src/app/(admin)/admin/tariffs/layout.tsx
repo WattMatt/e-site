@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Platform tariff library (spec §12; D-03). 404 for anyone not on the
- * platform_tariff_admins allow-list (00209). Every page and action re-checks.
+ * platform_tariff_admins allow-list (00210). Every page and action re-checks.
  */
 export default async function TariffLibraryLayout({ children }: { children: React.ReactNode }) {
   await requirePlatformTariffAdminPage()

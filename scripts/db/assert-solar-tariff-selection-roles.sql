@@ -1,15 +1,15 @@
--- BEHAVIOURAL assertions for 00213_solar_tariff_selection, run as real roles.
---   00207…00210 are not in the production ledger yet, so dry-run the chain:
+-- BEHAVIOURAL assertions for 00214_solar_tariff_selection, run as real roles.
+--   00208…00211 are not in the production ledger yet, so dry-run the chain:
 --     S=/private/tmp/claude-501/solar-2b; M=apps/edge-functions/supabase/migrations
---     cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql \
---         $M/00210_solar_meter_data.sql > "$S/chain-without-00213.sql"
---     scripts/db/dry-run-migration.sh "$S/chain-without-00213.sql" scripts/db/assert-solar-tariff-selection-roles.sql   (RED: aborts)
---     cat "$S/chain-without-00213.sql" $M/00213_solar_tariff_selection.sql > "$S/chain.sql"
+--     cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql \
+--         $M/00211_solar_meter_data.sql > "$S/chain-without-00214.sql"
+--     scripts/db/dry-run-migration.sh "$S/chain-without-00214.sql" scripts/db/assert-solar-tariff-selection-roles.sql   (RED: aborts)
+--     cat "$S/chain-without-00214.sql" $M/00214_solar_tariff_selection.sql > "$S/chain.sql"
 --     scripts/db/dry-run-migration.sh "$S/chain.sql" scripts/db/assert-solar-tariff-selection-roles.sql               (GREEN)
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is
 -- deliberately NOT used (it bypasses the paywall, so it has no negative case).
 --
--- REFUSAL PATTERN (as the 00207/00209 assertion files): a "…_REFUSED" check
+-- REFUSAL PATTERN (as the 00208/00210 assertion files): a "…_REFUSED" check
 -- catches ONLY the SQLSTATE the design promises. When the statement is
 -- (wrongly) allowed, the block raises P0001 itself so the subtransaction rolls
 -- the write back and a mutation run cannot corrupt later checks. Any other
@@ -161,7 +161,7 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('edit_set_escalation_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('edit_set_escalation_REFUSED', false);
   END;
-  -- …but Site & Supply edits (other columns) still work for Edit (00207 unchanged).
+  -- …but Site & Supply edits (other columns) still work for Edit (00208 unchanged).
   UPDATE solar.studies SET nmd_kva = 600 WHERE id = v_study;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO _r VALUES ('edit_still_saves_site_columns', v_n = 1);
@@ -204,7 +204,7 @@ BEGIN
   SELECT count(*) INTO v_n FROM solar.studies WHERE id = v_study AND tariff_id = v_t25 AND licensee_id = v_lic;
   INSERT INTO _r VALUES ('fin_pins_published_tariff_licensee_rebound', v_n = 1);
   BEGIN
-    -- 00218: the source note is money — it lives on study_export_rates, never on the study row.
+    -- 00219: the source note is money — it lives on study_export_rates, never on the study row.
     UPDATE solar.studies SET export_rule = '{"version": 1, "method": "manual", "sourceNote": "on the study"}' WHERE id = v_study;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION

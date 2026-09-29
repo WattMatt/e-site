@@ -36,7 +36,7 @@ export interface WeatherView { id: string; latRound: number; lngRound: number; f
 export interface LayoutChoice { id: string; name: string; moduleCount: number | null; dcKwp: number | null }
 export interface CaseEditorData {
   caseId: string; name: string; updatedAt: string; config: CaseConfig; buildReasons: string[]
-  /** 'layout' = DC/AC come from `layoutId` (00218 FK) and are not edited in the case. */
+  /** 'layout' = DC/AC come from `layoutId` (00219 FK) and are not edited in the case. */
   pvSource: 'manual' | 'layout'; layoutId: string | null
   /** A layout-linked case whose layout now sizes differently (or is empty): the layout's current DC/AC. */
   layoutDrift: { dcKwp: number; acKw: number } | null

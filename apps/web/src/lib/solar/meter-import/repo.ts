@@ -1,7 +1,7 @@
 /**
  * The meter-import pipeline's only Supabase code. It uses the CALLER's client, so every read and
  * write goes through RLS. The one exception is the activity line: solar.audit_events is
- * service-written since 00218 (users cannot INSERT, so an editor cannot forge a line), so audit()
+ * service-written since 00219 (users cannot INSERT, so an editor cannot forge a line), so audit()
  * hands it to recordSolarAudit with the caller as actor — every route reaching it has already passed
  * requireSolarLevelAPI(…, 'edit'). Everything else in the pipeline is pure and is tested against the
  * in-memory fake (fake-repo.ts).

@@ -27,7 +27,7 @@ export class CommitError extends Error {
 export const READING_CHUNK = 5000
 
 const METER_KINDS = ['tenant', 'bulk', 'council', 'generator', 'solar', 'common', 'vacant', 'check', 'virtual', 'water', 'unknown'] as const
-// 'm3' is excluded too: 00210's meter_channels.source_unit CHECK refuses it (water is not load, and
+// 'm3' is excluded too: 00211's meter_channels.source_unit CHECK refuses it (water is not load, and
 // the parser rejects a file with a volume column), so a user-chosen m3 must be a 422, not a DB 500.
 // The parse route's preview options use the same list, so a unit the dialog offers can be committed.
 export const COMMITTABLE_UNITS = SOURCE_UNITS.filter((u) => u !== 'unknown' && u !== 'm3') as [string, ...string[]]

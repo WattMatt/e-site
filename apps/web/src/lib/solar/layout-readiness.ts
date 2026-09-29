@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * The Layout readiness step from solar.layouts.summary (a server-computed cache,
- * 00211) and the roof sources' north — never the geometry, so the tab dot costs
+ * 00212) and the roof sources' north — never the geometry, so the tab dot costs
  * two small reads on every Solar page. Returns null on a read error (the step
  * then stays grey rather than guessing).
  */

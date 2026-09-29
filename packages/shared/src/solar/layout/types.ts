@@ -5,7 +5,7 @@
  * apps/web/src/lib/sheet/use-sheet-image.ts defines (a PDF page at
  * getViewport({ scale: 2 }), a raster at its natural size). Metres come from
  * each object's own `pixelsPerMeter`, which the DATABASE stamps when the object
- * is first saved (00211 layout_objects_bind) — never from the browser.
+ * is first saved (00212 layout_objects_bind) — never from the browser.
  *
  * Plan metres (what the geometry modules compute in) are image pixels divided
  * by that scale: x to the right, y DOWN the sheet.
@@ -15,7 +15,7 @@ export interface Pt {
   y: number
 }
 
-/** Mirrors the CHECK on solar.layout_objects.kind (00211). 'north' is reserved: the north reference lives on the roof source. */
+/** Mirrors the CHECK on solar.layout_objects.kind (00212). 'north' is reserved: the north reference lives on the roof source. */
 export const LAYOUT_OBJECT_KINDS = [
   'roof', 'obstruction', 'array', 'module_block', 'inverter', 'string', 'equipment', 'north',
 ] as const
@@ -121,7 +121,7 @@ export interface StringProps {
 export interface EquipmentProps {
   equipmentKind: LayoutEquipmentKind
   name: string
-  /** structure.nodes id — REQUIRED for a DB symbol (00211 refuses a free-floating DB). */
+  /** structure.nodes id — REQUIRED for a DB symbol (00212 refuses a free-floating DB). */
   nodeId: string | null
 }
 

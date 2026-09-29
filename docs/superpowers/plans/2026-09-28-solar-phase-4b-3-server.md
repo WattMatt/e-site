@@ -4,7 +4,7 @@
 
 **Goal:** The gated server surface: fetch/cache weather, resolve the study's tariff (read-only), assemble a run context, execute a run into an immutable row + CSV, cancel, export, save/select/delete cases, save and run financials, maintain the equipment catalogue, download XLSX.
 
-**Architecture:** `apps/web/src/lib/solar/cases/*` hold the server logic (service client used ONLY after the caller's gate passed, and only where RLS cannot express the operation: finishing a run, the service-only buckets, the weather cache, reading org settings for a non-admin). User-scoped writes (case CRUD, run INSERT, financials) go through the caller's session so the 00215 policies decide. Routes and actions are thin: gate → lib → audit/event → JSON.
+**Architecture:** `apps/web/src/lib/solar/cases/*` hold the server logic (service client used ONLY after the caller's gate passed, and only where RLS cannot express the operation: finishing a run, the service-only buckets, the weather cache, reading org settings for a non-admin). User-scoped writes (case CRUD, run INSERT, financials) go through the caller's session so the 00216 policies decide. Routes and actions are thin: gate → lib → audit/event → JSON.
 
 **Tech Stack:** Next.js 15 route handlers (`runtime='nodejs'`, `maxDuration=60`), server actions, `node:zlib`, exceljs, vitest with `fakeSupabase`.
 
@@ -74,7 +74,7 @@ describe('solar storage', () => {
 ```ts
 import 'server-only'
 /**
- * The two Phase 4b buckets are SERVICE-ONLY (00215: no storage.objects policy for authenticated).
+ * The two Phase 4b buckets are SERVICE-ONLY (00216: no storage.objects policy for authenticated).
  * Call these only with the service client and only after the caller's Solar gate has passed.
  */
 import { gunzipSync, gzipSync } from 'node:zlib'
@@ -820,7 +820,7 @@ describe('executeCaseRun', () => {
 import 'server-only'
 /**
  * One run, end to end (functional spec §7.2 Run). The running row is INSERTed through the caller's
- * session (00215 RLS: Solar Edit); the result is written by the service client, which is the only
+ * session (00216 RLS: Solar Edit); the result is written by the service client, which is the only
  * role allowed to UPDATE a run, and only while it is running (freeze trigger). Every failure is kept
  * on the row with a sentence and logged with the run id.
  */
@@ -1090,7 +1090,7 @@ Note: the failure test expects `{ error }` only (no runId) because its mock retu
 ```ts
 /**
  * POST /api/projects/[id]/solar/cases/[caseId]/cancel — spec §7.2 Cancel (while running). Case-level:
- * at most one run per case can be running (00215 case_runs_one_running). Gate: Solar Edit.
+ * at most one run per case can be running (00216 case_runs_one_running). Gate: Solar Edit.
  * Service client: only it may UPDATE a run, and the freeze trigger allows only running → terminal.
  */
 import { NextResponse } from 'next/server'
@@ -1121,7 +1121,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 ```ts
 /**
  * GET …/runs/[runId]/export?kind=hourly|monthly|slice&from=&to=
- * Gate: Solar View. The run row is read through the CALLER's session (00215 case_runs_select), so a
+ * Gate: Solar View. The run row is read through the CALLER's session (00216 case_runs_select), so a
  * caller who cannot see the run gets 404; the file is then read with the service client (the bucket
  * has no user policy). Everything served is the stored result — nothing is recomputed.
  */
@@ -1317,7 +1317,7 @@ describe('fetchSolarWeatherAction', () => {
 'use server'
 /**
  * Yield & Scenarios case actions (functional spec §7.1–7.2). Each re-checks the Solar level itself and
- * writes through the caller's session (00215 RLS + bind triggers decide). The service client is used
+ * writes through the caller's session (00216 RLS + bind triggers decide). The service client is used
  * only to read org_settings (owner/admin-only by RLS, but every Edit user's new case needs the org
  * defaults), the equipment catalogue for snapshots, and the weather cache.
  */
@@ -1894,7 +1894,7 @@ export async function runSolarFinancialsAction(input: { projectId: string; caseI
   return { ok: true, id: out.id }
 }
 ```
-Note: `fakeSupabase` rows for `solar.cases` include `organisation_id` (bound by 00215's trigger in reality).
+Note: `fakeSupabase` rows for `solar.cases` include `organisation_id` (bound by 00216's trigger in reality).
 
 - [ ] **Step 6: XLSX route** `…/financials/xlsx/route.ts` + test.
 
@@ -2043,7 +2043,7 @@ describe('equipment actions', () => {
 /**
  * Equipment catalogue (functional spec §11): Add, Edit, Retire (never delete — cases reference it),
  * Import from CSV. PAN/OND import deferred (D-19). Owner/admin of the ACTIVE org (the catalogue lives
- * in /settings/solar); 00215's equipment_*_authz policies (solar.library_orgs('admin')) decide in the DB.
+ * in /settings/solar); 00216's equipment_*_authz policies (solar.library_orgs('admin')) decide in the DB.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'

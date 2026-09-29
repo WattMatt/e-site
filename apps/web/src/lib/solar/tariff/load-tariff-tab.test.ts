@@ -35,7 +35,7 @@ describe('loadTariffTab', () => {
     expect((await loadTariffTab(client as never, 'p1', { fy: '2024/25', todayIso: '2026-01-10' })).selectedYearId).toBe('y24')
     expect((await loadTariffTab(client as never, 'p1', { fy: '1999/00', todayIso: '2026-01-10' })).selectedYearId).toBe('y25')
   })
-  it('the export source note comes from the money rows, never from studies.export_rule (00218)', async () => {
+  it('the export source note comes from the money rows, never from studies.export_rule (00219)', async () => {
     const t = {
       ...tables,
       'solar.studies': [{ ...tables['solar.studies'][0], export_rule: { version: 1, method: 'manual', sourceNote: 'stale copy on the study' } }],

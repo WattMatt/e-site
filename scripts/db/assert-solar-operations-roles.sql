@@ -1,6 +1,6 @@
--- BEHAVIOURAL assertions for 00217_solar_operations (Solar Phase 7), run as real roles.
---   RED:   scripts/db/dry-run-migration.sh <00207..00216 chain> scripts/db/assert-solar-operations-roles.sql
---   GREEN: scripts/db/dry-run-migration.sh <00207..00216 chain + 00217> scripts/db/assert-solar-operations-roles.sql
+-- BEHAVIOURAL assertions for 00218_solar_operations (Solar Phase 7), run as real roles.
+--   RED:   scripts/db/dry-run-migration.sh <00208..00217 chain> scripts/db/assert-solar-operations-roles.sql
+--   GREEN: scripts/db/dry-run-migration.sh <00208..00217 chain + 00218> scripts/db/assert-solar-operations-roles.sql
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it
 -- bypasses the paywall, so it has no negative case).
 
@@ -54,7 +54,7 @@ DECLARE
   v_sha1     CONSTANT TEXT := repeat('1', 64);
   v_sha2     CONSTANT TEXT := repeat('2', 64);
   v_sha3     CONSTANT TEXT := repeat('3', 64);
-  -- Set once the run exists: 00217 binds baseline.caseRunId to the accepted proposal's run.
+  -- Set once the run exists: 00218 binds baseline.caseRunId to the accepted proposal's run.
   v_baseline JSONB;
   v_mov      UUID;
   v_c5       UUID;
@@ -100,7 +100,7 @@ BEGIN
     'monthlyKwh', '[15000,14000,14500,13000,12000,11000,11500,13000,14000,15000,15500,16000]'::jsonb,
     'diurnalKw', (SELECT jsonb_agg(to_jsonb(array_fill(0, ARRAY[24]))) FROM generate_series(1, 12)),
     'ghiKwhM2', NULL);
-  -- Proposals straight to their end states (the 00216 guard is exercised by its own file).
+  -- Proposals straight to their end states (the 00217 guard is exercised by its own file).
   SET LOCAL session_replication_role = replica;
   INSERT INTO solar.proposals (id, study_id, project_id, organisation_id, family_id, version, case_id, case_run_id, status,
                                snapshot, pdf_path, pdf_sha256, share_token_hash, expires_at, issued_at, responded_at)
@@ -122,10 +122,10 @@ BEGIN
   INSERT INTO solar.meter_files (project_id, sha256, size_bytes, storage_path, original_name, status)
   VALUES (v_p, v_sha3, 10, v_org || '/' || v_p || '/' || v_sha3 || '.csv', 'may.csv', 'accepted') RETURNING id INTO v_f3;
   -- c1 (older file) and c2 (newer file) both feed PV main with the SAME timestamp.
-  -- Distinct source_column: 00210's meter_channels_source_key is UNIQUE NULLS NOT DISTINCT on
+  -- Distinct source_column: 00211's meter_channels_source_key is UNIQUE NULLS NOT DISTINCT on
   -- (meter_id, file_id, source_column) and file_id is ON DELETE SET NULL, so two same-named
   -- channels of one meter collide when the project delete in section 11 nulls both file ids
-  -- (a 00210 trap, reported separately; the dedupe under test does not depend on the name).
+  -- (a 00211 trap, reported separately; the dedupe under test does not depend on the name).
   INSERT INTO solar.meter_channels (meter_id, file_id, source_column, quantity, direction, source_unit, unit,
                                     interval_min, tz_convention, is_primary, parser_version, created_at)
   VALUES (v_msolar, v_f1, 'kW', 'active_power', 'export', 'kW', 'kW', 30, 'end', TRUE, 'probe', now() - interval '1 day')
@@ -655,10 +655,10 @@ BEGIN
     AND (SELECT count(*) FROM solar.monthly_reports WHERE project_id = v_p) = 2);
 
   -- ── 11. A project delete cascades every operations row (no history FK trap) ─
-  -- A DIRECT study delete is refused by 00216 (solar.studies_keep_issued_proposals) while the
+  -- A DIRECT study delete is refused by 00217 (solar.studies_keep_issued_proposals) while the
   -- accepted proposal exists, and an installation cannot exist without one. The project-delete
   -- cascade passes that guard at depth > 1 and must take every operations row with it: the
-  -- installation/study cascades reach the 00217 triggers at depth > 1 (no history row, no guard).
+  -- installation/study cascades reach the 00218 triggers at depth > 1 (no history row, no guard).
   BEGIN
     INSERT INTO solar.downtime (installation_id, starts_at, ends_at, cause) VALUES (v_inst, '2026-03-12 10:00+02', '2026-03-12 12:00+02', 'other');
     DELETE FROM projects.projects WHERE id = v_p;

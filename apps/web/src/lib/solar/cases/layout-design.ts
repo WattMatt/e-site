@@ -2,7 +2,7 @@ import 'server-only'
 /**
  * What a case needs from a layout (From layout, Import BOM): its summary and bill of materials,
  * computed HERE from the layout's own objects — never from solar.layouts.summary, which a direct
- * PostgREST write could set (00211). Read through the CALLER's session: RLS decides whether the
+ * PostgREST write could set (00212). Read through the CALLER's session: RLS decides whether the
  * layout is visible, and the project filter keeps it to this project.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'

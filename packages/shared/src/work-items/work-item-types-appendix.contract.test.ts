@@ -87,7 +87,7 @@ function spineMigration(): { name: string; sql: string } {
 }
 
 /** EVERY migration that inserts registry rows, in file order (00196's Q1 seed,
- *  then add-on types such as 00212's solar_task). */
+ *  then add-on types such as 00213's solar_task). */
 function registrySeedMigrations(): Array<{ name: string; sql: string }> {
   return readdirSync(MIG_DIR).sort()
     .filter((n) => n.endsWith('.sql'))

@@ -1,7 +1,7 @@
 'use server'
 /**
  * Solar proposals (spec §9.3). Every action gates Solar Edit + financials FIRST (proposals are a
- * money table). Drafts are written through the caller's session — 00216's RLS and guard decide.
+ * money table). Drafts are written through the caller's session — 00217's RLS and guard decide.
  * Issue / withdraw / new link run the SERVICE-ONLY definer functions after the gate (Task 21).
  */
 import { revalidatePath } from 'next/cache'

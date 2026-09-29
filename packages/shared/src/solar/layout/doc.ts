@@ -201,7 +201,7 @@ export function diffObjects(saved: LayoutObject[], current: LayoutObject[]): { u
 
 /**
  * The object list the database will hold after a save — used server-side to
- * compute layouts.summary. Existing objects keep their stored scale (00211 pins
+ * compute layouts.summary. Existing objects keep their stored scale (00212 pins
  * it); new ones take `newObjectPixelsPerMeter` (the sheet's current scale).
  */
 export function applyObjectDelta(

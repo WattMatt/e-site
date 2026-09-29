@@ -6,7 +6,7 @@ import { requestSolarAccessAction } from '@/actions/solar-requests.actions'
 /**
  * Spec §0.3: shown to View-level users only. canRequestEdit is false for a
  * member from outside the project's organisation — View is the most they can
- * ever hold (00207), so there is nothing to ask for.
+ * ever hold (00208), so there is nothing to ask for.
  */
 export function ViewOnlyBanner({ projectId, canRequestEdit = true }: { projectId: string; canRequestEdit?: boolean }) {
   const [busy, setBusy] = useState(false)

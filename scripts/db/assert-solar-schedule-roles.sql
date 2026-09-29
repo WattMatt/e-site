@@ -1,11 +1,11 @@
--- BEHAVIOURAL assertions for 00212_solar_schedule, run as real roles.
+-- BEHAVIOURAL assertions for 00213_solar_schedule, run as real roles.
 --   Red:   scripts/db/dry-run-migration.sh "$S/red.sql"   scripts/db/assert-solar-schedule-roles.sql
 --   Green: scripts/db/dry-run-migration.sh "$S/green.sql" scripts/db/assert-solar-schedule-roles.sql
--- red.sql = 00207 + 00208 (whichever are not yet in the ledger); green.sql = those + 00212.
+-- red.sql = 00208 + 00209 (whichever are not yet in the ledger); green.sql = those + 00213.
 -- Fixtures are minted inside the transaction and rolled back; the WM-Consulting
 -- org is NOT used (it bypasses the paywall, so it has no lapse case).
 -- Seeding happens as postgres BEFORE any impersonation (request.jwt.claims is
--- transaction-local and outlives RESET ROLE). REFUSAL PATTERN (00207 file): a
+-- transaction-local and outlives RESET ROLE). REFUSAL PATTERN (00208 file): a
 -- "…_REFUSED" check catches only the SQLSTATE the design promises; a wrongly
 -- allowed statement raises P0001 itself so the write rolls back.
 --
@@ -26,7 +26,7 @@
 --   Spec-I2  a My Work void removes the side row; baselines exclude it, older
 --       baselines keep it with task_id NULL;  Spec-I4  create's gatekeeper_id;
 --   I2  inspector-with-Edit behaviour (owner decision Q2) as documented in
---       00212 item 11;  M2  link UPDATE loop;  Spec-8  p_replace atomicity and
+--       00213 item 11;  M2  link UPDATE loop;  Spec-8  p_replace atomicity and
 --       direct reassign to a supplier;  M12  candidate emails only for editors.
 
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;
@@ -115,7 +115,7 @@ BEGIN
   INSERT INTO _r VALUES ('fixture_resolver_picks_client_on_project2',
     projects.resolve_work_item_assignee(v_project2, 'solar_task', NULL) IS NOT DISTINCT FROM v_client);
 
-  -- Grants, written by the grantor as 00207 requires.
+  -- Grants, written by the grantor as 00208 requires.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES

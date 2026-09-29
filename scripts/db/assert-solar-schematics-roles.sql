@@ -1,10 +1,10 @@
--- BEHAVIOURAL assertions for 00214_solar_schematics (Solar Phase 3b), run as real roles.
---   cat 00207 00208 00209 00210            > $SCRATCH/3b-red.sql    ; dry-run-migration.sh $SCRATCH/3b-red.sql   <this file>  (expect RED)
---   cat 00207 00208 00209 00210 00214      > $SCRATCH/3b-green.sql  ; dry-run-migration.sh $SCRATCH/3b-green.sql <this file>  (expect GREEN)
+-- BEHAVIOURAL assertions for 00215_solar_schematics (Solar Phase 3b), run as real roles.
+--   cat 00208 00209 00210 00211            > $SCRATCH/3b-red.sql    ; dry-run-migration.sh $SCRATCH/3b-red.sql   <this file>  (expect RED)
+--   cat 00208 00209 00210 00211 00215      > $SCRATCH/3b-green.sql  ; dry-run-migration.sh $SCRATCH/3b-green.sql <this file>  (expect GREEN)
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it bypasses the
 -- paywall, so it has no negative case). All seeding happens as postgres BEFORE the first impersonation:
 -- request.jwt.claims is transaction-local and outlives RESET ROLE; it is cleared before later postgres steps.
--- REFUSAL PATTERN (as 00207/00210): a "..._REFUSED" check catches ONLY the SQLSTATE the design promises;
+-- REFUSAL PATTERN (as 00208/00211): a "..._REFUSED" check catches ONLY the SQLSTATE the design promises;
 -- if the statement is wrongly allowed the block raises P0001 itself so the write is rolled back; any
 -- other error records false instead of aborting the file.
 

@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00207: Solar add-on foundation
+-- Migration 00208: Solar add-on foundation
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §2–3; decisions D-01, D-02,
 -- D-04 in docs/solar/06-open-decisions.md (owner, 2026-09-28).

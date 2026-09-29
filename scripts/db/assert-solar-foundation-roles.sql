@@ -1,6 +1,6 @@
--- BEHAVIOURAL assertions for 00207_solar_foundation, run as real roles.
+-- BEHAVIOURAL assertions for 00208_solar_foundation, run as real roles.
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql scripts/db/assert-solar-foundation-roles.sql   (expect RED)
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql  (expect GREEN)
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00208_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql  (expect GREEN)
 -- Fixtures are minted inside the transaction and rolled back. The WM-Consulting
 -- org is deliberately NOT used: it bypasses the paywall, so it has no negative case.
 -- Mechanics (paid for before): request.jwt.claims is transaction-local and
@@ -221,7 +221,7 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('study_project_move_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('study_project_move_REFUSED', false);
   END;
-  -- activity is SERVICE-written since 00218: an editor cannot post a line directly
+  -- activity is SERVICE-written since 00219: an editor cannot post a line directly
   BEGIN
     INSERT INTO solar.audit_events (project_id, verb, actor_id, organisation_id)
     VALUES (v_project, 'probe.forged', v_admin, v_org2);

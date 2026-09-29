@@ -3,7 +3,7 @@
  * Review queue actions (spec §12). Approve / Edit / Reject a charge, delete a
  * tariff, Validate (records the verdict on the content it checked), Publish,
  * and the SSEG rule. Every action re-checks is_platform_tariff_admin; writes go
- * through the admin's session so 00209's guards decide (draft-only edits,
+ * through the admin's session so 00210's guards decide (draft-only edits,
  * review stamps, publish rules, immutability).
  */
 import { revalidatePath } from 'next/cache'
@@ -91,7 +91,7 @@ const TARIFF_STALE = 'Someone else changed this tariff. Reload to see their vers
 /**
  * Point one tariff at its export (Gen-offset) tariff (spec §5 linked_tariff).
  * The choice must be another tariff of the SAME tariff year (so the same
- * licensee and financial year); 00209's year_child_guard refuses a published
+ * licensee and financial year); 00210's year_child_guard refuses a published
  * year, and the page's updated_at conditions the write.
  */
 export async function setExportTariffAction(input: { tariffId: string; exportTariffId: string | null; expectedUpdatedAt: string }): Promise<
@@ -179,7 +179,7 @@ export async function publishTariffYearAction(input: { yearId: string }): Promis
 const SSEG_STALE = 'Someone else changed this SSEG rule. Reload to see their version.'
 
 /**
- * Stale-guarded on tariffs.sseg_rule.updated_at (00213): an update is
+ * Stale-guarded on tariffs.sseg_rule.updated_at (00214): an update is
  * conditioned on the value the form loaded, and a create (nothing loaded)
  * collides with UNIQUE (tariff_year_id) if someone created one meanwhile.
  */

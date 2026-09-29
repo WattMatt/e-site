@@ -5,7 +5,7 @@ Conventions follow E-Site's migration rules (repo `CLAUDE.md`): every migration 
 `@verify` block; RLS is proven with impersonation assertion scripts (`scripts/db/assert-*.sql`) run red
 first; all three suites (`web`, `@esite/shared`, `@esite/db`) green before merge; migration numbers are
 claimed **at apply time** after checking the ledger, `origin/main` and open-PR filenames (next free was
-`00207` on 2026-09-28, but #191/#193 are stranded below the head).
+`00208` on 2026-09-28, but #191/#193 are stranded below the head).
 
 ---
 
@@ -111,7 +111,7 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `bill_checks` | study_id, month, entered values, modelled values | |
 | `layouts` | study_id, name UNIQUE per study, roof_source_id, module_id, updated_at | |
 | `layout_objects` | layout_id, kind (roof/obstruction/array/module_block/inverter/string/equipment/north), geometry jsonb (image px), pixels_per_meter snapshot, props jsonb | **Register in `isAnnotated()`** |
-| `cases` | study_id, name, pv_source (layout/manual), layout_id (FK → layouts, ON DELETE RESTRICT, same project — 00218), config jsonb (full case input), finance jsonb, updated_at | |
+| `cases` | study_id, name, pv_source (layout/manual), layout_id (FK → layouts, ON DELETE RESTRICT, same project — 00219), config jsonb (full case input), finance jsonb, updated_at | |
 | `case_runs` | case_id, engine_version, inputs jsonb, inputs_hash, weather_dataset_id, tariff_ref jsonb, status, error, outputs jsonb (KPIs, monthly), hourly_path (Storage, 8760 columns compressed), run_by, started_at, finished_at | Immutable after finish |
 | `weather_datasets` | source (pvgis_tmy/upload), lat_round, lng_round, fetched_at, storage_path, meta jsonb | Cache shared per org (lat/lng rounded to 0.01°) |
 | `equipment` | org_id (NULL = platform catalogue), kind (module/inverter/battery), make, model, specs jsonb, retired_at | Never hard-deleted |
@@ -119,10 +119,10 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `proposals` | study_id, case_id, version, status, snapshot jsonb, pdf_path, pdf_sha256, share_token_hash, expires_at, issued_by/at, withdrawn_at | Token stored hashed |
 | `proposal_events` | proposal_id, kind (issued/viewed/accepted/declined/withdrawn/expired), actor_name, actor_email, ip, user_agent, pdf_sha256, at | Append-only (no UPDATE/DELETE policies) |
 | `installations`, `guarantees`, `downtime`, `monthly_report_notes`, `handover_items` | Operations (Phase 7) | Handover items reference E-Site document ids |
-| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00214) |
-| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00214) |
+| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00215) |
+| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00215) |
 | `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (flat image px, even length ≤ 400), line_type (supply/check), floor_plan_id (denormalised) | Supply lines define the meter hierarchy; a loop anywhere in the study is refused; deleting a card deletes its lines; **in `isAnnotated()`** |
-| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00214); no UPDATE |
+| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00215); no UPDATE |
 | `schedule_tasks` | work_item_id → projects.work_items (type `solar_task`), category, zone, start_date date, end_date date, progress, colour, sort_order, is_milestone | Dates as `date`, never timestamptz |
 | `schedule_segments`, `schedule_dependencies` (type FS/SS/FF/SF, lag_days), `schedule_baselines` (+ baseline tasks), `schedule_filter_presets` (per user) | Gantt | |
 | `solar.schedule_templates`, `handover_templates` | org_id, content jsonb | Org settings |
@@ -138,7 +138,7 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   `meter_import_reports`, `meter_readings`, `equipment` with org_id): SELECT when
   `org_has_solar(organisation_id)` and the caller is an active member of that org with a Solar grant on any
   of its projects (or owner/admin) — `solar.library_orgs('view')`; writes by the same with Edit level
-  (`library_orgs('edit')`). **Deletes (00210 as built):** `meter_files`, `meters`, `meter_register` need
+  (`library_orgs('edit')`). **Deletes (00211 as built):** `meter_files`, `meters`, `meter_register` need
   org owner/admin (`library_orgs('admin')`); `meter_channels` and `meter_series_hashes` need Edit (a
   re-import rebinds them); `meter_readings` has no DELETE grant at all — they go with their channel
   (cascade) or through `solar.clear_channel_readings` (Edit); `meter_import_reports` cannot be deleted.
@@ -154,25 +154,25 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   Edit user writes inputs, sees no money; Edit + financials sees money; member without a grant reads nothing;
   client_viewer and supplier read nothing even if a grant row is forged; user from another org reads nothing;
   **lapsed subscription ⇒ nobody reads or writes, rows unchanged**; service-role bypass holds.
-- **Phase 3b as built (00214, Load + Schematics):**
+- **Phase 3b as built (00215, Load + Schematics):**
   - **No new `product_events` verbs** (owner decision 2026-09-28): the Load build, schematic save and
-    schematic sheet export write `solar.audit_events` only; `00214` does not re-declare
+    schematic sheet export write `solar.audit_events` only; `00215` does not re-declare
     `product_events_event_check`.
   - **Meter comparison overlay** is built on the Load → Meters sub-tab (owner change to default 8): select
     2–4 meters → one overlaid, downsampled chart that reuses the meter series route and the chart
     component; only meters sharing one unit are overlaid (the rest are named with the reason). Energy /
     power data only, no rand values, so View may use it.
   - **Schematic sheets** are `projects.reports` kind `solar_schematic_sheet` (read: Solar View via
-    `user_can_read_report_kind`, redefined in 00214 with both `solar_layout_sheet` and
+    `user_can_read_report_kind`, redefined in 00215 with both `solar_layout_sheet` and
     `solar_schematic_sheet`; delete: Solar Edit). SVG download is client-side (escaped; background
     embedded as a data URL) and writes nothing.
-  - **`cloud-sync-project` deploy is an owner step AFTER 00214 is applied.** Its `isAnnotated()` now
+  - **`cloud-sync-project` deploy is an owner step AFTER 00215 is applied.** Its `isAnnotated()` now
     queries `schematics`, `schematic_cards` and `schematic_lines`; deployed before the tables exist, the
     lookups error and fail closed — every drawing reads as annotated and auto-adopt stops platform-wide.
   - Point-of-connection offer from the schematic graph (spec §13.3 bullet 3) is deferred to the Site &
     Supply follow-up (open question).
 
-- **Derived values that cross the money line (I-1, 00219 review).** `case_runs.inputs_hash` (View-readable) carries
+- **Derived values that cross the money line (I-1, 00220 review).** `case_runs.inputs_hash` (View-readable) carries
   the study pricing, so the pricing half is an HMAC keyed server-side (`apps/web/src/lib/solar/pricing/pricing-hash.ts`):
   a View user cannot test candidate override or export rates against it. What a View user does learn is one bit —
   a case turning Stale after a money user edits the override or an export rate. Accepted.

@@ -36,7 +36,7 @@ beforeEach(() => {
 })
 
 describe('createInstallationAction', () => {
-  it('gates Edit FIRST, inserts the installation with the SERVICE role (00217 refuses a session insert) naming the caller, then a P50 guarantee and the default checklist', async () => {
+  it('gates Edit FIRST, inserts the installation with the SERVICE role (00218 refuses a session insert) naming the caller, then a P50 guarantee and the default checklist', async () => {
     const f = setup()
     await expect(createInstallationAction({ projectId: P })).resolves.toEqual({ ok: true, installationId: I, warning: null })
     expect(h.requireSolarLevel).toHaveBeenCalledWith(P, 'edit', expect.anything())

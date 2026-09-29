@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00213: Solar tariff selection + tariff-library operations (Phase 2b)
+-- Migration 00214: Solar tariff selection + tariff-library operations (Phase 2b)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §5 (Tariff tab) and §12 (platform
 -- tariff library); docs/solar/03-data-model-and-security.md §3 (studies
@@ -36,7 +36,7 @@
 --   tariffs.tou_calendar.updated_at, tariffs.sseg_rule.updated_at (bumped by
 --                  tariffs.touch_updated_at) + tariffs.save_tou_calendar — the
 --                  calendar, its windows and holiday rule in one transaction,
---                  stale-guarded, SECURITY INVOKER (00209's admin RLS decides).
+--                  stale-guarded, SECURITY INVOKER (00210's admin RLS decides).
 --
 -- WHO. Money rows (the four solar tables): read and written at Edit +
 -- financials only (solar_can_see_money). Studies' tariff columns: written at
@@ -55,14 +55,14 @@
 --          $c$SELECT tariffs.record_due_year_alerts('municipal')$c$);
 --   05:00 UTC = 07:00 SAST on 1 April (Eskom year) and 1 July (municipal year).
 --
--- 00207's and 00209's schema-wide @verify directives are re-checked on every
+-- 00208's and 00210's schema-wide @verify directives are re-checked on every
 -- deploy and this migration conforms to each: FORCE RLS on every new table in
 -- solar and tariffs; exactly one SELECT policy on solar.studies (unchanged);
 -- no RESTRICTIVE policy covering SELECT anywhere in solar; no FOR ALL and no
 -- RESTRICTIVE policy anywhere in tariffs; every SECURITY DEFINER function
 -- revokes EXECUTE from PUBLIC and anon.
 --
--- DEPENDS ON 00207 (solar helpers, studies), 00209 (tariffs schema).
+-- DEPENDS ON 00208 (solar helpers, studies), 00210 (tariffs schema).
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that dry run permanent.
 -- The "[mutation-probe Mn]" comments mark lines the red/green mutation runs
@@ -285,7 +285,7 @@ ALTER TABLE solar.studies ADD CONSTRAINT studies_escalation_shape CHECK (
     escalation IS NULL OR (jsonb_typeof(escalation) = 'object' AND jsonb_typeof(escalation->'overrides') = 'object'));
 
 -- INVOKER: every read below is one the caller may already make (published
--- tariffs via 00209's reader policy; the study's own override via the money
+-- tariffs via 00210's reader policy; the study's own override via the money
 -- SELECT policy). A draft tariff or a foreign override is invisible and reads
 -- as "not found", which refuses the same way.
 CREATE OR REPLACE FUNCTION solar.studies_tariff_guard()
@@ -332,14 +332,14 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION solar.studies_tariff_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.studies_tariff_guard() FROM anon;
--- Fires after 00207's studies_bind (triggers fire in name order).
+-- Fires after 00208's studies_bind (triggers fire in name order).
 CREATE TRIGGER studies_tariff_guard BEFORE INSERT OR UPDATE ON solar.studies
     FOR EACH ROW EXECUTE FUNCTION solar.studies_tariff_guard();
 
 -- ── 3. Binding for the money tables ─────────────────────────────────────────
 -- project_id and organisation_id come from the parent row, never the client
 -- (RLS keys on project_id). The parent is immutable. Attribution is bound.
--- SECURITY DEFINER like 00207's studies_bind: the parent lookup must not
+-- SECURITY DEFINER like 00208's studies_bind: the parent lookup must not
 -- depend on what the caller can see (a hidden parent would otherwise surface
 -- as a NOT NULL error instead of the named refusal).
 CREATE OR REPLACE FUNCTION solar.money_row_bind()
@@ -692,7 +692,7 @@ ALTER TABLE tariffs.error_report ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tariffs.error_report FORCE ROW LEVEL SECURITY;
 CREATE POLICY error_report_select ON tariffs.error_report FOR SELECT TO authenticated
     USING (reporter_id = (SELECT auth.uid()) OR (SELECT public.is_platform_tariff_admin()));
--- The tariff must be one the reporter can read (the subquery is under 00209's RLS).
+-- The tariff must be one the reporter can read (the subquery is under 00210's RLS).
 CREATE POLICY error_report_insert ON tariffs.error_report FOR INSERT TO authenticated
     WITH CHECK (public.solar_can_see_money(project_id) AND EXISTS (SELECT 1 FROM tariffs.tariff t WHERE t.id = error_report.tariff_id));  -- [mutation-probe M7]
 CREATE POLICY error_report_update ON tariffs.error_report FOR UPDATE TO authenticated
@@ -760,7 +760,7 @@ $$;
 
 -- ── 8. Validation fingerprint (the 2b Validate action) ──────────────────────
 -- The year's content as the validators see it. Review stamps are not content
--- (the same rule as 00209's invalidate_year_validation).
+-- (the same rule as 00210's invalidate_year_validation).
 CREATE OR REPLACE FUNCTION tariffs.year_content_fingerprint(p_year_id UUID)
 RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
     SELECT md5(
@@ -777,7 +777,7 @@ $$;
 -- Records the verdict only if the content is still what was checked. The year
 -- row is locked first, so a content write racing this call either changed the
 -- fingerprint already (refused here) or waits for this commit and then clears
--- the record through 00209's invalidate_year_validation trigger.
+-- the record through 00210's invalidate_year_validation trigger.
 CREATE OR REPLACE FUNCTION tariffs.record_year_validation(p_year_id UUID, p_blocking INTEGER, p_fingerprint TEXT)
 RETURNS VOID LANGUAGE plpgsql SET search_path = '' AS $$
 DECLARE
@@ -817,7 +817,7 @@ CREATE TRIGGER sseg_rule_touch BEFORE UPDATE ON tariffs.sseg_rule
 
 -- A TOU calendar, its windows and its holiday rule in ONE transaction. NULL id
 -- creates; otherwise the calendar is locked and the expected timestamp checked
--- (40001 when it moved). INVOKER: 00209's admin-only write policies decide; the
+-- (40001 when it moved). INVOKER: 00210's admin-only write policies decide; the
 -- explicit check gives a non-admin the named refusal instead of a silent no-op.
 -- Returns {id, updated_at}.
 CREATE OR REPLACE FUNCTION tariffs.save_tou_calendar(p_calendar_id UUID, p_expected_updated_at TIMESTAMPTZ,

@@ -15,7 +15,7 @@ import { withStorage } from '@/test/fake-storage'
 // Canonical `<org uuid>/<project uuid>/…` paths: the URL action refuses anything else (review round 3).
 const O = 'aaaaaaaa-0000-4000-8000-000000000001'
 const P = 'bbbbbbbb-0000-4000-8000-000000000001'
-// Monthly PDFs live under solar-reports/ so 00216's service-only storage + row policies cover them.
+// Monthly PDFs live under solar-reports/ so 00217's service-only storage + row policies cover them.
 const rows = [{ id: 'm1', project_id: P, organisation_id: O, kind: 'solar_monthly', title: 'March',
   storage_path: `${O}/${P}/solar-reports/solar_monthly-2026-03-v1-abcdef012345.pdf`, status: 'issued', version: 1 }]
 
@@ -25,7 +25,7 @@ beforeEach(() => {
   h.createServiceClient.mockReturnValue(withStorage(fakeSupabase()).client)
 })
 
-describe('solar_monthly follows Edit + financials (00217 mirrors this)', () => {
+describe('solar_monthly follows Edit + financials (00218 mirrors this)', () => {
   it('Edit cannot list or open it; Edit + financials can', async () => {
     h.level.mockResolvedValue('edit')
     await expect(listProjectReportsAction(P, 'solar_monthly')).resolves.toEqual({ error: 'You do not have Solar access on this project.' })

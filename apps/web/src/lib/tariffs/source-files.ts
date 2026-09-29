@@ -1,6 +1,6 @@
 /**
  * Tariff source files: the three MIME types the private tariff-sources bucket
- * accepts (00209), 2a's storage naming (<fy>/<sha256>.<ext>), metadata checks.
+ * accepts (00210), 2a's storage naming (<fy>/<sha256>.<ext>), metadata checks.
  */
 import { SOURCE_DOCUMENT_KINDS, SOURCE_DOCUMENT_STATUSES } from '@esite/shared'
 

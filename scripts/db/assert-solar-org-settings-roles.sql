@@ -1,8 +1,8 @@
--- BEHAVIOURAL assertions for 00208_solar_org_settings, run as real roles.
+-- BEHAVIOURAL assertions for 00209_solar_org_settings, run as real roles.
 --   Red:   scripts/db/dry-run-migration.sh <red.sql>   scripts/db/assert-solar-org-settings-roles.sql
 --   Green: scripts/db/dry-run-migration.sh <green.sql> scripts/db/assert-solar-org-settings-roles.sql
--- where red.sql / green.sql are built in the plan (Task 4 Step 2): 00207 must be in
--- front of 00208 while 00207 is not yet applied to production.
+-- where red.sql / green.sql are built in the plan (Task 4 Step 2): 00208 must be in
+-- front of 00209 while 00208 is not yet applied to production.
 -- Fixtures are minted inside the transaction and rolled back. Seeding happens as
 -- postgres before any impersonation (request.jwt.claims outlives RESET ROLE).
 -- REFUSAL PATTERN: a "…_REFUSED" check catches only the SQLSTATE the design

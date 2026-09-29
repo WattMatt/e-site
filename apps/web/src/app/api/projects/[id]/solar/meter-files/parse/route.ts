@@ -18,7 +18,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 300
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-// Same list as commit (no m3: 00210's source_unit CHECK refuses it), so a previewed choice can commit.
+// Same list as commit (no m3: 00211's source_unit CHECK refuses it), so a previewed choice can commit.
 const KNOWN_UNITS = COMMITTABLE_UNITS
 const Options = z.object({
   dateOrder: z.enum(['DMY', 'MDY', 'YMD']).optional(),

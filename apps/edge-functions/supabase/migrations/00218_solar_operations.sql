@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00217: Solar operations (Phase 7)
+-- Migration 00218: Solar operations (Phase 7)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §10 and §2.3 (Operations readiness);
 -- docs/solar/03-data-model-and-security.md §3 (installations, guarantees, downtime,
@@ -32,10 +32,10 @@
 --     Edit gate); the bind trigger also pins the baseline to the accepted proposal's run.
 --   * public.user_can_read_report_kind(): every Solar kind, solar_monthly on Edit + financials.
 --   * projects.reports: a solar_monthly row is evidence of what the client received; no session
---     deletes it (the 00216 proposal rule, extended to the monthly report).
+--     deletes it (the 00217 proposal rule, extended to the monthly report).
 --   * product_events: five Phase 7 events.
 -- RULES
---   * 00207's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
+--   * 00208's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
 --     policy in schema solar, every SECURITY DEFINER function revoked from anon.
 --   * Per-verb write policies only (never RESTRICTIVE FOR ALL: it narrows reads too, the 00205 lesson).
 -- ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('monthly_reports', 'downtime_history') AND cmd IN ('INSERT', 'UPDATE', 'DELETE'))
 -- sql: (SELECT bool_and(c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND c.relname IN ('installations', 'installation_meters', 'guarantees', 'ops_irradiation', 'downtime', 'downtime_history', 'monthly_report_notes', 'monthly_reports', 'handover_templates', 'handover_items'))
 -- sql: (SELECT NOT bool_or(p.prosecdef) FROM pg_proc p WHERE p.oid IN ('public.solar_ops_monthly_kwh(uuid, text)'::regprocedure, 'public.solar_ops_series(uuid, text, date)'::regprocedure))
--- sql: (SELECT prosrc LIKE '%solar_monthly%' AND prosrc LIKE '%solar_layout_sheet%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_proposal%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
+-- sql: (SELECT prosrc LIKE '%solar_monthly%' AND prosrc LIKE '%solar_layout_sheet%' AND prosrc LIKE '%solar_schematic_sheet%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_proposal%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
 -- sql: (SELECT public.report_kind_is_sensitive('solar_monthly') AND public.report_kind_is_sensitive('solar_proposal'))
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_monthly_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_handover_updated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- behaviour: scripts/db/assert-solar-operations-roles.sql, every row ok
@@ -845,7 +845,7 @@ REVOKE ALL ON FUNCTION public.solar_ops_series(UUID, TEXT, DATE) FROM anon;
 GRANT EXECUTE ON FUNCTION public.solar_ops_series(UUID, TEXT, DATE) TO authenticated, service_role;
 
 -- ── 12. Saved Solar reports read on the Solar level ─────────────────────────
--- Redefines 00216's functions IN FULL with EVERY Solar kind, so the final definition is right
+-- Redefines 00217's functions IN FULL with EVERY Solar kind, so the final definition is right
 -- whichever Solar branch lands last.
 CREATE OR REPLACE FUNCTION public.report_kind_is_sensitive(_kind TEXT)
 RETURNS BOOLEAN
@@ -865,6 +865,7 @@ SET row_security TO 'off'
 AS $function$
   SELECT CASE
     WHEN _kind = 'solar_layout_sheet' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
+    WHEN _kind = 'solar_schematic_sheet' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
     WHEN _kind = 'solar_technical' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
     WHEN _kind = 'solar_feasibility' THEN COALESCE(public.solar_can_see_money(_project_id), FALSE)
     WHEN _kind = 'solar_proposal' THEN COALESCE(public.solar_can_see_money(_project_id), FALSE)
@@ -882,12 +883,12 @@ GRANT EXECUTE ON FUNCTION public.report_kind_is_sensitive(TEXT) TO authenticated
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
 
 -- A solar_monthly row is evidence of what the client received (decision 13): no session deletes
--- it, mirroring 00216's reports_solar_proposal_delete_authz. RESTRICTIVE FOR DELETE only, so it
+-- it, mirroring 00217's reports_solar_proposal_delete_authz. RESTRICTIVE FOR DELETE only, so it
 -- narrows nothing but DELETE (the 00205 lesson).
 CREATE POLICY reports_solar_monthly_delete_authz ON projects.reports AS RESTRICTIVE FOR DELETE TO authenticated
     USING (kind IS DISTINCT FROM 'solar_monthly');
 
--- ── 13. Product events (re-declared in full: 00216's list + Phase 7) ───────
+-- ── 13. Product events (re-declared in full: 00217's list + Phase 7) ───────
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
     'rfi_created',
@@ -918,7 +919,7 @@ ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHEC
     'solar_proposal_withdrawn',
     'solar_proposal_responded',
     'solar_narrative_drafted',
-    -- 00217: operations
+    -- 00218: operations
     'solar_installation_saved',
     'solar_guarantee_saved',
     'solar_downtime_saved',

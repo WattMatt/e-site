@@ -5501,7 +5501,7 @@ Pure TypeScript in `@esite/shared`, no DB, no UI:
 5. GCR densities (30 / 45 W/m²) are used as averages over operating hours; confirm (D-06).
 
 ### Next
-Plan 3a-ii on this branch: migration `00210` (claimed at apply time), `solar-meter-raw` bucket, parse/commit routes, D-23 volume test.
+Plan 3a-ii on this branch: migration `00211` (claimed at apply time), `solar-meter-raw` bucket, parse/commit routes, D-23 volume test.
 
 ### Verification
 shared / web / db suites green; shared + web type-check clean; corpus smoke test green with `METER_CORPUS_DIR` set.

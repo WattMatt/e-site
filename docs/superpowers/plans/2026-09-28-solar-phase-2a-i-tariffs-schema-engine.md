@@ -4,7 +4,7 @@
 
 **Goal:** Create the `tariffs` reference-data schema (platform-admin writes, subscriber reads, publish state machine, immutable published rows) and the pure TypeScript tariff core in `@esite/shared`: canonical types, unit handling, validators, year-on-year diff and a bill engine that reproduces the hand-computed golden bills, including net-billing carry-forward.
 
-**Architecture:** One migration (`00209_tariffs_schema.sql`, number claimed at apply time) creates a new exposed schema `tariffs` with per-verb RLS, FORCE RLS, no anon, two SECURITY DEFINER helpers in `public`, and invoker triggers that run the year state machine and freeze published data. A pure TS module `packages/shared/src/tariffs/` holds the model and the engine; nothing in it does I/O. Plan 2a-ii (`2026-09-28-solar-phase-2a-ii-tariffs-parsers-ingest.md`) builds the parsers and the ingestion script on top of these types.
+**Architecture:** One migration (`00210_tariffs_schema.sql`, number claimed at apply time) creates a new exposed schema `tariffs` with per-verb RLS, FORCE RLS, no anon, two SECURITY DEFINER helpers in `public`, and invoker triggers that run the year state machine and freeze published data. A pure TS module `packages/shared/src/tariffs/` holds the model and the engine; nothing in it does I/O. Plan 2a-ii (`2026-09-28-solar-phase-2a-ii-tariffs-parsers-ingest.md`) builds the parsers and the ingestion script on top of these types.
 
 **Tech Stack:** Postgres (Supabase) with `@verify` blocks and `scripts/db/dry-run-migration.sh` impersonation assertions; TypeScript; Vitest; pnpm/Turborepo.
 
@@ -17,8 +17,8 @@
 ## Ground rules (read once)
 
 - Work in the worktree created in Task 1. Every path below is relative to its root.
-- **Migration number:** the file is `00209_tariffs_schema.sql`. Numbers are claimed **at apply time**: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and the migration filenames in open PRs. If `00209` is taken, rename the file and every reference to it (assertion file header, this plan's commands).
-- **This migration depends on `00207`** (`solar.org_subscription_active`). While `00207` is not in the production ledger, dry runs concatenate `00207` + `00209` (Task 11 shows how).
+- **Migration number:** the file is `00210_tariffs_schema.sql`. Numbers are claimed **at apply time**: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and the migration filenames in open PRs. If `00210` is taken, rename the file and every reference to it (assertion file header, this plan's commands).
+- **This migration depends on `00208`** (`solar.org_subscription_active`). While `00208` is not in the production ledger, dry runs concatenate `00208` + `00210` (Task 11 shows how).
 - **Do not apply to production.** Dry runs only, inside rolled-back transactions.
 - Run all three suites before claiming done: `pnpm --filter web test`, `pnpm --filter @esite/shared test`, `pnpm --filter @esite/db test:ci`.
 - Never `REVOKE … FROM PUBLIC` alone on a new function: also `REVOKE … FROM anon` (Supabase grants anon directly).
@@ -43,7 +43,7 @@
 | `packages/shared/src/tariffs/index.ts` | Barrel |
 | `packages/shared/src/tariffs/*.test.ts` | Unit tests (one per module; the bill engine has two) |
 | `packages/shared/src/index.ts` | Re-export `./tariffs` |
-| `apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql` | The migration |
+| `apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql` | The migration |
 | `scripts/db/assert-tariffs-schema-roles.sql` | Behavioural impersonation assertions |
 | `apps/edge-functions/supabase/config.toml` | Expose `tariffs` locally |
 | `packages/db/src/__tests__/security/anon-execute-secdef.test.ts` | Classify `tariffs` as exposed |
@@ -2060,12 +2060,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `scripts/db/assert-tariffs-schema-roles.sql`:
 ```sql
--- BEHAVIOURAL assertions for 00209_tariffs_schema, run as real roles.
---   While 00207 is not in the production ledger, dry-run the pair:
---     cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
---         apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql > "$S/combo.sql"
+-- BEHAVIOURAL assertions for 00210_tariffs_schema, run as real roles.
+--   While 00208 is not in the production ledger, dry-run the pair:
+--     cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+--         apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql > "$S/combo.sql"
 --     scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-tariffs-schema-roles.sql      (GREEN)
---   RED first: 00207 alone (no tariffs schema: the file aborts).
+--   RED first: 00208 alone (no tariffs schema: the file aborts).
 -- Fixtures are minted inside the transaction and rolled back. The platform
 -- tariff admin is a throwaway user made an active admin of WM-Consulting
 -- inside the transaction; no real WM member is impersonated.
@@ -2468,10 +2468,10 @@ SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 
 ```bash
 S="$(mktemp -d)"
-cp apps/edge-functions/supabase/migrations/00207_solar_foundation.sql "$S/only-00207.sql"
-scripts/db/dry-run-migration.sh "$S/only-00207.sql" scripts/db/assert-tariffs-schema-roles.sql
+cp apps/edge-functions/supabase/migrations/00208_solar_foundation.sql "$S/only-00208.sql"
+scripts/db/dry-run-migration.sh "$S/only-00208.sql" scripts/db/assert-tariffs-schema-roles.sql
 ```
-Expected: RED — `✗ assert-tariffs-schema-roles.sql aborted` with `schema "tariffs" does not exist` (or `relation "tariffs.ingest_run" does not exist`). If `00207` is already in the production ledger, `00207` alone errors on `CREATE POLICY … already exists`; then use an empty file instead: `: > "$S/noop.sql"` and dry-run `"$S/noop.sql"` — same RED.
+Expected: RED — `✗ assert-tariffs-schema-roles.sql aborted` with `schema "tariffs" does not exist` (or `relation "tariffs.ingest_run" does not exist`). If `00208` is already in the production ledger, `00208` alone errors on `CREATE POLICY … already exists`; then use an empty file instead: `: > "$S/noop.sql"` and dry-run `"$S/noop.sql"` — same RED.
 
 - [ ] **Step 3: Commit**
 
@@ -2487,14 +2487,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 11: The migration (GREEN)
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql`
+- Create: `apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql`
 
 - [ ] **Step 1: Write the migration**
 
-`apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql`:
+`apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql`:
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00209: Tariff library schema (Solar Phase 2a)
+-- Migration 00210: Tariff library schema (Solar Phase 2a)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §4; source reality in
 -- docs/solar/as-is/09-nersa-tariff-source.md; decisions D-03 (E-Site runs the
@@ -2526,7 +2526,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 -- anyone, the service role included (triggers are not bypassed by BYPASSRLS).
 -- Corrections are a new version through review.
 --
--- DEPENDS ON 00207 (solar.org_subscription_active).
+-- DEPENDS ON 00208 (solar.org_subscription_active).
 -- NEW SCHEMA CHECKLIST (00126): grants below (no anon), config.toml, AND the
 -- production PostgREST db_schema PATCH at apply time (else PGRST002).
 -- The "[mutation-probe Mn]" comments mark lines the red/green mutation runs
@@ -2625,7 +2625,7 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
 $$;
 
 -- D-03b: the caller is active in at least one org with a live Solar
--- subscription (WM-Consulting counts, through the 00207 bypass).
+-- subscription (WM-Consulting counts, through the 00208 bypass).
 CREATE OR REPLACE FUNCTION public.caller_has_any_solar_org()
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT auth.uid() IS NOT NULL AND EXISTS (
@@ -3148,11 +3148,11 @@ NOTIFY pgrst, 'reload schema';
 
 ```bash
 S="$(mktemp -d)"
-cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
-    apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql > "$S/combo.sql"
+cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+    apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql > "$S/combo.sql"
 scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-tariffs-schema-roles.sql
 ```
-Expected: every check `✓`, `0 failed`, 50 checks. (If `00207` is already in the ledger, dry-run `apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql` alone.) Also re-run `scripts/db/assert-solar-foundation-roles.sql` against the same combo to prove 00209 changes nothing for 00207:
+Expected: every check `✓`, `0 failed`, 50 checks. (If `00208` is already in the ledger, dry-run `apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql` alone.) Also re-run `scripts/db/assert-solar-foundation-roles.sql` against the same combo to prove 00210 changes nothing for 00208:
 ```bash
 scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-foundation-roles.sql
 ```
@@ -3163,13 +3163,13 @@ Expected: all `✓`.
 ```bash
 pnpm --filter web exec vitest run src/lib/migration-verify-block.contract.test.ts
 ```
-Expected: PASS. This contract test runs `parseVerifyBlock` over every migration ≥ `00185`, so it now parses 00209's 58 directives; a failure names the `@verify line N` to fix (unknown directive word, prose-only line, or an em dash inside a `sql:` payload). (Holding against a real database is proven by `scripts/verify-migration-applied.ts` after the owner applies; the dry run's behaviour file already exercised every object.)
+Expected: PASS. This contract test runs `parseVerifyBlock` over every migration ≥ `00185`, so it now parses 00210's 58 directives; a failure names the `@verify line N` to fix (unknown directive word, prose-only line, or an em dash inside a `sql:` payload). (Holding against a real database is proven by `scripts/verify-migration-applied.ts` after the owner applies; the dry run's behaviour file already exercised every object.)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql
-git commit -m "feat(tariffs): 00209 tariff library schema — subscriber reads, admin writes, immutable published years
+git add apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql
+git commit -m "feat(tariffs): 00210 tariff library schema — subscriber reads, admin writes, immutable published years
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3186,8 +3186,8 @@ A check never seen failing is decorative. Each mutant removes one mechanism; the
 
 ```bash
 S="$(mktemp -d)"
-M=apps/edge-functions/supabase/migrations/00209_tariffs_schema.sql
-BASE=apps/edge-functions/supabase/migrations/00207_solar_foundation.sql
+M=apps/edge-functions/supabase/migrations/00210_tariffs_schema.sql
+BASE=apps/edge-functions/supabase/migrations/00208_solar_foundation.sql
 # M1: no immutability trigger on charge
 perl -ne 'print unless /\[mutation-probe M1\]/' "$M" > "$S/m1.sql"
 # M2: tariff_year readable by everyone
@@ -3238,17 +3238,17 @@ Expected: FAIL — `new schema: add it to EXPOSED_SCHEMAS or UNEXPOSED_SCHEMAS`,
 
 In `packages/db/src/__tests__/security/anon-execute-secdef.test.ts`, replace:
 ```ts
-  // 'solar' is created by 00207 and added to db_schema by the PATCH that
+  // 'solar' is created by 00208 and added to db_schema by the PATCH that
   // accompanies its apply (the 00126 new-schema checklist), so it is exposed.
   'solar',
 ] as const
 ```
 with:
 ```ts
-  // 'solar' is created by 00207 and added to db_schema by the PATCH that
+  // 'solar' is created by 00208 and added to db_schema by the PATCH that
   // accompanies its apply (the 00126 new-schema checklist), so it is exposed.
   'solar',
-  // 'tariffs' (00209): same checklist, same PATCH, so exposed.
+  // 'tariffs' (00210): same checklist, same PATCH, so exposed.
   'tariffs',
 ] as const
 ```
@@ -3297,16 +3297,16 @@ cat > /tmp/solar-2a-pr.md <<'EOF'
 Plans: `docs/superpowers/plans/2026-09-28-solar-phase-2a-i-tariffs-schema-engine.md` (this part) and `…-2a-ii-tariffs-parsers-ingest.md` (parsers + ingestion, pushed to this same branch).
 
 ### 2a-i — schema, canonical types, bill engine
-- `00209_tariffs_schema.sql` (number claimed at apply time; depends on `00207`): new exposed schema `tariffs`; subscriber reads of published/superseded years only (D-03b), platform-admin and service-role writes (D-03), publish state machine with supersede, immutable published data, inferred units must be reviewed before publish, private `tariff-sources` bucket.
+- `00210_tariffs_schema.sql` (number claimed at apply time; depends on `00208`): new exposed schema `tariffs`; subscriber reads of published/superseded years only (D-03b), platform-admin and service-role writes (D-03), publish state machine with supersede, immutable published data, inferred units must be reviewed before publish, private `tariff-sources` bucket.
 - `@esite/shared` `tariffs/`: canonical types, units, TOU aggregation, validators, YoY diff, bill engine with net-billing carry-forward and FY-end reset. Golden cases 1–8 and 10 reproduce as-is/09 §7.2 to the cent.
 
 ### Evidence
-- Dry run (00207 + 00209): <paste: N/N green>
+- Dry run (00208 + 00210): <paste: N/N green>
 - Mutations: <paste the four red sets from Task 12>
 - Suites before → after: shared <a → b>, web <c → d>, db <e → f>; type-check clean.
 
 ### Apply checklist (owner)
-1. Re-check ledger `max(version)`, `origin/main` and open-PR migration filenames; renumber `00209` if taken. `00207` must be applied first.
+1. Re-check ledger `max(version)`, `origin/main` and open-PR migration filenames; renumber `00210` if taken. `00208` must be applied first.
 2. PATCH production PostgREST `db_schema` to add `tariffs` before merging (else `PGRST002`).
 3. Merge → deploy workflow applies → `scripts/verify-migration-applied.ts` checks the `@verify` block.
 4. Re-run `scripts/db/assert-tariffs-schema-roles.sql` against production with an empty migration file → all ok.

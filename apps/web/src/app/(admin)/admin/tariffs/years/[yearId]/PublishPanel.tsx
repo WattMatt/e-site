@@ -1,5 +1,5 @@
 'use client'
-/** Validate + Publish (spec §12). The database enforces every publish rule (00209). */
+/** Validate + Publish (spec §12). The database enforces every publish rule (00210). */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'

@@ -4,7 +4,7 @@
 
 **Goal:** After installation, record the as-built system and its commissioning date (seeded from the ACCEPTED proposal's case), derive the expected generation per month automatically from a chosen guarantee basis, import actual generation through the existing meter pipeline (idempotent, month from the data), track monthly performance, log and auto-detect downtime from the sun's position, generate an immutable monthly client report (`projects.reports` kind `solar_monthly` + frozen metric snapshot + PDF, lost revenue at the pinned tariff's TOU rates via the bill engine), keep engineer commentary separate from the numbers, and track the handover documents against E-Site Documents.
 
-**Architecture:** One migration (`00217_solar_operations.sql`) adds ten `solar.*` tables (installations, installation_meters, guarantees, ops_irradiation, downtime, downtime_history, monthly_report_notes, monthly_reports, handover_templates, handover_items), two SECURITY INVOKER read functions that aggregate generation in SQL and return ONE JSON document (no PostgREST row cap; one reading per meter per interval, so a re-import can never double), the `solar_monthly` report kind in `user_can_read_report_kind()`, and five product events. All arithmetic (month bucketing, guarantee derivation, expected-energy shaping, SPA daylight test, downtime candidates, performance rows, year-to-date, lost energy, the snapshot and the report model, handover completion, readiness) is pure TypeScript in a new `@esite/shared/solar-operations` subpath with unit tests. The web app gates, loads rows through the caller's session (RLS decides), calls the shared functions on the server, values lost energy through 4b's `resolveStudyTariff` with an energy-only bill build, renders the PDF with react-pdf through Phase 6's `pdfText` and `solarBranding`, and never computes a displayed figure in the browser.
+**Architecture:** One migration (`00218_solar_operations.sql`) adds ten `solar.*` tables (installations, installation_meters, guarantees, ops_irradiation, downtime, downtime_history, monthly_report_notes, monthly_reports, handover_templates, handover_items), two SECURITY INVOKER read functions that aggregate generation in SQL and return ONE JSON document (no PostgREST row cap; one reading per meter per interval, so a re-import can never double), the `solar_monthly` report kind in `user_can_read_report_kind()`, and five product events. All arithmetic (month bucketing, guarantee derivation, expected-energy shaping, SPA daylight test, downtime candidates, performance rows, year-to-date, lost energy, the snapshot and the report model, handover completion, readiness) is pure TypeScript in a new `@esite/shared/solar-operations` subpath with unit tests. The web app gates, loads rows through the caller's session (RLS decides), calls the shared functions on the server, values lost energy through 4b's `resolveStudyTariff` with an energy-only bill build, renders the PDF with react-pdf through Phase 6's `pdfText` and `solarBranding`, and never computes a displayed figure in the browser.
 
 **Tech Stack:** Postgres (Supabase) + RLS, Next.js 15 App Router (server components, server actions, route handlers `runtime='nodejs'`), TypeScript, zod, `@react-pdf/renderer` (existing), vitest + RTL, the Phase 4a engine's SPA (`@esite/shared/solar-engine` `solarPosition`), the Phase 2a tariff bill engine (`createBillCalculator`), the Phase 3a meter pipeline (`/api/projects/[id]/solar/meter-files{,/parse,/commit}`), `node:crypto` for SHA-256.
 
@@ -15,7 +15,7 @@
 | File | Tasks | Produces |
 |---|---|---|
 | `2026-09-29-solar-phase-7-0-index.md` (this) | 0 | Worktree, preflight facts, decisions, conventions, file map |
-| `2026-09-29-solar-phase-7-1-schema.md` | 1–4 | `00217_solar_operations.sql`, behavioural assertions (red → green → eight mutations), product-events registry |
+| `2026-09-29-solar-phase-7-1-schema.md` | 1–4 | `00218_solar_operations.sql`, behavioural assertions (red → green → eight mutations), product-events registry |
 | `2026-09-29-solar-phase-7-2-shared.md` | 5–15 | `@esite/shared/solar-operations`: time, as-built, baseline, guarantee, shape, downtime detection, performance + YTD, lost energy, handover, snapshot + report model, readiness + activity |
 | `2026-09-29-solar-phase-7-3-server.md` | 16–25 | Report-kind access, error sentences + RPC wrappers + installation seed, view model loader, installation / meter / guarantee / irradiation / downtime actions, handover actions, lost revenue, monthly report PDF, generation + notes |
 | `2026-09-29-solar-phase-7-4-ui.md` | 26–31 | Engine-free client subpath, page + readiness dots, installation + meters + generation import, guarantee + irradiation + performance table, downtime log + candidates, monthly report panel, handover checklist + settings template card |
@@ -25,7 +25,7 @@
 
 ## Decisions this plan takes (flagged for the owner in the final report)
 
-1. **Base branch.** Phase 7 imports Phase 6 (`solar.proposals`, `pdfText`, `solarBranding`, `SOLAR_READ_REPORT_KINDS`, the 00216 CHECK lists) and Phase 4b (`solar.case_runs`, `decodeHourlyCsv`, `resolveStudyTariff`, `getGzipText`). **Task 0 WAITS for `origin/feat/solar-phase-6`**; it never bases on an earlier branch.
+1. **Base branch.** Phase 7 imports Phase 6 (`solar.proposals`, `pdfText`, `solarBranding`, `SOLAR_READ_REPORT_KINDS`, the 00217 CHECK lists) and Phase 4b (`solar.case_runs`, `decodeHourlyCsv`, `resolveStudyTariff`, `getGzipText`). **Task 0 WAITS for `origin/feat/solar-phase-6`**; it never bases on an earlier branch.
 2. **The modelled baseline is frozen INTO the installation row at creation** (`installations.baseline`): the accepted run's 12 monthly P50 kWh, a 12 × 24 mean diurnal PV profile (kW per SAST hour of day), the TMY's monthly GHI (kWh/m²), the design PR, DC kWp and AC kW, and the run id + inputs hash. A later case edit, re-run or deletion therefore cannot change the guarantee of an operating plant. The baseline is immutable (trigger); changing it means a new installation record. `as_built` (equipment, sizes) stays editable.
 3. **An installation can only be created from an ACCEPTED proposal of the study** (spec §10 "from accepted proposal case"). The bind trigger re-checks `status = 'accepted'` and the study. With no accepted proposal the card says why and links to Reports & Proposal.
 4. **Guarantee basis** is ONE current row per installation: `p50` (baseline monthly), `pct_of_modelled` (pct × P50) or `manual` (12 contractual monthly kWh). Expected kWh is derived per month at read time — never typed per month. P50 and %-of-modelled are degraded by `degradation_pct_per_year` (default = the case's annual degradation) from operating year 2; manual is not degraded (it is the contract's own schedule). The commissioning month is prorated by days; a leap February is scaled 29/28 (the TMY February has 28 days).
@@ -42,8 +42,8 @@
 15. **Handover**: per-installation items seeded from the org template (`solar.handover_templates`, owner/admin, `/settings/solar`) or the built-in "Solar PV Handover" default; each item links ONE `tenants.documents` id of the same project (the Documents module), or is marked N/A; completion % = (linked + N/A) / all. No folder names anywhere. No links to Schedule tasks (Phase 5b is not on the base).
 16. **Downtime has an append-only history** (`downtime_history`: the old row, actor, time) written by trigger on every direct UPDATE/DELETE — downtime feeds a contractual claim (as-is E.9).
 17. **Not built:** Solcast forecast (D-08b), notifications/emails (none in the spec for Phase 7), a manual installation without a proposal, per-day "slot overrides" (WM's) — a downtime row IS the override.
-18. **Report kinds**: `solar_monthly` → Edit + financials. `00217` redefines `report_kind_is_sensitive()` and `user_can_read_report_kind()` IN FULL with every Solar kind (`solar_layout_sheet`, `solar_technical`, `solar_feasibility`, `solar_proposal`, `solar_monthly`) so the final definition is right whichever Solar branch merges last.
-19. **Product events**: 00216's list + `solar_installation_saved`, `solar_guarantee_saved`, `solar_downtime_saved`, `solar_monthly_report_generated`, `solar_handover_updated`.
+18. **Report kinds**: `solar_monthly` → Edit + financials. `00218` redefines `report_kind_is_sensitive()` and `user_can_read_report_kind()` IN FULL with every Solar kind (`solar_layout_sheet`, `solar_technical`, `solar_feasibility`, `solar_proposal`, `solar_monthly`) so the final definition is right whichever Solar branch merges last.
+19. **Product events**: 00217's list + `solar_installation_saved`, `solar_guarantee_saved`, `solar_downtime_saved`, `solar_monthly_report_generated`, `solar_handover_updated`.
 
 ---
 
@@ -57,11 +57,11 @@
 6. **Generate without a pinned tariff**: disabled (as briefed). Alternative: allow a report with the Rand column omitted and a sentence saying why.
 7. **Year to date** = calendar year. Alternative: operating year (from the commissioning month) or the licensee's financial year.
 8. **Commentary visibility**: Edit + financials only (the financial section discusses Rand). Alternative: split — technical sections at Edit, financial at Edit + financials.
-9. **Irradiation input**: a monthly figure typed in with a source note. Alternative: import an irradiance CSV through the meter pipeline (needs a new `quantity` value in 00210's CHECK — a separate migration).
+9. **Irradiation input**: a monthly figure typed in with a source note. Alternative: import an irradiance CSV through the meter pipeline (needs a new `quantity` value in 00211's CHECK — a separate migration).
 10. **Monthly report deletion**: never (evidence of what the client received). Alternative: owner/admin may delete a superseded version.
 11. **Distribution**: no email in Phase 7. Alternative: reuse `notify_solar_email` to send the PDF link to the client on Generate.
 12. **Handover links to Schedule tasks** (Phase 5b): not built — 5b is not on the base. Alternative: add an optional `schedule_task_id` once 5b merges.
-13. **Product-events CHECK after merges**: `00217` re-declares `00216`'s list plus five; if Phase 5/5b add events and merge after this branch, the integration merge must union the CHECK (same caveat Phase 6 carries).
+13. **Product-events CHECK after merges**: `00218` re-declares `00217`'s list plus five; if Phase 5/5b add events and merge after this branch, the integration merge must union the CHECK (same caveat Phase 6 carries).
 
 ---
 
@@ -88,11 +88,11 @@
 
 | Path | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00217_solar_operations.sql` | Tables, bind/guard/history triggers, RLS, two read functions, report-kind gate, product-event CHECK, `@verify` |
+| `apps/edge-functions/supabase/migrations/00218_solar_operations.sql` | Tables, bind/guard/history triggers, RLS, two read functions, report-kind gate, product-event CHECK, `@verify` |
 | `scripts/db/assert-solar-operations-roles.sql` | Behavioural assertions as real roles |
 | `packages/shared/src/solar/operations/{index,time,as-built,baseline,guarantee,shape,downtime-detect,performance,lost-energy,handover,report}.ts` (+ tests), `__fixtures__/baseline.ts` | `@esite/shared/solar-operations` |
 | `packages/shared/src/solar/operations/client.ts` | `@esite/shared/solar-operations/client` — the engine-free part for `'use client'` files |
-| `apps/web/src/lib/solar/operations/errors.ts` (+ test) | 00217 trigger sentences shown; everything else via `humanSolarError` |
+| `apps/web/src/lib/solar/operations/errors.ts` (+ test) | 00218 trigger sentences shown; everything else via `humanSolarError` |
 | `apps/web/src/lib/solar/operations/series.ts` (+ test) | RPC wrappers, JSON → typed |
 | `apps/web/src/lib/solar/operations/data.ts` (+ test) | Operations page view model loader |
 | `apps/web/src/lib/solar/operations/baseline-loader.ts` (+ test) | Accepted proposal → baseline + as-built |
@@ -155,12 +155,12 @@ Expected: `Preparing worktree (new branch 'feat/solar-phase-7')`; install comple
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-7
 M=apps/edge-functions/supabase/migrations
-git grep -n "CREATE TABLE IF NOT EXISTS solar.case_runs" -- $M/00215_solar_cases.sql
-git grep -n "CREATE TABLE IF NOT EXISTS solar.weather_datasets" -- $M/00215_solar_cases.sql
-git grep -n "CREATE TABLE IF NOT EXISTS solar.proposals" -- $M/00216_solar_proposals.sql
-git grep -n "CREATE OR REPLACE FUNCTION public.user_can_read_report_kind" -- $M/00216_solar_proposals.sql
-git grep -n "CREATE TABLE IF NOT EXISTS solar.meter_readings" -- $M/00210_solar_meter_data.sql
-git grep -n "CREATE TABLE IF NOT EXISTS solar.study_meters" -- $M/00210_solar_meter_data.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.case_runs" -- $M/00216_solar_cases.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.weather_datasets" -- $M/00216_solar_cases.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.proposals" -- $M/00217_solar_proposals.sql
+git grep -n "CREATE OR REPLACE FUNCTION public.user_can_read_report_kind" -- $M/00217_solar_proposals.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.meter_readings" -- $M/00211_solar_meter_data.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.study_meters" -- $M/00211_solar_meter_data.sql
 git grep -n "export function decodeHourlyCsv" -- packages/shared/src/solar/cases/hourly-csv.ts
 git grep -n "export interface CaseRunOutputs\|export interface MonthlyRow" -- packages/shared/src/solar/cases/outputs.ts
 git grep -n "CaseConfigSchema = \|degradation:" -- packages/shared/src/solar/cases/config.ts
@@ -194,12 +194,12 @@ M=apps/edge-functions/supabase/migrations
 git grep -l "product_events_event_check" -- $M | sort | tail -1
 # (b) The last migration that (re)defines user_can_read_report_kind (Task 1 redefines it in full).
 git grep -l "FUNCTION public.user_can_read_report_kind" -- $M | sort | tail -1
-# (c) Is 00213 (tariff selection, Phase 2b) on the base? If not, every tariff resolves "not pinned".
-ls $M/00213_*.sql 2>/dev/null || echo "00213 NOT on base: monthly report Generate will show the not-pinned reason"
+# (c) Is 00214 (tariff selection, Phase 2b) on the base? If not, every tariff resolves "not pinned".
+ls $M/00214_*.sql 2>/dev/null || echo "00214 NOT on base: monthly report Generate will show the not-pinned reason"
 # (d) The documents table the Documents module reads.
 git grep -n "schema('tenants')" -- 'apps/web/src/app/(admin)/projects/[id]/documents/page.tsx'
 ```
-Expected today: (a) `00216_solar_proposals.sql`, (b) `00216_solar_proposals.sql`, (c) the "NOT on base" line (unless 2b merged), (d) a `.from('documents')` on `tenants`. If (a) or (b) names a later migration, Task 1 copies ITS list/branches instead and keeps every value.
+Expected today: (a) `00217_solar_proposals.sql`, (b) `00217_solar_proposals.sql`, (c) the "NOT on base" line (unless 2b merged), (d) a `.from('documents')` on `tenants`. If (a) or (b) names a later migration, Task 1 copies ITS list/branches instead and keeps every value.
 
 - [ ] **Step 5: Check the migration number in all three places (it is claimed at APPLY time; this is only the branch check).**
 
@@ -210,7 +210,7 @@ for r in $(git branch -r | grep -v HEAD); do git ls-tree -r --name-only $r -- ap
 gh pr list --state open --json number,files --jq '.[] | select(any(.files[]; .path | test("migrations/002[1-9]"))) | {number, files: [.files[].path | select(test("migrations/"))]}'
 grep -h -o -E '002[0-9]{2}_[a-z_]+\.sql' /Users/spud/.config/superpowers/worktrees/esite/solar-phase-1a/docs/superpowers/plans/*.md | sort -u
 ```
-Expected: `00211`–`00216` claimed by Solar branches/plans; nothing holds `00217`. If ANY branch, PR or plan holds `00217`, STOP and ask which number to use.
+Expected: `00212`–`00217` claimed by Solar branches/plans; nothing holds `00218`. If ANY branch, PR or plan holds `00218`, STOP and ask which number to use.
 
 - [ ] **Step 6: Baseline the three suites.**
 

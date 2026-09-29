@@ -2,7 +2,7 @@ import 'server-only'
 /**
  * The tariff the Tariff tab bill check costs for this study: `loadStudyPricing` (the ONE pricing
  * loader, shared with Yield & Financials — I-1) read through the caller's session, because the
- * override and the export rates are money tables (00213). The tariff is the resolver's: the project
+ * override and the export rates are money tables (00214). The tariff is the resolver's: the project
  * override's rows when there is one (D-10), else the pinned published tariff.
  */
 import type { Tariff } from '@esite/shared'

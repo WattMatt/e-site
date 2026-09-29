@@ -2,7 +2,7 @@
 /**
  * Meters (spec §10): generation meters (kind solar) and the council/bulk meter for realised
  * consumption. The role follows the meter's kind, so a council meter can never be linked as
- * generation (00217 refuses it too).
+ * generation (00218 refuses it too).
  */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'

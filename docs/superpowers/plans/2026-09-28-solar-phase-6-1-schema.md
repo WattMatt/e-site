@@ -1,28 +1,28 @@
-# Solar Phase 6 — Part 1: Schema (`00216_solar_proposals.sql`) and behavioural assertions
+# Solar Phase 6 — Part 1: Schema (`00217_solar_proposals.sql`) and behavioural assertions
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Read `2026-09-28-solar-phase-6-0-index.md` first (decisions, conventions, `$W`, `$S`).
 
 ---
 
-### Task 1: Write migration `00216_solar_proposals.sql`
+### Task 1: Write migration `00217_solar_proposals.sql`
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00216_solar_proposals.sql`
+- Create: `apps/edge-functions/supabase/migrations/00217_solar_proposals.sql`
 
 - [ ] **Step 1: Re-check the number immediately before writing.**
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6 && git fetch origin && \
-for r in $(git branch -r | grep -v HEAD); do git ls-tree -r --name-only $r -- apps/edge-functions/supabase/migrations | grep -F '00216_' | sed "s|^|$r: |"; done
+for r in $(git branch -r | grep -v HEAD); do git ls-tree -r --name-only $r -- apps/edge-functions/supabase/migrations | grep -F '00217_' | sed "s|^|$r: |"; done
 ```
 Expected: no output. Any output → STOP and ask for a number.
 
-- [ ] **Step 2: Confirm the two CHECK lists you are about to re-declare.** The product-events list below is `00215`'s plus six; the notifications list is `00208`'s plus two. If Task 0 Step 4(c) named a LATER migration for either CHECK, open it and add every value it has that the lists below lack (never drop one).
+- [ ] **Step 2: Confirm the two CHECK lists you are about to re-declare.** The product-events list below is `00216`'s plus six; the notifications list is `00209`'s plus two. If Task 0 Step 4(c) named a LATER migration for either CHECK, open it and add every value it has that the lists below lack (never drop one).
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 M=apps/edge-functions/supabase/migrations; S=/private/tmp/claude-501/solar-6; mkdir -p $S
-awk '/product_events_event_check CHECK/,/\)\);/' $M/00215_solar_cases.sql | grep -o "'[a-z_]*'" | tr -d "'" | sort > $S/events-base.txt
+awk '/product_events_event_check CHECK/,/\)\);/' $M/00216_solar_cases.sql | grep -o "'[a-z_]*'" | tr -d "'" | sort > $S/events-base.txt
 wc -l < $S/events-base.txt
 ```
 Expected: `22`.
@@ -31,7 +31,7 @@ Expected: `22`.
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00216: Solar reports and client proposals (Phase 6)
+-- Migration 00217: Solar reports and client proposals (Phase 6)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §9, §15, §2.2; docs/solar/03-data-model-and-security.md
 -- §3 (proposals, proposal_events), §3.1, §5 items 5-7; decisions D-15, D-17, D-18.
@@ -54,7 +54,7 @@ Expected: `22`.
 --     technical on View; feasibility and proposal on Edit + financials).
 --   * projects.project_settings.notify_solar_email; two notification types; six product events.
 -- RULES
---   * 00207's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
+--   * 00208's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
 --     policy in schema solar, every SECURITY DEFINER function revoked from anon.
 --   * Per-verb write policies only (never RESTRICTIVE FOR ALL: it narrows reads too, the 00205 lesson).
 -- ---------------------------------------------------------------------------
@@ -742,7 +742,7 @@ REVOKE ALL ON FUNCTION public.solar_portfolio(UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION public.solar_portfolio(UUID) TO authenticated, service_role;
 
 -- ── 8. Saved Solar reports read on the Solar level ──────────────────────────
--- Redefines 00183's functions IN FULL. solar_layout_sheet is carried from 00211 (Phase 5) so the
+-- Redefines 00183's functions IN FULL. solar_layout_sheet is carried from 00212 (Phase 5) so the
 -- FINAL definition gates every Solar kind whichever branch lands first.
 CREATE OR REPLACE FUNCTION public.report_kind_is_sensitive(_kind TEXT)
 RETURNS BOOLEAN
@@ -781,7 +781,7 @@ GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authen
 ALTER TABLE projects.project_settings
     ADD COLUMN IF NOT EXISTS notify_solar_email BOOLEAN NOT NULL DEFAULT TRUE;
 
--- ── 10. Notification types (re-declared in full: 00208's list + Phase 6) ────
+-- ── 10. Notification types (re-declared in full: 00209's list + Phase 6) ────
 ALTER TABLE public.notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
     type = ANY (ARRAY[
@@ -810,13 +810,13 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
         'solar_access_requested',
         'solar_access_changed',
         'solar_access_declined',
-        -- 00216: client responses to a proposal
+        -- 00217: client responses to a proposal
         'solar_proposal_accepted',
         'solar_proposal_declined'
     ]::text[])
 );
 
--- ── 11. Product events (re-declared in full: 00215's list + Phase 6) ────────
+-- ── 11. Product events (re-declared in full: 00216's list + Phase 6) ────────
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
     'rfi_created',
@@ -868,7 +868,7 @@ NOTIFY pgrst, 'reload schema';
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
-M=apps/edge-functions/supabase/migrations/00216_solar_proposals.sql
+M=apps/edge-functions/supabase/migrations/00217_solar_proposals.sql
 grep -nE '^\s*(BEGIN|COMMIT)\s*;' $M ; echo "begin/commit lines: $?"
 grep -n '^-- sql:' $M | grep -n '—' ; echo "em dash in sql payload: $?"
 grep -c 'SECURITY DEFINER' $M
@@ -882,8 +882,8 @@ Expected: `begin/commit lines: 1`; `em dash in sql payload: 1`; `17` SECURITY DE
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
-git add apps/edge-functions/supabase/migrations/00216_solar_proposals.sql
-git commit -m "feat(solar): 00216 proposals, evidence events, service-only client access, report kinds
+git add apps/edge-functions/supabase/migrations/00217_solar_proposals.sql
+git commit -m "feat(solar): 00217 proposals, evidence events, service-only client access, report kinds
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -895,12 +895,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `scripts/db/assert-solar-proposals-roles.sql`
 
-- [ ] **Step 1: Write the assertion file.** Same refusal pattern as 00215's file: a `…_REFUSED` check records `true` only on the promised SQLSTATE; a wrongly-allowed statement raises `P0001` so its write rolls back. All seeding as postgres before the first impersonation; `request.jwt.claims` is cleared before every later postgres step (it outlives `RESET ROLE`).
+- [ ] **Step 1: Write the assertion file.** Same refusal pattern as 00216's file: a `…_REFUSED` check records `true` only on the promised SQLSTATE; a wrongly-allowed statement raises `P0001` so its write rolls back. All seeding as postgres before the first impersonation; `request.jwt.claims` is cleared before every later postgres step (it outlives `RESET ROLE`).
 
 ```sql
--- BEHAVIOURAL assertions for 00216_solar_proposals (Solar Phase 6), run as real roles.
---   RED:   scripts/db/dry-run-migration.sh <00207..00210 (+00213) + 00215> scripts/db/assert-solar-proposals-roles.sql
---   GREEN: scripts/db/dry-run-migration.sh <00207..00210 (+00213) + 00215 + 00216> scripts/db/assert-solar-proposals-roles.sql
+-- BEHAVIOURAL assertions for 00217_solar_proposals (Solar Phase 6), run as real roles.
+--   RED:   scripts/db/dry-run-migration.sh <00208..00211 (+00214) + 00216> scripts/db/assert-solar-proposals-roles.sql
+--   GREEN: scripts/db/dry-run-migration.sh <00208..00211 (+00214) + 00216 + 00217> scripts/db/assert-solar-proposals-roles.sql
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it
 -- bypasses the paywall, so it has no negative case).
 
@@ -1324,13 +1324,13 @@ END $$;
 SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 ```
 
-- [ ] **Step 2: Build the RED bundle (base + 00215, no 00216) and run it.** If Task 0 Step 5 found `00213` on origin AND it is on this branch, insert it after `00210`.
+- [ ] **Step 2: Build the RED bundle (base + 00216, no 00217) and run it.** If Task 0 Step 5 found `00214` on origin AND it is on this branch, insert it after `00211`.
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 S=/private/tmp/claude-501/solar-6; M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql \
-    $(ls $M/00213_*.sql 2>/dev/null) $M/00215_solar_cases.sql > $S/base.sql
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql \
+    $(ls $M/00214_*.sql 2>/dev/null) $M/00216_solar_cases.sql > $S/base.sql
 grep -nE '^\s*(BEGIN|COMMIT)\s*;' $S/base.sql || echo "no-txn-control-ok"
 scripts/db/dry-run-migration.sh $S/base.sql scripts/db/assert-solar-proposals-roles.sql 2>&1 | tail -20
 ```
@@ -1341,7 +1341,7 @@ Expected: `no-txn-control-ok`, then RED — the file aborts at the first `solar.
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 git add scripts/db/assert-solar-proposals-roles.sql
-git commit -m "test(solar): 00216 behavioural assertions (red without 00216)
+git commit -m "test(solar): 00217 behavioural assertions (red without 00217)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1352,17 +1352,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:** none committed (scratch bundles only).
 
-- [ ] **Step 1: GREEN run, plus the earlier Solar assertion files on top of 00216.**
+- [ ] **Step 1: GREEN run, plus the earlier Solar assertion files on top of 00217.**
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 S=/private/tmp/claude-501/solar-6; M=apps/edge-functions/supabase/migrations
-cat $S/base.sql $M/00216_solar_proposals.sql > $S/green.sql
+cat $S/base.sql $M/00217_solar_proposals.sql > $S/green.sql
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-proposals-roles.sql 2>&1 | tail -70
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-cases-roles.sql scripts/db/assert-solar-foundation-roles.sql \
   scripts/db/assert-solar-org-settings-roles.sql scripts/db/assert-solar-meter-data-roles.sql 2>&1 | grep -iE 'false|error' || echo "earlier Solar assertions still green"
 ```
-Expected: 67 rows, every `ok` = `true`; then `earlier Solar assertions still green` (00216 re-declares both CHECKs and `user_can_read_report_kind`; those must not break 00207/00208/00210/00215 behaviour). Any `false`: fix the MIGRATION unless the assertion is demonstrably wrong, then re-run both commands. Count the rows: if the count is not 67, an assertion block aborted — read the error.
+Expected: 67 rows, every `ok` = `true`; then `earlier Solar assertions still green` (00217 re-declares both CHECKs and `user_can_read_report_kind`; those must not break 00208/00209/00211/00216 behaviour). Any `false`: fix the MIGRATION unless the assertion is demonstrably wrong, then re-run both commands. Count the rows: if the count is not 67, an assertion block aborted — read the error.
 
 - [ ] **Step 2: Mutation 1 — expiry ignored ⇒ expired links work.**
 
@@ -1456,7 +1456,7 @@ Expected: `issued_snapshot_immutable_REFUSED` is `false`.
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
 pnpm --filter @esite/shared test -- src/lib/analytics/product-events.contract.test.ts 2>&1 | tail -12
 ```
-Expected: FAIL — the final CHECK (now `00216`) contains `solar_report_generated` … which `PRODUCT_EVENTS` lacks.
+Expected: FAIL — the final CHECK (now `00217`) contains `solar_report_generated` … which `PRODUCT_EVENTS` lacks.
 
 - [ ] **Step 2: Append to `PRODUCT_EVENTS`** (after `'solar_equipment_saved',`):
 
@@ -1480,7 +1480,7 @@ export type SolarNotificationType =
   | 'solar_proposal_accepted'
   | 'solar_proposal_declined'
 ```
-and change its header comment's "The four types are in notifications_type_check from 00208" to "The six types are in notifications_type_check (00208 + 00216)".
+and change its header comment's "The four types are in notifications_type_check from 00209" to "The six types are in notifications_type_check (00209 + 00217)".
 
 - [ ] **Step 4: Run the registries and the repo-wide migration guards.**
 
@@ -1490,7 +1490,7 @@ pnpm --filter @esite/shared test -- src/lib/analytics/product-events.contract.te
 pnpm --filter @esite/db test:ci 2>&1 | tail -15
 pnpm --filter web test -- src/lib/migration-verify-block.contract.test.ts src/lib/solar 2>&1 | tail -6
 ```
-Expected: all PASS. `@esite/db` checks every SECURITY DEFINER function is revoked from anon in the TEXT (each one is spelled out, never an `EXECUTE format()` loop) and that no RESTRICTIVE `FOR ALL` exists; `migration-verify-block.contract.test.ts` parses `00216`'s block (unknown directive words, prose-only blocks and em dashes in `sql:` are refused). If `@esite/db` has a notification-type registry test, it now names the two new types; add them to whatever list it reads, the same way as Step 2.
+Expected: all PASS. `@esite/db` checks every SECURITY DEFINER function is revoked from anon in the TEXT (each one is spelled out, never an `EXECUTE format()` loop) and that no RESTRICTIVE `FOR ALL` exists; `migration-verify-block.contract.test.ts` parses `00217`'s block (unknown directive words, prose-only blocks and em dashes in `sql:` are refused). If `@esite/db` has a notification-type registry test, it now names the two new types; add them to whatever list it reads, the same way as Step 2.
 
 - [ ] **Step 5: Commit.**
 

@@ -1,5 +1,5 @@
 /**
- * Errors from 00211 (roof sources, layouts, layout objects, the save RPC) → one
+ * Errors from 00212 (roof sources, layouts, layout objects, the save RPC) → one
  * human sentence (spec §0.4 rule 5). Keyed on SQLSTATE plus the exact sentences
  * the bind triggers raise. Falls back to humanSolarError EXCEPT for 23505, whose
  * generic mapping there is the access-request sentence.

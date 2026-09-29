@@ -119,7 +119,7 @@ describe('patchToRow', () => {
     expect(patchToRow({})).toEqual({})
   })
 
-  it('maps notify_solar_email in both directions, never crossed with a sibling toggle (00216)', () => {
+  it('maps notify_solar_email in both directions, never crossed with a sibling toggle (00217)', () => {
     expect(rowToProjectSettings(sampleRow).notifySolarEmail).toBe(false)
     expect(rowToProjectSettings({ ...sampleRow, notify_solar_email: true, notify_form_email: false }).notifySolarEmail).toBe(true)
     expect(patchToRow({ notifySolarEmail: false })).toEqual({ notify_solar_email: false })

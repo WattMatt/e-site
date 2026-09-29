@@ -1,7 +1,7 @@
 /**
  * Project tariff override rows (spec §5 "Create project override", D-10
  * landlord resale). A copy of the pinned tariff's charges; an edited row
- * carries a reason (enforced again in SQL by 00213).
+ * carries a reason (enforced again in SQL by 00214).
  *
  * Plausibility is "the same ranges as ingestion": 2a's unitCompatible and
  * 2a's validateTariff codes energy_out_of_range / fixed_unit / non_numeric.

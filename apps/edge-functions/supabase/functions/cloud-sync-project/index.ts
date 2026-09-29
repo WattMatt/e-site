@@ -869,7 +869,7 @@ async function isAnnotated(
     .maybeSingle()
   if (me || markup) return true
 
-  // A Solar schematic (00214): a single-line diagram anchored to this drawing page.
+  // A Solar schematic (00215): a single-line diagram anchored to this drawing page.
   // Its own file_path records the revision it was placed on and the editor warns when
   // they diverge — but, as for markup layers, not adopting silently is the protection.
   const { data: schematic, error: sce } = await supabase
@@ -881,7 +881,7 @@ async function isAnnotated(
     .maybeSingle()
   if (sce || schematic) return true
 
-  // Meter cards and supply lines (00214): x/y and waypoints in raw image pixels of THIS
+  // Meter cards and supply lines (00215): x/y and waypoints in raw image pixels of THIS
   // file. Covered by the schematic above today (the FK chain), queried in their own right
   // so a future path that writes them cannot make the predicate blind.
   const { data: schematicCard, error: scc } = await supabase
@@ -902,7 +902,7 @@ async function isAnnotated(
     .maybeSingle()
   if (scl || schematicLine) return true
 
-  // A Solar roof source (00211): this drawing page is the sheet a PV layout is
+  // A Solar roof source (00212): this drawing page is the sheet a PV layout is
   // (or is about to be) drawn on. Its file_path records the revision the layout
   // belongs to and the layout page warns when they diverge — but, as for markup
   // layers, not adopting silently is the actual protection.
@@ -915,7 +915,7 @@ async function isAnnotated(
     .maybeSingle()
   if (rse || roofSource) return true
 
-  // Solar layout geometry (00211): roofs, arrays, strings in raw image pixels of
+  // Solar layout geometry (00212): roofs, arrays, strings in raw image pixels of
   // THIS file. Covered by the roof source above today (the FK chain), queried in
   // its own right so a future path that writes objects cannot make it blind.
   const { data: layoutObject, error: loe } = await supabase

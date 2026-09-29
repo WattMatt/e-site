@@ -4,22 +4,22 @@
 
 **Goal:** Store meter files, meters, channels and readings in the `solar` schema behind Solar entitlements, prove the storage choice with a ≥ 2 M-row volume test (D-23), and give the server a register → parse → commit pipeline that turns a raw file in Storage into idempotent readings after the user accepts it.
 
-**Architecture:** Migration `00210_solar_meter_data.sql` (number claimed at apply time) adds the org meter library (`meter_files`, `meters`, `meter_series_hashes`, `meter_register`, `meter_channels`, `meter_import_reports`, `meter_readings` hash-partitioned × 8), the study-scoped tables (`study_meters`, `tenant_load_basis`, `site_load`), platform `load_archetypes` (seeded from `LOAD_ARCHETYPES` in 3a-i, contract-tested), four `solar.studies` columns, and the private `solar-meter-raw` bucket. Library RLS uses one caller-scoped array helper `solar.library_orgs(level)` evaluated once per statement; readings are written only through `solar.write_readings(...)`. Three Next.js route handlers under `app/api/projects/[id]/solar/meter-files/` call the pure library from plan 3a-i through a small repository interface, so every route is unit-tested with an in-memory fake.
+**Architecture:** Migration `00211_solar_meter_data.sql` (number claimed at apply time) adds the org meter library (`meter_files`, `meters`, `meter_series_hashes`, `meter_register`, `meter_channels`, `meter_import_reports`, `meter_readings` hash-partitioned × 8), the study-scoped tables (`study_meters`, `tenant_load_basis`, `site_load`), platform `load_archetypes` (seeded from `LOAD_ARCHETYPES` in 3a-i, contract-tested), four `solar.studies` columns, and the private `solar-meter-raw` bucket. Library RLS uses one caller-scoped array helper `solar.library_orgs(level)` evaluated once per statement; readings are written only through `solar.write_readings(...)`. Three Next.js route handlers under `app/api/projects/[id]/solar/meter-files/` call the pure library from plan 3a-i through a small repository interface, so every route is unit-tested with an in-memory fake.
 
 **Tech Stack:** Postgres (Supabase) with `@verify` blocks and `scripts/db/dry-run-migration.sh` impersonation assertions (red → green, mutation-proven), Next.js 15 route handlers (runtime `nodejs`), supabase-js, zod, Vitest.
 
 **Prerequisite:** plan `2026-09-28-solar-phase-3a-i-meter-data-library.md` is complete on branch `feat/solar-phase-3a` (draft PR open against `feat/solar-phase-1a`).
 
-**Specs:** `docs/solar/03-data-model-and-security.md` §1, §3, §3.1, §3.2, §5; `docs/solar/01-functional-spec.md` §4.3; `docs/solar/02-calculation-engine-spec.md` §2.1; decisions D-22, D-23 in `docs/solar/06-open-decisions.md`; `00207_solar_foundation.sql` for every convention.
+**Specs:** `docs/solar/03-data-model-and-security.md` §1, §3, §3.1, §3.2, §5; `docs/solar/01-functional-spec.md` §4.3; `docs/solar/02-calculation-engine-spec.md` §2.1; decisions D-22, D-23 in `docs/solar/06-open-decisions.md`; `00208_solar_foundation.sql` for every convention.
 
 ---
 
 ## Ground rules (read once)
 
 - Work in `~/.config/superpowers/worktrees/esite/solar-phase-3a` on `feat/solar-phase-3a`.
-- **Migration number:** the file is `00210_solar_meter_data.sql`. Numbers are claimed **at apply time**: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and migration filenames in every open PR. If `00210` is taken, rename the file and every reference (the contract test in Task 4 finds the file by suffix, not number).
-- **Do not apply to production.** Tasks 5 and 6 run inside rolled-back transactions only. Applying is owner-approved after merge; `solar` is already in PostgREST `db_schema` from 00207, so no new schema PATCH is needed.
-- **Conventions copied from 00207, all mandatory:** no `BEGIN`/`COMMIT` in the file (the dry run wraps it); every SECURITY DEFINER function has `SET search_path = ''` and its own spelled-out `REVOKE … FROM PUBLIC` **and** `REVOKE … FROM anon` (the repo guard reads the text); `organisation_id`/`project_id` are bound by BEFORE triggers, never trusted; `ENABLE` + `FORCE ROW LEVEL SECURITY` on every table **including each partition** (00207's `bool_and` directive re-checks relkind `r` in `solar` on every deploy); SELECT is one PERMISSIVE policy; writes are a PERMISSIVE policy per verb plus a RESTRICTIVE policy per verb — **never** a RESTRICTIVE `FOR ALL` or `FOR SELECT` (00207 re-checks that none exists in `solar`).
+- **Migration number:** the file is `00211_solar_meter_data.sql`. Numbers are claimed **at apply time**: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and migration filenames in every open PR. If `00211` is taken, rename the file and every reference (the contract test in Task 4 finds the file by suffix, not number).
+- **Do not apply to production.** Tasks 5 and 6 run inside rolled-back transactions only. Applying is owner-approved after merge; `solar` is already in PostgREST `db_schema` from 00208, so no new schema PATCH is needed.
+- **Conventions copied from 00208, all mandatory:** no `BEGIN`/`COMMIT` in the file (the dry run wraps it); every SECURITY DEFINER function has `SET search_path = ''` and its own spelled-out `REVOKE … FROM PUBLIC` **and** `REVOKE … FROM anon` (the repo guard reads the text); `organisation_id`/`project_id` are bound by BEFORE triggers, never trusted; `ENABLE` + `FORCE ROW LEVEL SECURITY` on every table **including each partition** (00208's `bool_and` directive re-checks relkind `r` in `solar` on every deploy); SELECT is one PERMISSIVE policy; writes are a PERMISSIVE policy per verb plus a RESTRICTIVE policy per verb — **never** a RESTRICTIVE `FOR ALL` or `FOR SELECT` (00208 re-checks that none exists in `solar`).
 - `sql:` payloads contain no em dash outside a string literal (#194).
 - Run all three suites and both type-checks before claiming done: `pnpm --filter @esite/shared test`, `pnpm --filter web test`, `pnpm --filter @esite/db test:ci`, `pnpm --filter @esite/shared type-check`, `pnpm --filter web type-check`.
 - Commit after every task with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
@@ -39,7 +39,7 @@
 
 | File | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql` | The migration |
+| `apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql` | The migration |
 | `scripts/db/assert-solar-meter-data-roles.sql` | Behavioural impersonation assertions |
 | `scripts/db/solar-readings-volume-test.sql` | D-23 volume test (rolled back) |
 | `packages/shared/src/services/solar/load/archetype-seed.contract.test.ts` | Migration seed == `LOAD_ARCHETYPES` |
@@ -75,10 +75,10 @@ Expected: clean tree, the 3a-i commits on top, both files present, one draft PR.
 
 ```bash
 . scripts/db/mgmt-api.sh
-mgmt_query "select max(version) as head, bool_or(version = '00207') as has_00207 from supabase_migrations.schema_migrations"
+mgmt_query "select max(version) as head, bool_or(version = '00208') as has_00208 from supabase_migrations.schema_migrations"
 ls apps/edge-functions/supabase/migrations | tail -5
 ```
-Note both values. If `has_00207` is false, the dry runs below apply 00207 and 00210 together (Task 5 shows how).
+Note both values. If `has_00208` is false, the dry runs below apply 00208 and 00211 together (Task 5 shows how).
 
 ---
 
@@ -90,14 +90,14 @@ Note both values. If `has_00207` is false, the dry runs below apply 00207 and 00
 - [ ] **Step 1: Write the assertions**
 
 ```sql
--- BEHAVIOURAL assertions for 00210_solar_meter_data (Solar Phase 3a), run as real roles.
+-- BEHAVIOURAL assertions for 00211_solar_meter_data (Solar Phase 3a), run as real roles.
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql scripts/db/assert-solar-meter-data-roles.sql        (expect RED)
---   scripts/db/dry-run-migration.sh <00210 or 00207+00210> scripts/db/assert-solar-meter-data-roles.sql (expect GREEN)
+--   scripts/db/dry-run-migration.sh <00211 or 00208+00211> scripts/db/assert-solar-meter-data-roles.sql (expect GREEN)
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it bypasses
 -- the paywall, so it has no negative case). All seeding happens as postgres BEFORE the first
 -- impersonation: request.jwt.claims is transaction-local and outlives RESET ROLE; it is cleared
 -- explicitly before every later postgres step.
--- REFUSAL PATTERN (as 00207): a "…_REFUSED" check catches ONLY the SQLSTATE the design promises; if the
+-- REFUSAL PATTERN (as 00208): a "…_REFUSED" check catches ONLY the SQLSTATE the design promises; if the
 -- statement is wrongly allowed the block raises P0001 itself so the write is rolled back; any other
 -- error records false instead of aborting the file.
 
@@ -471,7 +471,7 @@ SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 printf -- '-- no-op\nSELECT 1;\n' > /tmp/noop.sql
 scripts/db/dry-run-migration.sh /tmp/noop.sql scripts/db/assert-solar-meter-data-roles.sql
 ```
-Expected: the file ABORTS (`relation "solar.meter_files" does not exist`, or `schema "solar" does not exist` if 00207 is not applied), reported as one failed assertion. A check you have never seen fail is decorative.
+Expected: the file ABORTS (`relation "solar.meter_files" does not exist`, or `schema "solar" does not exist` if 00208 is not applied), reported as one failed assertion. A check you have never seen fail is decorative.
 
 - [ ] **Step 3: Commit**
 
@@ -490,13 +490,13 @@ EOF
 ### Task 3: The migration
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql`
+- Create: `apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00210: Solar meter data core (Phase 3a)
+-- Migration 00211: Solar meter data core (Phase 3a)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §1, §3, §3.1, §3.2; decision D-23.
 -- Plan: docs/superpowers/plans/2026-09-28-solar-phase-3a-ii-meter-data-storage-pipeline.md
@@ -516,11 +516,11 @@ EOF
 --   deletes need owner/admin. One helper, solar.library_orgs(level), returns the caller's orgs as an
 --   array, so a policy is `organisation_id = ANY ((SELECT solar.library_orgs('view')))`: evaluated
 --   once per statement (InitPlan), not once per row, which matters at millions of readings.
---   Study rows: exactly the solar.studies pattern (00207).
+--   Study rows: exactly the solar.studies pattern (00208).
 --   Readings: SELECT policy only; no INSERT/UPDATE/DELETE grant; written by solar.write_readings.
 --   Lapse = hidden but kept (every helper goes through solar.org_subscription_active).
 --
--- 00207's schema-wide directives re-run on every deploy and this migration conforms: every table
+-- 00208's schema-wide directives re-run on every deploy and this migration conforms: every table
 -- AND partition has FORCE RLS; no RESTRICTIVE policy covers SELECT; every SECURITY DEFINER function
 -- in solar has its anon EXECUTE revoked.
 -- ---------------------------------------------------------------------------
@@ -1393,7 +1393,7 @@ CREATE POLICY meter_import_reports_update_authz ON solar.meter_import_reports AS
 CREATE POLICY meter_readings_select ON solar.meter_readings FOR SELECT TO authenticated
     USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
 
--- Study-scoped tables: the solar.studies (00207) shape.
+-- Study-scoped tables: the solar.studies (00208) shape.
 CREATE POLICY study_meters_select ON solar.study_meters FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
 CREATE POLICY study_meters_insert ON solar.study_meters FOR INSERT TO authenticated
@@ -1449,7 +1449,7 @@ CREATE POLICY solar_meter_raw_read ON storage.objects FOR SELECT TO authenticate
 CREATE POLICY solar_meter_raw_insert ON storage.objects FOR INSERT TO authenticated
     WITH CHECK (bucket_id = 'solar-meter-raw' AND solar.raw_path_allowed(name, 'edit'));
 
--- ── 12. Table privileges (default privileges from 00207 granted too much to new tables) ─
+-- ── 12. Table privileges (default privileges from 00208 granted too much to new tables) ─
 GRANT SELECT, INSERT, UPDATE, DELETE ON solar.meter_files, solar.meters, solar.meter_register, solar.meter_channels,
     solar.tenant_load_basis, solar.site_load TO authenticated;
 GRANT SELECT, INSERT, DELETE ON solar.meter_series_hashes, solar.study_meters TO authenticated;
@@ -1475,9 +1475,9 @@ Two things in this file are there because of a trap, not taste:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql
+git add apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql
 git commit -m "$(cat <<'EOF'
-feat(solar): 00210 meter data — library tables, partitioned readings, study load tables, archetypes, raw bucket
+feat(solar): 00211 meter data — library tables, partitioned readings, study load tables, archetypes, raw bucket
 
 Number claimed at apply time. Not applied.
 
@@ -1563,13 +1563,13 @@ EOF
 
 - [ ] **Step 1: Build the file to dry-run**
 
-If Task 1 showed `00207` in the ledger:
+If Task 1 showed `00208` in the ledger:
 ```bash
-cp apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql /tmp/mig-3a.sql
+cp apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql /tmp/mig-3a.sql
 ```
-Otherwise (00207 not applied yet):
+Otherwise (00208 not applied yet):
 ```bash
-cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql > /tmp/mig-3a.sql
+cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql > /tmp/mig-3a.sql
 ```
 
 - [ ] **Step 2: GREEN**
@@ -3363,8 +3363,8 @@ In `docs/rbac-matrix.md`, directly after the `## API routes (\`apps/web/src/app/
 Gated by `requireSolarLevelAPI(…, 'edit')` (JSON 401/403): the caller needs **Solar Edit** on the project,
 i.e. an org owner/admin of the project's org (always `edit_financials`) or a user holding an `edit` /
 `edit_financials` grant in `solar.project_access`, with the org's Solar subscription live. Suppliers and
-client viewers can never hold a grant (00207); external project members are capped at View and are refused.
-Everything is written with the caller's client, so the `solar` RLS policies (00210) apply as well.
+client viewers can never hold a grant (00208); external project members are capped at View and are refused.
+Everything is written with the caller's client, so the `solar` RLS policies (00211) apply as well.
 
 | Endpoint | Needs | Writes |
 |---|---|---|
@@ -3418,7 +3418,7 @@ cat > /tmp/pr-3a.md <<'EOF'
 `@esite/shared/meter-data` (formats A/B/C/D/E/F/G/generic, fixed unit tables, SAST ts_end, quality flags 0-7, artefacts, identity/body hashes, registers, validation report, .xlsx) and `@esite/shared/solar-load` (day types with SA holidays, gap filling, reference-year alignment, common window, archetypes from GCR densities, synthesis, S1-S4, diversity, MD). 31 anonymised golden fixtures from the office corpus.
 
 ### 3a-ii (this push)
-- Migration `00210_solar_meter_data.sql` (**number claimed at apply time; NOT applied**): org meter library, readings hash-partitioned x 8 and written only through `solar.write_readings`, study load tables, 8 seeded archetypes (contract-tested against the TS), private `solar-meter-raw` bucket.
+- Migration `00211_solar_meter_data.sql` (**number claimed at apply time; NOT applied**): org meter library, readings hash-partitioned x 8 and written only through `solar.write_readings`, study load tables, 8 seeded archetypes (contract-tested against the TS), private `solar-meter-raw` bucket.
 - Dry run: 45/45 behavioural assertions green; red first (file aborts without the migration); mutations: drop `meters_insert_authz` -> `viewer_create_meter_REFUSED` red; keep partition grants -> `partition_direct_read_REFUSED` red; ignore subscription in the owner/admin arm -> `lapsed_admin_reads_nothing` red.
 - D-23 volume test (2.1 M readings, rolled back): <paste the six measurement rows>. Decision: <keep / switch>.
 - Routes (Solar Edit, JSON 401/403): register raw file (sha recomputed), parse (review models), commit (series / register / skip; server re-parse; identity must be resolved; readings counted back).
@@ -3545,5 +3545,5 @@ git push git@github.com:WattMatt/e-site.git feat/solar-phase-3a
 
 ## Hand-off (no apply)
 
-- Migration `00210` is **not applied**. At apply time: re-check the ledger head, `origin/main` and open-PR migration filenames; rename if the number is taken; apply 00207 first if it is not yet in the ledger; then `scripts/verify-migration-applied.ts` checks the `@verify` block. No PostgREST `db_schema` PATCH is needed (`solar` is exposed by 00207).
+- Migration `00211` is **not applied**. At apply time: re-check the ledger head, `origin/main` and open-PR migration filenames; rename if the number is taken; apply 00208 first if it is not yet in the ledger; then `scripts/verify-migration-applied.ts` checks the `@verify` block. No PostgREST `db_schema` PATCH is needed (`solar` is exposed by 00208).
 - **Not verified here (needs a signed-in human, and the 3b UI):** a real browser upload to `solar-meter-raw` with the Storage policy, and a parse → commit round trip against production data. The routes are proven with an in-memory repository and the SQL with impersonation; the join between them (real supabase-js calls against the real schema) is first exercised in 3b.

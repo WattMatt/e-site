@@ -29,7 +29,7 @@ beforeEach(() => {
   h.createServiceClient.mockReturnValue(withStorage(fakeSupabase()).client)
 })
 
-describe('Solar report kinds follow the Solar level (00216 mirrors this)', () => {
+describe('Solar report kinds follow the Solar level (00217 mirrors this)', () => {
   it('feasibility and proposal need Edit + financials; technical needs View', async () => {
     h.level.mockResolvedValue('edit')
     await expect(listProjectReportsAction(P, 'solar_feasibility')).resolves.toEqual({ error: 'You do not have Solar access on this project.' })
@@ -74,7 +74,7 @@ describe('Solar report kinds follow the Solar level (00216 mirrors this)', () =>
 
 // Review round 2 (C1): the URL action gates on a row's KIND and then service-signs its storage_path,
 // so a forged row (00117 reports_write lets owner/admin/PM write any row) could point an open or
-// View-level kind at a feasibility PDF. 00216 refuses the write; this refuses the sign as well.
+// View-level kind at a feasibility PDF. 00217 refuses the write; this refuses the sign as well.
 describe('a report URL is signed only for a path that belongs to the row (review round 2, C1)', () => {
   const FEAS_PATH = 'aaaaaaaa-0000-4000-8000-000000000001/bbbbbbbb-0000-4000-8000-000000000001/solar-reports/solar_feasibility-v1-run1.pdf'
   const REFUSED = 'This report’s file could not be verified, so it cannot be opened.'

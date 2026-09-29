@@ -2,7 +2,7 @@
 /**
  * Layouts (functional spec §6.2) and the save (§6.3 "Save"). Each action
  * re-checks Edit itself and writes through the caller's session. The save
- * goes through public.solar_save_layout_objects (00211): one transaction,
+ * goes through public.solar_save_layout_objects (00212): one transaction,
  * refused when updated_at moved (another tab / person), scale and anchor
  * stamped by the database. The summary stored with it is computed HERE from
  * the resulting object list — never taken from the browser.
@@ -109,7 +109,7 @@ export async function renameLayoutAction(input: { projectId: string; layoutId: s
 
 /**
  * "Refused if a case uses the layout" (§6.2) is enforced by the DATABASE:
- * 00218 declares cases.layout_id REFERENCES solar.layouts(id) ON DELETE
+ * 00219 declares cases.layout_id REFERENCES solar.layouts(id) ON DELETE
  * RESTRICT, and humanLayoutError maps that 23503 to "Used by a case — change
  * the case first."
  */
@@ -182,7 +182,7 @@ export async function saveLayoutObjectsAction(input: {
 /**
  * Duplicate (§6.2): a new layout on the same roof source with every object
  * copied under fresh ids. Objects are re-stamped with the sheet's CURRENT scale
- * (00211 never trusts a scale from a caller); if the page was recalibrated since
+ * (00212 never trusts a scale from a caller); if the page was recalibrated since
  * the original was drawn, the copy measures against the new scale.
  */
 export async function duplicateLayoutAction(input: { projectId: string; layoutId: string; name: string }): Promise<LayoutResult<{ id: string }>> {

@@ -4,7 +4,7 @@ import 'server-only'
  * (the same code the tab shows), lost revenue from the bill engine, commentary from the notes table.
  * Everything the PDF prints is first frozen into a snapshot; the PDF is rendered from the snapshot;
  * both are stored (projects.reports + solar.monthly_reports). v(n+1) supersedes v(n)'s report row and
- * never edits v(n) — 00217 makes the snapshot table immutable. The caller has already gated Edit +
+ * never edits v(n) — 00218 makes the snapshot table immutable. The caller has already gated Edit +
  * financials; `svc` writes the report tables and the PDF after that gate.
  */
 import { createHash } from 'node:crypto'
@@ -97,7 +97,7 @@ export async function generateMonthlyReport(i: GenerateMonthlyInput): Promise<Ge
   const { data: prior } = await i.svc.schema('solar').from('monthly_reports').select('version, report_id')
     .eq('installation_id', inst.id).eq('period_month', monthFirstDay(i.month)).order('version', { ascending: false }).limit(1).maybeSingle()
   const version = prior ? Number((prior as Row).version) + 1 : 1
-  // Under solar-reports/ (as Phase 6's `<kind>-v…` files): 00216's RESTRICTIVE storage and projects.reports
+  // Under solar-reports/ (as Phase 6's `<kind>-v…` files): 00217's RESTRICTIVE storage and projects.reports
   // policies make that directory service-only, and the URL action maps the `solar_monthly-` file name back
   // to its kind before it signs. A new directory would sit outside both guards.
   const storagePath = `${v.organisationId}/${i.projectId}/solar-reports/solar_monthly-${i.month}-v${version}-${snapSha.slice(0, 12)}.pdf`

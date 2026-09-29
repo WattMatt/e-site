@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { humanTariffError } from './errors'
 
 describe('humanTariffError', () => {
-  it('maps the exact 00209/00213 sentences and SQLSTATEs, never the raw message', () => {
+  it('maps the exact 00210/00214 sentences and SQLSTATEs, never the raw message', () => {
     expect(humanTariffError({ message: 'tariffs.tariff_year x: not validated, or 2 blocking issue(s); validate again after any change' }))
       .toBe('Run the checks again: the year changed since it was last checked, or the checks found blocking issues.')
     expect(humanTariffError({ message: 'tariffs.tariff_year x: 3 inferred unit(s) not reviewed' }))

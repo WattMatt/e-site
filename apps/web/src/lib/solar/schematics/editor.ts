@@ -3,7 +3,7 @@
  * Schematic editor state (functional spec §13.2). Pure: every Konva gesture becomes one of these
  * operations, and history stores one snapshot per completed gesture. Coordinates are drawing-image
  * pixels (useSheetImage's image space), so they are identical across devices and sessions.
- * Loops in the supply hierarchy are refused here AND by the database (00214 schematic_lines_bind).
+ * Loops in the supply hierarchy are refused here AND by the database (00215 schematic_lines_bind).
  */
 import { wouldCreateCycle, type MeterLine } from '@esite/shared/solar-load'
 

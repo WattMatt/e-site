@@ -91,7 +91,7 @@ async function chargesWithTitles(supabase: AnyClient, tariffId: string): Promise
     .sort((a, b) => [a.component, a.season, a.tou, a.blockMin ?? -1].join('|').localeCompare([b.component, b.season, b.tou, b.blockMin ?? -1].join('|')))
 }
 
-/** The note is read from the money rows (this loader runs only at Edit + financials); see 00218. */
+/** The note is read from the money rows (this loader runs only at Edit + financials); see 00219. */
 function withMoneyNote(rule: ReturnType<typeof parseExportRule>, rateRows: Row[]): ReturnType<typeof parseExportRule> {
   if (!rule) return null
   return { ...rule, sourceNote: rule.method === 'manual' ? ((rateRows[0]?.source_note as string | undefined) ?? null) : null }

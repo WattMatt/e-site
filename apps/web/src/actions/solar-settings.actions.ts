@@ -3,7 +3,7 @@
  * Save the active organisation's Solar defaults (spec §11). Re-checks
  * owner/admin of THAT org with requireRole (never the page gate; note it
  * returns an object — `.ok`). Writes through the caller's session, so
- * 00208's org_settings policies (owner/admin of the row's org) and bind
+ * 00209's org_settings policies (owner/admin of the row's org) and bind
  * trigger (org immutable, updated_by bound) decide. Stale-guarded.
  */
 import { revalidatePath } from 'next/cache'

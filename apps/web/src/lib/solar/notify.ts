@@ -5,7 +5,7 @@ import 'server-only'
  * the project roster — Solar requests go to the org's owners/admins and
  * decisions go to one person. Never throws (a failed notification must not
  * fail the user's action). The six types are in notifications_type_check
- * (00208 + 00216); a type missing there makes the bell insert fail silently.
+ * (00209 + 00217); a type missing there makes the bell insert fail silently.
  *
  * Email uses send-email's `rfi-created` passthrough ({to, subject, html}),
  * the same shape lib/notify.ts uses for every module.

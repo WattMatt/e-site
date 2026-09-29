@@ -4,7 +4,7 @@
 
 All commands run from `~/.config/superpowers/worktrees/esite/solar-phase-2b`.
 
-**Level.** The whole tab is **Edit + financials** (spec §5 title "COST_VIEW_ROLES only"; §0.1 legend: cost-view = Edit + financials). The page calls `requireSolarLevel(id, 'edit_financials')` (lower levels are redirected to `/solar/locked` — the tab is already hidden for them by `visibleSolarTabs`), and **every action re-checks it**. The spec's per-row "write" labels are therefore effectively Edit + financials on this tab; the database agrees (00213 `studies_tariff_guard` + the money tables' RESTRICTIVE gates).
+**Level.** The whole tab is **Edit + financials** (spec §5 title "COST_VIEW_ROLES only"; §0.1 legend: cost-view = Edit + financials). The page calls `requireSolarLevel(id, 'edit_financials')` (lower levels are redirected to `/solar/locked` — the tab is already hidden for them by `visibleSolarTabs`), and **every action re-checks it**. The spec's per-row "write" labels are therefore effectively Edit + financials on this tab; the database agrees (00214 `studies_tariff_guard` + the money tables' RESTRICTIVE gates).
 
 **Page → client props are JSON only** (the 2026-09-22 rule): the page passes data; client components build closures over server actions themselves.
 
@@ -114,7 +114,7 @@ import { describe, it, expect } from 'vitest'
 import { humanSolarTariffError } from './errors'
 
 describe('humanSolarTariffError', () => {
-  it('maps the 00213 sentences', () => {
+  it('maps the 00214 sentences', () => {
     expect(humanSolarTariffError({ code: '23514', message: 'solar.studies: only a published tariff can be pinned' })).toBe('That tariff is not published in the library.')
     expect(humanSolarTariffError({ code: '23514', message: 'solar.studies: the project override belongs to another study or tariff; revert it first' }))
       .toBe('Revert the project override before choosing another tariff.')
@@ -234,7 +234,7 @@ import 'server-only'
 /**
  * The TOU calendar a study uses: its licensee's calendar valid on the date,
  * else Eskom's hours flagged assumed_eskom (spec §5 "TOU hours notice").
- * Read through the caller's session (00209: readable by subscribed orgs).
+ * Read through the caller's session (00210: readable by subscribed orgs).
  */
 import { calendarFromRows, pickCalendar, resolveStudyCalendar, type TouCalendar } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -276,7 +276,7 @@ import 'server-only'
 /**
  * The tariff the engine costs for this study: the project override's rows
  * when there is one (D-10), else the pinned published tariff. Read through
- * the caller's session: the override is a money table (00213).
+ * the caller's session: the override is a money table (00214).
  */
 import { overrideChargeFromDb, overrideToTariff, type Tariff } from '@esite/shared'
 import { tariffFromRows } from '@esite/shared/tariffs/ingest'
@@ -326,7 +326,7 @@ export async function loadEffectiveTariff(supabase: AnyClient, projectId: string
 - [ ] **Step 6: Implement `errors.ts`**
 
 ```ts
-/** 00213 errors on the Tariff tab -> sentences; falls back to 1c's humanSolarError. */
+/** 00214 errors on the Tariff tab -> sentences; falls back to 1c's humanSolarError. */
 import { STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 
 export function humanSolarTariffError(err: { code?: string; message?: string } | null | undefined): string {
@@ -820,7 +820,7 @@ Expected: FAIL — module not found.
 /**
  * Tariff tab actions (spec §5). Every action re-checks Edit + financials
  * (requireSolarLevel redirects lower levels) and writes through the caller's
- * session so 00213 decides (studies_tariff_guard; money tables' RESTRICTIVE
+ * session so 00214 decides (studies_tariff_guard; money tables' RESTRICTIVE
  * gates; override functions are SECURITY INVOKER). Saves carry
  * expectedUpdatedAt. Audit rows carry ids, never rand amounts.
  */
@@ -1066,7 +1066,7 @@ export async function getSolarTariffSourceUrlAction(input: { projectId: string; 
   Promise<{ url: string; kind: 'pdf' | 'xlsx' | 'link' } | { error: string }> {
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  // Read through the caller's session: 00209 lets subscribed orgs read source documents.
+  // Read through the caller's session: 00210 lets subscribed orgs read source documents.
   const { data } = await g.supabase.schema('tariffs').from('source_document').select('storage_path, url').eq('id', input.sourceDocumentId).maybeSingle()
   const doc = data as { storage_path: string | null; url: string | null } | null
   if (!doc) return { error: 'That source document is not available.' }

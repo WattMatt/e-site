@@ -2,7 +2,7 @@
  * Solar org defaults (spec §11) — the skeleton: Finance, Opex and Loss
  * defaults, seeded with the decided values (D-05 insurance, D-07 finance/O&M,
  * D-16 12B off; engine spec defaults table for losses and replacements).
- * Stored in solar.org_settings.settings as { version, values } (00208). A
+ * Stored in solar.org_settings.settings as { version, values } (00209). A
  * case copies these at creation, so later edits never alter past results.
  * Rate card, load densities, equipment catalogue and report branding arrive
  * with the phases that use them.

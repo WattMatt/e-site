@@ -31,7 +31,7 @@ export function zeroThresholdKw(acKw: number): number {
 const r6 = (x: number) => Math.round(x * 1e6) / 1e6
 
 /**
- * The plant's output as ONE series (review B1). 00217's solar_ops_series returns one point per SPAN
+ * The plant's output as ONE series (review B1). 00218's solar_ops_series returns one point per SPAN
  * (end, interval): generation meters on the same interval are summed, meters on different intervals
  * stay separate points with their own span. This folds them onto the coarsest interval's grid, energy
  * weighted by overlap. Within a slot each interval group's kW is its energy over the time IT covers,

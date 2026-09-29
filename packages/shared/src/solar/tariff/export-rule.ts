@@ -4,7 +4,7 @@
  * rates, so "No export credit (R0)" (default) or a manually entered rate with
  * a mandatory source note. The rate AND its source note are money: both are
  * stored in solar.study_export_rates, never in studies.export_rule (plan D2b-2;
- * the note moved there in 00218). validateExportRuleForm's rule carries the
+ * the note moved there in 00219). validateExportRuleForm's rule carries the
  * note only in flight, to solar.save_export_rule, which strips it.
  */
 import { makeCharge, makeTariff, type Tariff } from '../../tariffs/types'
@@ -43,7 +43,7 @@ export interface ExportRuleForm {
 
 /**
  * A STORED rule (solar.studies.export_rule). It never carries the source note: the note is money
- * and lives only on solar.study_export_rates.source_note (00218 refuses a sourceNote key on the
+ * and lives only on solar.study_export_rates.source_note (00219 refuses a sourceNote key on the
  * study row). A caller that may see money attaches it from the rate rows (loadTariffTab).
  */
 export function parseExportRule(v: unknown): ExportRule | null {

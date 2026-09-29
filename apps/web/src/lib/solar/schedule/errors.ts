@@ -2,7 +2,7 @@
  * Postgres / PostgREST errors from the schedule RPCs and tables → one sentence.
  *
  * 22023 (our RPCs), P0001 (the 00196 transition guard and membership trigger),
- * P0002 (task gone) and SOL01 (00212's solar-task owner guard, owner decision
+ * P0002 (task gone) and SOL01 (00213's solar-task owner guard, owner decision
  * Q4) are ALREADY sentences written for users and pass through — unless the
  * text is a bind-trigger diagnostic ("solar.…"), which never reaches the user.
  * Everything else is mapped by SQLSTATE and constraint name; a raw Postgres

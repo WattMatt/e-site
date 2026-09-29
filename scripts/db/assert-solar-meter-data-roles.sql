@@ -1,15 +1,15 @@
--- BEHAVIOURAL assertions for 00210_solar_meter_data (Solar Phase 3a), run as real roles.
+-- BEHAVIOURAL assertions for 00211_solar_meter_data (Solar Phase 3a), run as real roles.
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql scripts/db/assert-solar-meter-data-roles.sql        (expect RED)
---   scripts/db/dry-run-migration.sh <00210 or 00207+00210> scripts/db/assert-solar-meter-data-roles.sql (expect GREEN)
---   (If 00207 is not in the ledger, the RED "no-op" is 00207 alone, so the file fails on 00210's
---   missing objects rather than on 00207's.)
+--   scripts/db/dry-run-migration.sh <00211 or 00208+00211> scripts/db/assert-solar-meter-data-roles.sql (expect GREEN)
+--   (If 00208 is not in the ledger, the RED "no-op" is 00208 alone, so the file fails on 00211's
+--   missing objects rather than on 00208's.)
 -- Decision 2 (owner, 2026-09-28) is section 9b: an external View member reads the meters LINKED to a
 -- study they can view (and those meters' channels and readings), nothing else, and writes nothing.
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used (it bypasses
 -- the paywall, so it has no negative case). All seeding happens as postgres BEFORE the first
 -- impersonation: request.jwt.claims is transaction-local and outlives RESET ROLE; it is cleared
 -- explicitly before every later postgres step.
--- REFUSAL PATTERN (as 00207): a "…_REFUSED" check catches ONLY the SQLSTATE the design promises; if the
+-- REFUSAL PATTERN (as 00208): a "…_REFUSED" check catches ONLY the SQLSTATE the design promises; if the
 -- statement is wrongly allowed the block raises P0001 itself so the write is rolled back; any other
 -- error records false instead of aborting the file.
 

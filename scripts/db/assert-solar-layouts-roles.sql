@@ -1,14 +1,14 @@
--- BEHAVIOURAL assertions for 00211_solar_layouts, run as real roles.
+-- BEHAVIOURAL assertions for 00212_solar_layouts, run as real roles.
 --   S=$(mktemp -d)
---   cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
---       apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql > "$S/base.sql"
+--   cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+--       apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql > "$S/base.sql"
 --   scripts/db/dry-run-migration.sh "$S/base.sql" scripts/db/assert-solar-layouts-roles.sql          (expect RED)
---   cat "$S/base.sql" apps/edge-functions/supabase/migrations/00211_solar_layouts.sql > "$S/combo.sql"
+--   cat "$S/base.sql" apps/edge-functions/supabase/migrations/00212_solar_layouts.sql > "$S/combo.sql"
 --   scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-layouts-roles.sql         (expect GREEN)
--- (Once 00207/00208 are in the ledger, use 00211 alone and /tmp/noop.sql for the red run.)
+-- (Once 00208/00209 are in the ledger, use 00212 alone and /tmp/noop.sql for the red run.)
 -- Fixtures are minted inside the transaction and rolled back; WM-Consulting is
 -- not used (it bypasses the paywall, so it has no negative case).
--- REFUSAL PATTERN (as 00207's file): a "…_REFUSED" check catches only the
+-- REFUSAL PATTERN (as 00208's file): a "…_REFUSED" check catches only the
 -- SQLSTATE the design promises; if the statement is wrongly allowed the block
 -- raises P0001 itself so the write is rolled back and later checks still run.
 
@@ -93,7 +93,7 @@ BEGIN
     'geometry', jsonb_build_object('modules', jsonb_build_array(jsonb_build_array(50, 50, 107, 50, 107, 160, 50, 160))),
     'props', '{}'::jsonb);
 
-  -- ── Grants (as the org admin, through 00207's own path) ──────────────────
+  -- ── Grants (as the org admin, through 00208's own path) ──────────────────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_p1, v_editor, 'edit'), (v_p1, v_viewer, 'view'), (v_p2, v_editor, 'edit');

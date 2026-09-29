@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { humanSolarTariffError } from './errors'
 
 describe('humanSolarTariffError', () => {
-  it('maps the 00213 sentences', () => {
+  it('maps the 00214 sentences', () => {
     expect(humanSolarTariffError({ code: '23514', message: 'solar.studies: only a published tariff can be pinned' })).toBe('That tariff is not published in the library.')
     expect(humanSolarTariffError({ code: '23514', message: 'solar.studies: the project override belongs to another study or tariff; revert it first' }))
       .toBe('Revert the project override before choosing another tariff.')

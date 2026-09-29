@@ -52,8 +52,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     // Presence: one upsert + one indexed lookup, run alongside the four reads
     // this layout already awaits, so it adds no wall-clock time. Never throws.
     touchPresence('web'),
-    // Platform tariff admins (00209 allow-list) see the Tariff library link. The pages gate themselves.
-    // Cast: the generated Database types predate 00209 (same as the Solar pages' AnyClient casts).
+    // Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves.
+    // Cast: the generated Database types predate 00210 (same as the Solar pages' AnyClient casts).
     (supabase as unknown as { rpc: (fn: string) => PromiseLike<{ data: unknown; error: unknown }> }).rpc('is_platform_tariff_admin'),
   ])
   const tariffAdmin = !tariffAdminRes.error && tariffAdminRes.data === true

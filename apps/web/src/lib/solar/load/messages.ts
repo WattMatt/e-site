@@ -1,5 +1,5 @@
 // apps/web/src/lib/solar/load/messages.ts
-/** Error code → one human sentence (spec §0.4 rule 5). Codes come from the 3a routes, 00214 and the builder. */
+/** Error code → one human sentence (spec §0.4 rule 5). Codes come from the 3a routes, 00215 and the builder. */
 export const LOAD_MESSAGES: Record<string, string> = {
   no_study: 'Set up the study first — save Site & Supply or any Load setting.',
   save_failed: 'The site profile could not be saved — try again.',

@@ -1,12 +1,12 @@
--- BEHAVIOURAL assertions for 00219_solar_pricing_guards, run as real roles.
---   RED:   scripts/db/dry-run-migration.sh <00207..00215 + 00218 concatenated>          scripts/db/assert-solar-pricing-guards.sql
---   GREEN: scripts/db/dry-run-migration.sh <00207..00215 + 00218 + 00219 concatenated>  scripts/db/assert-solar-pricing-guards.sql
+-- BEHAVIOURAL assertions for 00220_solar_pricing_guards, run as real roles.
+--   RED:   scripts/db/dry-run-migration.sh <00208..00216 + 00219 concatenated>          scripts/db/assert-solar-pricing-guards.sql
+--   GREEN: scripts/db/dry-run-migration.sh <00208..00216 + 00219 + 00220 concatenated>  scripts/db/assert-solar-pricing-guards.sql
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used.
 --
 -- The export-rule guard is a DEFERRED constraint trigger (it must let save_export_rule delete and
 -- re-insert rates inside one statement). The harness never commits, so every probe forces the check
 -- with SET CONSTRAINTS … IMMEDIATE, exactly what COMMIT would do, and puts it back to DEFERRED.
--- On the RED run (no 00219) the SET CONSTRAINTS names do not exist: that raises, and the probe
+-- On the RED run (no 00220) the SET CONSTRAINTS names do not exist: that raises, and the probe
 -- records false — which is the red.
 
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;

@@ -96,7 +96,7 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
   }
   if (linked && linked !== 'missing' && 'error' in linked) return unreadable(projectId, 'export tariff', linked.error)
   // RLS hides money rows from a caller without financials access WITHOUT an error. An override the
-  // study points at has at least its copied charges, and 00219 ties a manual rule to its rates, so
+  // study points at has at least its copied charges, and 00220 ties a manual rule to its rates, so
   // an empty read there means "not allowed to see it" — never price the partial picture.
   const ovRows = (ov.data ?? []) as Row[]
   const rateRows = (rates.data ?? []) as Row[]

@@ -4,7 +4,7 @@
 
 **Goal:** Ship the Solar **Schedule** tab (`/projects/[id]/solar/schedule`, functional spec §14, decision D-20): a Gantt programme whose tasks are E-Site work items of a new type `solar_task`, with Gantt fields in `solar.schedule_*` side tables, a correct critical path (FS/SS/FF/SF + lag), working-day mode with SA public holidays, baselines, split bars, per-user filter presets in the database, template seeding, CSV/XLSX/MS Project XML import, PNG/PDF/XLSX/DOCX/ICS export, and working undo/redo.
 
-**Architecture:** All scheduling maths is pure TypeScript in `packages/shared/src/solar/schedule/` (dates as `'YYYY-MM-DD'` strings, arithmetic on UTC day numbers, never a local `Date`). One migration (`00212_solar_schedule.sql`, number claimed at apply time) registers `solar_task` in `projects.work_item_types`, re-declares the two spine objects that enumerate types (`work_items_source_required`, `work_items_ensure_ref()`), creates eight `solar.schedule_*` tables with FORCE RLS and per-verb policies on `solar_can_view` / `solar_can_edit`, and adds SECURITY DEFINER RPCs that create/update/delete a work item **and** its side row in one transaction (the spine's `work_items_insert_gate` stays `task`-only, so a `solar_task` can only be born through the gated RPC). Server actions in `apps/web` call those RPCs through the caller's session; the page is a server loader + one client component with a DOM row list and a Konva timeline whose geometry comes from a pure `layoutGantt()`.
+**Architecture:** All scheduling maths is pure TypeScript in `packages/shared/src/solar/schedule/` (dates as `'YYYY-MM-DD'` strings, arithmetic on UTC day numbers, never a local `Date`). One migration (`00213_solar_schedule.sql`, number claimed at apply time) registers `solar_task` in `projects.work_item_types`, re-declares the two spine objects that enumerate types (`work_items_source_required`, `work_items_ensure_ref()`), creates eight `solar.schedule_*` tables with FORCE RLS and per-verb policies on `solar_can_view` / `solar_can_edit`, and adds SECURITY DEFINER RPCs that create/update/delete a work item **and** its side row in one transaction (the spine's `work_items_insert_gate` stays `task`-only, so a `solar_task` can only be born through the gated RPC). Server actions in `apps/web` call those RPCs through the caller's session; the page is a server loader + one client component with a DOM row list and a Konva timeline whose geometry comes from a pure `layoutGantt()`.
 
 **Tech Stack:** Postgres (Supabase) + PostgREST, Next.js 15 server actions and route handlers, React 19, react-konva 19 / konva 10 (already dependencies), exceljs 4 (already a dependency), @react-pdf/renderer 4 + `winAnsiSafe` (existing PDF pipeline), pizzip (already a dependency) for DOCX, plain-text ICS, vitest.
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | 1 | `2026-09-28-solar-phase-5b-schedule-1-engine.md` (this file) | 0 worktree · 1 calendar dates (SAST round trip) · 2 working-day calendar · 3 dependency graph + critical path |
 | 2 | `2026-09-28-solar-phase-5b-schedule-2-model-import.md` | 4 status/rows/filters/grouping/drag · 5 roll-up, baseline variance, workload · 6 template · 7 import (plan, CSV, MS Project XML, table mapping) · 8 ICS · 9 Gantt layout |
-| 3 | `2026-09-28-solar-phase-5b-schedule-3-registry-migration.md` | 10 `solar_task` registry in TypeScript + contract tests + Appendix A(b) · 11 migration `00212` red → green → mutations |
+| 3 | `2026-09-28-solar-phase-5b-schedule-3-registry-migration.md` | 10 `solar_task` registry in TypeScript + contract tests + Appendix A(b) · 11 migration `00213` red → green → mutations |
 | 4 | `2026-09-28-solar-phase-5b-schedule-4-server.md` | 12 fake-supabase `schema().rpc` · 13 errors + audit sentences · 14 loader · 15 task actions · 16 links/baselines/presets/settings actions · 17 template (apply + org editor) · 18 import route + commit · 19 exports (XLSX, ICS, PDF A3) · 20 DOCX (optional, separate) |
 | 5 | `2026-09-28-solar-phase-5b-schedule-5-ui.md` | 21 undo/redo history · 22 keyboard shortcuts · 23 tab + readiness · 24 toolbar (filters/presets, baselines, settings, export menu) · 25 row list + Konva chart · 26 task + link dialogs · 27 bulk bar, stats, workload, shortcuts overlay, empty state · 28 import dialog · 29 ScheduleClient + page (undo/redo, keyboard, PNG) · 30 RBAC matrix, suites, push, draft PR · open questions |
 
@@ -76,7 +76,7 @@
 - Modify `packages/shared/src/work-items/types.ts` (register `solar_task`), both contract tests, and `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/16-appendix-registries.md` (A(b) row).
 
 **Database**
-- `apps/edge-functions/supabase/migrations/00212_solar_schedule.sql`
+- `apps/edge-functions/supabase/migrations/00213_solar_schedule.sql`
 - `scripts/db/assert-solar-schedule-roles.sql`
 
 **Web — lib / actions / routes**
@@ -123,11 +123,11 @@ Expected: all three green. If any is red before you change anything, stop and re
 
 ```bash
 ls apps/edge-functions/supabase/migrations | tail -5 >> /tmp/solar-5b-base.txt
-bash -c '. scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) AS head, bool_or(version = '"'"'00207'"'"') AS has_00207, bool_or(version = '"'"'00208'"'"') AS has_00208 FROM supabase_migrations.schema_migrations;"' >> /tmp/solar-5b-base.txt
+bash -c '. scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) AS head, bool_or(version = '"'"'00208'"'"') AS has_00208, bool_or(version = '"'"'00209'"'"') AS has_00209 FROM supabase_migrations.schema_migrations;"' >> /tmp/solar-5b-base.txt
 gh pr list --state open --json number,headRefName,files --jq '.[] | select(any(.files[]; .path | test("migrations/002"))) | "\(.number) \(.headRefName) \([.files[].path | select(test("migrations/"))] | join(","))"' >> /tmp/solar-5b-base.txt
 tail -12 /tmp/solar-5b-base.txt
 ```
-Expected: `has_00207`/`has_00208` tell Task 11 whether to prepend 00207/00208 to the dry run. Note every open PR migration number ≥ `00209` (tariffs `00209`, and whatever 3a/4a claimed); `00212` is this phase's working name only.
+Expected: `has_00208`/`has_00209` tell Task 11 whether to prepend 00208/00209 to the dry run. Note every open PR migration number ≥ `00210` (tariffs `00210`, and whatever 3a/4a claimed); `00213` is this phase's working name only.
 
 No commit (nothing changed).
 

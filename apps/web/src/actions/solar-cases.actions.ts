@@ -1,7 +1,7 @@
 'use server'
 /**
  * Yield & Scenarios case actions (functional spec §7.1–7.2). Each re-checks the Solar level itself and
- * writes through the caller's session (00215 RLS + bind triggers decide). The service client is used
+ * writes through the caller's session (00216 RLS + bind triggers decide). The service client is used
  * only to read org_settings (owner/admin-only by RLS, but every Edit user's new case needs the org
  * defaults), the equipment catalogue for snapshots, and the weather cache.
  */
@@ -87,7 +87,7 @@ export async function createSolarCaseAction(input: { projectId: string; name: st
     const { data: src } = await supabase.schema('solar').from('cases').select('config, pv_source, layout_id').eq('id', start.fromCaseId).eq('project_id', projectId).maybeSingle()
     const parsed = parseCaseConfig((src as Row | null)?.config)
     if (!parsed.ok) return { error: 'The case to copy could not be read.' }
-    // A copy keeps the source's layout link, so the row and config.pv.source agree (00218's FK and
+    // A copy keeps the source's layout link, so the row and config.pv.source agree (00219's FK and
     // cases_layout_bind re-check the layout). The row's pv_source is the truth for the config.
     const srcRow = src as { pv_source?: string; layout_id?: string | null }
     layoutId = srcRow.pv_source === 'layout' && srcRow.layout_id ? srcRow.layout_id : null
@@ -138,7 +138,7 @@ export async function renameSolarCaseAction(input: { projectId: string; caseId: 
 
 export async function deleteSolarCaseAction(input: { projectId: string; caseId: string }): Promise<{ ok: true } | { error: string }> {
   const { supabase, userId } = await session(input.projectId)
-  // 00216 cases_keep_issued_proposals refuses a case an issued proposal was made from (humanSolarError words it).
+  // 00217 cases_keep_issued_proposals refuses a case an issued proposal was made from (humanSolarError words it).
   const { data, error } = await supabase.schema('solar').from('cases').delete().eq('id', input.caseId).eq('project_id', input.projectId).select('id')
   if (error) return { error: error.code === '23503' ? 'This is the selected case — choose another selected case first.' : humanSolarError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: 'Nothing was deleted — reload to see the current cases.' }
@@ -219,7 +219,7 @@ export async function saveSolarCaseAction(input: { projectId: string; caseId: st
 
 /**
  * Manual ↔ From layout on an existing case (spec §7.1–7.2). Linking re-derives DC/AC from the
- * layout's own objects; back to Manual keeps the last sizes as editable inputs. 00218's
+ * layout's own objects; back to Manual keeps the last sizes as editable inputs. 00219's
  * cases_layout_fk / cases_layout_bind refuse a layout that is gone or from another project.
  */
 export async function setSolarCasePvSourceAction(input: {

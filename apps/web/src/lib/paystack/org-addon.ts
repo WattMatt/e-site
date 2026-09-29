@@ -1,6 +1,6 @@
 /**
  * Pure helpers for the org add-on subscription (Solar, billing.org_addon_subscriptions,
- * migration 00207). The DB-touching branches live in /api/paystack/webhook —
+ * migration 00208). The DB-touching branches live in /api/paystack/webhook —
  * the ONLY writer of that table.
  */
 import { FEATURE_PRICES } from '@esite/shared'

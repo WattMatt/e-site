@@ -2,7 +2,7 @@
 /**
  * Equipment catalogue (functional spec §11): Add, Edit, Retire (never delete — cases reference it),
  * Import from CSV. PAN/OND import deferred (D-19). Owner/admin of the ACTIVE org (the catalogue lives
- * in /settings/solar); 00215's equipment_*_authz policies (solar.library_orgs('admin')) decide in the DB.
+ * in /settings/solar); 00216's equipment_*_authz policies (solar.library_orgs('admin')) decide in the DB.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'

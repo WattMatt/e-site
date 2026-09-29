@@ -61,7 +61,7 @@ export type PlanTier = keyof typeof PLANS
 //
 // model: 'org'              — one-time unlock per organisation (billing.org_feature_unlocks, migration 00097)
 // model: 'seat'             — one-time unlock per user within an org (billing.org_feature_seats, migration 00125)
-// model: 'org_subscription' — RECURRING org-wide plan (billing.org_addon_subscriptions, migration 00207).
+// model: 'org_subscription' — RECURRING org-wide plan (billing.org_addon_subscriptions, migration 00208).
 //                             Bought only through its own route (/api/paystack/solar-subscribe) against
 //                             the Paystack plan named by `planCodeEnv`. NEVER through the one-time
 //                             /api/paystack/feature-unlock route, which rejects these keys: a one-time

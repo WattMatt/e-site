@@ -204,8 +204,8 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
 
 /**
  * Schedule (functional spec §1.3): green with at least one task — start, end
- * and owner are NOT NULL in 00212, so any task qualifies — grey with none.
- * The red "dependency cycle" case cannot arise (00212 refuses loops at write
+ * and owner are NOT NULL in 00213, so any task qualifies — grey with none.
+ * The red "dependency cycle" case cannot arise (00213 refuses loops at write
  * time), so it is not modelled.
  */
 export function scheduleReadiness(count: number | null | undefined): { status: ReadinessStatus; reason: string } {

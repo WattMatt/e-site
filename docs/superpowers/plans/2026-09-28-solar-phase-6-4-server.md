@@ -66,7 +66,7 @@ beforeEach(() => {
   h.createServiceClient.mockReturnValue(withStorage(fakeSupabase()).client)
 })
 
-describe('Solar report kinds follow the Solar level (00216 mirrors this)', () => {
+describe('Solar report kinds follow the Solar level (00217 mirrors this)', () => {
   it('feasibility and proposal need Edit + financials; technical needs View', async () => {
     h.level.mockResolvedValue('edit')
     await expect(listProjectReportsAction(P, 'solar_feasibility')).resolves.toEqual({ error: 'You do not have Solar access on this project.' })
@@ -117,10 +117,10 @@ import { ORG_WRITE_ROLES, COST_VIEW_ROLES, type OrgRole, type SolarAccessLevel }
 ```ts
 /**
  * Kinds whose read follows the Solar module's own gate: the caller's per-user
- * Solar level on the project (00207, decision D-04), not an E-Site role. A
+ * Solar level on the project (00208, decision D-04), not an E-Site role. A
  * contractor with a View grant reads a layout sheet or a technical report; a
  * project manager with no grant does not. Mirrored in
- * public.user_can_read_report_kind() (00211 / 00216) and pinned by
+ * public.user_can_read_report_kind() (00212 / 00217) and pinned by
  * report-kind-access.contract.test.ts against the FINAL definition.
  */
 export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>> = {
@@ -192,7 +192,7 @@ and add below `type ErrResult = …`:
 ```ts
 const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
 
-/** Solar kinds read on the caller's Solar level (00211/00216 mirror this in SQL). Null when allowed or not a Solar kind. */
+/** Solar kinds read on the caller's Solar level (00212/00217 mirror this in SQL). Null when allowed or not a Solar kind. */
 async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
   const need = solarLevelForKind(kind)
   if (!need) return null
@@ -213,7 +213,7 @@ async function solarReadDenied(supabase: unknown, projectId: string, kind: strin
 ```
 (d) In `deleteProjectReportAction`, immediately after `if (!report) return { error: 'Not found' }`:
 ```ts
-  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00216).
+  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00217).
   if (report.kind === 'solar_proposal') {
     return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
   }
@@ -826,7 +826,7 @@ pnpm --filter web test -- src/lib/solar/proposals/email-toggle.test.ts 'src/app/
 
 - [ ] **Step 3: Wire the column.**
 
-`project-settings.schema.ts` — after `notifyFormEmail: z.boolean(),` add `notifySolarEmail: z.boolean(),`; in the defaults after `notifyFormEmail: true,` add `notifySolarEmail: true,` (mirrors the column DEFAULT TRUE in 00216).
+`project-settings.schema.ts` — after `notifyFormEmail: z.boolean(),` add `notifySolarEmail: z.boolean(),`; in the defaults after `notifyFormEmail: true,` add `notifySolarEmail: true,` (mirrors the column DEFAULT TRUE in 00217).
 
 `_project-settings-mappers.ts` — row type: after `notify_form_email: boolean` add `notify_solar_email: boolean`; `rowToSettings`: after `notifyFormEmail: row.notify_form_email,` add `notifySolarEmail: row.notify_solar_email,`; `patchToRow`: after the `notifyFormEmail` line add
 ```ts
@@ -851,7 +851,7 @@ pnpm --filter web test -- src/lib/solar/proposals/email-toggle.test.ts 'src/app/
 ```ts
 import 'server-only'
 /**
- * Project toggle `notify_solar_email` (00216). Gates the optional client email at Issue and the
+ * Project toggle `notify_solar_email` (00217). Gates the optional client email at Issue and the
  * proposer's accept/decline email; the in-app bell is never gated. Fails CLOSED: a read error sends
  * no email (probes on WM projects resolve 12-13 real recipients).
  */
@@ -1324,7 +1324,7 @@ describe('deleteSolarProposalDraftAction / reviseSolarProposalAction', () => {
 'use server'
 /**
  * Solar proposals (spec §9.3). Every action gates Solar Edit + financials FIRST (proposals are a
- * money table). Drafts are written through the caller's session — 00216's RLS and guard decide.
+ * money table). Drafts are written through the caller's session — 00217's RLS and guard decide.
  * Issue / withdraw / new link run the SERVICE-ONLY definer functions after the gate (Task 21).
  */
 import { revalidatePath } from 'next/cache'
@@ -2353,7 +2353,7 @@ describe('signedProposalPdfUrl', () => {
 import 'server-only'
 /**
  * Client-side access to an issued proposal (spec §9.4, D-18): by secure token (no login) or as a
- * portal user. Everything goes through 00216's SERVICE-ONLY definer functions — the raw token is
+ * portal user. Everything goes through 00217's SERVICE-ONLY definer functions — the raw token is
  * hashed in SQL, only the frozen snapshot is returned. The caller has already applied its own gate
  * (token shape + rate limit, or requirePortalAccess). `ClientProposalView` is what reaches the
  * browser: no storage path, no project id.

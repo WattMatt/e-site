@@ -2,7 +2,7 @@
 /**
  * Grantor actions for the Solar Access panel (spec §1.3). Each re-checks
  * public.solar_is_grantor (org owner/admin of the project's org) — never the
- * page gate. The database remains the last word: 00207's project_access RLS
+ * page gate. The database remains the last word: 00208's project_access RLS
  * (grantor-only writes), project_access_bind (eligibility + per-user maximum:
  * externals cap at View, clients/suppliers refused) and access_requests_guard
  * (approval writes the grant). Every write is conditioned on what the grantor
@@ -192,7 +192,7 @@ export async function decideSolarRequestAction(input: {
 
 /**
  * Owner default 3 (2026-09-28): close an "ask an admin to subscribe" request.
- * Sets status 'approved' through 00207's access_requests_guard, which checks
+ * Sets status 'approved' through 00208's access_requests_guard, which checks
  * the caller is a grantor, stamps decided_by/decided_at and forces
  * approved_level NULL for a subscribe request. Conditioned on status =
  * 'pending' so a concurrent answer is reported, not overwritten.

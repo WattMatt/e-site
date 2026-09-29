@@ -55,7 +55,7 @@ export function visibleObjects(objects: LayoutObject[], hidden: ReadonlySet<stri
   return objects.filter((o) => !hiddenKinds.has(o.kind))
 }
 
-/** "<name> (copy)", then "(copy 2)", … — layout names are unique per study, case-insensitively (00211). */
+/** "<name> (copy)", then "(copy 2)", … — layout names are unique per study, case-insensitively (00212). */
 export function uniqueCopyName(name: string, existing: string[]): string {
   const taken = new Set(existing.map((n) => n.trim().toLowerCase()))
   const base = name.trim()

@@ -32,7 +32,7 @@ describe('proposalControls', () => {
     expect(proposalControls({ ...base, familyHasAccepted: true }, NOW).canRevise).toBe(false)
     expect(proposalControls({ ...base, isLatest: false }, NOW).canRevise).toBe(false)
   })
-  it('a draft cannot be issued once another version of its family was accepted (00216 family_accepted)', () => {
+  it('a draft cannot be issued once another version of its family was accepted (00217 family_accepted)', () => {
     const c = proposalControls({ ...base, status: 'draft', expiresAt: null, familyHasAccepted: true }, NOW)
     expect(c.canIssue).toBe(false)
     expect(c.issueBlockedReason).toBe(PROPOSAL_FAMILY_ACCEPTED)

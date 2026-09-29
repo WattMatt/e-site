@@ -1,6 +1,6 @@
 import 'server-only'
 /**
- * Owners/admins of an organisation — the Solar grantors (00207
+ * Owners/admins of an organisation — the Solar grantors (00208
  * public.solar_is_grantor). Read with the service client because
  * user_organisations RLS is own-row-only; callers only use this AFTER their
  * own gate (a requester notifying the people who can answer, or naming them

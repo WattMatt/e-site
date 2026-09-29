@@ -4,7 +4,7 @@
 
 **Goal:** Yield & Financials price a study exactly as the Tariff tab does — project override, export rule and its rates, the Tariff tab's escalation path, and the Load tab's load growth — through ONE pure resolver, and changing any of the four marks the case Stale. Close I-2 (manual export rule with no rates over REST) and add the deferred `solar.layouts.module_id` FK.
 
-**Architecture:** `resolveStudyPricing()` (pure, `packages/shared/src/solar/tariff/pricing.ts`) turns the study's stored pricing choices + the published tariff + override rows + export rates + org defaults into one `ResolvedStudyPricing`; `studyPricingHash()` hashes it canonically. One web loader `loadStudyPricing(client, projectId)` reads the rows and calls the resolver; the Tariff tab bill check (`loadEffectiveTariff`) and the run/financials path (`resolveStudyTariff`) both go through it, pinned by a contract test. The case hash becomes `inputsHash({ energy: inputsHash(caseInput), pricing: pricingHash })`; the financials hash carries the pricing hash too. DB: `00219_solar_pricing_guards.sql` (deferred constraint triggers tying `export_rule.method = 'manual'` to a rate set, both directions; `layouts.module_id` FK + org/kind bind).
+**Architecture:** `resolveStudyPricing()` (pure, `packages/shared/src/solar/tariff/pricing.ts`) turns the study's stored pricing choices + the published tariff + override rows + export rates + org defaults into one `ResolvedStudyPricing`; `studyPricingHash()` hashes it canonically. One web loader `loadStudyPricing(client, projectId)` reads the rows and calls the resolver; the Tariff tab bill check (`loadEffectiveTariff`) and the run/financials path (`resolveStudyTariff`) both go through it, pinned by a contract test. The case hash becomes `inputsHash({ energy: inputsHash(caseInput), pricing: pricingHash })`; the financials hash carries the pricing hash too. DB: `00220_solar_pricing_guards.sql` (deferred constraint triggers tying `export_rule.method = 'manual'` to a rate set, both directions; `layouts.module_id` FK + org/kind bind).
 
 **Tech Stack:** TypeScript, vitest, Next.js 15 server code, Supabase/Postgres (plpgsql constraint triggers), `scripts/db/dry-run-migration.sh`.
 
@@ -29,7 +29,7 @@
 - Create `apps/web/src/lib/solar/pricing/load-study-pricing.ts` (+test) and `pricing-single-source.contract.test.ts`.
 - Modify `apps/web/src/lib/solar/tariff/effective-tariff.ts`, `apps/web/src/lib/solar/cases/tariff.ts`, `run-context.ts`, `run-case.ts`, `financials.ts`, `financials-page-data.ts` (+tests).
 - Modify UI: `solar/(gated)/tariff/page.tsx`, `load/_components/SiteProfilePanel.tsx`, `financials/FinancialsEditor.tsx`.
-- Create `apps/edge-functions/supabase/migrations/00219_solar_pricing_guards.sql`, `scripts/db/assert-solar-pricing-guards.sql`.
+- Create `apps/edge-functions/supabase/migrations/00220_solar_pricing_guards.sql`, `scripts/db/assert-solar-pricing-guards.sql`.
 - Docs: `docs/solar/06-open-decisions.md`, `docs/solar/02-calculation-engine-spec.md` §6 note, PR #216 body.
 
 ---
@@ -71,7 +71,7 @@ export interface ResolvedStudyPricing {
 export function resolveStudyPricing(i: StudyPricingInput): ResolvedStudyPricing
 export function studyPricingHash(p: ResolvedStudyPricing): string // inputsHash(p)
 ```
-  Override applies only when `study.tariffOverrideId === override.id`. Manual with no rates is treated as 'none' (defence in depth; 00219 makes it unreachable). Run → PASS. Commit `feat(solar-pricing): one resolver for study pricing (override, export rule, escalation, load growth)`.
+  Override applies only when `study.tariffOverrideId === override.id`. Manual with no rates is treated as 'none' (defence in depth; 00220 makes it unreachable). Run → PASS. Commit `feat(solar-pricing): one resolver for study pricing (override, export rule, escalation, load growth)`.
 
 ### Task 2: Finance input + engine load growth on both bills
 
@@ -104,14 +104,14 @@ export function studyPricingHash(p: ResolvedStudyPricing): string // inputsHash(
 
 - [ ] Failing page/editor test (`FinancialsEditor` renders "Load growth 3 %/yr — from the Load tab" and no editable escalation/load growth inputs), implement, remove `NOT_IN_FINANCIALS` and the SiteProfilePanel note, PASS, commit `feat(solar-financials): escalation and load growth shown from the Tariff and Load tabs`.
 
-### Task 6: `00219_solar_pricing_guards.sql`
+### Task 6: `00220_solar_pricing_guards.sql`
 
-- [ ] **Step 1:** `scripts/db/assert-solar-pricing-guards.sql` — as a money user: direct `UPDATE studies SET export_rule='{"version":1,"method":"manual"}'` with no rates → 23514 (forced with `SET CONSTRAINTS … IMMEDIATE`); `save_export_rule` manual with rates → ok; then direct `DELETE FROM study_export_rates` → 23514; `save_export_rule` manual→none → ok (rates gone); direct rate INSERT while rule 'none' → 23514; study delete cascade ok. Layouts: `module_id` of a non-existent id → 23503; another org's module → 23514; an inverter row → 23514; own-org / platform module → ok; deleting a used equipment row → 23503. Run on `00207..00215+00218` → RED.
+- [ ] **Step 1:** `scripts/db/assert-solar-pricing-guards.sql` — as a money user: direct `UPDATE studies SET export_rule='{"version":1,"method":"manual"}'` with no rates → 23514 (forced with `SET CONSTRAINTS … IMMEDIATE`); `save_export_rule` manual with rates → ok; then direct `DELETE FROM study_export_rates` → 23514; `save_export_rule` manual→none → ok (rates gone); direct rate INSERT while rule 'none' → 23514; study delete cascade ok. Layouts: `module_id` of a non-existent id → 23503; another org's module → 23514; an inverter row → 23514; own-org / platform module → ok; deleting a used equipment row → 23503. Run on `00208..00216+00219` → RED.
 - [ ] **Step 2:** migration (no BEGIN/COMMIT; `@verify` block): `solar.export_rule_rates_check()` SECURITY DEFINER `search_path=''`, constraint triggers `studies_export_rule_rates` (AFTER INSERT OR UPDATE OF export_rule ON solar.studies) and `export_rates_rule_match` (AFTER INSERT OR UPDATE OR DELETE ON solar.study_export_rates), both `DEFERRABLE INITIALLY DEFERRED`; `UPDATE solar.layouts SET module_id = NULL WHERE module_id NOT IN equipment`; `layouts_module_fk … ON DELETE RESTRICT`; `solar.layouts_module_bind()` trigger; revoke anon EXECUTE.
-- [ ] **Step 3:** full chain `00207..00215 + 00218 + 00219` with every solar assertion file + the new one → GREEN; mutations (drop each trigger) → the matching checks red. Commit `feat(solar-db): 00219 pricing guards — manual export needs rates; layouts.module_id FK`.
+- [ ] **Step 3:** full chain `00208..00216 + 00219 + 00220` with every solar assertion file + the new one → GREEN; mutations (drop each trigger) → the matching checks red. Commit `feat(solar-db): 00220 pricing guards — manual export needs rates; layouts.module_id FK`.
 
 ### Task 7: Verification, reviews, docs, push
 
 - [ ] Three suites (`@esite/shared`, `@esite/db`, `web`), type-checks, lint, `next build`, then `rm -rf apps/web/.next`.
 - [ ] Two foreground reviewers (pricing correctness; security); fix Critical/Important; re-review.
-- [ ] `docs/solar/06-open-decisions.md` (I-1, I-2, module FK → Fixed), engine spec §6 note, PR #216 body (Fixed + 00219 in the apply order); push.
+- [ ] `docs/solar/06-open-decisions.md` (I-1, I-2, module FK → Fixed), engine spec §6 note, PR #216 body (Fixed + 00220 in the apply order); push.

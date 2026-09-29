@@ -2,7 +2,7 @@ import 'server-only'
 /**
  * The TOU calendar a study uses: its licensee's calendar valid on the date,
  * else Eskom's hours flagged assumed_eskom (spec §5 "TOU hours notice").
- * Read through the caller's session (00209: readable by subscribed orgs).
+ * Read through the caller's session (00210: readable by subscribed orgs).
  */
 import { calendarFromRows, pickCalendar, resolveStudyCalendar, type TouCalendar } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'

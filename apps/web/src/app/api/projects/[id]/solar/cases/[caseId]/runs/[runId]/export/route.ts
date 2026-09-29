@@ -1,6 +1,6 @@
 /**
  * GET …/runs/[runId]/export?kind=hourly|monthly|slice&from=&to=
- * Gate: Solar View. The run row is read through the CALLER's session (00215 case_runs_select), so a
+ * Gate: Solar View. The run row is read through the CALLER's session (00216 case_runs_select), so a
  * caller who cannot see the run gets 404; the file is then read with the service client (the bucket
  * has no user policy). Everything served is the stored result — nothing is recomputed.
  */

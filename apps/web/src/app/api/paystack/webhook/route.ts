@@ -195,7 +195,7 @@ async function resolveUserOrg(supabase: Client, userId: string): Promise<string 
   return (data as { organisation_id?: string } | null)?.organisation_id ?? null
 }
 
-// ── Org add-on subscriptions (Solar — billing.org_addon_subscriptions, 00207) ─
+// ── Org add-on subscriptions (Solar — billing.org_addon_subscriptions, 00208) ─
 //
 // THIS ROUTE IS THE ONLY WRITER of billing.org_addon_subscriptions (service
 // client; the table has SELECT for org owner/admin and no write policy).
@@ -766,7 +766,7 @@ export async function POST(req: NextRequest) {
       return ok()
     }
 
-    // Branch A3: org add-on subscription — FIRST charge (Solar, 00207).
+    // Branch A3: org add-on subscription — FIRST charge (Solar, 00208).
     // Discriminated by metadata.type set in /api/paystack/solar-subscribe.
     // Must sit before Branch B: this metadata carries org_id but no tier, so
     // it would otherwise fall to Branch C and be matched against the org's

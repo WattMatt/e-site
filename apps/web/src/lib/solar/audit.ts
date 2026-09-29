@@ -2,7 +2,7 @@ import 'server-only'
 /**
  * Append one row to solar.audit_events (feeds Overview → Recent activity).
  * Written with the service client AFTER the action's own gate has passed.
- * Since 00218 authenticated users hold NO insert grant or policy on
+ * Since 00219 authenticated users hold NO insert grant or policy on
  * solar.audit_events (an editor could otherwise post a forged activity line
  * through PostgREST), so this is the only writer — pinned by
  * audit-writers.contract.test.ts. It also covers grantors acting before the

@@ -1,10 +1,10 @@
 -- ---------------------------------------------------------------------------
--- Migration 00208: Solar org settings, notification types, product events
+-- Migration 00209: Solar org settings, notification types, product events
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
 -- filenames, and the migration filenames in every OPEN PR (feat/solar-phase-1b
--- included). If 00208 is taken, renumber this file (and the header of
+-- included). If 00209 is taken, renumber this file (and the header of
 -- scripts/db/assert-solar-org-settings-roles.sql) above the head first.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
@@ -25,7 +25,7 @@
 --      solar_* verbs (00199's list + solar_*). packages/shared PRODUCT_EVENTS
 --      and its contract test change in the same PR.
 --
--- 00207's schema-wide @verify directives are re-checked on every deploy and
+-- 00208's schema-wide @verify directives are re-checked on every deploy and
 -- this migration conforms to each: FORCE RLS on the new relkind 'r' table; no
 -- RESTRICTIVE policy covering SELECT anywhere in solar; the SECURITY DEFINER
 -- bind function revokes EXECUTE from PUBLIC and anon.
@@ -88,7 +88,7 @@ CREATE TRIGGER org_settings_bind BEFORE INSERT OR UPDATE ON solar.org_settings
 
 ALTER TABLE solar.org_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.org_settings FORCE ROW LEVEL SECURITY;
--- Per verb, PERMISSIVE only (00207 forbids a RESTRICTIVE read policy in solar).
+-- Per verb, PERMISSIVE only (00208 forbids a RESTRICTIVE read policy in solar).
 -- Owners/admins of the org only: the defaults include rate cards (money).
 CREATE POLICY org_settings_select ON solar.org_settings FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.user_organisations uo
@@ -138,7 +138,7 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
         'billing_duplicate_charge',
         'billing_refund_processed',
         'billing_dispute_opened',
-        -- 00208: Solar access requests and decisions
+        -- 00209: Solar access requests and decisions
         'solar_subscribe_requested',
         'solar_access_requested',
         'solar_access_changed',

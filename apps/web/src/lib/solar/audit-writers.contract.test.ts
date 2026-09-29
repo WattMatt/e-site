@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 /**
- * Contract (00218): solar.audit_events is SERVICE-written. Authenticated users hold no INSERT
+ * Contract (00219): solar.audit_events is SERVICE-written. Authenticated users hold no INSERT
  * grant or policy on it, so an editor cannot post a forged "Recent activity" line. The only
  * writer in the app is lib/solar/audit.ts (recordSolarAudit, service client, called AFTER each
  * action's own Solar gate). A second writer with the user's client would fail at runtime (42501)

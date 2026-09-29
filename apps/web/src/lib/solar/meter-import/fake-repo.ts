@@ -81,7 +81,7 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
       return m
     },
     async upsertChannel(row) {
-      // 00210's partial unique index meter_channels_one_primary_per_file (meter_id, file_id) WHERE is_primary.
+      // 00211's partial unique index meter_channels_one_primary_per_file (meter_id, file_id) WHERE is_primary.
       if (row.is_primary && state.channels.some((c) => c.meter_id === row.meter_id && c.file_id === row.file_id && c.is_primary && c.source_column !== row.source_column)) {
         throw new Error('upsert channel: duplicate key value violates unique constraint "meter_channels_one_primary_per_file"')
       }

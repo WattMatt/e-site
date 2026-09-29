@@ -1,7 +1,7 @@
 -- D-23 volume test for solar.meter_readings, inserted and measured INSIDE the dry-run transaction,
 -- then rolled back. The check text carries the measurement; ok = within the D-23 limit.
 --   scripts/db/dry-run-migration.sh <scratchpad>/mig-3a.sql scripts/db/solar-readings-volume-test.sql
---   (mig-3a.sql = 00207_solar_foundation.sql + 00210_solar_meter_data.sql while 00207 is unapplied)
+--   (mig-3a.sql = 00208_solar_foundation.sql + 00211_solar_meter_data.sql while 00208 is unapplied)
 --
 -- SCALE (owner decision 2026-09-28): the full D-23 corpus is 120 bulk channels + 1 write_readings
 -- channel x 17,520 half-hours (a 40-tenant mall, three channels each, one year) = 2,119,920 rows.

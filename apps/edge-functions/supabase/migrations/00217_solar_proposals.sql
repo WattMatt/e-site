@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00216: Solar reports and client proposals (Phase 6)
+-- Migration 00217: Solar reports and client proposals (Phase 6)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §9, §15, §2.2; docs/solar/03-data-model-and-security.md
 -- §3 (proposals, proposal_events), §3.1, §5 items 5-7; decisions D-15, D-17, D-18.
@@ -18,19 +18,21 @@
 --   * Service-only state changes: solar_issue_proposal, solar_withdraw_proposal,
 --     solar_rotate_proposal_link.
 --   * public.solar_portfolio(org): the §15 portfolio rows the caller may see.
---   * public.user_can_read_report_kind(): Solar kinds read on the Solar level (layout sheet and
+--   * public.user_can_read_report_kind(): Solar kinds read on the Solar level (layout sheet, schematic sheet and
 --     technical on View; feasibility and proposal on Edit + financials).
 --   * projects.project_settings.notify_solar_email; two notification types; six product events.
---   * Solar PDFs in bucket 'reports' (<org>/<project>/solar-reports/ and /solar-proposals/) are
---     SERVICE-ONLY: per-verb RESTRICTIVE storage.objects policies refuse them to every session
---     role (00117's bucket policies admit any org member). No session inserts or updates a Solar
---     report row (kind solar_*) or any row whose storage_path is a Solar PDF (00117 reports_write
---     is FOR ALL, and the report-URL action service-signs a row's path after gating on its kind);
---     the solar_proposal row cannot be deleted through a session either.
+--   * Solar-specific defence in depth on bucket 'reports' (<org>/<project>/solar-reports/ and
+--     /solar-proposals/): per-verb RESTRICTIVE storage.objects policies refuse Solar PDFs to every
+--     session role, and no session inserts or updates a Solar report row (kind solar_*) or any row
+--     whose storage_path is a Solar PDF; the solar_proposal row cannot be deleted through a session
+--     either. The GENERAL fixes are not this migration's: 00207 (PR #218, applied first) makes the
+--     whole `reports` / `qc-reports` buckets service-only and binds every report row's path to its
+--     own org and project (public.report_path_belongs). These Solar policies AND with 00207's and
+--     keep the Solar rule true on its own; where they overlap (canonical path) they are redundant.
 --   * A study or case that an issued proposal depends on cannot be deleted directly; a project
 --     delete (an FK cascade, trigger depth > 1) still removes everything.
 -- RULES
---   * 00207's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
+--   * 00208's schema-wide directives hold: FORCE RLS on every solar table, no RESTRICTIVE read
 --     policy in schema solar, every SECURITY DEFINER function revoked from anon.
 --   * Per-verb write policies only (never RESTRICTIVE FOR ALL: it narrows reads too, the 00205 lesson).
 -- ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@
 -- sql: (SELECT count(*) = 3 FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'proposals' AND permissive = 'RESTRICTIVE' AND strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar_can_see_money') > 0)
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('proposals', 'proposal_events', 'proposal_templates') AND cmd = 'ALL')
 -- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_proposal%' FROM pg_proc WHERE oid = 'public.report_kind_is_sensitive(text)'::regprocedure)
--- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_proposal%' AND prosrc LIKE '%solar_layout_sheet%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
+-- sql: (SELECT prosrc LIKE '%solar_feasibility%' AND prosrc LIKE '%solar_technical%' AND prosrc LIKE '%solar_proposal%' AND prosrc LIKE '%solar_layout_sheet%' AND prosrc LIKE '%solar_schematic_sheet%' FROM pg_proc WHERE oid = 'public.user_can_read_report_kind(uuid, text)'::regprocedure)
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_proposal_accepted%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_declined%' AND pg_get_constraintdef(oid) LIKE '%solar_access_declined%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%' FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check')
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_report_generated%' AND pg_get_constraintdef(oid) LIKE '%solar_proposal_issued%' AND pg_get_constraintdef(oid) LIKE '%solar_narrative_drafted%' AND pg_get_constraintdef(oid) LIKE '%solar_equipment_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- sql: (SELECT count(DISTINCT cmd) = 4 AND count(*) = 4 AND bool_and(strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar-(reports|proposals)') > 0) FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'solar_pdfs_service_only_%' AND permissive = 'RESTRICTIVE' AND cmd <> 'ALL')
@@ -780,7 +782,7 @@ REVOKE ALL ON FUNCTION public.solar_portfolio(UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION public.solar_portfolio(UUID) TO authenticated, service_role;
 
 -- ── 8. Saved Solar reports read on the Solar level ──────────────────────────
--- Redefines 00183's functions IN FULL. solar_layout_sheet is carried from 00211 (Phase 5) so the
+-- Redefines 00183's functions IN FULL. solar_layout_sheet is carried from 00212 (Phase 5) so the
 -- FINAL definition gates every Solar kind whichever branch lands first.
 CREATE OR REPLACE FUNCTION public.report_kind_is_sensitive(_kind TEXT)
 RETURNS BOOLEAN
@@ -800,6 +802,7 @@ SET row_security TO 'off'
 AS $function$
   SELECT CASE
     WHEN _kind = 'solar_layout_sheet' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
+    WHEN _kind = 'solar_schematic_sheet' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
     WHEN _kind = 'solar_technical' THEN COALESCE(public.solar_can_view(_project_id), FALSE)
     WHEN _kind = 'solar_feasibility' THEN COALESCE(public.solar_can_see_money(_project_id), FALSE)
     WHEN _kind = 'solar_proposal' THEN COALESCE(public.solar_can_see_money(_project_id), FALSE)
@@ -815,9 +818,10 @@ REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION public.report_kind_is_sensitive(TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
 
--- ── 8b. Solar PDFs are service-only (bucket 'reports', 00117) ───────────────
--- 00117's bucket policies admit ANY active org member to read, upload, overwrite and delete every
--- object under <org>/. Solar feasibility and proposal PDFs are money, and an accepted proposal's PDF
+-- ── 8b. Solar PDFs are service-only (bucket 'reports') ───────────────────────
+-- 00207 (#218) already refuses the whole bucket to session roles; these Solar-scoped policies are
+-- kept as defence in depth so the Solar rule does not depend on it. Solar feasibility and proposal
+-- PDFs are money, and an accepted proposal's PDF
 -- is the evidence its hash is stamped against. Every app read, sign, upload and remove of these paths
 -- goes through the service client after the Solar gate, so a session role needs none of them.
 -- Per verb (never RESTRICTIVE FOR ALL); every other bucket and path is untouched.
@@ -837,7 +841,8 @@ CREATE POLICY solar_pdfs_service_only_delete ON storage.objects AS RESTRICTIVE F
 
 -- Every Solar report row (feasibility, technical, layout sheet, proposal) is inserted and superseded
 -- only by the service client after the Solar gate. 00117's reports_write (FOR ALL, owner/admin/PM)
--- would otherwise let a session forge a row: getProjectReportUrlAction gates on the row's KIND and
+-- admits a session write of an in-org row even after 00207 binds its path to the row, so without this
+-- a session could still forge a Solar row: getProjectReportUrlAction gates on the row's KIND and
 -- then service-signs its storage_path, so a technical (View) or open-kind row pointed at a
 -- deterministic feasibility path would hand money PDFs to a user without financials. So no session
 -- inserts or updates a row whose kind is solar_* OR whose path is a Solar PDF (USING and WITH CHECK).
@@ -878,7 +883,7 @@ CREATE POLICY reports_solar_proposal_delete_authz ON projects.reports AS RESTRIC
 ALTER TABLE projects.project_settings
     ADD COLUMN IF NOT EXISTS notify_solar_email BOOLEAN NOT NULL DEFAULT TRUE;
 
--- ── 10. Notification types (re-declared in full: 00208's list + Phase 6) ────
+-- ── 10. Notification types (re-declared in full: 00209's list + Phase 6) ────
 ALTER TABLE public.notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
     type = ANY (ARRAY[
@@ -907,13 +912,13 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
         'solar_access_requested',
         'solar_access_changed',
         'solar_access_declined',
-        -- 00216: client responses to a proposal
+        -- 00217: client responses to a proposal
         'solar_proposal_accepted',
         'solar_proposal_declined'
     ]::text[])
 );
 
--- ── 11. Product events (re-declared in full: 00215's list + Phase 6) ────────
+-- ── 11. Product events (re-declared in full: 00216's list + Phase 6) ────────
 ALTER TABLE public.product_events DROP CONSTRAINT IF EXISTS product_events_event_check;
 ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHECK (event IN (
     'rfi_created',

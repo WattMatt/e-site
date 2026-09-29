@@ -1,7 +1,7 @@
 'use server'
 /**
  * Schematics tab writes (functional spec §13). Each action re-checks Solar Edit and writes with the
- * caller's session, so 00214's RESTRICTIVE solar_can_edit policies and bind triggers decide (drawing on
+ * caller's session, so 00215's RESTRICTIVE solar_can_edit policies and bind triggers decide (drawing on
  * this project and active, meter in this study, no loop). The report upload alone uses the service
  * client, after the gate, as every other sheet export does.
  */

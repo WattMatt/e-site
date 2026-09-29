@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { humanLayoutError } from './layout-errors'
 
 describe('humanLayoutError', () => {
-  it('maps every 00211 sentence and never echoes a raw message', () => {
+  it('maps every 00212 sentence and never echoes a raw message', () => {
     expect(humanLayoutError({ code: '40001', message: 'solar.layouts: stale layout' })).toBe('Someone else changed this — reload to see their version.')
     expect(humanLayoutError({ code: '23514', message: 'solar.layout_objects: the roof source has no scale; calibrate this page first' }))
       .toBe('This drawing page has no scale yet — calibrate it before drawing.')

@@ -4,7 +4,7 @@
 
 **Goal:** Make the Phase 4a engine usable: users define cases (design options) per study, run them on the server into immutable stored runs (inputs snapshot + `inputs_hash` + `engine_version` + outputs + an 8760 hourly CSV), see every result and a Stale banner on the Yield & Scenarios tab, price them on the Financials tab (capex, opex, cash/debt/PPA/lease side by side, tax/12B, XLSX, tornado), fetch PVGIS TMY weather server-side into a per-org cache, and maintain an org equipment catalogue — with the readiness rules for Yield/Financials and the Overview KPIs now live.
 
-**Architecture:** One migration (`00215_solar_cases.sql`) adds six `solar.*` tables (cases, case_runs, weather_datasets, equipment, case_financials, case_run_financials), `studies.selected_case_id`, two private service-only buckets and five `solar_*` product events, with per-verb RLS, FORCE RLS, bind triggers and a freeze trigger that makes a run immutable once it leaves `running`. All pure logic (case config schema, CaseInput builder, outputs/waterfall/checks, hourly CSV codec, finance-input builder, stored-financials runner, equipment CSV) lives in a new `@esite/shared/solar-cases` subpath beside the engine and is unit-tested there; the web app only loads rows, calls those functions on the server, and renders stored numbers. The browser never computes a displayed result (a contract test enforces it).
+**Architecture:** One migration (`00216_solar_cases.sql`) adds six `solar.*` tables (cases, case_runs, weather_datasets, equipment, case_financials, case_run_financials), `studies.selected_case_id`, two private service-only buckets and five `solar_*` product events, with per-verb RLS, FORCE RLS, bind triggers and a freeze trigger that makes a run immutable once it leaves `running`. All pure logic (case config schema, CaseInput builder, outputs/waterfall/checks, hourly CSV codec, finance-input builder, stored-financials runner, equipment CSV) lives in a new `@esite/shared/solar-cases` subpath beside the engine and is unit-tested there; the web app only loads rows, calls those functions on the server, and renders stored numbers. The browser never computes a displayed result (a contract test enforces it).
 
 **Tech Stack:** Postgres (Supabase) + RLS, Next.js 15 App Router (server components, server actions, `runtime='nodejs'` route handlers), TypeScript, zod, vitest + RTL, exceljs (already a web dependency), hand-rolled SVG charts (E-Site has **no** charting library — the only existing chart, `components/mv/TccPlot.tsx`, is hand-rolled SVG; this plan follows that and adds no dependency), `node:zlib` for gzip.
 
@@ -15,7 +15,7 @@
 | File | Tasks | Produces |
 |---|---|---|
 | `2026-09-28-solar-phase-4b-0-index.md` (this) | 0 | Worktree, preflight facts, conventions, file map |
-| `2026-09-28-solar-phase-4b-1-schema.md` | 1–4 | `00215_solar_cases.sql`, behavioural assertions (red → green → mutations), product-event registry, `@verify` |
+| `2026-09-28-solar-phase-4b-1-schema.md` | 1–4 | `00216_solar_cases.sql`, behavioural assertions (red → green → mutations), product-event registry, `@verify` |
 | `2026-09-28-solar-phase-4b-2-case-model.md` | 5–13 | `@esite/shared/solar-cases`: config, finance config, equipment, TOU periods, CaseInput builder, outputs, hourly CSV, finance input, stored financials, bill adapter, status, readiness, rate-card settings |
 | `2026-09-28-solar-phase-4b-3-server.md` | 14–22 | Storage + weather + tariff + run-context libs, run / cancel / export routes, case / weather / financials / equipment actions, XLSX |
 | `2026-09-28-solar-phase-4b-4-yield-ui.md` | 23–29 | SVG charts, Yield & Scenarios page (list, editor, results, compare, stale banner), no-browser-engine contract test |
@@ -29,7 +29,7 @@
 2. **Weather cache is per organisation** (`03 §3`: "Cache shared per org"), key `(organisation_id, source, lat_round, lng_round)` at 0.01°. The raw PVGIS response is stored verbatim (CSV, gzipped) — the same format as 4a's fixtures, so tests reuse them and never call PVGIS.
 3. **Both new buckets are service-only.** `solar-runs` and `solar-weather` get **no** `storage.objects` policy for `authenticated`; every read/write goes through a gated server route/action with the service client, and downloads are short-lived signed URLs (≤ 1 h). Smallest possible surface; `@verify` pins "zero policies".
 4. **Money lives in separate tables** (`case_financials`, `case_run_financials`) gated on `solar_can_see_money` (`03 §3.1`), so `cases.config` holds no rand values. The load-shedding **R/kWh value** is money → finance config; hours/year and backed kW are technical → case config (D-14 reported separately, never in IRR — the engine already enforces it).
-5. **`layout_id` has no FK yet.** `solar.layouts` is created by `00211` on `feat/solar-phase-5`, which is not on the base. `cases.layout_id UUID NULL` + CHECK pairing it with `pv_source`; the create action refuses `pv_source='layout'` ("From layout arrives with the Layout tab"), and the UI renders **From layout** disabled. The Phase 5 integration merge adds `FOREIGN KEY (layout_id) REFERENCES solar.layouts(id)`.
+5. **`layout_id` has no FK yet.** `solar.layouts` is created by `00212` on `feat/solar-phase-5`, which is not on the base. `cases.layout_id UUID NULL` + CHECK pairing it with `pv_source`; the create action refuses `pv_source='layout'` ("From layout arrives with the Layout tab"), and the UI renders **From layout** disabled. The Phase 5 integration merge adds `FOREIGN KEY (layout_id) REFERENCES solar.layouts(id)`.
 6. **Measured-weather upload is deferred** (spec §7.2 lists it; the user brief lists only PVGIS + GSA). The option renders disabled "Coming later". PAN/OND import deferred per the brief (D-19).
 7. **Opex escalation = CPI** (the engine escalates opex by CPI; a separate opex escalation input would be an engine change). The field renders read-only "= CPI".
 8. **Generic platform catalogue rows are seeded** (one module, one inverter, one battery, make `Generic`, marked "typical values, not a datasheet") so a Manual case can run on day one. Org rows override; platform rows are service-role-written only.
@@ -59,7 +59,7 @@
 
 | Path | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00215_solar_cases.sql` | Schema, RLS, triggers, buckets, events, seed catalogue, `@verify` |
+| `apps/edge-functions/supabase/migrations/00216_solar_cases.sql` | Schema, RLS, triggers, buckets, events, seed catalogue, `@verify` |
 | `scripts/db/assert-solar-cases-roles.sql` | Behavioural RLS/trigger assertions as real roles |
 | `packages/shared/src/solar/cases/index.ts` | Barrel for `@esite/shared/solar-cases` |
 | `packages/shared/src/solar/cases/config.ts` (+ `.test.ts`) | `CaseConfig` zod schema, defaults from org settings, loss reset |
@@ -147,8 +147,8 @@ git grep -n "export const ENGINE_VERSION" -- packages/shared/src/services/solar/
 git grep -n "export function parsePvgisTmyCsv" -- packages/shared/src/services/solar/weather/pvgis-tmy.ts
 git grep -n "export function createBillCalculator" -- packages/shared/src/tariffs/bill-calculator.ts
 git grep -n "export function tariffFromRows" -- packages/shared/src/tariffs/ingest/supabase-store.ts
-git grep -n "CREATE TABLE IF NOT EXISTS solar.site_load" -- apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql
-git grep -n "CREATE OR REPLACE FUNCTION solar.library_orgs" -- apps/edge-functions/supabase/migrations/00210_solar_meter_data.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.site_load" -- apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql
+git grep -n "CREATE OR REPLACE FUNCTION solar.library_orgs" -- apps/edge-functions/supabase/migrations/00211_solar_meter_data.sql
 git grep -n "export async function requireSolarLevelAPI" -- apps/web/src/lib/solar/api-gate.ts
 ls packages/shared/src/services/solar/__fixtures__/pvgis/tmy_jhb.csv.gz packages/shared/src/services/solar/__fixtures__/stub-bill-calculator.ts
 ```
@@ -169,7 +169,7 @@ git fetch origin
 for r in $(git branch -r | grep -v HEAD); do git ls-tree -r --name-only $r -- apps/edge-functions/supabase/migrations | grep -E '/002(1[1-9]|[2-9][0-9])_' | sed "s|^|$r: |"; done | sort -u
 gh pr list --state open --json number,files --jq '.[] | select(any(.files[]; .path | test("migrations/002[1-9]"))) | {number, files: [.files[].path | select(test("migrations/"))]}'
 ```
-Expected today (2026-09-28): only `origin/feat/solar-phase-5: …/00211_solar_layouts.sql`. If any branch/PR holds `00215`, STOP and ask which number to use. If `00213` exists on origin, note it: Task 3 concatenates it into the dry run. The ledger (production) check happens at APPLY time, which is not part of this plan (the PR is a draft onto `feat/solar-integration`).
+Expected today (2026-09-28): only `origin/feat/solar-phase-5: …/00212_solar_layouts.sql`. If any branch/PR holds `00216`, STOP and ask which number to use. If `00214` exists on origin, note it: Task 3 concatenates it into the dry run. The ledger (production) check happens at APPLY time, which is not part of this plan (the PR is a draft onto `feat/solar-integration`).
 
 - [ ] **Step 6: Baseline the three suites** (so later failures are attributable).
 

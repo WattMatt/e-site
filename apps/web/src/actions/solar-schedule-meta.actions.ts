@@ -1,7 +1,7 @@
 'use server'
 /**
  * Links, baselines, per-user filter presets and schedule settings (spec §14.1–14.2).
- * Direct table writes through the caller's session: 00212's RLS and bind
+ * Direct table writes through the caller's session: 00213's RLS and bind
  * triggers (loop refusal, user binding, org binding) are the authority; each
  * action re-checks the Solar level itself first. Presets are View-level
  * (filtering is reading); everything else needs Edit.

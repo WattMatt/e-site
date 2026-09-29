@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: 'Solar access' }
 
 /**
  * Grantors only (spec §1.3). OUTSIDE solar/(gated): owners/admins may set up
- * grants before the org subscribes (00207 keeps project_access ungated by
+ * grants before the org subscribes (00208 keeps project_access ungated by
  * subscription), and the gated layout would bounce them to /locked.
  */
 export default async function SolarAccessPage({ params }: { params: Promise<{ id: string }> }) {

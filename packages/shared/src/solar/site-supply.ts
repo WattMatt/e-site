@@ -1,7 +1,7 @@
 /**
  * Site & Supply (spec §3.2) — option lists and validation shared by the form
  * (instant feedback) and saveSolarSiteAction (the real check). Column names
- * and CHECKs come from solar.studies in migration 00207; this module never
+ * and CHECKs come from solar.studies in migration 00208; this module never
  * accepts a value the table would refuse. Warnings never block a save.
  */
 import { isInSouthAfrica } from './readiness'

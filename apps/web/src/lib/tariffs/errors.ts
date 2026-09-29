@@ -1,6 +1,6 @@
 /**
  * tariffs.* errors -> one human sentence (spec §0.4 rule 5). Keyed on the
- * exact sentences raised by 00209's guards and 00213's functions, then the
+ * exact sentences raised by 00210's guards and 00214's functions, then the
  * SQLSTATE. Never returns the raw message.
  */
 export const TARIFF_GENERIC_ERROR = 'Something went wrong. Try again.'

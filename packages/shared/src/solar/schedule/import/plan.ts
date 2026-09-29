@@ -1,7 +1,7 @@
 /**
  * What a template or an import file becomes before it is committed: tasks
  * keyed by a client key and links between keys. solar.schedule_create_tasks
- * (00212) takes exactly this shape (snake_cased by the action), in ONE
+ * (00213) takes exactly this shape (snake_cased by the action), in ONE
  * transaction — WM inserted row by row with a toast each (as-is/06 B.7 D7).
  */
 import { isCalendarDate, type CalendarDate } from '../dates'
@@ -10,7 +10,7 @@ import { isGanttStatus, type GanttStatus } from '../status'
 import type { ScheduleSegment } from '../rows'
 
 export const MAX_IMPORT_TASKS = 2000
-/** solar.schedule_dependencies.lag_days CHECK (lag_days BETWEEN -365 AND 365), 00212. */
+/** solar.schedule_dependencies.lag_days CHECK (lag_days BETWEEN -365 AND 365), 00213. */
 export const MAX_LAG_DAYS = 365
 
 export interface PlannedTask {

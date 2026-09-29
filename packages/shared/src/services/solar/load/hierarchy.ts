@@ -1,7 +1,7 @@
 /**
  * The meter supply hierarchy drawn on schematics (functional spec §13.3). Supply lines only; a
  * `check` line (a check meter beside a supply meter) never enters it. The database refuses loops
- * (00214 schematic_lines_bind); these functions still survive one, so a legacy row cannot hang them.
+ * (00215 schematic_lines_bind); these functions still survive one, so a legacy row cannot hang them.
  */
 export interface MeterLine {
   fromMeterId: string

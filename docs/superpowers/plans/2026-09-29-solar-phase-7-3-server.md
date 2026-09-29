@@ -44,7 +44,7 @@ beforeEach(() => {
   h.createServiceClient.mockReturnValue(withStorage(fakeSupabase()).client)
 })
 
-describe('solar_monthly follows Edit + financials (00217 mirrors this)', () => {
+describe('solar_monthly follows Edit + financials (00218 mirrors this)', () => {
   it('Edit cannot list or open it; Edit + financials can', async () => {
     h.level.mockResolvedValue('edit')
     await expect(listProjectReportsAction(P, 'solar_monthly')).resolves.toEqual({ error: 'You do not have Solar access on this project.' })
@@ -75,7 +75,7 @@ In `report-kind-access.ts`, add to `SOLAR_READ_REPORT_KINDS` (after `solar_propo
 
 In `project-reports.actions.ts` `deleteProjectReportAction`, immediately after Phase 6's `solar_proposal` refusal:
 ```ts
-  // A generated monthly report is the record of what the client received (00217 keeps its snapshot).
+  // A generated monthly report is the record of what the client received (00218 keeps its snapshot).
   if (report.kind === 'solar_monthly') {
     return { error: 'A monthly report is kept as the record of what the client received — generate a new version instead.' }
   }
@@ -90,7 +90,7 @@ In `SavedReportsPanel.tsx` add to `SUMMARY_LABELS`:
   variancePct: '% variance',
 ```
 
-- [ ] **Step 4: Run — PASS, plus the report-kind contract (it now requires `solar_monthly` in the FINAL `user_can_read_report_kind()`, which 00217 has); commit.**
+- [ ] **Step 4: Run — PASS, plus the report-kind contract (it now requires `solar_monthly` in the FINAL `user_can_read_report_kind()`, which 00218 has); commit.**
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-7
@@ -119,7 +119,7 @@ import { describe, it, expect } from 'vitest'
 import { opsError } from './errors'
 
 describe('opsError', () => {
-  it('turns 00217 trigger refusals into the sentence they carry', () => {
+  it('turns 00218 trigger refusals into the sentence they carry', () => {
     expect(opsError({ code: '23514', message: 'solar.installation_meters: a generation meter must be a solar meter' })).toBe('A generation meter must be a solar meter.')
     expect(opsError({ code: '23P01', message: 'solar.downtime: this window overlaps recorded downtime' })).toBe('This window overlaps recorded downtime.')
     expect(opsError({ code: '42501', message: 'solar.installations: the installation identity and its modelled baseline are immutable' }))
@@ -241,7 +241,7 @@ describe('loadInstallationSeed', () => {
 `errors.ts`:
 ```ts
 /**
- * 00217's triggers raise "solar.<table>: <sentence>" with SQLSTATE 23514 / 23P01 / 23503 / 42501 / 23505.
+ * 00218's triggers raise "solar.<table>: <sentence>" with SQLSTATE 23514 / 23P01 / 23503 / 42501 / 23505.
  * Those sentences are written for people, so they are shown; anything else goes through
  * humanSolarError, which never echoes database text.
  */
@@ -263,7 +263,7 @@ export function opsError(err: { code?: string; message?: string } | null | undef
 `series.ts`:
 ```ts
 /**
- * Wrappers for 00217's two aggregation functions. They return ONE jsonb document, so no PostgREST
+ * Wrappers for 00218's two aggregation functions. They return ONE jsonb document, so no PostgREST
  * row cap can truncate a month (WM M3/G12), and they run as the caller (RLS decides).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -906,7 +906,7 @@ describe('saveInstallationAction', () => {
 'use server'
 /**
  * Operations tab actions (spec §10). Every action gates its Solar level FIRST (requireSolarLevel
- * redirects a lower level), writes through the caller's session so 00217's RESTRICTIVE policies and
+ * redirects a lower level), writes through the caller's session so 00218's RESTRICTIVE policies and
  * bind triggers decide, and reports trigger refusals in their own words (opsError).
  */
 import { revalidatePath } from 'next/cache'
@@ -1489,7 +1489,7 @@ describe('saveHandoverTemplateAction', () => {
 /**
  * Handover checklist (spec §10): each item links ONE file of the project's E-Site Documents
  * (tenants.documents) or is marked N/A. The org template lives in /settings/solar (owner/admin).
- * 00217's bind trigger refuses a document from another project and stamps completion.
+ * 00218's bind trigger refuses a document from another project and stamps completion.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -1998,7 +1998,7 @@ import 'server-only'
  * (the same code the tab shows), lost revenue from the bill engine, commentary from the notes table.
  * Everything the PDF prints is first frozen into a snapshot; the PDF is rendered from the snapshot;
  * both are stored (projects.reports + solar.monthly_reports). v(n+1) supersedes v(n)'s report row and
- * never edits v(n) — 00217 makes the snapshot table immutable. The caller has already gated Edit +
+ * never edits v(n) — 00218 makes the snapshot table immutable. The caller has already gated Edit +
  * financials; `svc` writes the report tables and the PDF after that gate.
  */
 import { createHash } from 'node:crypto'

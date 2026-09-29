@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build everything under the Solar Layout tab that is not a canvas: the pure PV-layout geometry in `@esite/shared` (auto-fill packing with setbacks and obstructions, the D-11 row-pitch rule, fall-line-only foreshortening, azimuth, string checks and auto-stringing, summary, BOM, satellite tile maths), migration `00211_solar_layouts.sql` (roof sources, layouts, layout objects, an atomic stale-refusing save, the `solar-roof-images` bucket, the Solar read gate on `solar_layout_sheet` reports), the `isAnnotated()` registration in `cloud-sync-project`, and the application half of the report read gate.
+**Goal:** Build everything under the Solar Layout tab that is not a canvas: the pure PV-layout geometry in `@esite/shared` (auto-fill packing with setbacks and obstructions, the D-11 row-pitch rule, fall-line-only foreshortening, azimuth, string checks and auto-stringing, summary, BOM, satellite tile maths), migration `00212_solar_layouts.sql` (roof sources, layouts, layout objects, an atomic stale-refusing save, the `solar-roof-images` bucket, the Solar read gate on `solar_layout_sheet` reports), the `isAnnotated()` registration in `cloud-sync-project`, and the application half of the report read gate.
 
-**Architecture:** Geometry lives in `packages/shared/src/solar/layout/` as small pure modules working in plan metres (x right, y down, the sheet's image space divided by pixels-per-metre); every stored coordinate is image pixels and every object carries the scale the DATABASE stamped when it was first saved. The migration follows 00207's shape exactly: per-verb PERMISSIVE policies on `solar_can_view` plus per-verb RESTRICTIVE policies on `solar_can_edit`, FORCE RLS, bind triggers that pin org/project/anchor/created fields, and no BEGIN/COMMIT. Plan 5-ii (`2026-09-28-solar-phase-5-layout-ii-canvas-ui.md`) builds the actions, pages, Konva canvas, export and 3D preview on top of this.
+**Architecture:** Geometry lives in `packages/shared/src/solar/layout/` as small pure modules working in plan metres (x right, y down, the sheet's image space divided by pixels-per-metre); every stored coordinate is image pixels and every object carries the scale the DATABASE stamped when it was first saved. The migration follows 00208's shape exactly: per-verb PERMISSIVE policies on `solar_can_view` plus per-verb RESTRICTIVE policies on `solar_can_edit`, FORCE RLS, bind triggers that pin org/project/anchor/created fields, and no BEGIN/COMMIT. Plan 5-ii (`2026-09-28-solar-phase-5-layout-ii-canvas-ui.md`) builds the actions, pages, Konva canvas, export and 3D preview on top of this.
 
 **Tech Stack:** TypeScript (strict), Vitest, PostgreSQL 15 / Supabase (RLS, PL/pgSQL), Deno edge function (`cloud-sync-project`), pnpm + Turborepo.
 
@@ -13,12 +13,12 @@
 ## Read this first (context an engineer new to this repo will not have)
 
 - **Worktree and branch.** Work in a NEW worktree `~/.config/superpowers/worktrees/esite/solar-phase-5` on branch `feat/solar-phase-5`, created from `origin/feat/solar-phase-1c` (Task 0). Never touch the canonical `esite/` checkout; other sessions own it. Run every command from the worktree root unless a step says otherwise.
-- **What Phase 1 gives you** (on `feat/solar-phase-1c`): migration `00207_solar_foundation.sql` (schema `solar`, `solar.studies`, the helpers `public.solar_can_view/_edit/_see_money(project_id)`, `public.solar_access_level`), `00208_solar_org_settings.sql` (`solar.org_settings`), the gated layout `apps/web/src/app/(admin)/projects/[id]/solar/(gated)/layout.tsx`, `apps/web/src/lib/solar/access.ts` (`requireSolarLevel`, `getSolarAccessLevel`), and `@esite/shared` `solar/*` (access levels, tabs, readiness, org settings).
-- **00207 and 00208 are NOT in the production ledger yet.** Every dry run in this plan concatenates `00207 + 00208 + 00211` (Task 11 shows how). If the owner has applied them by the time you run it, dry-run `00211` alone.
-- **Migration number `00211`.** `00209` (tariffs, plan 2a-i) and `00210` (meter data, plan 3a-ii) are claimed by sibling plans. Numbers are claimed **at apply time**, not now: before the owner applies, re-check THREE places — the ledger `max(version)`, `origin/main`'s migration filenames, and the migration filenames in every open PR. If `00211` is taken, rename the file and every reference (the assertion file header, the contract test in Task 14, this plan's commands). *Claiming a number is not holding it: the head moves when someone APPLIES.*
-- **00207's schema-wide `@verify` directives are re-checked on EVERY deploy** (`00207_solar_foundation.sql:99-115`). This migration must conform: FORCE RLS on every new table in `solar`; no RESTRICTIVE policy covering SELECT or ALL anywhere in `solar`; every SECURITY DEFINER function in `solar` revokes EXECUTE from PUBLIC and anon.
+- **What Phase 1 gives you** (on `feat/solar-phase-1c`): migration `00208_solar_foundation.sql` (schema `solar`, `solar.studies`, the helpers `public.solar_can_view/_edit/_see_money(project_id)`, `public.solar_access_level`), `00209_solar_org_settings.sql` (`solar.org_settings`), the gated layout `apps/web/src/app/(admin)/projects/[id]/solar/(gated)/layout.tsx`, `apps/web/src/lib/solar/access.ts` (`requireSolarLevel`, `getSolarAccessLevel`), and `@esite/shared` `solar/*` (access levels, tabs, readiness, org settings).
+- **00208 and 00209 are NOT in the production ledger yet.** Every dry run in this plan concatenates `00208 + 00209 + 00212` (Task 11 shows how). If the owner has applied them by the time you run it, dry-run `00212` alone.
+- **Migration number `00212`.** `00210` (tariffs, plan 2a-i) and `00211` (meter data, plan 3a-ii) are claimed by sibling plans. Numbers are claimed **at apply time**, not now: before the owner applies, re-check THREE places — the ledger `max(version)`, `origin/main`'s migration filenames, and the migration filenames in every open PR. If `00212` is taken, rename the file and every reference (the assertion file header, the contract test in Task 14, this plan's commands). *Claiming a number is not holding it: the head moves when someone APPLIES.*
+- **00208's schema-wide `@verify` directives are re-checked on EVERY deploy** (`00208_solar_foundation.sql:99-115`). This migration must conform: FORCE RLS on every new table in `solar`; no RESTRICTIVE policy covering SELECT or ALL anywhere in `solar`; every SECURITY DEFINER function in `solar` revokes EXECUTE from PUBLIC and anon.
 - **A RESTRICTIVE `FOR ALL` policy narrows reads too** (the 00205/00206 lesson). Every write gate here is one policy per verb (`INSERT`, `UPDATE`, `DELETE`), never `FOR ALL`.
-- **`isAnnotated()` fails CLOSED.** It is the only thing that stops Dropbox auto-adopt swapping a drawing file under pixel-anchored geometry (`apps/edge-functions/supabase/functions/cloud-sync-project/index.ts:785-873`). If the new lookups error — `00211` not applied, or schema `solar` not exposed to PostgREST — EVERY drawing reads as annotated and auto-adopt silently stops platform-wide. The deploy order is therefore fixed: migration → verify → edge function (Task 15, owner steps).
+- **`isAnnotated()` fails CLOSED.** It is the only thing that stops Dropbox auto-adopt swapping a drawing file under pixel-anchored geometry (`apps/edge-functions/supabase/functions/cloud-sync-project/index.ts:785-873`). If the new lookups error — `00212` not applied, or schema `solar` not exposed to PostgREST — EVERY drawing reads as annotated and auto-adopt silently stops platform-wide. The deploy order is therefore fixed: migration → verify → edge function (Task 15, owner steps).
 - **Edge functions do not deploy on merge.** `cloud-sync-project` is deployed by hand from `apps/edge-functions/deploy.sh` and read back from the Management API. That is an OWNER step here, not something this plan's executor does.
 - **Three suites on any migration work:** `web`, `@esite/shared` AND `@esite/db`. `packages/db` holds the repo-wide migration guards (`packages/db/src/__tests__/security/*`) and reads migration TEXT.
 - **Phase 4a (engine) is not pushed.** `origin/feat/solar-phase-4a` does not exist today. This plan needs its §3.3 string-sizing functions, so Task 6 places a BYTE-IDENTICAL copy of `packages/shared/src/services/solar/pv/string-sizing.ts` (4a commit `c8665929`) at the same path, so the later merge is a clean identical add. If `origin/feat/solar-phase-4a` exists when you execute, check the file out from it instead (Task 6 Step 1 says how).
@@ -43,7 +43,7 @@
 | `packages/shared/src/solar/layout/index.ts` | Barrel |
 | `packages/shared/src/solar/index.ts` | Add `export * from './layout'` |
 | `packages/shared/src/solar/readiness.ts` | `computeSolarReadiness` takes an optional layout input |
-| `apps/edge-functions/supabase/migrations/00211_solar_layouts.sql` | The migration |
+| `apps/edge-functions/supabase/migrations/00212_solar_layouts.sql` | The migration |
 | `scripts/db/assert-solar-layouts-roles.sql` | Behavioural assertions as real roles (red → green) |
 | `apps/edge-functions/supabase/functions/cloud-sync-project/index.ts` | `isAnnotated()` queries `solar.roof_sources` and `solar.layout_objects` |
 | `packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts` | Discovery must find the two Solar tables |
@@ -102,7 +102,7 @@ Expected: every suite passes (record the web/shared/db counts; the final task co
  * apps/web/src/lib/sheet/use-sheet-image.ts defines (a PDF page at
  * getViewport({ scale: 2 }), a raster at its natural size). Metres come from
  * each object's own `pixelsPerMeter`, which the DATABASE stamps when the object
- * is first saved (00211 layout_objects_bind) — never from the browser.
+ * is first saved (00212 layout_objects_bind) — never from the browser.
  *
  * Plan metres (what the geometry modules compute in) are image pixels divided
  * by that scale: x to the right, y DOWN the sheet.
@@ -112,7 +112,7 @@ export interface Pt {
   y: number
 }
 
-/** Mirrors the CHECK on solar.layout_objects.kind (00211). 'north' is reserved: the north reference lives on the roof source. */
+/** Mirrors the CHECK on solar.layout_objects.kind (00212). 'north' is reserved: the north reference lives on the roof source. */
 export const LAYOUT_OBJECT_KINDS = [
   'roof', 'obstruction', 'array', 'module_block', 'inverter', 'string', 'equipment', 'north',
 ] as const
@@ -218,7 +218,7 @@ export interface StringProps {
 export interface EquipmentProps {
   equipmentKind: EquipmentKind
   name: string
-  /** structure.nodes id — REQUIRED for a DB symbol (00211 refuses a free-floating DB). */
+  /** structure.nodes id — REQUIRED for a DB symbol (00212 refuses a free-floating DB). */
   nodeId: string | null
 }
 
@@ -1955,7 +1955,7 @@ export function layoutSummary(objects: LayoutObject[], conditions: DesignConditi
   }
 }
 
-/** What solar.layouts.summary stores (00211): the list and readiness read it without loading geometry. */
+/** What solar.layouts.summary stores (00212): the list and readiness read it without loading geometry. */
 export interface StoredLayoutSummary {
   moduleCount: number
   dcKwp: number
@@ -2226,7 +2226,7 @@ export function mapboxStaticUrl(i: { lat: number; lng: number; zoom: number; tok
 ```ts
 /**
  * Shape check for one layout object on its way to solar_save_layout_objects
- * (00211). Server actions are directly invocable, so a malformed body must get
+ * (00212). Server actions are directly invocable, so a malformed body must get
  * a sentence, never a TypeError or a raw Postgres error. The database still
  * binds everything that matters (scale, anchor, project); this only refuses
  * garbage early. Returns null when valid.
@@ -2433,7 +2433,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: Behavioural assertions for 00211 — written first, run RED
+### Task 10: Behavioural assertions for 00212 — written first, run RED
 
 **Files:**
 - Create: `scripts/db/assert-solar-layouts-roles.sql`
@@ -2443,17 +2443,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 `scripts/db/assert-solar-layouts-roles.sql`:
 
 ```sql
--- BEHAVIOURAL assertions for 00211_solar_layouts, run as real roles.
+-- BEHAVIOURAL assertions for 00212_solar_layouts, run as real roles.
 --   S=$(mktemp -d)
---   cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
---       apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql > "$S/base.sql"
+--   cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+--       apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql > "$S/base.sql"
 --   scripts/db/dry-run-migration.sh "$S/base.sql" scripts/db/assert-solar-layouts-roles.sql          (expect RED)
---   cat "$S/base.sql" apps/edge-functions/supabase/migrations/00211_solar_layouts.sql > "$S/combo.sql"
+--   cat "$S/base.sql" apps/edge-functions/supabase/migrations/00212_solar_layouts.sql > "$S/combo.sql"
 --   scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-layouts-roles.sql         (expect GREEN)
--- (Once 00207/00208 are in the ledger, use 00211 alone and /tmp/noop.sql for the red run.)
+-- (Once 00208/00209 are in the ledger, use 00212 alone and /tmp/noop.sql for the red run.)
 -- Fixtures are minted inside the transaction and rolled back; WM-Consulting is
 -- not used (it bypasses the paywall, so it has no negative case).
--- REFUSAL PATTERN (as 00207's file): a "…_REFUSED" check catches only the
+-- REFUSAL PATTERN (as 00208's file): a "…_REFUSED" check catches only the
 -- SQLSTATE the design promises; if the statement is wrongly allowed the block
 -- raises P0001 itself so the write is rolled back and later checks still run.
 
@@ -2538,7 +2538,7 @@ BEGIN
     'geometry', jsonb_build_object('modules', jsonb_build_array(jsonb_build_array(50, 50, 107, 50, 107, 160, 50, 160))),
     'props', '{}'::jsonb);
 
-  -- ── Grants (as the org admin, through 00207's own path) ──────────────────
+  -- ── Grants (as the org admin, through 00208's own path) ──────────────────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_p1, v_editor, 'edit'), (v_p1, v_viewer, 'view'), (v_p2, v_editor, 'edit');
@@ -2824,12 +2824,12 @@ END $$;
 SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 ```
 
-- [ ] **Step 2: Run it RED (no 00211 yet)**
+- [ ] **Step 2: Run it RED (no 00212 yet)**
 
 ```bash
 S=$(mktemp -d)
-cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
-    apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql > "$S/base.sql"
+cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+    apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql > "$S/base.sql"
 scripts/db/dry-run-migration.sh "$S/base.sql" scripts/db/assert-solar-layouts-roles.sql
 ```
 
@@ -2839,36 +2839,36 @@ Expected: RED — the file aborts (`relation "solar.roof_sources" does not exist
 
 ```bash
 git add scripts/db/assert-solar-layouts-roles.sql
-git commit -m "test(solar-layout): behavioural assertions for 00211, red before the migration
+git commit -m "test(solar-layout): behavioural assertions for 00212, red before the migration
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 11: Migration `00211_solar_layouts.sql` — GREEN, then mutations
+### Task 11: Migration `00212_solar_layouts.sql` — GREEN, then mutations
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00211_solar_layouts.sql`
+- Create: `apps/edge-functions/supabase/migrations/00212_solar_layouts.sql`
 
 - [ ] **Step 1: Write the migration**
 
-`apps/edge-functions/supabase/migrations/00211_solar_layouts.sql`:
+`apps/edge-functions/supabase/migrations/00212_solar_layouts.sql`:
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00211: Solar layouts on drawings (Solar Phase 5)
+-- Migration 00212: Solar layouts on drawings (Solar Phase 5)
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
--- filenames, and the migration filenames in every OPEN PR (00209 tariffs and
--- 00210 meter data are claimed by sibling Solar branches). If 00211 is taken,
+-- filenames, and the migration filenames in every OPEN PR (00210 tariffs and
+-- 00211 meter data are claimed by sibling Solar branches). If 00212 is taken,
 -- renumber this file and the header of scripts/db/assert-solar-layouts-roles.sql.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
--- DEPENDS ON 00207 (schema solar, solar.studies, public.solar_can_view/_edit).
--- While 00207/00208 are not in the ledger, dry runs concatenate 00207 + 00208
--- + 00211.
+-- DEPENDS ON 00208 (schema solar, solar.studies, public.solar_can_view/_edit).
+-- While 00208/00209 are not in the ledger, dry runs concatenate 00208 + 00209
+-- + 00212.
 --
 -- Spec: docs/solar/01-functional-spec.md §6 (Layout tab) and §3.2 C (roof
 -- sources); 02-calculation-engine-spec.md §3.1-§3.3; 03-data-model-and-
@@ -2903,7 +2903,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 -- checked at the END of the statement, so deleting the whole project (which
 -- cascades to both the drawing and the study) still works.
 --
--- 00207's schema-wide @verify directives (re-run on every deploy) are honoured:
+-- 00208's schema-wide @verify directives (re-run on every deploy) are honoured:
 -- FORCE RLS on each new table; no RESTRICTIVE policy covering SELECT or ALL
 -- anywhere in solar; each SECURITY DEFINER function in solar revokes EXECUTE
 -- from PUBLIC and anon; solar.studies still has exactly one SELECT policy.
@@ -3377,13 +3377,13 @@ NOTIFY pgrst, 'reload schema';
 
 ```bash
 S=$(mktemp -d)
-cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql \
-    apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql \
-    apps/edge-functions/supabase/migrations/00211_solar_layouts.sql > "$S/combo.sql"
+cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql \
+    apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql \
+    apps/edge-functions/supabase/migrations/00212_solar_layouts.sql > "$S/combo.sql"
 scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-layouts-roles.sql
 ```
 
-Expected: every check `✓`, `0 failed` (48 checks). Then prove 00211 changes nothing Phase 1 asserted:
+Expected: every check `✓`, `0 failed` (48 checks). Then prove 00212 changes nothing Phase 1 asserted:
 
 ```bash
 scripts/db/dry-run-migration.sh "$S/combo.sql" scripts/db/assert-solar-foundation-roles.sql scripts/db/assert-solar-org-settings-roles.sql
@@ -3393,7 +3393,7 @@ Expected: both files `0 failed`.
 
 - [ ] **Step 3: Mutation runs — each must turn named checks red, then revert**
 
-Make each edit in a COPY (`cp apps/edge-functions/supabase/migrations/00211_solar_layouts.sql "$S/m.sql"`, edit `$S/m.sql`, then `cat base.sql m.sql > "$S/mcombo.sql"` and dry-run it). Record the red checks in the PR body.
+Make each edit in a COPY (`cp apps/edge-functions/supabase/migrations/00212_solar_layouts.sql "$S/m.sql"`, edit `$S/m.sql`, then `cat base.sql m.sql > "$S/mcombo.sql"` and dry-run it). Record the red checks in the PR body.
 
 | # | Mutation in the copy | Must go red |
 |---|---|---|
@@ -3409,13 +3409,13 @@ Expected: each mutation turns at least its named check red; the original file is
 - [ ] **Step 4: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00211_solar_layouts.sql
-git commit -m "feat(solar-layout): 00211 roof sources, layouts, layout objects, atomic save
+git add apps/edge-functions/supabase/migrations/00212_solar_layouts.sql
+git commit -m "feat(solar-layout): 00212 roof sources, layouts, layout objects, atomic save
 
 Per-verb RLS on solar_can_view / solar_can_edit, FORCE RLS, bind triggers
 pin org/project/anchor/scale; drawings cannot be hard-deleted under a
 layout; solar_layout_sheet reports read on the Solar level. Dry-run 48/48
-against 00207+00208+00211; six mutations each turned their check red.
+against 00208+00209+00212; six mutations each turned their check red.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3438,7 +3438,7 @@ Expected: PASS, including `anon-execute-secdef.test.ts` (it reads migration TEXT
 
 - [ ] **Step 3: Note the expected red**
 
-The annotated-predicate contract test should now be RED, naming `solar.roof_sources (defined in 00211_solar_layouts.sql)` and `solar.layout_objects (defined in 00211_solar_layouts.sql)`. That is the schema-derived guard catching the new tables on its own — the intended behaviour. Do not commit until Task 13 turns it green.
+The annotated-predicate contract test should now be RED, naming `solar.roof_sources (defined in 00212_solar_layouts.sql)` and `solar.layout_objects (defined in 00212_solar_layouts.sql)`. That is the schema-derived guard catching the new tables on its own — the intended behaviour. Do not commit until Task 13 turns it green.
 
 ---
 
@@ -3470,7 +3470,7 @@ Expected: FAIL in `queries, or explicitly exempts, every table…` listing `sola
 In `apps/edge-functions/supabase/functions/cloud-sync-project/index.ts`, extend the doc comment's list (line ~776) with `, a Solar roof source or layout object` and insert immediately BEFORE the final `return false` of `isAnnotated()` (after the `floor_plan_markups` block):
 
 ```ts
-  // A Solar roof source (00211): this drawing page is the sheet a PV layout is
+  // A Solar roof source (00212): this drawing page is the sheet a PV layout is
   // (or is about to be) drawn on. Its file_path records the revision the layout
   // belongs to and the layout page warns when they diverge — but, as for markup
   // layers, not adopting silently is the actual protection.
@@ -3483,7 +3483,7 @@ In `apps/edge-functions/supabase/functions/cloud-sync-project/index.ts`, extend 
     .maybeSingle()
   if (rse || roofSource) return true
 
-  // Solar layout geometry (00211): roofs, arrays, strings in raw image pixels of
+  // Solar layout geometry (00212): roofs, arrays, strings in raw image pixels of
   // THIS file. Covered by the roof source above today (the FK chain), queried in
   // its own right so a future path that writes objects cannot make it blind.
   const { data: layoutObject, error: loe } = await supabase
@@ -3516,8 +3516,8 @@ Expected: `Check …index.ts` with no errors.
 git add apps/edge-functions/supabase/functions/cloud-sync-project/index.ts packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts
 git commit -m "fix(cloud-sync): isAnnotated() sees Solar roof sources and layout objects
 
-The schema-derived contract test named both 00211 tables on its own.
-Deploy is a manual owner step AFTER 00211 is applied: the lookups fail
+The schema-derived contract test named both 00212 tables on its own.
+Deploy is a manual owner step AFTER 00212 is applied: the lookups fail
 closed, so deploying first would stop auto-adopt platform-wide.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -3533,7 +3533,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `apps/web/src/actions/project-reports.actions.ts:1-6` (imports), `:116-125` (list gate), `:176-184` (URL gate)
 - Test: `apps/web/src/actions/project-reports.solar-gate.test.ts`
 
-Why a third set and not `REPORT_KIND_READ_ROLES`: that map gates on E-Site ROLES (owner/admin/PM). Solar is gated per USER per project (00207, D-04): a contractor holding a Solar View grant must read the sheet, and a project manager WITHOUT a grant must not. Putting `solar_layout_sheet` in the role map would get both wrong.
+Why a third set and not `REPORT_KIND_READ_ROLES`: that map gates on E-Site ROLES (owner/admin/PM). Solar is gated per USER per project (00208, D-04): a contractor holding a Solar View grant must read the sheet, and a project manager WITHOUT a grant must not. Putting `solar_layout_sheet` in the role map would get both wrong.
 
 - [ ] **Step 1: Write the failing contract assertions (append inside the existing `describe`)**
 
@@ -3591,9 +3591,9 @@ and append after `OPEN_READ_REPORT_KINDS`:
 ```ts
 /**
  * Kinds whose read follows the Solar module's own gate: the caller's per-user
- * Solar level on the project (00207, decision D-04), not an E-Site role. A
+ * Solar level on the project (00208, decision D-04), not an E-Site role. A
  * contractor with a View grant reads a layout sheet; a project manager with no
- * grant does not. Mirrored in public.user_can_read_report_kind() (00211) and
+ * grant does not. Mirrored in public.user_can_read_report_kind() (00212) and
  * pinned by report-kind-access.contract.test.ts against the FINAL definition.
  */
 export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>> = {
@@ -3619,7 +3619,7 @@ export function hasDeclaredReadPolicy(kind: string): boolean {
 - [ ] **Step 4: Run the contract test**
 
 Run: `pnpm --filter web exec vitest run src/lib/reports/report-kind-access.contract.test.ts`
-Expected: PASS (the final definition is 00211's).
+Expected: PASS (the final definition is 00212's).
 
 - [ ] **Step 5: Write the failing action-gate tests**
 
@@ -3702,7 +3702,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
 
-/** Solar kinds read on the caller's Solar level (00211 mirrors this in SQL). Null when allowed or not a Solar kind. */
+/** Solar kinds read on the caller's Solar level (00212 mirrors this in SQL). Null when allowed or not a Solar kind. */
 async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
   const need = solarLevelForKind(kind)
   if (!need) return null
@@ -3740,7 +3740,7 @@ git add apps/web/src/lib/reports/report-kind-access.ts apps/web/src/lib/reports/
 git commit -m "feat(reports): solar_layout_sheet reads on the Solar level, app half
 
 A third explicit read-policy set; the contract test pins it against the
-FINAL user_can_read_report_kind() (00211), not a hand-written mirror.
+FINAL user_can_read_report_kind() (00212), not a hand-written mirror.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3767,8 +3767,8 @@ Expected: all green; counts = baseline + the new tests. Any red → fix before 5
 
 These go verbatim into the PR description in 5-ii's final task:
 
-1. **Claim the number at apply time.** Re-check the ledger `max(version)`, `origin/main`, and open-PR migration filenames. `00207` and `00208` must be applied first (`00209`/`00210` are independent). Renumber `00211` if taken.
-2. **Apply** `00211` through the deploy workflow (or Management API), then `pnpm tsx scripts/verify-migration-applied.ts` → every directive of `00211` green AND every block ≥ `00185` still green (00207's schema-wide directives included).
+1. **Claim the number at apply time.** Re-check the ledger `max(version)`, `origin/main`, and open-PR migration filenames. `00208` and `00209` must be applied first (`00210`/`00211` are independent). Renumber `00212` if taken.
+2. **Apply** `00212` through the deploy workflow (or Management API), then `pnpm tsx scripts/verify-migration-applied.ts` → every directive of `00212` green AND every block ≥ `00185` still green (00208's schema-wide directives included).
 3. **Pre-deploy check for the edge function** — as `service_role`, over PostgREST:
    `curl -s -o /dev/null -w '%{http_code}' "$SUPABASE_URL/rest/v1/roof_sources?select=id&limit=1" -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" -H "Accept-Profile: solar"` and the same for `layout_objects`. Both must be `200`. A `406`/`PGRST106` means schema `solar` is not in the PostgREST `db_schema` list — deploying then would make EVERY drawing read as annotated (fail-closed) and silently stop Dropbox auto-adopt platform-wide.
 4. **Deploy** `cd apps/edge-functions && ./deploy.sh cloud-sync-project`, then read back from the Management API: `GET /v1/projects/cbskbnvvgcybmfikxgky/functions/cloud-sync-project` → `version` incremented, `verify_jwt` unchanged; pull `/functions/cloud-sync-project/body` and confirm the needles `roof_sources` and `layout_objects` are in the deployed bundle (the deployed artefact, not the repo).

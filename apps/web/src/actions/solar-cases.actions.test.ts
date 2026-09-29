@@ -143,7 +143,7 @@ describe('rename / delete / select', () => {
     setup({ writes: { 'solar.cases:delete': { error: { code: '23503', message: 'fk' } } } })
     expect(await deleteSolarCaseAction({ projectId: P, caseId: C })).toEqual({ error: 'This is the selected case — choose another selected case first.' })
   })
-  it('deleting a case an issued proposal was made from is a sentence (00216 cases_keep_issued_proposals, review M2)', async () => {
+  it('deleting a case an issued proposal was made from is a sentence (00217 cases_keep_issued_proposals, review M2)', async () => {
     setup({ writes: { 'solar.cases:delete': { error: { code: '42501', message: 'solar.cases: this case is kept as evidence and cannot be deleted' } } } })
     expect(await deleteSolarCaseAction({ projectId: P, caseId: C })).toEqual({ error: 'This case can’t be deleted because it is referenced by issued client documents.' })
     expect(h.audit).not.toHaveBeenCalled()

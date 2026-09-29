@@ -63,7 +63,7 @@ export default async function Page({ params }: Props) {
   const notifyQcEmail = settings?.notifyQcEmail ?? true
   const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
   const notifyFormEmail = settings?.notifyFormEmail ?? true
-  // 00216: notify_solar_email DEFAULT TRUE.
+  // 00217: notify_solar_email DEFAULT TRUE.
   const notifySolarEmail = settings?.notifySolarEmail ?? true
 
   return (

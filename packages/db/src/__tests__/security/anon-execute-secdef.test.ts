@@ -60,10 +60,10 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../../apps/edge-functions/supab
 const EXPOSED_SCHEMAS = [
   'public', 'projects', 'inspections', 'field', 'tenants', 'suppliers',
   'billing', 'marketplace', 'cable_schedule', 'structure', 'gcr',
-  // 'solar' is created by 00207 and added to db_schema by the PATCH that
+  // 'solar' is created by 00208 and added to db_schema by the PATCH that
   // accompanies its apply (the 00126 new-schema checklist), so it is exposed.
   'solar',
-  // 'tariffs' (00209): same checklist, same PATCH, so exposed.
+  // 'tariffs' (00210): same checklist, same PATCH, so exposed.
   'tariffs',
 ] as const
 

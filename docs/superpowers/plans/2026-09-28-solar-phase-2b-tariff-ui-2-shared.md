@@ -937,7 +937,7 @@ Expected: FAIL — module not found.
 /**
  * Project tariff override rows (spec §5 "Create project override", D-10
  * landlord resale). A copy of the pinned tariff's charges; an edited row
- * carries a reason (enforced again in SQL by 00213).
+ * carries a reason (enforced again in SQL by 00214).
  */
 import { unitCompatible } from '../../tariffs/parsers/normalise'
 import {

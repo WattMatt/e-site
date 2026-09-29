@@ -16,7 +16,7 @@ type ErrResult = { error: string }
 
 const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
 
-/** Solar kinds read on the caller's Solar level (00211/00216 mirror this in SQL). Null when allowed or not a Solar kind. */
+/** Solar kinds read on the caller's Solar level (00212/00217 mirror this in SQL). Null when allowed or not a Solar kind. */
 async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
   const need = solarLevelForKind(kind)
   if (!need) return null
@@ -42,7 +42,7 @@ function solarKindForPath(path: string): string {
 /**
  * The URL action signs with the SERVICE client, so the row's storage_path is trusted only when it
  * belongs to the row (review round 2, C1): it must sit under the row's own `<org>/<project>/`, and a
- * Solar PDF path is signed only for a Solar kind whose file the caller's Solar level can read. 00216
+ * Solar PDF path is signed only for a Solar kind whose file the caller's Solar level can read. 00217
  * refuses a session write of such a row; this holds even for a row that predates it.
  */
 async function reportPathDenied(
@@ -284,11 +284,11 @@ export async function deleteProjectReportAction(
   const report = row as { storage_path: string; kind: string; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
-  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00216).
+  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00217).
   if (report.kind === 'solar_proposal') {
     return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
   }
-  // A generated monthly report is the record of what the client received (00217 keeps its snapshot).
+  // A generated monthly report is the record of what the client received (00218 keeps its snapshot).
   if (report.kind === 'solar_monthly') {
     return { error: 'A monthly report is kept as the record of what the client received — generate a new version instead.' }
   }

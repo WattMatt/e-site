@@ -1,6 +1,6 @@
--- BEHAVIOURAL assertions for 00218_solar_integration_fixes, run as real roles.
---   RED:   scripts/db/dry-run-migration.sh <00207..00215 concatenated>          scripts/db/assert-solar-integration-fixes.sql
---   GREEN: scripts/db/dry-run-migration.sh <00207..00215 + 00218 concatenated>  scripts/db/assert-solar-integration-fixes.sql
+-- BEHAVIOURAL assertions for 00219_solar_integration_fixes, run as real roles.
+--   RED:   scripts/db/dry-run-migration.sh <00208..00216 concatenated>          scripts/db/assert-solar-integration-fixes.sql
+--   GREEN: scripts/db/dry-run-migration.sh <00208..00216 + 00219 concatenated>  scripts/db/assert-solar-integration-fixes.sql
 -- Fixtures are minted inside the transaction and rolled back. WM-Consulting is NOT used.
 
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;
@@ -181,7 +181,7 @@ BEGIN
     WHEN check_violation THEN INSERT INTO _r VALUES ('d_relink_to_foreign_layout_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('d_relink_to_foreign_layout_REFUSED', false);
   END;
-  -- The editor may delete layouts (00211); a used one is refused by the FK.
+  -- The editor may delete layouts (00212); a used one is refused by the FK.
   BEGIN
     DELETE FROM solar.layouts WHERE id = v_lay;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';

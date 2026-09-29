@@ -59,7 +59,7 @@ export async function applySolarRateCardAction(input: { projectId: string; caseI
 /**
  * "Import BOM from layout" (spec §8): fills the case's layout BOM into the given (unsaved) config as
  * capex lines (source 'layout_bom', quantities only — rates are the user's). The BOM is computed
- * server-side from the layout's own objects; the layout is the one the CASE is linked to (00218 FK).
+ * server-side from the layout's own objects; the layout is the one the CASE is linked to (00219 FK).
  */
 export async function importLayoutBomAction(input: { projectId: string; caseId: string; config: unknown }): Promise<{ ok: true; config: CaseFinanceConfig } | { error: string } | { fieldErrors: Record<string, string> }> {
   const { supabase } = await session(input.projectId)

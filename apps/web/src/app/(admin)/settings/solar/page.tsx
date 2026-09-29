@@ -36,11 +36,11 @@ export default async function SolarSettingsPage() {
   // An invalid stored template shows the standard programme but keeps the row's
   // updated_at, so saving overwrites it rather than conflicting.
   const orgItems = readScheduleTemplate(tplRow?.content ?? null)
-  // Read through the caller's session (00216 SELECT policy); an unsubscribed org just sees the defaults.
+  // Read through the caller's session (00217 SELECT policy); an unsubscribed org just sees the defaults.
   const { data: tpl } = await supabase.schema('solar').from('proposal_templates')
     .select('terms_text, disclaimer_text, validity_days, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
   const t = tpl as { terms_text?: string; disclaimer_text?: string; validity_days?: number; updated_at?: string } | null
-  // Phase 7: the org's handover checklist template (00217 SELECT policy); none saved → the built-in default.
+  // Phase 7: the org's handover checklist template (00218 SELECT policy); none saved → the built-in default.
   const { data: hoRow } = await supabase.schema('solar').from('handover_templates')
     .select('name, items, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
   const ho = hoRow as { name?: unknown; items?: unknown; updated_at?: string } | null

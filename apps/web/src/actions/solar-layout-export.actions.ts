@@ -3,7 +3,7 @@
  * Export layout sheet (functional spec §6.3): the browser's rasterised crop +
  * a legend/title block computed HERE from the stored layout, saved as the next
  * version in projects.reports kind 'solar_layout_sheet' (source solar.layouts).
- * Writing needs Solar Edit; reading follows the Solar level (00211 +
+ * Writing needs Solar Edit; reading follows the Solar level (00212 +
  * report-kind-access.ts SOLAR_READ_REPORT_KINDS).
  */
 import { revalidatePath } from 'next/cache'

@@ -18,7 +18,7 @@ import { buildS1, buildS2, buildS4, LoadModelError, monthlyEnergyKwh, type LoadB
 import { shapeFromSample, synthesiseTenant } from './synthesis'
 import { meterReferenceSeries } from './tenant-series'
 
-export const SITE_LOAD_ENGINE_VERSION = '3b.2'  // 3b.2: a counted parent contributes its residual (00218 integration fix)
+export const SITE_LOAD_ENGINE_VERSION = '3b.2'  // 3b.2: a counted parent contributes its residual (00219 integration fix)
 /** Never load (functional spec §4.3 "Meter kind"). */
 export const LOAD_EXCLUDED_KINDS = ['solar', 'generator', 'check', 'water'] as const
 
@@ -195,7 +195,7 @@ function evaluateTenants(
   // descendants, per hour, floored at 0), so a chain P → C → G sums to P and nothing is counted twice.
   const children = supplyChildren(input.lines)
   const nearest = new Map<string, string[]>()
-  // A meter drawn under two counted parents (a dual-fed board; 00214 refuses loops, not a second
+  // A meter drawn under two counted parents (a dual-fed board; 00215 refuses loops, not a second
   // parent) is subtracted from ONE of them — the first by meter id, deterministically — so the site
   // total never loses it twice. Checks names it: the hierarchy is ambiguous about where it sits.
   const claimedBy = new Map<string, string>()

@@ -1,6 +1,6 @@
 /**
  * Solar access gates (Phase 1A). Thin wrappers over the SQL helpers in
- * migration 00207 so every page, action and API route asks the database the
+ * migration 00208 so every page, action and API route asks the database the
  * same question the RLS policies ask. All fail CLOSED.
  *
  *   public.solar_access_level(project) → 'view' | 'edit' | 'edit_financials' | NULL

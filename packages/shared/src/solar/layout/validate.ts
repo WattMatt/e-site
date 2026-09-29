@@ -1,6 +1,6 @@
 /**
  * Shape check for one layout object on its way to solar_save_layout_objects
- * (00211). Server actions are directly invocable, so a malformed body must get
+ * (00212). Server actions are directly invocable, so a malformed body must get
  * a sentence, never a TypeError or a raw Postgres error. The database still
  * binds everything that matters (scale, anchor, project); this only refuses
  * garbage early. Returns null when valid.

@@ -1,4 +1,4 @@
-# E-Site Solar Phase 5b — Schedule (Gantt) — Part 3 of 5: `solar_task` registry and migration 00212
+# E-Site Solar Phase 5b — Schedule (Gantt) — Part 3 of 5: `solar_task` registry and migration 00213
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -9,13 +9,13 @@
 1. **`solar_task` is a SOURCELESS work-item type** (D-20): the side row points at the work item (`solar.schedule_tasks.work_item_id → projects.work_items`), not the other way round, so no FK column is added to the hottest table. Registry row (mirrors `00196_work_item_spine.sql:236-248`): `('solar_task', 'Solar task', NULL, NULL, 5, 'office', 'creator', MARKUP_WRITE_ROLES, 20)`.
    - `gatekeeper_rule = 'creator'` like `task` (`00196:247`): whoever schedules a task signs it off.
    - `write_roles = MARKUP_WRITE_ROLES` (owner, admin, PM, contractor): the E-Site roles that can hold Solar Edit on their own org in practice, and an existing shared constant (the contract test at `work-item-types.contract.test.ts:234` refuses an invented list). An own-org **inspector** with Solar Edit can edit Gantt fields but the 00196 transition guard (`00196:1509-1760`) will refuse them the work-item-governed changes (void, due date); the RPC skips the due-date mirror when the caller may not write it rather than failing the drag (see open question 3).
-2. **Two spine objects enumerate types and must be re-declared in 00212**, because the 00196 comment "A new SOURCELESS type costs one row here and nothing else" (`00196:217`) is only true for `approval`:
+2. **Two spine objects enumerate types and must be re-declared in 00213**, because the 00196 comment "A new SOURCELESS type costs one row here and nothing else" (`00196:217`) is only true for `approval`:
    - `work_items_source_required` (`00196:343-347`) lists `('task','approval')` → re-declared with `'solar_task'` in ONE `ALTER TABLE … DROP CONSTRAINT …, ADD CONSTRAINT …` statement (the 00196 note at `:274-276` about re-declaring wholesale).
    - `projects.work_items_ensure_ref()` (`00196:752-800`) → re-declared verbatim plus `WHEN 'solar_task' THEN 'SOLAR'` (otherwise refs would be `SOLAR_TASK-3`, and the contract test "every registered type has a prefix arm" fails).
 3. **`work_items_insert_gate` is NOT changed** (`00196:1174-1188`, `item_type = 'task'` only). A `solar_task` work item can therefore only be born inside `solar.schedule_create_tasks()` (SECURITY DEFINER, checks `solar_can_edit`), which creates the work item AND its side row in one transaction. Every later work-item change still passes the spine's triggers: membership (`00196:949`), ref (`:752`), due date (`:616`), transition guard (`:1509`), events (`:1357`).
 4. **Owner = `work_items.assignee_id`.** An explicit owner who is not an active project member is refused with a sentence (the resolver `projects.resolve_work_item_assignee` would otherwise silently substitute the PM, `00196:843-903`); no owner → the resolver chain. Reassignment writes a `reassigned` event and watcher row through the spine (spec §14.3 "reassignment notifies the new owner (work-item events)"; bells/emails arrive with Q1 item 4).
-5. **PR #193 (`00202_work_item_source_mirrors_and_backfill.sql`, open, stranded below the ledger head) interaction:** it re-declares `work_items_transition_guard()` (adds `source_status` to the immutable list and a `pg_trigger_depth() > 1` bypass). Nothing here writes `source_status` and every work-item write here runs at trigger depth 1 inside an RPC, so the rules are identical before and after #193. #193 does not re-declare `work_items_source_required` or `work_items_ensure_ref()`; **if a later migration re-declares either, it must keep the `solar_task` arm** — recorded in 00212's header and the PR body.
-6. **RLS shape** (docs/solar/03 §3.1; `00207_solar_foundation.sql:548-563`): SELECT permissive `solar_can_view`; each write verb = permissive `user_has_project_access` + RESTRICTIVE `solar_can_edit`, one per verb (never RESTRICTIVE FOR ALL — `00205`/`00206`). FORCE RLS on every table (00207's schema-wide `@verify` directive re-checks it on every deploy). Presets are per user (`user_id = auth.uid()`), writable at View level (filtering is a read feature). Templates are org-level, owner/admin only (like `solar.org_settings`, `00208`).
+5. **PR #193 (`00202_work_item_source_mirrors_and_backfill.sql`, open, stranded below the ledger head) interaction:** it re-declares `work_items_transition_guard()` (adds `source_status` to the immutable list and a `pg_trigger_depth() > 1` bypass). Nothing here writes `source_status` and every work-item write here runs at trigger depth 1 inside an RPC, so the rules are identical before and after #193. #193 does not re-declare `work_items_source_required` or `work_items_ensure_ref()`; **if a later migration re-declares either, it must keep the `solar_task` arm** — recorded in 00213's header and the PR body.
+6. **RLS shape** (docs/solar/03 §3.1; `00208_solar_foundation.sql:548-563`): SELECT permissive `solar_can_view`; each write verb = permissive `user_has_project_access` + RESTRICTIVE `solar_can_edit`, one per verb (never RESTRICTIVE FOR ALL — `00205`/`00206`). FORCE RLS on every table (00208's schema-wide `@verify` directive re-checks it on every deploy). Presets are per user (`user_id = auth.uid()`), writable at View level (filtering is a read feature). Templates are org-level, owner/admin only (like `solar.org_settings`, `00209`).
 
 ---
 
@@ -27,7 +27,7 @@
 - Modify: `packages/shared/src/work-items/work-item-types-appendix.contract.test.ts`
 - Modify: `docs/superpowers/specs/2026-09-09-v2-platform-roadmap/16-appendix-registries.md` (A(b) table)
 
-The two contract tests currently read the registry from the FIRST migration containing `INSERT INTO projects.work_item_types` (00196) and the ref-prefix CASE from that same file. 00212 adds a second seeding statement and a newer `work_items_ensure_ref()`, so the tests must read **every** seed and the **latest** function body — otherwise they would keep passing against 00196 while production runs 00212.
+The two contract tests currently read the registry from the FIRST migration containing `INSERT INTO projects.work_item_types` (00196) and the ref-prefix CASE from that same file. 00213 adds a second seeding statement and a newer `work_items_ensure_ref()`, so the tests must read **every** seed and the **latest** function body — otherwise they would keep passing against 00196 while production runs 00213.
 
 - [ ] **Step 1: Add the A(b) row**
 
@@ -42,7 +42,7 @@ In `packages/shared/src/work-items/work-item-types.contract.test.ts`:
 
 (a) After `function spineMigration()` add:
 ```ts
-/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed, then add-on types such as 00212's solar_task). */
+/** EVERY migration that inserts registry rows, in file order (00196's Q1 seed, then add-on types such as 00213's solar_task). */
 function registrySeedMigrations(): Array<{ path: string; sql: string }> {
   return readdirSync(MIG_DIR).sort()
     .filter((n) => n.endsWith('.sql'))
@@ -120,7 +120,7 @@ In `packages/shared/src/work-items/types.ts`:
 
 Append to `WORK_ITEM_TYPES` (after the `task` row):
 ```ts
-  // Solar add-on (00212): the Schedule tab's Gantt tasks (D-20). Sourceless —
+  // Solar add-on (00213): the Schedule tab's Gantt tasks (D-20). Sourceless —
   // solar.schedule_tasks.work_item_id points back at the item.
   { key: 'solar_task',     label: 'Solar task',       sourceTable: null,                           sourceColumn: null,              defaultDays: 5,  calendar: 'office', gatekeeperRule: 'creator',          writeRoles: MARKUP_WRITE_ROLES, sortOrder: 20 },
 ```
@@ -138,28 +138,28 @@ Add to `STATE_LABELS`:
 Run: `pnpm --filter @esite/shared type-check`
 Expected: exit 0 (both `Record<WorkItemTypeKey, …>` maps now carry `solar_task`). Also run `pnpm --filter web type-check` — any other exhaustive `Record<WorkItemTypeKey, …>` in `apps/web` fails here and gets a `solar_task` entry in this commit.
 
-Commit together with Task 11 (the tests are green only once 00212 exists).
+Commit together with Task 11 (the tests are green only once 00213 exists).
 
 ---
 
-### Task 11: Migration `00212_solar_schedule.sql` — behavioural assertions red → green → mutations
+### Task 11: Migration `00213_solar_schedule.sql` — behavioural assertions red → green → mutations
 
 **Files:**
 - Create: `scripts/db/assert-solar-schedule-roles.sql`
-- Create: `apps/edge-functions/supabase/migrations/00212_solar_schedule.sql`
+- Create: `apps/edge-functions/supabase/migrations/00213_solar_schedule.sql`
 
 - [ ] **Step 1: Write the behavioural assertions (they must fail before the migration exists)**
 
 `scripts/db/assert-solar-schedule-roles.sql`:
 ```sql
--- BEHAVIOURAL assertions for 00212_solar_schedule, run as real roles.
+-- BEHAVIOURAL assertions for 00213_solar_schedule, run as real roles.
 --   Red:   scripts/db/dry-run-migration.sh "$S/red.sql"   scripts/db/assert-solar-schedule-roles.sql
 --   Green: scripts/db/dry-run-migration.sh "$S/green.sql" scripts/db/assert-solar-schedule-roles.sql
--- red.sql = 00207 + 00208 (whichever are not yet in the ledger); green.sql = those + 00212.
+-- red.sql = 00208 + 00209 (whichever are not yet in the ledger); green.sql = those + 00213.
 -- Fixtures are minted inside the transaction and rolled back; the WM-Consulting
 -- org is NOT used (it bypasses the paywall, so it has no lapse case).
 -- Seeding happens as postgres BEFORE any impersonation (request.jwt.claims is
--- transaction-local and outlives RESET ROLE). REFUSAL PATTERN (00207 file): a
+-- transaction-local and outlives RESET ROLE). REFUSAL PATTERN (00208 file): a
 -- "…_REFUSED" check catches only the SQLSTATE the design promises; a wrongly
 -- allowed statement raises P0001 itself so the write rolls back.
 
@@ -213,7 +213,7 @@ BEGIN
   INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo, current_period_end)
   VALUES (v_org, 'solar', 'active', 199900, now() + interval '1 year');
 
-  -- Grants, written by the grantor as 00207 requires.
+  -- Grants, written by the grantor as 00208 requires.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES
@@ -530,11 +530,11 @@ The file reports **56** checks.
 
 - [ ] **Step 2: Run it RED**
 
-From `/tmp/solar-5b-base.txt` (Task 0), read `has_00207` / `has_00208`. Build `$S/red.sql` (`S=$(mktemp -d)`):
+From `/tmp/solar-5b-base.txt` (Task 0), read `has_00208` / `has_00209`. Build `$S/red.sql` (`S=$(mktemp -d)`):
 ```bash
 : > "$S/red.sql"
-[ "$HAS_00207" = t ] || cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql >> "$S/red.sql"
-[ "$HAS_00208" = t ] || cat apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql >> "$S/red.sql"
+[ "$HAS_00208" = t ] || cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql >> "$S/red.sql"
+[ "$HAS_00209" = t ] || cat apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql >> "$S/red.sql"
 [ -s "$S/red.sql" ] || echo 'SELECT 1;' > "$S/red.sql"
 scripts/db/dry-run-migration.sh "$S/red.sql" scripts/db/assert-solar-schedule-roles.sql 2>&1 | tee "$S/red.out"
 ```
@@ -542,15 +542,15 @@ Expected: RED — the file aborts (`function solar.schedule_create_tasks(...) do
 
 - [ ] **Step 3: Write the migration — header, `@verify`, registry, spine re-declarations**
 
-`apps/edge-functions/supabase/migrations/00212_solar_schedule.sql` (Steps 3–6 are ONE file, written top to bottom):
+`apps/edge-functions/supabase/migrations/00213_solar_schedule.sql` (Steps 3–6 are ONE file, written top to bottom):
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00212: Solar schedule (Gantt) — solar_task work items + side tables
+-- Migration 00213: Solar schedule (Gantt) — solar_task work items + side tables
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claimed at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
--- filenames, and the migration filenames in every OPEN PR (tariffs 00209 and
--- the other Solar phases included). If 00212 is taken, renumber this file and
+-- filenames, and the migration filenames in every OPEN PR (tariffs 00210 and
+-- the other Solar phases included). If 00213 is taken, renumber this file and
 -- the header of scripts/db/assert-solar-schedule-roles.sql above the head.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
@@ -592,13 +592,13 @@ Expected: RED — the file aborts (`function solar.schedule_create_tasks(...) do
 -- writes bypass it. Nothing here writes source_status and every work-item write
 -- here runs at depth 1, so behaviour is identical before and after #193.
 --
--- 00207's schema-wide @verify directives are re-checked on every deploy and
+-- 00208's schema-wide @verify directives are re-checked on every deploy and
 -- this migration conforms: FORCE RLS on every new relkind 'r' table; no
 -- RESTRICTIVE policy covering SELECT anywhere in solar (restrictive policies
 -- here are per write verb only); every SECURITY DEFINER function in solar has
 -- EXECUTE revoked from PUBLIC and anon.
 --
--- No new schema, so no PostgREST db_schema PATCH (solar is exposed since 00207).
+-- No new schema, so no PostgREST db_schema PATCH (solar is exposed since 00208).
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that dry run permanent.
 -- ---------------------------------------------------------------------------
@@ -681,10 +681,10 @@ Expected: RED — the file aborts (`function solar.schedule_create_tasks(...) do
 DO $pre$
 BEGIN
     IF to_regclass('projects.work_items') IS NULL OR to_regprocedure('projects.work_items_transition_guard()') IS NULL THEN
-        RAISE EXCEPTION '00212 needs the work-item spine (00196) applied first';
+        RAISE EXCEPTION '00213 needs the work-item spine (00196) applied first';
     END IF;
     IF to_regprocedure('public.solar_can_edit(uuid)') IS NULL THEN
-        RAISE EXCEPTION '00212 needs the Solar foundation (00207) applied first';
+        RAISE EXCEPTION '00213 needs the Solar foundation (00208) applied first';
     END IF;
 END $pre$;
 
@@ -753,8 +753,8 @@ REVOKE EXECUTE ON FUNCTION projects.work_items_ensure_ref() FROM anon;
 Before writing section 3, diff it against the source so the "verbatim" claim is true:
 ```bash
 sed -n '/^CREATE OR REPLACE FUNCTION projects.work_items_ensure_ref/,/^\$fn\$;/p' apps/edge-functions/supabase/migrations/00196_work_item_spine.sql > "$S/ref-00196.sql"
-sed -n '/^CREATE OR REPLACE FUNCTION projects.work_items_ensure_ref/,/^\$fn\$;/p' apps/edge-functions/supabase/migrations/00212_solar_schedule.sql > "$S/ref-00212.sql"
-diff "$S/ref-00196.sql" "$S/ref-00212.sql"
+sed -n '/^CREATE OR REPLACE FUNCTION projects.work_items_ensure_ref/,/^\$fn\$;/p' apps/edge-functions/supabase/migrations/00213_solar_schedule.sql > "$S/ref-00213.sql"
+diff "$S/ref-00196.sql" "$S/ref-00213.sql"
 ```
 Expected: the only non-comment difference is the added `WHEN 'solar_task' THEN 'SOLAR'` line (the 00196 body carries a longer comment block above the SELECT; copying it too is fine, dropping it is fine — the executable lines must match).
 
@@ -874,7 +874,7 @@ CREATE TABLE IF NOT EXISTS solar.schedule_templates (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── 5. Bind triggers (SECURITY DEFINER, search_path '', 00207 pattern) ─────
+-- ── 5. Bind triggers (SECURITY DEFINER, search_path '', 00208 pattern) ─────
 CREATE OR REPLACE FUNCTION solar.schedule_tasks_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_project UUID; v_org UUID; v_type TEXT;
@@ -1063,7 +1063,7 @@ REVOKE ALL ON FUNCTION solar.schedule_templates_bind() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.schedule_templates_bind() FROM anon;
 
 -- ── 6. RLS: SELECT permissive on solar_can_view; each write verb = permissive
---      membership + RESTRICTIVE solar_can_edit (00207 / 00200 shape). ──────────
+--      membership + RESTRICTIVE solar_can_edit (00208 / 00200 shape). ──────────
 ALTER TABLE solar.schedule_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.schedule_settings FORCE ROW LEVEL SECURITY;
 ALTER TABLE solar.schedule_tasks ENABLE ROW LEVEL SECURITY;
@@ -1176,7 +1176,7 @@ CREATE POLICY schedule_filter_presets_update_authz ON solar.schedule_filter_pres
 CREATE POLICY schedule_filter_presets_delete_authz ON solar.schedule_filter_presets AS RESTRICTIVE FOR DELETE TO authenticated
     USING (public.solar_can_view(project_id));
 
--- templates: org owners/admins (like solar.org_settings, 00208); seeding reads it via a definer RPC
+-- templates: org owners/admins (like solar.org_settings, 00209); seeding reads it via a definer RPC
 CREATE POLICY schedule_templates_select ON solar.schedule_templates FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.user_organisations uo WHERE uo.user_id = auth.uid()
                      AND uo.organisation_id = schedule_templates.organisation_id AND uo.is_active AND uo.role IN ('owner', 'admin')));
@@ -1594,10 +1594,10 @@ NOTIFY pgrst, 'reload schema';
 - [ ] **Step 6: Run it GREEN**
 
 ```bash
-grep -n "COMMIT\|^BEGIN;" apps/edge-functions/supabase/migrations/00212_solar_schedule.sql   # must print nothing
+grep -n "COMMIT\|^BEGIN;" apps/edge-functions/supabase/migrations/00213_solar_schedule.sql   # must print nothing
 cp "$S/red.sql" "$S/green.sql"
 [ "$(cat "$S/green.sql")" = 'SELECT 1;' ] && : > "$S/green.sql"
-cat apps/edge-functions/supabase/migrations/00212_solar_schedule.sql >> "$S/green.sql"
+cat apps/edge-functions/supabase/migrations/00213_solar_schedule.sql >> "$S/green.sql"
 scripts/db/dry-run-migration.sh "$S/green.sql" scripts/db/assert-solar-schedule-roles.sql 2>&1 | tee "$S/green.out"
 ```
 Expected: 56 rows, every `ok = t`. If one is `f`, fix the **migration**, not the assertion (the assertion states the spec). A failure the migration cannot fix because the spine behaves differently than documented (e.g. the transition guard refuses a move this plan assumed it allows) is a STOP: report it, do not weaken the check.
@@ -1606,7 +1606,7 @@ Expected: 56 rows, every `ok = t`. If one is `f`, fix the **migration**, not the
 
 Rebuild `green.sql` after each edit, re-run, record, revert:
 
-| Mutation in 00212 | Expected red |
+| Mutation in 00213 | Expected red |
 |---|---|
 | In `schedule_assert_editor`, change `IF auth.uid() IS NULL OR NOT public.solar_can_edit(p_project_id)` to `IF auth.uid() IS NULL` | `create_viewer_REFUSED`, `create_nogrant_REFUSED`, `lapsed_create_REFUSED` go `f` |
 | In `schedule_dependencies_bind`, delete the `IF EXISTS (WITH RECURSIVE …) THEN RAISE … END IF;` block | `link_cycle_REFUSED` goes `f` |
@@ -1622,14 +1622,14 @@ pnpm --filter @esite/shared exec vitest run src/work-items
 pnpm --filter web exec vitest run src/lib/migration-verify-block.contract.test.ts
 pnpm --filter @esite/db test:ci 2>&1 | tail -8
 ```
-Expected: all PASS — the registry tests now find `solar_task` in 00212's seed, the `SOLAR` arm in the latest `work_items_ensure_ref()`, and the A(b) row; the `@verify` block parses (no unknown directive, no em dash inside a `sql:` payload); the anon-EXECUTE replay finds every definer function in solar revoked.
+Expected: all PASS — the registry tests now find `solar_task` in 00213's seed, the `SOLAR` arm in the latest `work_items_ensure_ref()`, and the A(b) row; the `@verify` block parses (no unknown directive, no em dash inside a `sql:` payload); the anon-EXECUTE replay finds every definer function in solar revoked.
 
 - [ ] **Step 9: Commit (Task 10 + Task 11 together)**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00212_solar_schedule.sql scripts/db/assert-solar-schedule-roles.sql \
+git add apps/edge-functions/supabase/migrations/00213_solar_schedule.sql scripts/db/assert-solar-schedule-roles.sql \
   packages/shared/src/work-items docs/superpowers/specs/2026-09-09-v2-platform-roadmap/16-appendix-registries.md
-git commit -m "feat(solar-schedule): 00212 — solar_task work items + Gantt side tables, per-verb RLS, gated RPCs
+git commit -m "feat(solar-schedule): 00213 — solar_task work items + Gantt side tables, per-verb RLS, gated RPCs
 
 solar_task registered sourceless (creator gatekeeper, MARKUP_WRITE_ROLES); the
 two spine objects that enumerate types re-declared with it. Tasks are born only

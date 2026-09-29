@@ -1057,7 +1057,7 @@ Update the note under the table: Yield & Scenarios and Financials now have route
 - [ ] **Step 2: Add action rows** to "Solar server actions":
 
 ```markdown
-| `createSolarCaseAction` / `duplicateSolarCaseAction` / `renameSolarCaseAction` / `deleteSolarCaseAction` (`solar-cases.actions.ts`) | `requireSolarLevel(project, 'edit')`; rename stale-guarded; From-layout refused until Phase 5 | `cases_*` (00215: permissive membership + RESTRICTIVE `solar_can_edit` per verb); `cases_bind` binds study/project/org; unique name per study; deleting the selected case fails on `studies_selected_case_fk` (23503) |
+| `createSolarCaseAction` / `duplicateSolarCaseAction` / `renameSolarCaseAction` / `deleteSolarCaseAction` (`solar-cases.actions.ts`) | `requireSolarLevel(project, 'edit')`; rename stale-guarded; From-layout refused until Phase 5 | `cases_*` (00216: permissive membership + RESTRICTIVE `solar_can_edit` per verb); `cases_bind` binds study/project/org; unique name per study; deleting the selected case fails on `studies_selected_case_fk` (23503) |
 | `setSelectedSolarCaseAction` | `requireSolarLevel(project, 'edit')`; stale-guarded on `studies.updated_at` | `studies_update_authz`; `studies_selected_case_check` (case in this study with a succeeded run, 23514) |
 | `saveSolarCaseAction` | `requireSolarLevel(project, 'edit')`; stale-guarded; equipment snapshots re-derived server-side from the catalogue (org or platform rows only); weather id must be the org's | `cases_update_authz` |
 | `fetchSolarWeatherAction` | `requireSolarLevel(project, 'edit')` FIRST, then `rateLimit('solar-weather:<org>', 5, 10 min)`; PVGIS + GSA called server-side only | `solar.weather_datasets` has no user write policy or grant — written by the service client after the gate; bucket `solar-weather` service-only |
@@ -1070,7 +1070,7 @@ Update the note under the table: Yield & Scenarios and Financials now have route
 ```markdown
 ### Solar cases, runs and financials API (Phase 4b)
 
-`app/api/*` sits outside `(admin)/layout.tsx`: every route below gates itself with `requireSolarLevelAPI` (JSON 401/403) BEFORE any other work. Run rows are INSERTed through the caller's session (00215 RLS); only the service client finishes a run, and only while it is `running` (`case_runs_freeze`). Both buckets (`solar-runs`, `solar-weather`) have **no** `storage.objects` policy for `authenticated`.
+`app/api/*` sits outside `(admin)/layout.tsx`: every route below gates itself with `requireSolarLevelAPI` (JSON 401/403) BEFORE any other work. Run rows are INSERTed through the caller's session (00216 RLS); only the service client finishes a run, and only while it is `running` (`case_runs_freeze`). Both buckets (`solar-runs`, `solar-weather`) have **no** `storage.objects` policy for `authenticated`.
 
 | Route | Needs | Notes |
 |---|---|---|
@@ -1110,11 +1110,11 @@ Expected: every suite green with counts above the Task 0 baseline; 0 type errors
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-4b
 S=/private/tmp/claude-501/solar-4b; M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql $M/00215_solar_cases.sql > $S/green.sql
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql $M/00216_solar_cases.sql > $S/green.sql
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-cases-roles.sql 2>&1 | grep -c ' t$\|true'
 scripts/db/dry-run-migration.sh $S/green.sql scripts/db/assert-solar-foundation-roles.sql scripts/db/assert-solar-meter-data-roles.sql scripts/db/assert-solar-org-settings-roles.sql 2>&1 | grep -iE 'false|error' || echo "earlier Solar assertions still green"
 ```
-Expected: 54 `true`; the earlier Solar assertion files still green with 00215 applied on top (00215 re-declares the product-events CHECK and adds a trigger on `solar.studies` — both must leave 00207/00208/00210 behaviour intact). (If `00213` exists on origin by now, insert it after `00210` in the `cat`.)
+Expected: 54 `true`; the earlier Solar assertion files still green with 00216 applied on top (00216 re-declares the product-events CHECK and adds a trigger on `solar.studies` — both must leave 00208/00209/00211 behaviour intact). (If `00214` exists on origin by now, insert it after `00211` in the `cat`.)
 
 - [ ] **Step 3: Contract checks that must have teeth.** Confirm each ran and could fail:
   - `no-browser-engine.contract.test.ts` (mutation shown in Task 29 Step 2).
@@ -1134,8 +1134,8 @@ Expected: 54 `true`; the earlier Solar assertion files still green with 00215 ap
 Reviewer A — security and data integrity prompt:
 ```
 Review branch feat/solar-phase-4b against origin/feat/solar-integration in /Users/spud/.config/superpowers/worktrees/esite/solar-phase-4b.
-Focus: 00215_solar_cases.sql and every server route/action/lib under apps/web/src/{app/api/projects/[id]/solar/cases,actions/solar-*.actions.ts,lib/solar/cases}.
-Check: (1) every route/action gates the Solar level (or OWNER_ADMIN for equipment) BEFORE any other work and before any service-client call; (2) no service-client read/write happens for a project the caller was not gated on; (3) RLS: one PERMISSIVE SELECT per table, RESTRICTIVE write gates per verb, no RESTRICTIVE FOR ALL, FORCE RLS, money tables on solar_can_see_money for SELECT and every write; (4) case_runs cannot be updated by authenticated and are frozen once finished; (5) client-supplied values that could forge results (equipment snapshots, weather id, org ids, statuses) are re-derived or bound server-side; (6) PVGIS/GSA only server-side, rate-limited per org, never in tests; (7) no raw Postgres error reaches a user; (8) anon has nothing; buckets have no user policy; (9) @verify directives are predicates only this migration could satisfy and none uses an em dash in a sql payload; (10) the 00207 schema-wide directives still hold.
+Focus: 00216_solar_cases.sql and every server route/action/lib under apps/web/src/{app/api/projects/[id]/solar/cases,actions/solar-*.actions.ts,lib/solar/cases}.
+Check: (1) every route/action gates the Solar level (or OWNER_ADMIN for equipment) BEFORE any other work and before any service-client call; (2) no service-client read/write happens for a project the caller was not gated on; (3) RLS: one PERMISSIVE SELECT per table, RESTRICTIVE write gates per verb, no RESTRICTIVE FOR ALL, FORCE RLS, money tables on solar_can_see_money for SELECT and every write; (4) case_runs cannot be updated by authenticated and are frozen once finished; (5) client-supplied values that could forge results (equipment snapshots, weather id, org ids, statuses) are re-derived or bound server-side; (6) PVGIS/GSA only server-side, rate-limited per org, never in tests; (7) no raw Postgres error reaches a user; (8) anon has nothing; buckets have no user policy; (9) @verify directives are predicates only this migration could satisfy and none uses an em dash in a sql payload; (10) the 00208 schema-wide directives still hold.
 Report confirmed defects only, each with file:line, the failing scenario and a proposed fix. Do not edit files.
 ```
 
@@ -1173,7 +1173,7 @@ Spec: docs/solar/01 §7, §8, §11, §2.3, §2.4; docs/solar/02 (engine called, 
 Plan: docs/superpowers/plans/2026-09-28-solar-phase-4b-*.md
 
 ### What
-- Migration `00215_solar_cases.sql` (claim the number at APPLY time — check ledger, origin/main and open-PR filenames): cases, immutable case_runs (users INSERT running rows; only the service role finishes them; frozen after), per-org PVGIS weather cache, equipment catalogue (platform + org rows, retire never delete), money tables case_financials / case_run_financials on solar_can_see_money, studies.selected_case_id, two service-only buckets, five product events.
+- Migration `00216_solar_cases.sql` (claim the number at APPLY time — check ledger, origin/main and open-PR filenames): cases, immutable case_runs (users INSERT running rows; only the service role finishes them; frozen after), per-org PVGIS weather cache, equipment catalogue (platform + org rows, retire never delete), money tables case_financials / case_run_financials on solar_can_see_money, studies.selected_case_id, two service-only buckets, five product events.
 - `@esite/shared/solar-cases`: case/finance config schemas, CaseInput builder (named blocking reasons), stored outputs (KPIs, monthly, typical days, daily, loss waterfall, checks, provenance), 8760 CSV, finance input, stored-energy financials (proven identical to runFinancials), tariff bill adapter, case status.
 - Routes: run (nodejs, 60 s), cancel, export (hourly/monthly/slice), financials XLSX. Actions: cases, selection, weather (server-side, per-org rate limit), financials, equipment.
 - UI: Yield & Scenarios (list, editor with every §7.2 section, results with charts, compare 2–4, stale banner), Financials (capex/opex/four models/tax+12B/results/cashflow/tornado/XLSX), /settings/solar/equipment, live Overview KPIs and readiness dots. Hand-rolled SVG charts (no chart library in E-Site).
@@ -1183,7 +1183,7 @@ Plan: docs/superpowers/plans/2026-09-28-solar-phase-4b-*.md
 - From layout / Import BOM (Phase 5; `cases.layout_id` has no FK until the Phase 5 merge adds it); measured-weather upload; PAN/OND import.
 
 ### Proof
-- DB: `scripts/db/assert-solar-cases-roles.sql` — RED on 00207..00210, GREEN (54/54) with 00215; mutations: <paste the Task 3 ledger>.
+- DB: `scripts/db/assert-solar-cases-roles.sql` — RED on 00208..00211, GREEN (54/54) with 00216; mutations: <paste the Task 3 ledger>.
 - Suites: shared <n> / web <n> / db <n>; type-check 0; lint 0; `next build` exit 0.
 - Reviews: two foreground reviewers (security/integrity; spec/correctness) — <findings and fixes>.
 

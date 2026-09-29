@@ -3,7 +3,7 @@
  * Save Site & Supply (spec §3.2). Re-checks Edit level itself
  * (requireSolarLevel redirects a lower level to /solar/locked), validates with
  * the same rules as the form, and writes through the caller's session so
- * 00207's studies_*_authz RESTRICTIVE policies and studies_bind (org binding,
+ * 00208's studies_*_authz RESTRICTIVE policies and studies_bind (org binding,
  * PoC node must belong to this project, attribution) decide. First save
  * inserts; later saves are conditioned on the updated_at the user loaded.
  */

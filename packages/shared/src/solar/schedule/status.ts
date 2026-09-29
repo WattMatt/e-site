@@ -1,7 +1,7 @@
 /**
  * Gantt status (spec §14.1: not started / in progress / done). Stored in
  * solar.schedule_tasks.gantt_status; the work item's universal status is kept
- * in step by the RPCs in 00212. This function is the READ side only.
+ * in step by the RPCs in 00213. This function is the READ side only.
  */
 export const GANTT_STATUSES = ['not_started', 'in_progress', 'done'] as const
 export type GanttStatus = (typeof GANTT_STATUSES)[number]

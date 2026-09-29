@@ -40,7 +40,7 @@ describe('executeFinancialsRun', () => {
     const user = fakeSupabase({ tables })
     const out = await executeFinancialsRun({ user: user.client as never, svc: svc as never, projectId: P, caseId: C, userId: U })
     expect(out).toEqual({ ok: true, id: 'f1' })
-    // 00215: authenticated has no INSERT on case_run_financials — a user-session insert could post any figures.
+    // 00216: authenticated has no INSERT on case_run_financials — a user-session insert could post any figures.
     expect(callsTo(user.calls, 'solar.case_run_financials', 'insert')).toHaveLength(0)
     const ins = callsTo(svcFake.calls, 'solar.case_run_financials', 'insert')[0]!.payload as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(ins).toMatchObject({ case_run_id: R, engine_version: ENGINE_VERSION, tariff_ref: { tariffId: 't1' }, run_by: U })

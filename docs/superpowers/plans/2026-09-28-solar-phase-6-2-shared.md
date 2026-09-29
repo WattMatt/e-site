@@ -1114,7 +1114,7 @@ describe('report and proposal verbs (Phase 6)', () => {
 
 `proposal-status.ts`:
 ```ts
-/** Proposal status chip (functional spec §9.3) — server-set; `expired` is derived (00216 mirrors this). */
+/** Proposal status chip (functional spec §9.3) — server-set; `expired` is derived (00217 mirrors this). */
 export type ProposalStatus = 'draft' | 'issued' | 'viewed' | 'accepted' | 'declined' | 'withdrawn'
 export type EffectiveProposalStatus = ProposalStatus | 'expired'
 

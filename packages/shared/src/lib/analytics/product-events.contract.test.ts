@@ -41,7 +41,7 @@ function migrationContaining(needle: string): string {
 
 /**
  * The LAST migration (by filename) containing `needle` — for a CHECK that is
- * dropped and re-added by later migrations (00199, then 00208 …), the
+ * dropped and re-added by later migrations (00199, then 00209 …), the
  * definition in force is the newest one.
  */
 function lastMigrationContaining(needle: string): string {

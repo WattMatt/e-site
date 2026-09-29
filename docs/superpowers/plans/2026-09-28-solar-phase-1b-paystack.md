@@ -17,8 +17,8 @@
 ## Ground rules (read once)
 
 - Repo root is the worktree created in Task 1. All paths below are relative to it.
-- **No migration.** 1A's `00207` already provides everything this plan writes to:
-  - `billing.org_addon_subscriptions` has a status CHECK of `pending, active, non_renewing, past_due, cancelled, refunded`, plus `last_event_id`, `paystack_customer_code`, `paystack_subscription_code UNIQUE`, `started_at`, `cancelled_at` and `refunded_at` (`00207_solar_foundation.sql:147-167`).
+- **No migration.** 1A's `00208` already provides everything this plan writes to:
+  - `billing.org_addon_subscriptions` has a status CHECK of `pending, active, non_renewing, past_due, cancelled, refunded`, plus `last_event_id`, `paystack_customer_code`, `paystack_subscription_code UNIQUE`, `started_at`, `cancelled_at` and `refunded_at` (`00208_solar_foundation.sql:147-167`).
   - `billing.payment_events.event_type` is free text, so new event types need no CHECK change (`00190_payment_events_and_unlock_revocation.sql:90-104`).
   - The notification types `billing_duplicate_charge` and `billing_refund_processed` are already legal (`00190`, the latest `notifications_type_check` re-declaration).
   - No plan-code column is needed: the plan code comes from `PAYSTACK_PLAN_SOLAR_ANNUAL` at request time.
@@ -38,7 +38,7 @@
 2. It would need a service-client write from a user-facing route.
 3. It would leave orphan `pending` rows for every abandoned checkout.
 
-The CHECK `status = 'pending' OR current_period_end IS NOT NULL` (`00207:165-166`) is satisfied because the webhook inserts straight into `active` with a period end.
+The CHECK `status = 'pending' OR current_period_end IS NOT NULL` (`00208:165-166`) is satisfied because the webhook inserts straight into `active` with a period end.
 
 ### Webhook event → state map
 
@@ -186,7 +186,7 @@ Expected: FAIL. `FEATURE_PRICES.solar` is undefined, and `ONE_TIME_FEATURE_KEYS`
 //
 // model: 'org'              — one-time unlock per organisation (billing.org_feature_unlocks, migration 00097)
 // model: 'seat'             — one-time unlock per user within an org (billing.org_feature_seats, migration 00125)
-// model: 'org_subscription' — RECURRING org-wide plan (billing.org_addon_subscriptions, migration 00207).
+// model: 'org_subscription' — RECURRING org-wide plan (billing.org_addon_subscriptions, migration 00208).
 //                             Bought only through its own route (/api/paystack/solar-subscribe) against
 //                             the Paystack plan named by `planCodeEnv`. NEVER through the one-time
 //                             /api/paystack/feature-unlock route, which rejects these keys: a one-time
@@ -528,7 +528,7 @@ Expected: FAIL. Cannot resolve `./org-addon`.
 ```ts
 /**
  * Pure helpers for the org add-on subscription (Solar, billing.org_addon_subscriptions,
- * migration 00207). The DB-touching branches live in /api/paystack/webhook —
+ * migration 00208). The DB-touching branches live in /api/paystack/webhook —
  * the ONLY writer of that table.
  */
 import { FEATURE_PRICES } from '@esite/shared'
@@ -1114,7 +1114,7 @@ Append this at the **end** of the file. Tasks 9-12 append further `describe` blo
 
 ```ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Org add-on subscription — Solar (billing.org_addon_subscriptions, 00207)
+// Org add-on subscription — Solar (billing.org_addon_subscriptions, 00208)
 //
 // The webhook is the ONLY writer of that table. Every assertion below checks
 // the WRITE (or its absence), never just the 200, for the reason given at the
@@ -1346,7 +1346,7 @@ import {
 
 ```ts
 
-// ── Org add-on subscriptions (Solar — billing.org_addon_subscriptions, 00207) ─
+// ── Org add-on subscriptions (Solar — billing.org_addon_subscriptions, 00208) ─
 //
 // THIS ROUTE IS THE ONLY WRITER of billing.org_addon_subscriptions (service
 // client; the table has SELECT for org owner/admin and no write policy).
@@ -1495,7 +1495,7 @@ async function applyOrgAddonCharge(
 
 ```ts
 
-    // Branch A3: org add-on subscription — FIRST charge (Solar, 00207).
+    // Branch A3: org add-on subscription — FIRST charge (Solar, 00208).
     // Discriminated by metadata.type set in /api/paystack/solar-subscribe.
     // Must sit before Branch B: this metadata carries org_id but no tier, so
     // it would otherwise fall to Branch C and be matched against the org's
@@ -1962,7 +1962,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 10: Webhook — `subscription.not_renew` and `subscription.disable`
 
-The existing block (`:788-806`) maps both events to `cancelled` for tier subscriptions. For Solar the spec asks for **different** states: `not_renew → non_renewing`, which keeps access until `current_period_end` because `solar.org_subscription_active` admits `non_renewing` (`00207:190-198`), and `disable → cancelled`. Status guards stop a late or re-delivered event from moving a row backwards.
+The existing block (`:788-806`) maps both events to `cancelled` for tier subscriptions. For Solar the spec asks for **different** states: `not_renew → non_renewing`, which keeps access until `current_period_end` because `solar.org_subscription_active` admits `non_renewing` (`00208:190-198`), and `disable → cancelled`. Status guards stop a late or re-delivered event from moving a row backwards.
 
 **Files:**
 - Modify: `apps/web/src/app/api/paystack/webhook/route.ts`
@@ -2582,7 +2582,7 @@ insert:
 Directly after the paragraph that begins `> **¹⁴ \`POST /api/paystack/mv-subscribe\``, insert a blank line and then:
 
 ```
-> **¹⁶ `POST /api/paystack/solar-subscribe` — owner/admin of the PROJECT's organisation, rate-limited, writes nothing.** Added 2026-09-28 (Solar Phase 1B; spec `docs/solar/03-data-model-and-security.md` §2.3 point 4, decision D-01). Body `{ project_id: uuid }`. `503` if `PAYSTACK_SECRET_KEY` or **`PAYSTACK_PLAN_SOLAR_ANNUAL`** is unset (both evaluated before the session check, as `mv-subscribe`); `401` unauthenticated; `429` past `rateLimit('solar-subscribe:<user id>', 5, 60_000)`; `400` on a malformed body. The org is read from `projects.projects` **through the caller's session** (a project they cannot see is refused), then `requireRole(userClient, project.organisation_id, OWNER_ADMIN)` — the primitive against the project's org, never the caller's primary org. An invisible project and a non-owner/admin get the **same** `403` body, so the route is no project-existence oracle. `409` (`alreadySubscribed: true`) when `public.org_has_solar(org)` is already true — which includes WM-Consulting's internal bypass. Otherwise initialises a Paystack **plan** checkout (no `amount`) with `metadata { type: 'org_addon_subscription', feature_key: 'solar', org_id, project_id, user_id, return_to: '/projects/<id>/solar' }`. The route writes **nothing** — `billing.org_addon_subscriptions` is written only by `/api/paystack/webhook` (service client; the table has an owner/admin SELECT policy and no write policy, `00207`), pinned by `lib/paystack/org-addon-single-writer.contract.test.ts`. Project managers are **not** admitted: the subscription is org-wide billing, like `/api/paystack/checkout`. A non-admin's route to a subscription is "Ask an admin to subscribe" (Phase 1C, `solar.access_requests kind='subscribe'`). `/api/paystack/feature-unlock` rejects the `solar` key (`ONE_TIME_FEATURE_KEYS`), so the add-on cannot be bought as a one-time charge.
+> **¹⁶ `POST /api/paystack/solar-subscribe` — owner/admin of the PROJECT's organisation, rate-limited, writes nothing.** Added 2026-09-28 (Solar Phase 1B; spec `docs/solar/03-data-model-and-security.md` §2.3 point 4, decision D-01). Body `{ project_id: uuid }`. `503` if `PAYSTACK_SECRET_KEY` or **`PAYSTACK_PLAN_SOLAR_ANNUAL`** is unset (both evaluated before the session check, as `mv-subscribe`); `401` unauthenticated; `429` past `rateLimit('solar-subscribe:<user id>', 5, 60_000)`; `400` on a malformed body. The org is read from `projects.projects` **through the caller's session** (a project they cannot see is refused), then `requireRole(userClient, project.organisation_id, OWNER_ADMIN)` — the primitive against the project's org, never the caller's primary org. An invisible project and a non-owner/admin get the **same** `403` body, so the route is no project-existence oracle. `409` (`alreadySubscribed: true`) when `public.org_has_solar(org)` is already true — which includes WM-Consulting's internal bypass. Otherwise initialises a Paystack **plan** checkout (no `amount`) with `metadata { type: 'org_addon_subscription', feature_key: 'solar', org_id, project_id, user_id, return_to: '/projects/<id>/solar' }`. The route writes **nothing** — `billing.org_addon_subscriptions` is written only by `/api/paystack/webhook` (service client; the table has an owner/admin SELECT policy and no write policy, `00208`), pinned by `lib/paystack/org-addon-single-writer.contract.test.ts`. Project managers are **not** admitted: the subscription is org-wide billing, like `/api/paystack/checkout`. A non-admin's route to a subscription is "Ask an admin to subscribe" (Phase 1C, `solar.access_requests kind='subscribe'`). `/api/paystack/feature-unlock` rejects the `solar` key (`ONE_TIME_FEATURE_KEYS`), so the add-on cannot be bought as a one-time charge.
 ```
 
 - [ ] **Step 4: Run the web suite**
@@ -2634,7 +2634,7 @@ git push -u origin feat/solar-phase-1b
 - [ ] **Step 4: Write the PR body** to `/tmp/solar-1b-pr.md` with:
 
   1. **What.** The route, the webhook state map (copy the table from this plan's header), `FEATURE_PRICES.solar`, the `feature-unlock` rejection, the callback allow-list, and `solarReturnTo`.
-  2. **No migration.** Say why, in one line per dependency: the table, CHECK and columns from `00207`; `payment_events` free text; notification types from `00190`.
+  2. **No migration.** Say why, in one line per dependency: the table, CHECK and columns from `00208`; `payment_events` free text; notification types from `00190`.
   3. **Why no pending row.** Copy the three reasons from this plan.
   4. **Suite counts.** Before (Task 1) and after (Step 1) for shared / web / db, plus type-check.
   5. **Owner checklist before this can take money:**

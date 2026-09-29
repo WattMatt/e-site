@@ -44,7 +44,7 @@ function fake() {
       'solar.schedule_filter_presets': [{ id: 'f1', project_id: P, name: 'Mine', filters: { search: '', statuses: ['done'], ownerIds: [], colours: [] } },
         { id: 'f2', project_id: P, name: 'Broken', filters: { search: 3 } }],
     },
-    // The eligible-candidates RPC (00212) already excludes client viewers and suppliers.
+    // The eligible-candidates RPC (00213) already excludes client viewers and suppliers.
     rpc: { 'solar.schedule_owner_candidates': { data: [{ user_id: 'u1', full_name: 'Ann Smith', email: 'ann@x.co.za' }], error: null } },
   })
 }

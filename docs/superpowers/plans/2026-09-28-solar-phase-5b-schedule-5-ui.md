@@ -396,7 +396,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `apps/web/src/app/(admin)/projects/[id]/solar/(gated)/layout.tsx` (task count → readiness)
 - Modify: `apps/web/src/app/(admin)/projects/[id]/solar/(gated)/overview/page.tsx:35`
 
-Spec §1.3 (functional spec line 163): Schedule is **green** with ≥ 1 task and every task has start, end and owner (all three are NOT NULL in 00212, so any task qualifies), **grey** with none; the **red** "dependency cycle exists" case cannot arise (00212 refuses loops at write time) and is therefore not modelled.
+Spec §1.3 (functional spec line 163): Schedule is **green** with ≥ 1 task and every task has start, end and owner (all three are NOT NULL in 00213, so any task qualifies), **grey** with none; the **red** "dependency cycle exists" case cannot arise (00213 refuses loops at write time) and is therefore not modelled.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1588,7 +1588,7 @@ export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, 
 }
 ```
 
-Test expectations this code satisfies (checked): the create payload has no `segments` key (none in `input`); in the milestone edit test the dialog opens with `mode="milestone"`, so only `start`/`end` change → `{ id, expectedUpdatedAt, start: '2026-10-09', end: '2026-10-09' }`; in the split test `splitSegmentsAt({2026-10-01..2026-10-05}, [], '2026-10-03')` gives `[10-01..10-02, 10-03..10-05]`, then segment 2 becomes `10-04..10-06` and only `segments` is sent (the server derives the span from them, 00212). The milestone delete button reads "Delete milestone"; the test uses a task.
+Test expectations this code satisfies (checked): the create payload has no `segments` key (none in `input`); in the milestone edit test the dialog opens with `mode="milestone"`, so only `start`/`end` change → `{ id, expectedUpdatedAt, start: '2026-10-09', end: '2026-10-09' }`; in the split test `splitSegmentsAt({2026-10-01..2026-10-05}, [], '2026-10-03')` gives `[10-01..10-02, 10-03..10-05]`, then segment 2 becomes `10-04..10-06` and only `segments` is sent (the server derives the span from them, 00213). The milestone delete button reads "Delete milestone"; the test uses a task.
 
 - [ ] **Step 4: Implement `LinkDialog.tsx`**
 
@@ -2859,7 +2859,7 @@ In the paragraph starting "`/solar/locked` and `/solar/access` sit **outside** �
 In the "Solar server actions" table add:
 ```markdown
 | `loadScheduleAction` (`solar-schedule.actions.ts`) | `requireSolarLevel(project, 'view')` | RLS `schedule_*_select` (`solar_can_view`); presets = own rows only |
-| `createScheduleTasksAction` / `updateScheduleTasksAction` / `deleteScheduleTasksAction` | `requireSolarLevel(project, 'edit')`; zod; `expectedUpdatedAt` per task | `00212` RPCs `solar.schedule_create_tasks` / `_update_tasks` / `_delete_tasks` (SECURITY DEFINER; each re-checks `solar_can_edit`); the work-item spine's triggers (membership, ref `SOLAR-n`, due date, transition guard — only the gatekeeper closes, so "Done" by anyone else is `answered`, awaiting sign-off). `work_items_insert_gate` still admits only `task` to client sessions, so a `solar_task` can be born only through the RPC |
+| `createScheduleTasksAction` / `updateScheduleTasksAction` / `deleteScheduleTasksAction` | `requireSolarLevel(project, 'edit')`; zod; `expectedUpdatedAt` per task | `00213` RPCs `solar.schedule_create_tasks` / `_update_tasks` / `_delete_tasks` (SECURITY DEFINER; each re-checks `solar_can_edit`); the work-item spine's triggers (membership, ref `SOLAR-n`, due date, transition guard — only the gatekeeper closes, so "Done" by anyone else is `answered`, awaiting sign-off). `work_items_insert_gate` still admits only `task` to client sessions, so a `solar_task` can be born only through the RPC |
 | `reorderScheduleTasksAction` | Edit | `solar.schedule_reorder` (INVOKER) → RLS `schedule_tasks_update_authz` |
 | `addScheduleLinkAction` / `updateScheduleLinkAction` / `removeScheduleLinkAction` (`solar-schedule-meta.actions.ts`) | Edit | RLS per verb (`solar_can_edit`); `schedule_dependencies_bind` refuses self, cross-project and loops |
 | `saveBaselineAction` / `deleteBaselineAction` | Edit | `solar.schedule_save_baseline` (INVOKER) + RLS; baseline rows keep removed tasks (`task_id` SET NULL) |
@@ -2895,7 +2895,7 @@ Expected: all green; counts above `/tmp/solar-5b-base.txt` by the new tests. Rec
 ```bash
 scripts/db/dry-run-migration.sh "$S/green.sql" scripts/db/assert-solar-schedule-roles.sql | tail -60
 ```
-(rebuild `$S/green.sql` from the committed 00212 first, as in Task 11 Step 6). Expected: 56/56 `t`. Append to `/tmp/solar-5b-dryrun.txt`.
+(rebuild `$S/green.sql` from the committed 00213 first, as in Task 11 Step 6). Expected: 56/56 `t`. Append to `/tmp/solar-5b-dryrun.txt`.
 
 - [ ] **Step 4: Commit the matrix, push (SSH — the gh HTTPS token lacks `workflow` scope)**
 
@@ -2912,10 +2912,10 @@ git push -u git@github.com:WattMatt/e-site.git feat/solar-phase-5b
 Write `/tmp/solar-5b-pr.md` containing, in order:
 1. **What** — the Schedule tab (spec §14, D-20): `solar_task` work items + `solar.schedule_*` side tables; CPM with FS/SS/FF/SF + lag on all tasks; working-day mode with SA holidays; baselines with variance days; split bars; per-user presets in the DB; template seeding + org template editor; CSV/XLSX/MS Project import (one transaction); PNG/PDF(A3)/XLSX(round-trippable)/DOCX/ICS export; working undo/redo and shortcuts.
 2. **WM defects not repeated** — the table from Part 1.
-3. **Migration `00212`** (NOT applied): what it re-declares in the spine (`work_items_source_required`, `work_items_ensure_ref()`), what it leaves alone (`work_items_insert_gate`), the dry-run evidence from `/tmp/solar-5b-dryrun.txt` (red → green 56/56, four mutations).
+3. **Migration `00213`** (NOT applied): what it re-declares in the spine (`work_items_source_required`, `work_items_ensure_ref()`), what it leaves alone (`work_items_insert_gate`), the dry-run evidence from `/tmp/solar-5b-dryrun.txt` (red → green 56/56, four mutations).
 4. **PR #193 interaction** — its guard re-declaration is compatible; any later re-declaration of the two spine objects must keep the `solar_task` arm.
 5. **Suites** — counts before/after from `/tmp/solar-5b-base.txt` and `/tmp/solar-5b-suites.txt`.
-6. **Apply checklist** — (a) `00207` and `00208` applied first; (b) re-check the ledger `max(version)`, `origin/main` and every open PR's migration filenames immediately before applying; renumber `00212` (file + assertion header) above the head if taken; (c) merge → deploy workflow → `scripts/verify-migration-applied.ts` checks the `@verify` block and re-checks 00207's schema-wide directives; (d) read `projects.work_item_types` back for `solar_task` — a green workflow is not evidence the migration ran.
+6. **Apply checklist** — (a) `00208` and `00209` applied first; (b) re-check the ledger `max(version)`, `origin/main` and every open PR's migration filenames immediately before applying; renumber `00213` (file + assertion header) above the head if taken; (c) merge → deploy workflow → `scripts/verify-migration-applied.ts` checks the `@verify` block and re-checks 00208's schema-wide directives; (d) read `projects.work_item_types` back for `solar_task` — a green workflow is not evidence the migration ran.
 7. **Not verified (needs a signed-in human)** — the owner walk: Solar → Schedule from the empty state → Use template (pick a start) → drag a bar, resize to one day, Ctrl+Z / Ctrl+Shift+Z → draw a link and set SS +2 → split a task in the dialog and move a segment → mark a task Done as someone who is not its creator (shows "awaiting sign-off"; the creator sees it in My Work) → save a baseline, move a task, Compare (variance listed) → save a filter preset, reload, preset still there → switch to working days → import an exported XLSX back → export PNG / PDF / Excel / Word / .ics and open each; as a View user confirm no edit controls. Konva has no component test; touch is untested.
 8. **Known gaps / owner decisions** — the open questions in Part 5's "Open questions" section with the defaults taken.
 9. Last line exactly: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
@@ -2940,5 +2940,5 @@ Expected: a draft PR URL. Report it with the suite counts and the dry-run result
 7. **Word export.** Default: included as a minimal OOXML table (Task 20). It duplicates the PDF/XLSX; declining it removes Task 20 and the `docx` format.
 8. **Undo scope.** Default: every edit on the page (drag, resize, dialog, bulk, delete, links, reorder, segments); **Use template** and **Import** are not undoable (bulk one-transaction inserts). Undoing a delete re-creates the task as a NEW work item (new `SOLAR-n` ref); the old one stays void in the ledger — a work item cannot leave `void`.
 9. **Notifications.** Default: reassignment writes the spine's `reassigned` event and watcher row (spec: "reassignment notifies the new owner (work-item events)"); bell/email arrive with Q1 item 4 — no new `notifications_type_check` value in this phase.
-10. **Workload threshold scope.** Default: per project (`schedule_settings.workload_threshold`, default 2), not org-wide, because org settings are readable only by owners/admins (00208) and the workload view is a View-level feature.
+10. **Workload threshold scope.** Default: per project (`schedule_settings.workload_threshold`, default 2), not org-wide, because org settings are readable only by owners/admins (00209) and the workload view is a View-level feature.
 

@@ -3,7 +3,7 @@ import 'server-only'
  * Loaders for the Layout tab. Everything returned is JSON: a page hands it to a
  * 'use client' component, and a function prop across that boundary compiles
  * and fails at render (the PR #201 lesson). Reads go through the CALLER's
- * session so 00211's solar_can_view decides; only solar.org_settings (owner/
+ * session so 00212's solar_can_view decides; only solar.org_settings (owner/
  * admin RLS, not secret) is read with the service client.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -36,7 +36,7 @@ type SourceDb = {
 const SOURCE_COLS = 'id, kind, floor_plan_id, page_index, file_path, source_revision_id, north_bearing_deg, storage_path, m_per_px, attribution, updated_at'
 const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null)
 
-/** The scale 00211's layout_objects_bind would stamp: page scale, else page 1 → drawing, satellite → 1 / m per px. */
+/** The scale 00212's layout_objects_bind would stamp: page scale, else page 1 → drawing, satellite → 1 / m per px. */
 export function scaleForSource(
   s: { kind: string; page_index: number; floor_plan_id: string | null; m_per_px: number | string | null },
   drawingScale: Map<string, number | null>,

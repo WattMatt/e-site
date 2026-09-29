@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { humanSolarError, STALE_MESSAGE } from './errors'
 
 describe('humanSolarError', () => {
-  it('maps the 00207 guard and bind sentences to plain English', () => {
+  it('maps the 00208 guard and bind sentences to plain English', () => {
     expect(humanSolarError({ code: '23505', message: 'duplicate key value violates unique constraint "access_requests_one_pending"' }))
       .toBe('You already have a request waiting for an answer.')
     expect(humanSolarError({ code: '42501', message: 'access_requests: requester is not an eligible member of this project' }))
@@ -16,7 +16,7 @@ describe('humanSolarError', () => {
     expect(humanSolarError({ code: '42501', message: 'access_requests: only members of the project\'s organisation may request a subscription' }))
       .toBe('Only members of this project’s organisation can ask for a subscription.')
   })
-  it('maps the 00215 cases_bind catalogue refusals (23514) to a pick-again sentence', () => {
+  it('maps the 00216 cases_bind catalogue refusals (23514) to a pick-again sentence', () => {
     expect(humanSolarError({ code: '23514', message: 'solar.cases: the module is not in this organisation\'s catalogue' }))
       .toBe('Pick the module again — it is not in your catalogue.')
     expect(humanSolarError({ code: '23514', message: 'solar.cases: the inverter must name a catalogue item' }))
@@ -30,7 +30,7 @@ describe('humanSolarError', () => {
     expect(humanSolarError({ code: '42501', message: 'solar.equipment: the platform catalogue is maintained by E-Site' }))
       .toBe('You do not have permission to do that.')
   })
-  it('words the 00216 issued-proposal delete guards neutrally (review I1, M2; round 2 M4)', () => {
+  it('words the 00217 issued-proposal delete guards neutrally (review I1, M2; round 2 M4)', () => {
     // The refusal reaches users below Edit + financials, so neither sentence may reveal a proposal.
     const c = humanSolarError({ code: '42501', message: 'solar.cases: this case is kept as evidence and cannot be deleted' })
     const s = humanSolarError({ code: '42501', message: 'solar.studies: this study is kept as evidence and cannot be deleted' })

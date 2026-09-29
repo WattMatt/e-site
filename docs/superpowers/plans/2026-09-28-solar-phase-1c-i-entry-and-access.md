@@ -4,11 +4,11 @@
 
 **Goal:** Give every eligible project member a way into Solar — a per-project/per-user sidebar entry, a locked screen that offers exactly the one action that unlocks it (Subscribe / Ask an admin / Request access / Withdraw), the gated module chrome (tab bar with status dots, View-only banner), and the grantor Access panel (levels, requests, copy access, subscription card).
 
-**Architecture:** One pure resolver in `@esite/shared` (`resolveSolarEntry`) turns the database's answers (`user_effective_project_role`, `solar_access_level`, `solar_is_grantor`, own-org membership, `org_has_solar`, the caller's pending requests) into one of the five §0.2 situations. A server loader (`loadSolarEntry`) gathers those answers; the sidebar item, the `/solar` redirect, the locked page and every request action all read the same state, so they can never disagree. Grantor actions re-check `solar_is_grantor` themselves and rely on 00207's RLS, bind trigger and request guard as the load-bearing layer. Migration `00208` adds the notification types, product-event verbs and the `solar.org_settings` table that plan 1C-ii's settings page needs (one migration for the whole of 1C, built here).
+**Architecture:** One pure resolver in `@esite/shared` (`resolveSolarEntry`) turns the database's answers (`user_effective_project_role`, `solar_access_level`, `solar_is_grantor`, own-org membership, `org_has_solar`, the caller's pending requests) into one of the five §0.2 situations. A server loader (`loadSolarEntry`) gathers those answers; the sidebar item, the `/solar` redirect, the locked page and every request action all read the same state, so they can never disagree. Grantor actions re-check `solar_is_grantor` themselves and rely on 00208's RLS, bind trigger and request guard as the load-bearing layer. Migration `00209` adds the notification types, product-event verbs and the `solar.org_settings` table that plan 1C-ii's settings page needs (one migration for the whole of 1C, built here).
 
-**Tech Stack:** Next.js 15 App Router (server components, server actions, `'use client'` components), Supabase (PostgREST, RLS, 00207 helpers), Postgres migration with `@verify` block, `scripts/db/dry-run-migration.sh`, Vitest + @testing-library/react + user-event, pnpm/Turborepo.
+**Tech Stack:** Next.js 15 App Router (server components, server actions, `'use client'` components), Supabase (PostgREST, RLS, 00208 helpers), Postgres migration with `@verify` block, `scripts/db/dry-run-migration.sh`, Vitest + @testing-library/react + user-event, pnpm/Turborepo.
 
-**Spec:** `docs/solar/01-functional-spec.md` §0 (access model, legend, §0.2 what each user sees, §0.3 chrome, §0.4 control rules), §1.1, §1.2, §1.3. Data model: `apps/edge-functions/supabase/migrations/00207_solar_foundation.sql`.
+**Spec:** `docs/solar/01-functional-spec.md` §0 (access model, legend, §0.2 what each user sees, §0.3 chrome, §0.4 control rules), §1.1, §1.2, §1.3. Data model: `apps/edge-functions/supabase/migrations/00208_solar_foundation.sql`.
 
 **Companion plan:** `docs/superpowers/plans/2026-09-28-solar-phase-1c-ii-overview-site-settings.md` (Overview, Site & Supply, `/settings/solar`). Execute this plan first; 1C-ii continues on the same branch and PR.
 
@@ -16,7 +16,7 @@
 
 ## Ground rules (read once)
 
-1. **Never trust the page gate.** Every server action re-checks: request actions through `loadSolarEntry` (state), grantor actions through `solar_is_grantor`. RLS + 00207 triggers remain the last word.
+1. **Never trust the page gate.** Every server action re-checks: request actions through `loadSolarEntry` (state), grantor actions through `solar_is_grantor`. RLS + 00208 triggers remain the last word.
 2. **Page → client props must be JSON.** No functions, no `Date`, no `Map` across the server → client boundary (the PR #201 rule). Dates travel as ISO strings.
 3. **Two-step inline confirm** for destructive actions (remove access, copy access): first press arms, second commits, 3 s auto-disarm. Never `window.confirm`.
 4. **Every save carries `expectedUpdatedAt`.** Stale writes are refused with exactly: `Someone else changed this — reload to see their version.`
@@ -40,7 +40,7 @@
 - `index.ts` — re-exports.
 
 **Database**
-- `apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql` — `solar.org_settings`; `notifications_type_check` + 4 solar types; `product_events_event_check` + 5 solar verbs.
+- `apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql` — `solar.org_settings`; `notifications_type_check` + 4 solar types; `product_events_event_check` + 5 solar verbs.
 - `scripts/db/assert-solar-org-settings-roles.sql` — behavioural assertions (red → green).
 - `packages/shared/src/lib/analytics/product-events.ts` (+ contract test) — registry gains the 5 verbs; the contract test reads the **last** migration that re-declares the CHECK.
 
@@ -114,8 +114,8 @@ grep -ln "ADD CONSTRAINT product_events_event_check" apps/edge-functions/supabas
 grep -n "solar" packages/shared/src/services/billing.service.ts | head -5
 ls apps/web/src/app/api/paystack/solar-subscribe 2>/dev/null
 ```
-Expected on a 1A base: the newest migration is `00207_solar_foundation.sql`; the latest re-declarations are `00190_…` (notifications) and `00199_…` (product events); no `solar` in billing.service; no subscribe route.
-**If 1B added a migration** (anything after `00207`), 1C's migration takes the next free number instead of `00208` — rename every `00208` in this plan accordingly. **If 1B re-declared either CHECK**, copy that file's list (not the 00190 / 00199 list below) as the base of Task 4's re-declaration. Record what you found in `/tmp/solar-1c-base.txt`.
+Expected on a 1A base: the newest migration is `00208_solar_foundation.sql`; the latest re-declarations are `00190_…` (notifications) and `00199_…` (product events); no `solar` in billing.service; no subscribe route.
+**If 1B added a migration** (anything after `00208`), 1C's migration takes the next free number instead of `00209` — rename every `00209` in this plan accordingly. **If 1B re-declared either CHECK**, copy that file's list (not the 00190 / 00199 list below) as the base of Task 4's re-declaration. Record what you found in `/tmp/solar-1c-base.txt`.
 
 ---
 
@@ -254,7 +254,7 @@ Expected: FAIL — `Failed to resolve import "./entry"` / `"./format"`.
  * orgSubscribed comes from public.org_has_solar, which answers only for
  * ACTIVE MEMBERS of the org (false for everyone else). An external member's
  * `false` therefore means "unknown", not "unsubscribed": externals always land
- * on request_access (00207 lets them request View whether or not the org has
+ * on request_access (00208 lets them request View whether or not the org has
  * paid; a grant confers nothing until it does).
  */
 import { SOLAR_ACCESS_LEVELS, type SolarAccessLevel } from './access'
@@ -601,11 +601,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Migration 00208 — org settings, notification types, product events (red → green)
+### Task 4: Migration 00209 — org settings, notification types, product events (red → green)
 
 **Files:**
 - Create: `scripts/db/assert-solar-org-settings-roles.sql`
-- Create: `apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql`
+- Create: `apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql`
 - Modify: `packages/shared/src/lib/analytics/product-events.ts`
 - Modify: `packages/shared/src/lib/analytics/product-events.contract.test.ts`
 
@@ -613,11 +613,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `scripts/db/assert-solar-org-settings-roles.sql`:
 ```sql
--- BEHAVIOURAL assertions for 00208_solar_org_settings, run as real roles.
+-- BEHAVIOURAL assertions for 00209_solar_org_settings, run as real roles.
 --   Red:   scripts/db/dry-run-migration.sh <red.sql>   scripts/db/assert-solar-org-settings-roles.sql
 --   Green: scripts/db/dry-run-migration.sh <green.sql> scripts/db/assert-solar-org-settings-roles.sql
--- where red.sql / green.sql are built in the plan (Task 4 Step 2): 00207 must be in
--- front of 00208 while 00207 is not yet applied to production.
+-- where red.sql / green.sql are built in the plan (Task 4 Step 2): 00208 must be in
+-- front of 00209 while 00208 is not yet applied to production.
 -- Fixtures are minted inside the transaction and rolled back. Seeding happens as
 -- postgres before any impersonation (request.jwt.claims outlives RESET ROLE).
 -- REFUSAL PATTERN: a "…_REFUSED" check catches only the SQLSTATE the design
@@ -772,13 +772,13 @@ SELECT k AS "check", v AS ok FROM _r ORDER BY k;
 
 - [ ] **Step 2: Run it RED**
 
-First learn whether 00207 is already in production:
+First learn whether 00208 is already in production:
 ```bash
-bash -c '. scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) AS head, bool_or(version = '"'"'00207'"'"') AS has_00207 FROM supabase_migrations.schema_migrations;"'
+bash -c '. scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) AS head, bool_or(version = '"'"'00208'"'"') AS has_00208 FROM supabase_migrations.schema_migrations;"'
 ```
 Build the two input files in the session scratchpad (`$S`, e.g. `S=$(mktemp -d)`):
-- If `has_00207` is **false**: `cp apps/edge-functions/supabase/migrations/00207_solar_foundation.sql "$S/red.sql"`
-- If `has_00207` is **true**: `echo 'SELECT 1;' > "$S/red.sql"`
+- If `has_00208` is **false**: `cp apps/edge-functions/supabase/migrations/00208_solar_foundation.sql "$S/red.sql"`
+- If `has_00208` is **true**: `echo 'SELECT 1;' > "$S/red.sql"`
 
 ```bash
 scripts/db/dry-run-migration.sh "$S/red.sql" scripts/db/assert-solar-org-settings-roles.sql
@@ -787,15 +787,15 @@ Expected: RED — the file aborts (`relation "solar.org_settings" does not exist
 
 - [ ] **Step 3: Write the migration**
 
-`apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql`:
+`apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql`:
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00208: Solar org settings, notification types, product events
+-- Migration 00209: Solar org settings, notification types, product events
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
 -- filenames, and the migration filenames in every OPEN PR (feat/solar-phase-1b
--- included). If 00208 is taken, renumber this file (and the header of
+-- included). If 00209 is taken, renumber this file (and the header of
 -- scripts/db/assert-solar-org-settings-roles.sql) above the head first.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
@@ -816,7 +816,7 @@ Expected: RED — the file aborts (`relation "solar.org_settings" does not exist
 --      solar_* verbs (00199's list + solar_*). packages/shared PRODUCT_EVENTS
 --      and its contract test change in the same PR.
 --
--- 00207's schema-wide @verify directives are re-checked on every deploy and
+-- 00208's schema-wide @verify directives are re-checked on every deploy and
 -- this migration conforms to each: FORCE RLS on the new relkind 'r' table; no
 -- RESTRICTIVE policy covering SELECT anywhere in solar; the SECURITY DEFINER
 -- bind function revokes EXECUTE from PUBLIC and anon.
@@ -879,7 +879,7 @@ CREATE TRIGGER org_settings_bind BEFORE INSERT OR UPDATE ON solar.org_settings
 
 ALTER TABLE solar.org_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.org_settings FORCE ROW LEVEL SECURITY;
--- Per verb, PERMISSIVE only (00207 forbids a RESTRICTIVE read policy in solar).
+-- Per verb, PERMISSIVE only (00208 forbids a RESTRICTIVE read policy in solar).
 -- Owners/admins of the org only: the defaults include rate cards (money).
 CREATE POLICY org_settings_select ON solar.org_settings FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.user_organisations uo
@@ -929,7 +929,7 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
         'billing_duplicate_charge',
         'billing_refund_processed',
         'billing_dispute_opened',
-        -- 00208: Solar access requests and decisions
+        -- 00209: Solar access requests and decisions
         'solar_subscribe_requested',
         'solar_access_requested',
         'solar_access_changed',
@@ -966,10 +966,10 @@ If Task 1 Step 3 found that 1B re-declared either CHECK, replace the correspondi
 - [ ] **Step 4: Run it GREEN**
 
 ```bash
-grep -n "COMMIT\|BEGIN;" apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql   # must print nothing
+grep -n "COMMIT\|BEGIN;" apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql   # must print nothing
 ```
-- If `has_00207` was **false**: `cat apps/edge-functions/supabase/migrations/00207_solar_foundation.sql apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql > "$S/green.sql"`
-- If **true**: `cp apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql "$S/green.sql"`
+- If `has_00208` was **false**: `cat apps/edge-functions/supabase/migrations/00208_solar_foundation.sql apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql > "$S/green.sql"`
+- If **true**: `cp apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql "$S/green.sql"`
 
 ```bash
 scripts/db/dry-run-migration.sh "$S/green.sql" scripts/db/assert-solar-org-settings-roles.sql
@@ -990,7 +990,7 @@ In `packages/shared/src/lib/analytics/product-events.ts`, replace the tail of `P
   'cable_route_leg_saved',
   'cable_route_assigned',
   'cable_route_sheet_exported',
-  // Solar (00208).
+  // Solar (00209).
   'solar_subscribe_requested',
   'solar_access_requested',
   'solar_access_changed',
@@ -1003,7 +1003,7 @@ In `packages/shared/src/lib/analytics/product-events.contract.test.ts`, add belo
 ```ts
 /**
  * The LAST migration (by filename) containing `needle` — for a CHECK that is
- * dropped and re-added by later migrations (00199, then 00208 …), the
+ * dropped and re-added by later migrations (00199, then 00209 …), the
  * definition in force is the newest one.
  */
 function lastMigrationContaining(needle: string): string {
@@ -1033,8 +1033,8 @@ Expected: all PASS. (The web contract test parses the new `@verify` block; an un
 - [ ] **Step 8: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00208_solar_org_settings.sql scripts/db/assert-solar-org-settings-roles.sql packages/shared/src/lib/analytics
-git commit -m "feat(solar): 00208 — org settings table, Solar notification types and product events
+git add apps/edge-functions/supabase/migrations/00209_solar_org_settings.sql scripts/db/assert-solar-org-settings-roles.sql packages/shared/src/lib/analytics
+git commit -m "feat(solar): 00209 — org settings table, Solar notification types and product events
 
 Dry run red (relation missing) → green 24/24; mutation-proven on the read
 policy and the updated_by binding.
@@ -1157,7 +1157,7 @@ import { describe, it, expect } from 'vitest'
 import { humanSolarError, STALE_MESSAGE } from './errors'
 
 describe('humanSolarError', () => {
-  it('maps the 00207 guard and bind sentences to plain English', () => {
+  it('maps the 00208 guard and bind sentences to plain English', () => {
     expect(humanSolarError({ code: '23505', message: 'duplicate key value violates unique constraint "access_requests_one_pending"' }))
       .toBe('You already have a request waiting for an answer.')
     expect(humanSolarError({ code: '42501', message: 'access_requests: requester is not an eligible member of this project' }))
@@ -1235,7 +1235,7 @@ Expected: FAIL — modules not found.
 /**
  * Postgres/PostgREST errors from the Solar tables → one human sentence
  * (spec §0.4 rule 5). Keyed on the SQLSTATE and the exact sentences raised by
- * 00207's bind trigger and request guard. Never returns the raw message.
+ * 00208's bind trigger and request guard. Never returns the raw message.
  */
 export const STALE_MESSAGE = 'Someone else changed this — reload to see their version.'
 export const ALREADY_ANSWERED = 'This request has already been answered — reload to see it.'
@@ -1622,7 +1622,7 @@ Expected: FAIL — cannot resolve `./notify`.
 ```ts
 import 'server-only'
 /**
- * Owners/admins of an organisation — the Solar grantors (00207
+ * Owners/admins of an organisation — the Solar grantors (00208
  * public.solar_is_grantor). Read with the service client because
  * user_organisations RLS is own-row-only; callers only use this AFTER their
  * own gate (a requester notifying the people who can answer, or naming them
@@ -1676,7 +1676,7 @@ import 'server-only'
  * the project roster — Solar requests go to the org's owners/admins and
  * decisions go to one person. Never throws (a failed notification must not
  * fail the user's action). The four types are in notifications_type_check
- * from 00208; a type missing there makes the bell insert fail silently.
+ * from 00209; a type missing there makes the bell insert fail silently.
  *
  * Email uses send-email's `rfi-created` passthrough ({to, subject, html}),
  * the same shape lib/notify.ts uses for every module.
@@ -1971,7 +1971,7 @@ Expected: FAIL — cannot resolve `./solar-requests.actions`.
 /**
  * Solar entry actions for NON-grantors (and the sidebar). Each re-resolves the
  * caller's state with loadSolarEntry — the locked page's rendering is never
- * trusted. 00207's access_requests_guard is the last word on eligibility
+ * trusted. 00208's access_requests_guard is the last word on eligibility
  * (it binds requester/org/status, clamps the level, and refuses externals'
  * subscribe requests); these actions only decide which button made sense.
  */
@@ -3641,7 +3641,7 @@ Expected: FAIL — cannot resolve `./solar-access.actions`.
 /**
  * Grantor actions for the Solar Access panel (spec §1.3). Each re-checks
  * public.solar_is_grantor (org owner/admin of the project's org) — never the
- * page gate. The database remains the last word: 00207's project_access RLS
+ * page gate. The database remains the last word: 00208's project_access RLS
  * (grantor-only writes), project_access_bind (eligibility + per-user maximum:
  * externals cap at View, clients/suppliers refused) and access_requests_guard
  * (approval writes the grant). Every write is conditioned on what the grantor
@@ -4222,7 +4222,7 @@ export const metadata: Metadata = { title: 'Solar access' }
 
 /**
  * Grantors only (spec §1.3). OUTSIDE solar/(gated): owners/admins may set up
- * grants before the org subscribes (00207 keeps project_access ungated by
+ * grants before the org subscribes (00208 keeps project_access ungated by
  * subscription), and the gated layout would bounce them to /locked.
  */
 export default async function SolarAccessPage({ params }: { params: Promise<{ id: string }> }) {
@@ -4527,7 +4527,7 @@ Insert before the line `## Client portal (\`apps/web/src/app/(portal)/portal/*\`
 ```markdown
 ## Solar (`apps/web/src/app/(admin)/projects/[id]/solar/*`)
 
-Solar is **not** gated by the E-Site role. Two things decide it (migration `00207`): the project org's Solar subscription (`public.org_has_solar`) and the caller's **per-user level** on the project (`public.solar_access_level` → `view` / `edit` / `edit_financials`). Org owners/admins of the project's org are **grantors** and hold Edit + financials implicitly while the org is subscribed. Suppliers and client viewers can never hold a level; a project member who is not an active member of the project's org ("external") is capped at View. The columns below are therefore Solar situations, not E-Site roles. Every page, action and RLS policy asks the database; the page gate is never the only gate.
+Solar is **not** gated by the E-Site role. Two things decide it (migration `00208`): the project org's Solar subscription (`public.org_has_solar`) and the caller's **per-user level** on the project (`public.solar_access_level` → `view` / `edit` / `edit_financials`). Org owners/admins of the project's org are **grantors** and hold Edit + financials implicitly while the org is subscribed. Suppliers and client viewers can never hold a level; a project member who is not an active member of the project's org ("external") is capped at View. The columns below are therefore Solar situations, not E-Site roles. Every page, action and RLS policy asks the database; the page gate is never the only gate.
 
 | Route | Grantor (org owner/admin) | Edit + financials | Edit | View | Own-org member, no grant | External member, no grant | supplier / client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -4536,13 +4536,13 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
-> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00208 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
 
 ### Solar server actions
 
 | Action | Gate (re-checked in the action) | DB layer that decides |
 |---|---|---|
-| `getSolarNavStateAction` (`solar-requests.actions.ts`) | signed-in; describes only the caller | the 00207 helpers it calls |
+| `getSolarNavStateAction` (`solar-requests.actions.ts`) | signed-in; describes only the caller | the 00208 helpers it calls |
 | `getSolarSubscriptionStateAction` | signed-in; describes only the caller | `solar_access_level` |
 | `requestSolarAccessAction` | resolved state is *request access*, or *granted* below Edit + financials (View-only banner) | `access_requests_guard` binds requester/org/status, clamps the level to the requester's maximum, refuses ineligible requesters |
 | `askAdminToSubscribeAction` | resolved state is *ask an admin* (own-org non-grantor, org unsubscribed); one open request per user per **org** | guard refuses externals' subscribe requests |
@@ -4551,7 +4551,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `decideSolarRequestAction` | `solar_is_grantor(request's project)`; conditioned on `status = 'pending'` | guard: only a grantor decides; approval writes the grant, never above the requester's maximum |
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 
-> Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions to the requester (bell).
+> Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00209`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00209`: requests go to the org's owners/admins (bell + email), decisions to the requester (bell).
 ```
 
 - [ ] **Step 2: Add the send-email caller**
@@ -4585,7 +4585,7 @@ pnpm --filter web type-check 2>&1 | tail -5
 pnpm --filter @esite/db test:ci 2>&1 | tail -15
 ```
 Expected: all green; web and shared counts above the Task 1 baseline by the tests added here. Pay attention to:
-- `apps/web/src/lib/migration-verify-block.contract.test.ts` (parses 00208's `@verify` block).
+- `apps/web/src/lib/migration-verify-block.contract.test.ts` (parses 00209's `@verify` block).
 - `packages/db` migration-text guards (anon EXECUTE on SECURITY DEFINER functions, write-role RLS shapes). A guard failure means the migration shape is wrong — fix the migration, never weaken the guard; if a guard is genuinely inapplicable, stop and report its name and message.
 - `apps/web/src/lib/analytics/product-events.contract.test.ts` — every file that calls `trackServer` must also call `emitProductEvent` (the new actions call only `emitProductEvent`, which is allowed).
 
@@ -4610,9 +4610,9 @@ gh pr create --repo WattMatt/e-site --draft --base "$PR_BASE" --head feat/solar-
 ```
 Before pushing, confirm the 1B contract still matches (it was given to this plan on 2026-09-28): `grep -rn "payment=received" apps/web/src/app/api/paystack` should find 1B's `return_to`/callback, and the subscribe route's 403/409/429/503 codes should be unchanged. If 1B renamed the query parameter, change `payment === 'received'` in `solar/locked/page.tsx` and the page test to match.
 
-`/tmp/solar-1c-pr.md` must contain: what 1C-i adds (sidebar entry, `/solar` redirect, locked screen, gated chrome, Access panel, request/decision notifications, migration `00208`); the dry-run evidence from `/tmp/solar-1c-dryrun.txt`; suite counts before/after; "1C-ii (Overview, Site & Supply, `/settings/solar`) follows on this branch"; and this **apply checklist**:
-1. `00207` must be applied first (Phase 1A). Re-check ledger `max(version)`, `origin/main` and open-PR migration filenames immediately before applying; renumber `00208` if taken.
-2. Merge → deploy workflow applies → `scripts/verify-migration-applied.ts` checks the `@verify` block (and re-checks 00207's schema-wide directives, which 00208 conforms to).
+`/tmp/solar-1c-pr.md` must contain: what 1C-i adds (sidebar entry, `/solar` redirect, locked screen, gated chrome, Access panel, request/decision notifications, migration `00209`); the dry-run evidence from `/tmp/solar-1c-dryrun.txt`; suite counts before/after; "1C-ii (Overview, Site & Supply, `/settings/solar`) follows on this branch"; and this **apply checklist**:
+1. `00208` must be applied first (Phase 1A). Re-check ledger `max(version)`, `origin/main` and open-PR migration filenames immediately before applying; renumber `00209` if taken.
+2. Merge → deploy workflow applies → `scripts/verify-migration-applied.ts` checks the `@verify` block (and re-checks 00208's schema-wide directives, which 00209 conforms to).
 3. Re-run `scripts/db/assert-solar-org-settings-roles.sql` against production with a no-op migration → all `t`.
 4. **Owner signed-in walk** (not possible from an agent session — it would need a password): see the checklist in plan 1C-ii Task 9.
 
@@ -4627,6 +4627,6 @@ End the body with:
 
 ## Self-review (done while writing)
 
-- **Spec coverage.** §0.1 two layers → `loadSolarEntry` + gated layout + actions; legend → `visibleSolarTabs`, level-hidden controls. §0.2 five rows → `resolveSolarEntry` (Task 2), `LockedScreen` rows 1–4 (Task 10), row 5 redirect (Task 11), badge (Task 9). §0.3 tab bar + dots + no-auto-save + in-app discard confirm + beforeunload → Task 5 (dirty store) + Task 12; View-only banner → Task 12; "Stale" banner — **not built**: there are no cases or runs in Phase 1 (engine spec §1.3), so it can never show. §0.4: rule 1 two-step (remove/copy), rule 2 `expectedUpdatedAt` (level saves; decisions conditioned on `status='pending'`), rule 4 spinner + disabled (`isLoading`), rule 5 `humanSolarError`, rule 6 empty states (requests, members, projects, subscription), rule 8 `product_events` (00208). Rule 7 (PDF strings) — no PDF in 1C. §1.1 → Task 9. §1.2 all five controls incl. return handling → Tasks 10–11. §1.3 all five controls → Tasks 13–14.
+- **Spec coverage.** §0.1 two layers → `loadSolarEntry` + gated layout + actions; legend → `visibleSolarTabs`, level-hidden controls. §0.2 five rows → `resolveSolarEntry` (Task 2), `LockedScreen` rows 1–4 (Task 10), row 5 redirect (Task 11), badge (Task 9). §0.3 tab bar + dots + no-auto-save + in-app discard confirm + beforeunload → Task 5 (dirty store) + Task 12; View-only banner → Task 12; "Stale" banner — **not built**: there are no cases or runs in Phase 1 (engine spec §1.3), so it can never show. §0.4: rule 1 two-step (remove/copy), rule 2 `expectedUpdatedAt` (level saves; decisions conditioned on `status='pending'`), rule 4 spinner + disabled (`isLoading`), rule 5 `humanSolarError`, rule 6 empty states (requests, members, projects, subscription), rule 8 `product_events` (00209). Rule 7 (PDF strings) — no PDF in 1C. §1.1 → Task 9. §1.2 all five controls incl. return handling → Tasks 10–11. §1.3 all five controls → Tasks 13–14.
 - **Placeholders:** none; every code step is complete.
 - **Type consistency:** `SolarEntryState`, `SolarNavBadge`, `requestableLevels`, `SOLAR_LEVEL_LABELS`, `ReadinessStep`, `AccessPanelData`, action names and result shapes are identical across tasks and tests.

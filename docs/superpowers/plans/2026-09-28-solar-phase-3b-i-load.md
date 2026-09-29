@@ -4,7 +4,7 @@
 
 **Goal:** Build `/projects/[id]/solar/load` exactly as functional spec §4: the load-basis select, the Meters sub-tab (direct-to-Storage upload, Dropbox folder import, copy from the org meter library, import meter register, the per-file import review dialog with identity panel and validation summary, meters table and detail drawer with chart / heatmap / edit mapping / remove / normalised CSV), the Tenants sub-tab (sources, weighted meter assignment, density and archetype, BO date, auto-match with review, exclude vacant, common-area %), the Site profile sub-tab (settings, rebuild with progress, KPI strip, five charts, reconciliation card) and the Checks sub-tab (acknowledgements).
 
-**Architecture:** Server-only data layer in `apps/web/src/lib/solar/load/` gathers study rows and readings (through the two INVOKER RPCs of 00214, so RLS decides), calls the pure `buildSiteLoad` from plan 3b-0, and stores `solar.site_load`. Charts receive server-derived aggregates only (`siteProfileCharts`, `minMaxBuckets`); CSV downloads are full resolution from server routes. The UI reuses the 3a routes (`meter-files`, `parse`, `commit`) unchanged in behaviour. Charts are small in-house SVG/canvas components (no chart library exists in the repo — see decision 1).
+**Architecture:** Server-only data layer in `apps/web/src/lib/solar/load/` gathers study rows and readings (through the two INVOKER RPCs of 00215, so RLS decides), calls the pure `buildSiteLoad` from plan 3b-0, and stores `solar.site_load`. Charts receive server-derived aggregates only (`siteProfileCharts`, `minMaxBuckets`); CSV downloads are full resolution from server routes. The UI reuses the 3a routes (`meter-files`, `parse`, `commit`) unchanged in behaviour. Charts are small in-house SVG/canvas components (no chart library exists in the repo — see decision 1).
 
 **Tech Stack:** Next.js 15 App Router (server components, server actions, route handlers with NDJSON streaming), supabase-js, `@esite/shared` (`/solar-load`, `/meter-data`), React 19 + Testing Library + Vitest (jsdom).
 
@@ -41,7 +41,7 @@
 |---|---|
 | `apps/web/src/test/fake-supabase.ts` | + `is`, passthrough `or/ilike/overlaps/not/range`, `upsert`, `schema(s).rpc` |
 | `apps/web/src/lib/solar/load/view-types.ts` | Client-safe view models, `RebuildEvent`, unit list |
-| `apps/web/src/lib/solar/load/readings.ts` (+ test) | `readChannelReadings`, `channelSummaries` (00214 RPCs) |
+| `apps/web/src/lib/solar/load/readings.ts` (+ test) | `readChannelReadings`, `channelSummaries` (00215 RPCs) |
 | `apps/web/src/lib/solar/load/gather.ts` (+ test) | Rows + readings → `BuildSiteLoadInput`, inputs hash, channel picking |
 | `apps/web/src/lib/solar/load/messages.ts` | Error code → sentence |
 | `apps/web/src/lib/solar/load/site-load-service.ts` (+ test) | Rebuild: gather → build → store; audit + product event |
@@ -414,7 +414,7 @@ Run: `pnpm --filter web test -- lib/solar/load/readings view-types.contract` →
 // apps/web/src/lib/solar/load/readings.ts
 import 'server-only'
 /**
- * Bulk reads through 00214's SECURITY INVOKER RPCs: one row per channel with parallel arrays, so a
+ * Bulk reads through 00215's SECURITY INVOKER RPCs: one row per channel with parallel arrays, so a
  * year of readings does not hit PostgREST's 1,000-row cap. meter_readings_select (RLS) decides what
  * comes back; a channel the caller may not read simply returns nothing.
  */
@@ -480,7 +480,7 @@ export async function channelSummaries(supabase: AnyClient, channelIds: string[]
 ```bash
 pnpm --filter web test -- lib/solar/load/readings view-types.contract 2>&1 | tail -4
 git add apps/web/src/lib/solar/load/view-types.ts apps/web/src/lib/solar/load/view-types.contract.test.ts apps/web/src/lib/solar/load/readings.ts apps/web/src/lib/solar/load/readings.test.ts
-git commit -m "feat(solar): load view types and bulk channel reads through the 00214 RPCs
+git commit -m "feat(solar): load view types and bulk channel reads through the 00215 RPCs
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -859,7 +859,7 @@ Expected: PASS (6 tests), type-check clean.
 
 ```ts
 // apps/web/src/lib/solar/load/messages.ts
-/** Error code → one human sentence (spec §0.4 rule 5). Codes come from the 3a routes, 00214 and the builder. */
+/** Error code → one human sentence (spec §0.4 rule 5). Codes come from the 3a routes, 00215 and the builder. */
 export const LOAD_MESSAGES: Record<string, string> = {
   no_study: 'Set up the study first — save Site & Supply or any Load setting.',
   save_failed: 'The site profile could not be saved — try again.',
@@ -2097,7 +2097,7 @@ Run: `pnpm --filter web test -- actions/solar-load` → FAIL.
 'use server'
 /**
  * Load tab writes (functional spec §4). Each action re-checks Solar Edit itself and writes with the
- * caller's session, so 00210/00214's RESTRICTIVE solar_can_edit policies and bind triggers decide;
+ * caller's session, so 00211/00215's RESTRICTIVE solar_can_edit policies and bind triggers decide;
  * library writes (meters, register) additionally need the org library at Edit. Saves carry
  * expectedUpdatedAt and a stale write is refused (spec §0.4 rule 2).
  */
@@ -5999,10 +5999,10 @@ In `docs/rbac-matrix.md`, in the Solar route table (after `/projects/[id]/solar/
 In "Solar server actions", add:
 
 ```md
-| `ensureSolarStudyAction`, `saveLoadBasisAction`, `saveLoadSettingsAction`, `saveCommonAreaAction` (`solar-load.actions.ts`) | `requireSolarLevel(project, 'edit')`; `expectedUpdatedAt` stale guard | `studies_*_authz` (RESTRICTIVE, `solar_can_edit`); CHECKs on `load_growth_pct`, `monthly_bills`, `diversity_factor`, `common_area_pct` (00210/00214) |
+| `ensureSolarStudyAction`, `saveLoadBasisAction`, `saveLoadSettingsAction`, `saveCommonAreaAction` (`solar-load.actions.ts`) | `requireSolarLevel(project, 'edit')`; `expectedUpdatedAt` stale guard | `studies_*_authz` (RESTRICTIVE, `solar_can_edit`); CHECKs on `load_growth_pct`, `monthly_bills`, `diversity_factor`, `common_area_pct` (00211/00215) |
 | `updateStudyMeterAction`, `removeStudyMeterAction`, `searchLibraryMetersAction`, `linkLibraryMetersAction`, `confirmRegisterRowAction` | Solar Edit; the meter must be linked to THIS project's study; `expectedUpdatedAt` on meter edits | library RLS (`solar.library_orgs('edit')`; deleting a library meter needs `'admin'` = org owner/admin); `study_meters_*_authz`; `meters_bind` refuses a node/parent of another org |
 | `saveTenantBasisAction`, `applyAutoMatchAction`, `excludeVacantAction` | Solar Edit; meters must be study meters; node must be a `tenant_db` of this project; weights > 0 | `tenant_load_basis_*_authz` + `tenant_load_basis_check` (same-org meters, weight > 0) |
-| `acknowledgeCheckAction`, `unacknowledgeCheckAction` | Solar Edit | `load_check_acks_*_authz` (00214); `acknowledged_by` stamped by trigger; no UPDATE grant |
+| `acknowledgeCheckAction`, `unacknowledgeCheckAction` | Solar Edit | `load_check_acks_*_authz` (00215); `acknowledged_by` stamped by trigger; no UPDATE grant |
 ```
 
 In the "Solar meter data API" section, add rows:

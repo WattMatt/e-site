@@ -504,7 +504,7 @@ describe('projectSettingsService.convenience bundles', () => {
       diaryEmail: true,
       qcEmail: true,
       formEmail: true,
-      // 00216: notify_solar_email DEFAULT TRUE.
+      // 00217: notify_solar_email DEFAULT TRUE.
       solarEmail: true,
     })
   })

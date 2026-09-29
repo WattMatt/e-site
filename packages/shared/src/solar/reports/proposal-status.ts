@@ -1,4 +1,4 @@
-/** Proposal status chip (functional spec §9.3) — server-set; `expired` is derived (00216 mirrors this). */
+/** Proposal status chip (functional spec §9.3) — server-set; `expired` is derived (00217 mirrors this). */
 export type ProposalStatus = 'draft' | 'issued' | 'viewed' | 'accepted' | 'declined' | 'withdrawn'
 export type EffectiveProposalStatus = ProposalStatus | 'expired'
 
@@ -20,7 +20,7 @@ export interface ProposalControlInput {
   familyHasDraft: boolean
   familyHasAccepted: boolean
 }
-/** Why a draft cannot be issued: another version of its family was accepted (00216 'family_accepted'). */
+/** Why a draft cannot be issued: another version of its family was accepted (00217 'family_accepted'). */
 export const PROPOSAL_FAMILY_ACCEPTED =
   'Another version of this proposal was accepted — it cannot be issued. Start a new proposal instead.'
 

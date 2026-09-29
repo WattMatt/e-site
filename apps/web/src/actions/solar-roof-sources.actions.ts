@@ -2,7 +2,7 @@
 /**
  * Roof sources (functional spec §3.2 C). Each action re-checks Edit itself
  * (requireSolarLevel redirects a lower level to /solar/locked) and writes
- * through the caller's session: 00211's RLS decides who, roof_sources_bind
+ * through the caller's session: 00212's RLS decides who, roof_sources_bind
  * stamps the drawing anchor and binds the org. Calibration is NOT here — it is
  * calibrateFloorPlanAction (cable-route.actions.ts), role-gated per page.
  */

@@ -4,7 +4,7 @@
 
 **Goal:** Turn a selected case's stored run into deliverables — a branded feasibility report (money) and technical report (no money), and a client proposal that is drafted, previewed, issued as a frozen snapshot + PDF + SHA-256 behind a hashed, expiring share link, accepted or declined by the client (public token page, no login, or the client portal) with server-stamped evidence — plus the org-level Solar portfolio page.
 
-**Architecture:** One migration (`00216_solar_proposals.sql`) adds `solar.proposals` (money, per-verb RLS on `solar_can_see_money`, a guard trigger that freezes everything once issued), append-only `solar.proposal_events`, `solar.proposal_templates` (org terms/disclaimer/validity), SERVICE-ONLY `SECURITY DEFINER` functions for every client-facing and state-changing path (token lookup hashes the raw token in SQL; nothing is granted to `anon`), a `solar_portfolio()` read function, the Solar report kinds in `user_can_read_report_kind()`, `notify_solar_email`, two notification types and six product events. All pure logic (number formatting, offer price, draft schema, finance options, frozen snapshot, key figures, report model, proposal status) lives in a new `@esite/shared/solar-reports` subpath and is unit-tested there; the web app loads stored rows, renders react-pdf documents through `winAnsiSafe`, and never re-simulates — a proposal's finance options are computed once at issue from the STORED hourly series (the 4b `runStoredFinancials` path) and frozen.
+**Architecture:** One migration (`00217_solar_proposals.sql`) adds `solar.proposals` (money, per-verb RLS on `solar_can_see_money`, a guard trigger that freezes everything once issued), append-only `solar.proposal_events`, `solar.proposal_templates` (org terms/disclaimer/validity), SERVICE-ONLY `SECURITY DEFINER` functions for every client-facing and state-changing path (token lookup hashes the raw token in SQL; nothing is granted to `anon`), a `solar_portfolio()` read function, the Solar report kinds in `user_can_read_report_kind()`, `notify_solar_email`, two notification types and six product events. All pure logic (number formatting, offer price, draft schema, finance options, frozen snapshot, key figures, report model, proposal status) lives in a new `@esite/shared/solar-reports` subpath and is unit-tested there; the web app loads stored rows, renders react-pdf documents through `winAnsiSafe`, and never re-simulates — a proposal's finance options are computed once at issue from the STORED hourly series (the 4b `runStoredFinancials` path) and frozen.
 
 **Tech Stack:** Postgres (Supabase) + RLS, Next.js 15 App Router (server components, server actions, `runtime='nodejs'` route handlers), TypeScript, zod, `@react-pdf/renderer` (existing), `pdf-lib` (existing, for appending the layout sheet), `@anthropic-ai/sdk` (NEW dependency, server-only, for the optional narrative — D-17), vitest + RTL, `node:crypto` for token + SHA-256.
 
@@ -15,7 +15,7 @@
 | File | Tasks | Produces |
 |---|---|---|
 | `2026-09-28-solar-phase-6-0-index.md` (this) | 0 | Worktree, preflight facts, decisions, conventions, file map |
-| `2026-09-28-solar-phase-6-1-schema.md` | 1–4 | `00216_solar_proposals.sql`, behavioural assertions (red → green → mutations), product events + notification types registry |
+| `2026-09-28-solar-phase-6-1-schema.md` | 1–4 | `00217_solar_proposals.sql`, behavioural assertions (red → green → mutations), product events + notification types registry |
 | `2026-09-28-solar-phase-6-2-shared.md` | 5–10 | `@esite/shared/solar-reports`: fmt, offer, draft, finance options, snapshot + key figures, report model, proposal status, readiness + activity |
 | `2026-09-28-solar-phase-6-3-pdf.md` | 11–14 | PDF text sanitiser + test extractor, neutral branding, feasibility/technical document, proposal document (glyph + figure tests) |
 | `2026-09-28-solar-phase-6-4-server.md` | 15–24 | Report-kind access, report generation, `notify_solar_email` chain, proposal libs + actions, preview/issue/withdraw/revise/new link, narrative, public token routes + middleware, portal actions |
@@ -27,7 +27,7 @@
 ## Decisions this plan takes (flagged for the owner in the final report)
 
 1. **Base branch.** Phase 6 imports Phase 4b modules on nearly every file (`solar.cases`, `case_runs`, `case_run_financials`, `@esite/shared/solar-cases`, `lib/solar/cases/*`). It therefore cannot be built on `feat/solar-integration` alone. **Task 0 WAITS for `origin/feat/solar-phase-4b`**; it does not base on the integration branch and rebase later (there would be nothing to compile against).
-2. **Report kinds follow the Solar level, not an E-Site role** (the Phase 5 `SOLAR_READ_REPORT_KINDS` pattern): `solar_technical` → View, `solar_feasibility` → Edit + financials, `solar_proposal` → Edit + financials (clients get the proposal PDF only through the token page or the portal, via a 7-day service-signed URL after their own gate). `solar_layout_sheet` → View is carried into `00216`'s redefinition of `user_can_read_report_kind()` so the FINAL definition gates all four whichever Solar branch merges first. `report_kind_is_sensitive()` also lists `solar_feasibility` and `solar_proposal` (belt and braces; the Solar branches of the CASE run first).
+2. **Report kinds follow the Solar level, not an E-Site role** (the Phase 5 `SOLAR_READ_REPORT_KINDS` pattern): `solar_technical` → View, `solar_feasibility` → Edit + financials, `solar_proposal` → Edit + financials (clients get the proposal PDF only through the token page or the portal, via a 7-day service-signed URL after their own gate). `solar_layout_sheet` → View is carried into `00217`'s redefinition of `user_can_read_report_kind()` so the FINAL definition gates all four whichever Solar branch merges first. `report_kind_is_sensitive()` also lists `solar_feasibility` and `solar_proposal` (belt and braces; the Solar branches of the CASE run first).
 3. **Every client-facing and state-changing proposal function is SERVICE-ONLY.** `solar_proposal_by_token`, `solar_proposal_respond_by_token`, `solar_portal_proposals`, `solar_portal_proposal`, `solar_portal_respond`, `solar_issue_proposal`, `solar_withdraw_proposal`, `solar_rotate_proposal_link` are `SECURITY DEFINER`, `EXECUTE` granted to `service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`). The Next layer runs its own gate (token shape + rate limit; `requirePortalAccess`; `requireSolarLevel(…, 'edit_financials')`) and stamps IP/UA from request headers — a caller can never forge the stamp through PostgREST because it cannot call the function at all. Security baseline item 1 ("no anon grants") holds with zero exceptions.
 4. **Token = 32 random bytes, base64url (43 chars); stored as the SHA-256 hex of the token.** The CHECK `share_token_hash ~ '^[0-9a-f]{64}$'` makes storing a raw token impossible, and the lookup refuses any string that is not the 43-char token shape (so the stored hash itself cannot be replayed as a token). Default expiry 30 days (org template `validity_days`, 1–365). **New link** rotates the token (old link dies) — spec §5.6 "revocable". The raw link is shown ONCE after Issue / New link, with Copy; it cannot be reconstructed.
 5. **`expired` is derived, not stored**: `solar.proposal_effective_status(status, expires_at)` (SQL) and `effectiveProposalStatus` (TS) agree; no job flips rows. No `expired` event row is written.
@@ -69,7 +69,7 @@
 
 | Path | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00216_solar_proposals.sql` | Tables, guard/bind triggers, RLS, service-only functions, portfolio function, report-kind gate, toggle column, notification + event CHECKs, `@verify` |
+| `apps/edge-functions/supabase/migrations/00217_solar_proposals.sql` | Tables, guard/bind triggers, RLS, service-only functions, portfolio function, report-kind gate, toggle column, notification + event CHECKs, `@verify` |
 | `scripts/db/assert-solar-proposals-roles.sql` | Behavioural assertions as real roles |
 | `packages/shared/src/solar/reports/{index,fmt,offer,proposal-draft,finance-options,snapshot,report-model,proposal-status}.ts` (+ tests) | `@esite/shared/solar-reports` |
 | `apps/web/src/test/pdf-text.ts` | WinAnsi-aware PDF content-stream text extractor for tests |
@@ -141,9 +141,9 @@ Expected: `Preparing worktree (new branch 'feat/solar-phase-6')`; install comple
 
 ```bash
 cd /Users/spud/.config/superpowers/worktrees/esite/solar-phase-6
-git grep -n "CREATE TABLE IF NOT EXISTS solar.case_runs" -- apps/edge-functions/supabase/migrations/00215_solar_cases.sql
-git grep -n "CREATE TABLE IF NOT EXISTS solar.case_run_financials" -- apps/edge-functions/supabase/migrations/00215_solar_cases.sql
-git grep -n "selected_case_id" -- apps/edge-functions/supabase/migrations/00215_solar_cases.sql | head -1
+git grep -n "CREATE TABLE IF NOT EXISTS solar.case_runs" -- apps/edge-functions/supabase/migrations/00216_solar_cases.sql
+git grep -n "CREATE TABLE IF NOT EXISTS solar.case_run_financials" -- apps/edge-functions/supabase/migrations/00216_solar_cases.sql
+git grep -n "selected_case_id" -- apps/edge-functions/supabase/migrations/00216_solar_cases.sql | head -1
 git grep -n "export interface CaseRunOutputs" -- packages/shared/src/solar/cases/outputs.ts
 git grep -n "export function runStoredFinancials" -- packages/shared/src/solar/cases/stored-financials.ts
 git grep -n "export function buildFinanceInput" -- packages/shared/src/solar/cases/finance-input.ts
@@ -173,7 +173,7 @@ git grep -l "notifications_type_check" -- apps/edge-functions/supabase/migration
 # (d) No Anthropic SDK yet.
 grep -n "@anthropic-ai/sdk" apps/web/package.json || echo "no anthropic sdk"
 ```
-Expected today: (a) "NOT on base", (b) "no map component", (c) `00215_solar_cases.sql` and `00208_solar_org_settings.sql`, (d) "no anthropic sdk". Record all four in the task log. If (c) names a later migration, Task 1 copies ITS list instead of the one printed in Task 1.
+Expected today: (a) "NOT on base", (b) "no map component", (c) `00216_solar_cases.sql` and `00209_solar_org_settings.sql`, (d) "no anthropic sdk". Record all four in the task log. If (c) names a later migration, Task 1 copies ITS list instead of the one printed in Task 1.
 
 - [ ] **Step 5: Check the migration number in all three places (it is claimed at APPLY time; this is only the branch check).**
 
@@ -183,7 +183,7 @@ git fetch origin
 for r in $(git branch -r | grep -v HEAD); do git ls-tree -r --name-only $r -- apps/edge-functions/supabase/migrations | grep -E '/002(1[1-9]|[2-9][0-9])_' | sed "s|^|$r: |"; done | sort -u
 gh pr list --state open --json number,files --jq '.[] | select(any(.files[]; .path | test("migrations/002[1-9]"))) | {number, files: [.files[].path | select(test("migrations/"))]}'
 ```
-Expected: `00211` (phase-5), `00215` (phase-4b), possibly `00212`/`00213`. If ANY branch or PR holds `00216`, STOP and ask which number to use. Note whether `00213` exists (Task 2/3 concatenate it into the dry run).
+Expected: `00212` (phase-5), `00216` (phase-4b), possibly `00213`/`00214`. If ANY branch or PR holds `00217`, STOP and ask which number to use. Note whether `00214` exists (Task 2/3 concatenate it into the dry run).
 
 - [ ] **Step 6: Baseline the three suites.**
 

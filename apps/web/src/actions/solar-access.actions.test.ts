@@ -216,7 +216,7 @@ describe('copySolarAccessFromProjectAction', () => {
 
 // Owner default 3 (2026-09-28): subscribe requests are listed on the Access
 // panel; a grantor presses "Mark done", which sets status 'approved' through
-// 00207's guard (approved_level stays NULL for a subscribe request).
+// 00208's guard (approved_level stays NULL for a subscribe request).
 describe('markSubscribeRequestDoneAction', () => {
   const sub = { id: 's1', project_id: P2, requester_id: 'u4', kind: 'subscribe', status: 'pending' }
 

@@ -703,7 +703,7 @@ export function toRpcPatch(p: TaskPatch): Record<string, unknown> {
 'use server'
 /**
  * Schedule task actions (spec §14). Each re-checks the Solar level itself;
- * writes go through the caller's session to the 00212 RPCs, which re-check
+ * writes go through the caller's session to the 00213 RPCs, which re-check
  * solar_can_edit and run the work-item spine's triggers. Nothing here trusts
  * the page gate or the client's shapes.
  */
@@ -829,7 +829,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `apps/web/src/actions/solar-schedule-meta.actions.ts`, `solar-schedule-meta.actions.test.ts`
 
-These write straight to the 00212 tables through the caller's session: RLS (Edit for links/baselines/settings, View for one's own presets) and the bind triggers (loop refusal, user binding) decide. Presets are a **View-level** action (filtering is reading).
+These write straight to the 00213 tables through the caller's session: RLS (Edit for links/baselines/settings, View for one's own presets) and the bind triggers (loop refusal, user binding) decide. Presets are a **View-level** action (filtering is reading).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -973,7 +973,7 @@ Expected: FAIL — cannot resolve `./solar-schedule-meta.actions`.
 'use server'
 /**
  * Links, baselines, per-user filter presets and schedule settings (spec §14.1–14.2).
- * Direct table writes through the caller's session: 00212's RLS and bind
+ * Direct table writes through the caller's session: 00213's RLS and bind
  * triggers (loop refusal, user binding, org binding) are the authority.
  */
 import { z } from 'zod'

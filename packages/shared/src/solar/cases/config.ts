@@ -29,7 +29,7 @@ export const BatterySnapshotSchema = z.object({
 export const CaseConfigSchema = z.object({
   version: z.literal(CASE_CONFIG_VERSION),
   pv: z.object({
-    /** 'layout': DC/AC come from the linked layout (cases.layout_id, 00218) and are not edited here. */
+    /** 'layout': DC/AC come from the linked layout (cases.layout_id, 00219) and are not edited here. */
     source: z.enum(['manual', 'layout']),
     dcKwp: num(0.1, 100_000),
     acKw: num(0.1, 100_000),

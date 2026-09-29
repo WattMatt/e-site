@@ -1,16 +1,16 @@
 -- ---------------------------------------------------------------------------
--- Migration 00211: Solar layouts on drawings (Solar Phase 5)
+-- Migration 00212: Solar layouts on drawings (Solar Phase 5)
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time, not now. Immediately before applying,
 -- re-check THREE places: the ledger max(version), origin/main's migration
--- filenames, and the migration filenames in every OPEN PR (00209 tariffs and
--- 00210 meter data are claimed by sibling Solar branches). If 00211 is taken,
+-- filenames, and the migration filenames in every OPEN PR (00210 tariffs and
+-- 00211 meter data are claimed by sibling Solar branches). If 00212 is taken,
 -- renumber this file and the header of scripts/db/assert-solar-layouts-roles.sql.
 -- Claiming a number is not holding it: the head moves when someone APPLIES.
 --
--- DEPENDS ON 00207 (schema solar, solar.studies, public.solar_can_view/_edit).
--- While 00207/00208 are not in the ledger, dry runs concatenate 00207 + 00208
--- + 00211.
+-- DEPENDS ON 00208 (schema solar, solar.studies, public.solar_can_view/_edit).
+-- While 00208/00209 are not in the ledger, dry runs concatenate 00208 + 00209
+-- + 00212.
 --
 -- Spec: docs/solar/01-functional-spec.md §6 (Layout tab) and §3.2 C (roof
 -- sources); 02-calculation-engine-spec.md §3.1-§3.3; 03-data-model-and-
@@ -49,7 +49,7 @@
 -- checked at the END of the statement, so deleting the whole project (which
 -- cascades to both the drawing and the study) still works.
 --
--- 00207's schema-wide @verify directives (re-run on every deploy) are honoured:
+-- 00208's schema-wide @verify directives (re-run on every deploy) are honoured:
 -- FORCE RLS on each new table; no RESTRICTIVE policy covering SELECT or ALL
 -- anywhere in solar; each SECURITY DEFINER function in solar revokes EXECUTE
 -- from PUBLIC and anon; solar.studies still has exactly one SELECT policy.

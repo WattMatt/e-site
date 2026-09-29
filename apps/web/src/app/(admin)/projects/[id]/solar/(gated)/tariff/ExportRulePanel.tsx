@@ -111,7 +111,7 @@ export function ExportRulePanel({ projectId, updatedAt, rule, rates, sourceNote,
           const check = validateExportRuleForm(form, hasLinked)
           if ('errors' in check) return setErrors(check.errors)
           setErrors({})
-          // Leaving a manual rate drops the saved rates (00213 save_export_rule replaces them).
+          // Leaving a manual rate drops the saved rates (00214 save_export_rule replaces them).
           if (drops > 0 && !dropRates.armed) return dropRates.arm()
           dropRates.disarm()
           setBusy(true)

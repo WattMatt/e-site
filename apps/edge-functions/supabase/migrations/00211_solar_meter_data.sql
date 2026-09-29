@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00210: Solar meter data core (Phase 3a)
+-- Migration 00211: Solar meter data core (Phase 3a)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §1, §3, §3.1, §3.2; decision D-23.
 -- Plan: docs/superpowers/plans/2026-09-28-solar-phase-3a-ii-meter-data-storage-pipeline.md
@@ -22,7 +22,7 @@
 --   One helper, solar.library_orgs(level), returns the caller's orgs as an array, so a policy is
 --   `organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])`: evaluated once per statement
 --   (InitPlan), not once per row, which matters at millions of readings.
---   Study rows: exactly the solar.studies pattern (00207).
+--   Study rows: exactly the solar.studies pattern (00208).
 --   Readings: SELECT policy only; no INSERT/UPDATE/DELETE grant; written by solar.write_readings,
 --   emptied per channel (for a re-commit that replaces them) by solar.clear_channel_readings.
 --   Lapse = hidden but kept (every helper goes through solar.org_subscription_active).
@@ -37,7 +37,7 @@
 --   register carries org-wide tenant data. The raw object in solar-meter-raw follows its
 --   meter_files record: solar.raw_path_allowed(…, 'view') needs the org library at View.
 --
--- 00207's schema-wide directives re-run on every deploy and this migration conforms: every table
+-- 00208's schema-wide directives re-run on every deploy and this migration conforms: every table
 -- AND partition has FORCE RLS; no RESTRICTIVE policy covers SELECT; every SECURITY DEFINER function
 -- in solar has its anon EXECUTE revoked.
 -- ---------------------------------------------------------------------------
@@ -1009,7 +1009,7 @@ CREATE POLICY meter_readings_select ON solar.meter_readings FOR SELECT TO authen
     USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])
            OR channel_id = ANY ((SELECT solar.linked_channel_ids())::uuid[]));
 
--- Study-scoped tables: the solar.studies (00207) shape.
+-- Study-scoped tables: the solar.studies (00208) shape.
 CREATE POLICY study_meters_select ON solar.study_meters FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
 CREATE POLICY study_meters_insert ON solar.study_meters FOR INSERT TO authenticated
@@ -1065,7 +1065,7 @@ CREATE POLICY solar_meter_raw_read ON storage.objects FOR SELECT TO authenticate
 CREATE POLICY solar_meter_raw_insert ON storage.objects FOR INSERT TO authenticated
     WITH CHECK (bucket_id = 'solar-meter-raw' AND solar.raw_path_allowed(name, 'edit'));
 
--- ── 12. Table privileges (default privileges from 00207 granted too much to new tables) ─
+-- ── 12. Table privileges (default privileges from 00208 granted too much to new tables) ─
 GRANT SELECT, INSERT, UPDATE, DELETE ON solar.meter_files, solar.meters, solar.meter_register, solar.meter_channels,
     solar.tenant_load_basis, solar.site_load TO authenticated;
 GRANT SELECT, INSERT, DELETE ON solar.meter_series_hashes, solar.study_meters TO authenticated;

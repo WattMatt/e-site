@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00214: Solar schematics (Phase 3b) — and the Load tab's remaining storage
+-- Migration 00215: Solar schematics (Phase 3b) — and the Load tab's remaining storage
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/01-functional-spec.md §4.3-§4.6, §13; docs/solar/03-data-model-and-security.md §3, §3.1, §5.
 -- Plan: docs/superpowers/plans/2026-09-28-solar-phase-3b-0-foundation.md
@@ -16,17 +16,17 @@
 --     PostgREST caps a response at 1,000 rows and a meter holds 17,520 readings a year.
 --   public.solar_save_schematic — replace-all save in one transaction; stale write = 40001.
 --   public.user_can_read_report_kind — redefined IN FULL: 00183's branches + solar_layout_sheet
---     (00211) + solar_schematic_sheet, both at Solar View.
+--     (00212) + solar_schematic_sheet, both at Solar View.
 --   public.product_events CHECK — deliberately NOT touched. The Solar Load/Schematics
 --     product-event verbs are NOT added here (owner decision 2026-09-29): another branch
 --     re-declares the same CHECK in full, and two full re-declarations race on apply order.
 --     Saves and exports are recorded as Solar audit events only.
 --
--- ACCESS. Every table has the 00207 study shape: SELECT = solar_can_view(project_id); each write verb
+-- ACCESS. Every table has the 00208 study shape: SELECT = solar_can_view(project_id); each write verb
 --   = a PERMISSIVE policy on solar_can_view plus a RESTRICTIVE policy on solar_can_edit. Lapse =
 --   hidden but kept. The supply hierarchy may never contain a loop (refused by the line bind).
 --
--- 00207's schema-wide @verify directives re-run on every deploy and this migration conforms: every
+-- 00208's schema-wide @verify directives re-run on every deploy and this migration conforms: every
 -- table has FORCE RLS; no RESTRICTIVE policy covers SELECT; every SECURITY DEFINER function in solar
 -- has anon EXECUTE revoked.
 --
@@ -379,7 +379,7 @@ CREATE TABLE IF NOT EXISTS solar.load_check_acks (
     acknowledged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT load_check_acks_key UNIQUE (study_id, check_key)
 );
--- 00210's study_scoped_bind binds project + org from the study (and pins study_id on UPDATE).
+-- 00211's study_scoped_bind binds project + org from the study (and pins study_id on UPDATE).
 CREATE TRIGGER load_check_acks_bind BEFORE INSERT ON solar.load_check_acks
     FOR EACH ROW EXECUTE FUNCTION solar.study_scoped_bind();
 
@@ -582,8 +582,8 @@ GRANT EXECUTE ON FUNCTION public.solar_save_schematic(UUID, TIMESTAMPTZ, JSONB, 
 
 -- ── 8. Saved schematic sheets read like the Solar module ─────────────────────
 -- Redefines 00183's function IN FULL (a CREATE OR REPLACE replaces the body). Every branch 00183 had
--- is kept byte-for-byte in meaning; solar_layout_sheet is Phase 5's (00211) and is kept here too so
--- the order in which 00211 and 00214 apply cannot drop either gate. A future Solar kind carrying
+-- is kept byte-for-byte in meaning; solar_layout_sheet is Phase 5's (00212) and is kept here too so
+-- the order in which 00212 and 00215 apply cannot drop either gate. A future Solar kind carrying
 -- money must use solar_can_see_money, so this names each kind rather than matching solar_%.
 CREATE OR REPLACE FUNCTION public.user_can_read_report_kind(_project_id UUID, _kind TEXT)
 RETURNS BOOLEAN

@@ -111,7 +111,7 @@ export function layoutSummary(objects: LayoutObject[], conditions: DesignConditi
   }
 }
 
-/** What solar.layouts.summary stores (00211): the list and readiness read it without loading geometry. */
+/** What solar.layouts.summary stores (00212): the list and readiness read it without loading geometry. */
 export interface StoredLayoutSummary {
   moduleCount: number
   dcKwp: number

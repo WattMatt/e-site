@@ -1,7 +1,7 @@
 // apps/web/src/lib/solar/load/readings.ts
 import 'server-only'
 /**
- * Bulk reads through 00214's SECURITY INVOKER RPCs: one row per channel with parallel arrays, so a
+ * Bulk reads through 00215's SECURITY INVOKER RPCs: one row per channel with parallel arrays, so a
  * year of readings does not hit PostgREST's 1,000-row cap. meter_readings_select (RLS) decides what
  * comes back; a channel the caller may not read simply returns nothing.
  */

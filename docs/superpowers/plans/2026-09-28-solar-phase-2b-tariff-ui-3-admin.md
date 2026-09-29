@@ -1,12 +1,12 @@
 # Solar Phase 2b — Part 3 of 5: Platform tariff library (`/admin/tariffs`)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. Read the index first. Parts 1–2 must be done (00213 green; `@esite/shared` tariff helpers and `runIngestJob` exist).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. Read the index first. Parts 1–2 must be done (00214 green; `@esite/shared` tariff helpers and `runIngestJob` exist).
 
 All commands run from `~/.config/superpowers/worktrees/esite/solar-phase-2b`.
 
-**Gate.** E-Site has no platform-level admin pages (checked 2026-09-28: `(admin)` holds only org/project routes; `/metrics` uses `requireRolePage(OWNER_ADMIN)`). The library is gated by the 00209 helper `public.is_platform_tariff_admin()` (the explicit allow-list) and **404s** for everyone else, so a customer cannot even learn the route exists. The page layout, every page, every server action and the API route each ask the database; the layout is never the only gate (`app/api/*` sits outside `(admin)/layout.tsx`).
+**Gate.** E-Site has no platform-level admin pages (checked 2026-09-28: `(admin)` holds only org/project routes; `/metrics` uses `requireRolePage(OWNER_ADMIN)`). The library is gated by the 00210 helper `public.is_platform_tariff_admin()` (the explicit allow-list) and **404s** for everyone else, so a customer cannot even learn the route exists. The page layout, every page, every server action and the API route each ask the database; the layout is never the only gate (`app/api/*` sits outside `(admin)/layout.tsx`).
 
-**Writes.** Everything a platform admin may write under 00209's policies goes through the **admin's own session** (RLS + triggers decide: review stamps, publish stamp, immutability). The service client is used only where 00209/00213 reserve the operation for the service role: Storage in the private `tariff-sources` bucket (no `storage.objects` policy), `ingest_run` + the validation record (`record_year_validation`), the job claim, the due-year monitor — and always AFTER the admin gate.
+**Writes.** Everything a platform admin may write under 00210's policies goes through the **admin's own session** (RLS + triggers decide: review stamps, publish stamp, immutability). The service client is used only where 00210/00214 reserve the operation for the service role: Storage in the private `tariff-sources` bucket (no `storage.objects` policy), `ingest_run` + the validation record (`record_year_validation`), the job claim, the due-year monitor — and always AFTER the admin gate.
 
 ---
 
@@ -74,7 +74,7 @@ import { describe, it, expect } from 'vitest'
 import { humanTariffError } from './errors'
 
 describe('humanTariffError', () => {
-  it('maps the exact 00209/00213 sentences and SQLSTATEs, never the raw message', () => {
+  it('maps the exact 00210/00214 sentences and SQLSTATEs, never the raw message', () => {
     expect(humanTariffError({ message: 'tariffs.tariff_year x: not validated, or 2 blocking issue(s); validate again after any change' }))
       .toBe('Run the checks again: the year changed since it was last checked, or the checks found blocking issues.')
     expect(humanTariffError({ message: 'tariffs.tariff_year x: 3 inferred unit(s) not reviewed' }))
@@ -125,7 +125,7 @@ Expected: FAIL — modules not found.
 import 'server-only'
 /**
  * Platform tariff library gate (D-03). Asks public.is_platform_tariff_admin()
- * (00209: an explicit allow-list, service-role writes only) — the same
+ * (00210: an explicit allow-list, service-role writes only) — the same
  * question the tariffs.* write policies ask. Fails closed. Pages 404 for
  * non-admins so the route is not advertised; actions return a sentence;
  * API routes return JSON 401/404.
@@ -178,7 +178,7 @@ export async function requirePlatformTariffAdminAPI(): Promise<
 ```ts
 /**
  * tariffs.* errors -> one human sentence (spec §0.4 rule 5). Keyed on the
- * exact sentences raised by 00209's guards and 00213's functions, then the
+ * exact sentences raised by 00210's guards and 00214's functions, then the
  * SQLSTATE. Never returns the raw message.
  */
 export const TARIFF_GENERIC_ERROR = 'Something went wrong. Try again.'
@@ -491,7 +491,7 @@ Expected: FAIL — modules not found.
 ```ts
 /**
  * Tariff source files: the three MIME types the private tariff-sources bucket
- * accepts (00209), 2a's storage naming (<fy>/<sha256>.<ext>), metadata checks.
+ * accepts (00210), 2a's storage naming (<fy>/<sha256>.<ext>), metadata checks.
  */
 import { SOURCE_DOCUMENT_KINDS, SOURCE_DOCUMENT_STATUSES } from '@esite/shared'
 
@@ -561,8 +561,8 @@ export function validateSourceMeta(m: SourceMeta): Partial<Record<SourceMetaFiel
 /**
  * Platform tariff library actions (spec §12; D-03). Every action re-checks
  * is_platform_tariff_admin (requirePlatformTariffAdmin) and writes through the
- * admin's session where 00209/00213 give admins a policy. The service client
- * is used only for what 00209/00213 reserve for the service role (Storage in
+ * admin's session where 00210/00214 give admins a policy. The service client
+ * is used only for what 00210/00214 reserve for the service role (Storage in
  * the private tariff-sources bucket, the due-year monitor) and only after the
  * gate. Errors are sentences (spec §0.4 rule 5).
  */
@@ -794,7 +794,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `apps/web/src/lib/tariffs/sseg-form.test.ts`
 - Test: `apps/web/src/actions/tariff-review.actions.test.ts`
 
-**Validate** records the verdict only on the content it checked: it reads `tariffs.year_content_fingerprint(year)` FIRST, loads and checks the year, then calls `tariffs.record_year_validation(year, blocking, fingerprint)`, which refuses (`40001`) if the content moved in between (00213). **Publish** is an ordinary `UPDATE … SET state = 'published'` through the admin's session: 00209's guard enforces every rule (charges on every tariff, inferred units reviewed, validated with 0 blocking, signed-in admin) and stamps `published_by`.
+**Validate** records the verdict only on the content it checked: it reads `tariffs.year_content_fingerprint(year)` FIRST, loads and checks the year, then calls `tariffs.record_year_validation(year, blocking, fingerprint)`, which refuses (`40001`) if the content moved in between (00214). **Publish** is an ordinary `UPDATE … SET state = 'published'` through the admin's session: 00210's guard enforces every rule (charges on every tariff, inferred units reviewed, validated with 0 blocking, signed-in admin) and stamps `published_by`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -999,7 +999,7 @@ export function ssegFormFromRow(r: Record<string, unknown> | null): SsegForm {
  * Review queue actions (spec §12). Approve / Edit / Reject a charge, delete a
  * tariff, Validate (records the verdict on the content it checked), Publish,
  * and the SSEG rule. Every action re-checks is_platform_tariff_admin; writes go
- * through the admin's session so 00209's guards decide (draft-only edits,
+ * through the admin's session so 00210's guards decide (draft-only edits,
  * review stamps, publish rules, immutability).
  */
 import { revalidatePath } from 'next/cache'
@@ -1339,7 +1339,7 @@ export function validateCalendarForm(f: CalendarForm): { value: CalendarValue } 
 ```ts
 'use server'
 /**
- * Save a TOU calendar (spec §12). Admin session writes (00209 admin policies).
+ * Save a TOU calendar (spec §12). Admin session writes (00210 admin policies).
  * Windows: insert the new set first, then delete the old ids, so a failed
  * insert never leaves a calendar without windows.
  */
@@ -1804,7 +1804,7 @@ pnpm --filter @esite/shared exec vitest run src/tariffs/ingest/supabase-jobs.tes
 pnpm --filter @esite/shared exec tsx ../../scripts/tariffs/ingest-worker.ts --help
 pnpm --filter @esite/shared type-check
 ```
-Expected: PASS (2 tests); the usage line; `tsc` exit 0. (A live run against the database is an owner step after 00213 applies — index "After merge".)
+Expected: PASS (2 tests); the usage line; `tsc` exit 0. (A live run against the database is an owner step after 00214 applies — index "After merge".)
 
 - [ ] **Step 6: Commit**
 
@@ -2161,7 +2161,7 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Platform tariff library (spec §12; D-03). 404 for anyone not on the
- * platform_tariff_admins allow-list (00209). Every page and action re-checks.
+ * platform_tariff_admins allow-list (00210). Every page and action re-checks.
  */
 export default async function TariffLibraryLayout({ children }: { children: React.ReactNode }) {
   await requirePlatformTariffAdminPage()
@@ -3020,7 +3020,7 @@ function DeleteTariff({ tariffId }: { tariffId: string }) {
 
 ```tsx
 'use client'
-/** Validate + Publish (spec §12). The database enforces every publish rule (00209). */
+/** Validate + Publish (spec §12). The database enforces every publish rule (00210). */
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
@@ -3750,8 +3750,8 @@ In `apps/web/src/app/(admin)/layout.tsx`, extend the existing `Promise.all` dest
     hasMvAccess(user.id, supabase),
     listMyOrganisations(),
     touchPresence('web'),
-    // Platform tariff admins (00209 allow-list) see the Tariff library link. The pages gate themselves.
-    // Cast: the generated Database types predate 00209 (same as the Solar pages' AnyClient casts).
+    // Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves.
+    // Cast: the generated Database types predate 00210 (same as the Solar pages' AnyClient casts).
     (supabase as unknown as { rpc: (fn: string) => PromiseLike<{ data: unknown; error: unknown }> }).rpc('is_platform_tariff_admin'),
   ])
   const tariffAdmin = !tariffAdminRes.error && tariffAdminRes.data === true
@@ -3778,7 +3778,7 @@ In `apps/web/src/components/layout/Sidebar.tsx` (four edits):
 (`BookOpen` is already imported from `lucide-react` in that file.)
 3. `interface SidebarProps` gains:
 ```tsx
-  /** Platform tariff admins (00209 allow-list) see the Tariff library link. The pages gate themselves. */
+  /** Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves. */
   tariffAdmin?: boolean
 ```
 4. `export function Sidebar({ …, role = null, tariffAdmin = false }: SidebarProps = {})` and pass `tariffAdmin={tariffAdmin}` to `<SidebarContent … />`.

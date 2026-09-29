@@ -2,7 +2,7 @@
 /**
  * Handover checklist (spec §10): each item links ONE file of the project's E-Site Documents
  * (tenants.documents) or is marked N/A. The org template lives in /settings/solar (owner/admin).
- * 00217's bind trigger refuses a document from another project and stamps completion.
+ * 00218's bind trigger refuses a document from another project and stamps completion.
  */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'

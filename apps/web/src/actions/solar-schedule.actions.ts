@@ -1,7 +1,7 @@
 'use server'
 /**
  * Schedule task actions (spec §14). Each re-checks the Solar level itself;
- * writes go through the caller's session to the 00212 RPCs, which re-check
+ * writes go through the caller's session to the 00213 RPCs, which re-check
  * solar_can_edit and run the work-item spine's triggers (including the Q4
  * owner guard, SQLSTATE SOL01). Nothing here trusts the page gate or the
  * client's shapes. Every mutation returns a small result; the client then

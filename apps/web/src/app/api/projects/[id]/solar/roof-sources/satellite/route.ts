@@ -7,7 +7,7 @@
  * Order: token (503, before the session, so an unconfigured server is obvious
  * and cheap) → session (401) → Solar Edit (403) → rate limit (429) → site
  * location (409) → Mapbox (502) → service-role upload under <org>/<project>/ →
- * roof source row written through the CALLER's session so 00211's RLS and bind
+ * roof source row written through the CALLER's session so 00212's RLS and bind
  * trigger decide. A refused row removes its orphaned image.
  */
 import { NextResponse } from 'next/server'

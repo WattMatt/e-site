@@ -83,7 +83,7 @@ Four new helpers, all following rule 5: `projects.user_can_read_work_item(uuid)`
 
 ### (c) Migration sequencing and the numbering-race protocol
 
-**Migration numbers are claimed at merge, never reserved in advance and never written down here** (Appendix A(f)). A reserved block is a comfortable fiction: reserving 00190–00209 for a quarter does not stop two sessions inside that quarter from both picking 00191, which is precisely how two `00183`s and two `00184`s shipped in a single week. Migrations are identified in planning by quarter and ordinal, and a number is attached to a file only at the moment of merge, under this protocol.
+**Migration numbers are claimed at merge, never reserved in advance and never written down here** (Appendix A(f)). A reserved block is a comfortable fiction: reserving 00190–00210 for a quarter does not stop two sessions inside that quarter from both picking 00191, which is precisely how two `00183`s and two `00184`s shipped in a single week. Migrations are identified in planning by quarter and ordinal, and a number is attached to a file only at the moment of merge, under this protocol.
 
 **Protocol, mandatory:**
 

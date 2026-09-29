@@ -4,7 +4,7 @@
 
 **Goal:** Build `/projects/[id]/solar/schematics` exactly as functional spec §13: a list of single-line diagrams (add from a project drawing **and page**, or a blank canvas; replace drawing; delete / delete selected; "No schematic required"), and a Konva editor on the sheet primitives (select/move/resize with snapping guides, place meter or create a meter stub, connect with waypoints and live anchors, include-in-load toggle, layers, pan/zoom/fit, undo/redo, explicit save with stale-write refusal and an IndexedDB draft, PDF sheet into `projects.reports` kind `solar_schematic_sheet`, SVG download with the background embedded). Then finish Phase 3b: three suites, build, two reviewers, push, draft PR.
 
-**Architecture:** Pure editor state (`lib/solar/schematics/editor.ts`) holds cards and lines in drawing-image pixels and refuses loops with the shared `wouldCreateCycle` (the database refuses them too — 00214). The Konva canvas (`SchematicCanvas`) is a thin view over that state using `useSheetImage` + `useSheetViewport` (the same image space as markup and cable routes, so coordinates are stable across devices). Saves go through `public.solar_save_schematic` (replace-all, `40001` on stale). The hierarchy the lines define is already consumed by the Load builder (plan 3b-0 Task 12: double-count guard, parent reconciliation on Checks).
+**Architecture:** Pure editor state (`lib/solar/schematics/editor.ts`) holds cards and lines in drawing-image pixels and refuses loops with the shared `wouldCreateCycle` (the database refuses them too — 00215). The Konva canvas (`SchematicCanvas`) is a thin view over that state using `useSheetImage` + `useSheetViewport` (the same image space as markup and cable routes, so coordinates are stable across devices). Saves go through `public.solar_save_schematic` (replace-all, `40001` on stale). The hierarchy the lines define is already consumed by the Load builder (plan 3b-0 Task 12: double-count guard, parent reconciliation on Checks).
 
 **Tech Stack:** Next.js 15, react-konva / konva (already in `apps/web`), pdf-lib (already used by the cable route sheet), `@esite/shared/solar-load`, Vitest + Testing Library.
 
@@ -143,7 +143,7 @@ Run: `pnpm --filter web test -- lib/solar/schematics/editor` → FAIL.
  * Schematic editor state (functional spec §13.2). Pure: every Konva gesture becomes one of these
  * operations, and history stores one snapshot per completed gesture. Coordinates are drawing-image
  * pixels (useSheetImage's image space), so they are identical across devices and sessions.
- * Loops in the supply hierarchy are refused here AND by the database (00214 schematic_lines_bind).
+ * Loops in the supply hierarchy are refused here AND by the database (00215 schematic_lines_bind).
  */
 import { wouldCreateCycle, type MeterLine } from '@esite/shared/solar-load'
 
@@ -865,7 +865,7 @@ Run → FAIL.
 'use server'
 /**
  * Schematics tab writes (functional spec §13). Each action re-checks Solar Edit and writes with the
- * caller's session, so 00214's RESTRICTIVE solar_can_edit policies and bind triggers decide (drawing on
+ * caller's session, so 00215's RESTRICTIVE solar_can_edit policies and bind triggers decide (drawing on
  * this project and active, meter in this study, no loop). The report upload alone uses the service
  * client, after the gate, as every other sheet export does.
  */
@@ -2189,22 +2189,22 @@ In "Solar server actions":
 | `createSchematicAction`, `updateSchematicMetaAction`, `replaceSchematicDrawingAction`, `deleteSchematicsAction`, `setSchematicWaivedAction` (`solar-schematics.actions.ts`) | `requireSolarLevel(project, 'edit')`; `expectedUpdatedAt` on meta / replace / waiver | `schematics_*_authz` (RESTRICTIVE, `solar_can_edit`); `schematics_bind` stamps the anchor and refuses a drawing of another project or an inactive one |
 | `saveSchematicAction` | Solar Edit; payload shape checked | `public.solar_save_schematic` (SECURITY INVOKER; `40001` on a stale version); card bind: only study meters; line bind: both placed, no loop in the study's supply hierarchy |
 | `createMeterStubAction`, `setIncludeInLoadAction` | Solar Edit; include needs the meter linked to a tenant of this project | library RLS (`library_orgs('edit')`) + `study_meters_*_authz`; `tenant_load_basis_*_authz` |
-| `exportSchematicSheetAction` | Solar Edit; image size capped | renders server-side; stored with the service client after the gate in `reports` bucket, `projects.reports` kind `solar_schematic_sheet` (read: `SOLAR_READ_REPORT_KINDS` → Solar View; `user_can_read_report_kind` 00214; delete needs Solar Edit) |
+| `exportSchematicSheetAction` | Solar Edit; image size capped | renders server-side; stored with the service client after the gate in `reports` bucket, `projects.reports` kind `solar_schematic_sheet` (read: `SOLAR_READ_REPORT_KINDS` → Solar View; `user_can_read_report_kind` 00215; delete needs Solar Edit) |
 ```
 
 And one sentence under the Solar section notes:
 
 ```md
-> `cloud-sync-project`'s `isAnnotated()` treats a drawing with a Solar schematic, meter card or supply line as annotated (00214), so a newer Dropbox file is never auto-adopted under it. **Deploy the edge function only after 00214 is applied** — before, the three lookups error and fail closed (every drawing reads as annotated).
+> `cloud-sync-project`'s `isAnnotated()` treats a drawing with a Solar schematic, meter card or supply line as annotated (00215), so a newer Dropbox file is never auto-adopted under it. **Deploy the edge function only after 00215 is applied** — before, the three lookups error and fail closed (every drawing reads as annotated).
 ```
 
 - [ ] **Step 2: As-built notes** in `docs/solar/03-data-model-and-security.md` §3, replace the three schematic rows with:
 
 ```md
-| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00214) |
-| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00214) |
+| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00215) |
+| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00215) |
 | `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (flat image px, even length ≤ 400), line_type (supply/check), floor_plan_id (denormalised) | Supply lines define the meter hierarchy; a loop anywhere in the study is refused; deleting a card deletes its lines; **in `isAnnotated()`** |
-| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00214); no UPDATE |
+| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00215); no UPDATE |
 ```
 
 and add to `studies` key columns: `load_growth_pct, monthly_bills jsonb (S4 input), schematic_waived`.
@@ -2213,7 +2213,7 @@ and add to `studies` key columns: `load_growth_pct, monthly_bills jsonb (S4 inpu
 
 ```bash
 git add docs/rbac-matrix.md docs/solar/03-data-model-and-security.md
-git commit -m "docs(solar): RBAC rows for Schematics; 03 rows as built (00214)
+git commit -m "docs(solar): RBAC rows for Schematics; 03 rows as built (00215)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -2242,7 +2242,7 @@ Expected: every suite green with counts above the Task 1 baseline of 3b-0; type-
 
 ```bash
 M=apps/edge-functions/supabase/migrations
-cat $M/00207_solar_foundation.sql $M/00208_solar_org_settings.sql $M/00209_tariffs_schema.sql $M/00210_solar_meter_data.sql $M/00214_solar_schematics.sql > "$SCRATCH/3b-green.sql"
+cat $M/00208_solar_foundation.sql $M/00209_solar_org_settings.sql $M/00210_tariffs_schema.sql $M/00211_solar_meter_data.sql $M/00215_solar_schematics.sql > "$SCRATCH/3b-green.sql"
 scripts/db/dry-run-migration.sh "$SCRATCH/3b-green.sql" scripts/db/assert-solar-schematics-roles.sql | tee "$SCRATCH/3b-dry-final.txt"
 grep "| f" "$SCRATCH/3b-dry-final.txt" || echo "all rows ok"
 ```
@@ -2253,7 +2253,7 @@ Expected: 43 rows, "all rows ok".
 
 Dispatch two `superpowers:code-reviewer` agents in ONE message (`run_in_background: false`), each given the branch diff `git diff origin/feat/solar-integration...HEAD` and the three plan files:
 
-1. **Security / data reviewer:** 00214 (per-verb RLS, FORCE, no RESTRICTIVE read policy, anon revokes spelled out, INVOKER read RPCs cannot widen reads, the save RPC's stale and permission checks, `user_can_read_report_kind` keeps every 00183/00211 branch, the product-events CHECK keeps every prior value), `isAnnotated()` fail-closed shape, every route/action gate (level + study-link checks), no service key outside audit/product events/report upload, no rand values at View, no `innerHTML`, WinAnsi in the PDF.
+1. **Security / data reviewer:** 00215 (per-verb RLS, FORCE, no RESTRICTIVE read policy, anon revokes spelled out, INVOKER read RPCs cannot widen reads, the save RPC's stale and permission checks, `user_can_read_report_kind` keeps every 00183/00212 branch, the product-events CHECK keeps every prior value), `isAnnotated()` fail-closed shape, every route/action gate (level + study-link checks), no service key outside audit/product events/report upload, no rand values at View, no `innerHTML`, WinAnsi in the PDF.
 2. **Behaviour / UX reviewer:** spec §4 and §13 control by control against the UI (hidden-not-disabled above level, two-step destructive confirms, `expectedUpdatedAt` everywhere, human sentences, empty states, units on every number), the builder's semantics (S1/S2/S3/S4, double-count guard, BO-date handling, reconciliation tolerances), the Konva conventions (mousedown selection, bubbling drag ends, image space), and test quality ("what would this fixture have to look like for the test to fail?").
 
 Fix every confirmed finding in new commits (never amend), re-run Step 1, and record each finding with its fix in `$SCRATCH/3b-evidence.md`.
@@ -2270,17 +2270,17 @@ git push -u git@github.com:WattMatt/e-site.git feat/solar-phase-3b
 
 ```bash
 gh pr create --draft --base feat/solar-integration --head feat/solar-phase-3b \
-  --title "Solar Phase 3b — Load tab UI + Schematics tab (migration 00214)" \
+  --title "Solar Phase 3b — Load tab UI + Schematics tab (migration 00215)" \
   --body-file "$SCRATCH/3b-pr-body.md"
 ```
 
 Write `$SCRATCH/3b-pr-body.md` first with these sections, filled from the evidence files:
-- **What** — Load tab (Meters · Tenants · Site profile · Checks), Schematics tab (list + Konva editor + PDF/SVG export), migration `00214_solar_schematics.sql`, `isAnnotated()` coverage, pure `@esite/shared/solar-load` builder/charts/hierarchy/auto-match.
+- **What** — Load tab (Meters · Tenants · Site profile · Checks), Schematics tab (list + Konva editor + PDF/SVG export), migration `00215_solar_schematics.sql`, `isAnnotated()` coverage, pure `@esite/shared/solar-load` builder/charts/hierarchy/auto-match.
 - **Design decisions** — the lists at the top of plans 3b-0, 3b-i, 3b-ii.
 - **Migration evidence** — green row count (43), and the five mutations with the rows each turned red; `@esite/db` guards green.
 - **Suites** — before/after counts for shared / web / db; type-check; lint; `next build` exit 0.
 - **Review findings** — each with its fix commit.
-- **Owner steps (not done here)** — (1) claim the migration number at apply time (ledger, `origin/main`, open-PR filenames) and apply `00214` through the deploy workflow **after 00207–00210**; (2) **then** deploy `cloud-sync-project` (`apps/edge-functions/deploy.sh`), and read `verify_jwt`/version back from the Management API; (3) the signed-in walk: Load → upload a meter export → review → Accept → Tenants assign → Site profile rebuild → charts; Schematics → add from drawing + page → place, connect, save, reload, export PDF + SVG; (4) the open questions below.
+- **Owner steps (not done here)** — (1) claim the migration number at apply time (ledger, `origin/main`, open-PR filenames) and apply `00215` through the deploy workflow **after 00208–00211**; (2) **then** deploy `cloud-sync-project` (`apps/edge-functions/deploy.sh`), and read `verify_jwt`/version back from the Management API; (3) the signed-in walk: Load → upload a meter export → review → Accept → Tenants assign → Site profile rebuild → charts; Schematics → add from drawing + page → place, connect, save, reload, export PDF + SVG; (4) the open questions below.
 - **Not verified** — the signed-in walk; Konva components have no component tests; touch/tablet untested; `packages/db/src/types.ts` not regenerated.
 - End the body with the line `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
@@ -2292,8 +2292,8 @@ Report: PR URL, the three suite counts, the dry-run result, the review findings 
 
 ## Self-review (done)
 
-- Spec §13.1: list (name, source drawing + page, placed/total, updated; row → editor; empty state) — Task 6; Add from drawing AND page, or blank — Task 6; Replace drawing (positions kept + warning) — Tasks 6/7 and 00214 propagation; Delete / Delete selected (two-step, count, cascade) — Task 6 + 00214 cascades; "No schematic required" — Task 6 + readiness (3b-0 Task 14).
-- §13.2: select/move/resize with shift-snap guides (Tasks 1, 7); Place meter + Create meter stub (Task 7); Connect with waypoints, Esc cancels, live anchors (Tasks 1, 7); edit waypoints (Task 7); connections manager (Task 7); include-in-load toggle (Tasks 5, 7); Delete card deletes lines (Task 1 + 00214 trigger); layers (Task 7); pan/zoom/fit via `use-sheet-viewport` (Task 7); undo/redo (Task 1/7); Save with stale refusal + IndexedDB draft (Tasks 5/7); PDF into `projects.reports` `solar_schematic_sheet` + SVG with embedded background (Tasks 2, 3, 5, 7).
+- Spec §13.1: list (name, source drawing + page, placed/total, updated; row → editor; empty state) — Task 6; Add from drawing AND page, or blank — Task 6; Replace drawing (positions kept + warning) — Tasks 6/7 and 00215 propagation; Delete / Delete selected (two-step, count, cascade) — Task 6 + 00215 cascades; "No schematic required" — Task 6 + readiness (3b-0 Task 14).
+- §13.2: select/move/resize with shift-snap guides (Tasks 1, 7); Place meter + Create meter stub (Task 7); Connect with waypoints, Esc cancels, live anchors (Tasks 1, 7); edit waypoints (Task 7); connections manager (Task 7); include-in-load toggle (Tasks 5, 7); Delete card deletes lines (Task 1 + 00215 trigger); layers (Task 7); pan/zoom/fit via `use-sheet-viewport` (Task 7); undo/redo (Task 1/7); Save with stale refusal + IndexedDB draft (Tasks 5/7); PDF into `projects.reports` `solar_schematic_sheet` + SVG with embedded background (Tasks 2, 3, 5, 7).
 - §13.3: reconciliation and the double-count guard consume `schematic_lines` (3b-0 Task 12, shown on Load → Checks / Site profile); the PoC offer is deferred (open question).
 - 03 §3 tables in `isAnnotated()` + schema-derived contract test (3b-0 Task 5); edge deploy ordered after the apply (Task 9 owner steps).
 - Placeholders: none. Names match 3b-0/3b-i (`wouldCreateCycle`, `MeterLine`, `tenantLabel`, `METER_KIND_OPTIONS`, `SOLAR_READ_REPORT_KINDS`, `downloadBlob`).

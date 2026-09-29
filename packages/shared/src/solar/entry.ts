@@ -7,7 +7,7 @@
  * orgSubscribed comes from public.org_has_solar, which answers only for
  * ACTIVE MEMBERS of the org (false for everyone else). An external member's
  * `false` therefore means "unknown", not "unsubscribed": externals always land
- * on request_access (00207 lets them request View whether or not the org has
+ * on request_access (00208 lets them request View whether or not the org has
  * paid; a grant confers nothing until it does).
  */
 import { SOLAR_ACCESS_LEVELS, type SolarAccessLevel } from './access'

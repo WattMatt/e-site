@@ -4,13 +4,13 @@
 
 **Goal:** Fill the Solar module's first two tabs — the Overview (study header, readiness checklist, KPI empty state, recent activity) and Site & Supply (location, supply authority & connection, site constraints, with roof sources and solar resource marked "coming in a later phase") — and add the `/settings/solar` org-defaults skeleton seeded with the decided defaults.
 
-**Architecture:** Validation and defaults are pure modules in `@esite/shared` used by both the client form (instant feedback) and the server action (the real check). Saves go through server actions that re-check the Solar level (`requireSolarLevel`) or the org role (`requireRole`), carry `expectedUpdatedAt`, write through the caller's session so 00207/00208 RLS decides, then record an audit event and a `product_events` row. Pages pass JSON-only props to client forms.
+**Architecture:** Validation and defaults are pure modules in `@esite/shared` used by both the client form (instant feedback) and the server action (the real check). Saves go through server actions that re-check the Solar level (`requireSolarLevel`) or the org role (`requireRole`), carry `expectedUpdatedAt`, write through the caller's session so 00208/00209 RLS decides, then record an audit event and a `product_events` row. Pages pass JSON-only props to client forms.
 
-**Tech Stack:** Next.js 15 App Router, Supabase (RLS; `solar.studies` from 00207, `solar.org_settings` from 00208), Vitest + @testing-library/react + user-event, pnpm.
+**Tech Stack:** Next.js 15 App Router, Supabase (RLS; `solar.studies` from 00208, `solar.org_settings` from 00209), Vitest + @testing-library/react + user-event, pnpm.
 
 **Spec:** `docs/solar/01-functional-spec.md` §2 (Overview; §2.3 only the Site & Supply rule is live), §3 (Site & Supply; §3.2 without roof sources / satellite / calibration — Phase 5; without §3.3 solar resource — Phase 4; without "Locate from address"; licensee is free text `licensee_name` until Phase 2), §11 (org settings skeleton). Defaults: `docs/solar/06-open-decisions.md` D-05, D-07, D-16 and `docs/solar/02-calculation-engine-spec.md` defaults table.
 
-**Prerequisite:** plan `docs/superpowers/plans/2026-09-28-solar-phase-1c-i-entry-and-access.md` fully executed on branch `feat/solar-phase-1c` (worktree `~/.config/superpowers/worktrees/esite/solar-phase-1c`), including migration `00208` (which creates `solar.org_settings` and the `solar_site_saved` / `solar_settings_saved` product events), the test fake `apps/web/src/test/fake-supabase.ts`, `lib/solar/{errors,audit,dirty-store}.ts`, and `solar/_components/{ReadinessChecklist,StatusDot}.tsx`.
+**Prerequisite:** plan `docs/superpowers/plans/2026-09-28-solar-phase-1c-i-entry-and-access.md` fully executed on branch `feat/solar-phase-1c` (worktree `~/.config/superpowers/worktrees/esite/solar-phase-1c`), including migration `00209` (which creates `solar.org_settings` and the `solar_site_saved` / `solar_settings_saved` product events), the test fake `apps/web/src/test/fake-supabase.ts`, `lib/solar/{errors,audit,dirty-store}.ts`, and `solar/_components/{ReadinessChecklist,StatusDot}.tsx`.
 
 ---
 
@@ -602,7 +602,7 @@ Expected: FAIL — cannot resolve `./site-supply`.
 /**
  * Site & Supply (spec §3.2) — option lists and validation shared by the form
  * (instant feedback) and saveSolarSiteAction (the real check). Column names
- * and CHECKs come from solar.studies in migration 00207; this module never
+ * and CHECKs come from solar.studies in migration 00208; this module never
  * accepts a value the table would refuse. Warnings never block a save.
  */
 import { isInSouthAfrica } from './readiness'
@@ -918,7 +918,7 @@ Expected: FAIL — cannot resolve `./solar-site.actions`.
  * Save Site & Supply (spec §3.2). Re-checks Edit level itself
  * (requireSolarLevel redirects a lower level to /solar/locked), validates with
  * the same rules as the form, and writes through the caller's session so
- * 00207's studies_*_authz RESTRICTIVE policies and studies_bind (org binding,
+ * 00208's studies_*_authz RESTRICTIVE policies and studies_bind (org binding,
  * PoC node must belong to this project, attribution) decide. First save
  * inserts; later saves are conditioned on the updated_at the user loaded.
  */
@@ -1563,7 +1563,7 @@ Expected: FAIL — cannot resolve `./org-settings`.
  * Solar org defaults (spec §11) — the skeleton: Finance, Opex and Loss
  * defaults, seeded with the decided values (D-05 insurance, D-07 finance/O&M,
  * D-16 12B off; engine spec defaults table for losses and replacements).
- * Stored in solar.org_settings.settings as { version, values } (00208). A
+ * Stored in solar.org_settings.settings as { version, values } (00209). A
  * case copies these at creation, so later edits never alter past results.
  * Rate card, load densities, equipment catalogue and report branding arrive
  * with the phases that use them.
@@ -1794,7 +1794,7 @@ Expected: FAIL — cannot resolve `./solar-settings.actions`.
  * Save the active organisation's Solar defaults (spec §11). Re-checks
  * owner/admin of THAT org with requireRole (never the page gate; note it
  * returns an object — `.ok`). Writes through the caller's session, so
- * 00208's org_settings policies (owner/admin of the row's org) and bind
+ * 00209's org_settings policies (owner/admin of the row's org) and bind
  * trigger (org immutable, updated_by bound) decide. Stale-guarded.
  */
 import { revalidatePath } from 'next/cache'
@@ -2158,7 +2158,7 @@ In the "Page routes" table, insert after the `/settings/billing` row:
 In the "Solar server actions" table, append:
 ```markdown
 | `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
-| `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
+| `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00209` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
 ```
 
 - [ ] **Step 2: Run every suite and the type-check**
@@ -2188,7 +2188,7 @@ Append to `/tmp/solar-1c-pr.md` a "1C-ii" section (Overview, Site & Supply, `/se
 gh pr edit --repo WattMatt/e-site feat/solar-phase-1c --body-file /tmp/solar-1c-pr.md
 ```
 
-**Owner signed-in walk (cannot be done from an agent session — signing in means entering a password; a local dev-server check through the preview tools is therefore not possible either).** Owner, after `00207` + `00208` are applied and 1B's Paystack test mode is configured, on a throwaway org (not WM-Consulting, which bypasses the paywall):
+**Owner signed-in walk (cannot be done from an agent session — signing in means entering a password; a local dev-server check through the preview tools is therefore not possible either).** Owner, after `00208` + `00209` are applied and 1B's Paystack test mode is configured, on a throwaway org (not WM-Consulting, which bypasses the paywall):
 1. As an org **contractor** on a project: the sidebar shows **Solar** with a lock; opening it shows "Solar is not active for <org>" + **Ask an admin to subscribe**; press it → "Requested on <date>"; the org admin's bell shows "<name> would like Solar for <project>".
 2. As the **admin**: Solar → locked screen with price + **Subscribe** → Paystack test card → returned to `/solar/locked?payment=received` → "Payment received — activating Solar…" → lands on the Overview once the webhook arrives (or the 30 s sentence).
 3. As the contractor again: sidebar lock remains; the locked page offers **Request access** (View / Edit / Edit + financials) → send with a note → the sidebar shows a clock; the page says "Request sent to <admins> on <date>"; **Withdraw request** works; send again.

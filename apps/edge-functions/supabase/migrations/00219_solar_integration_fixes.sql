@@ -1,11 +1,11 @@
 -- ---------------------------------------------------------------------------
--- Migration 00218: Solar integration fixes (phases 1-5b merged on feat/solar-final)
+-- Migration 00219: Solar integration fixes (phases 1-5b merged on feat/solar-final)
 -- ---------------------------------------------------------------------------
--- Cross-phase defects only visible once 00207..00215 sit on one branch. 00216 / 00217
+-- Cross-phase defects only visible once 00208..00216 sit on one branch. 00217 / 00218
 -- are claimed by Solar phases 6 / 7 (in flight); re-check the number at apply time.
 --
 -- WHAT
---   (a) solar.audit_events: authenticated users can no longer INSERT. 00207 let any Edit
+--   (a) solar.audit_events: authenticated users can no longer INSERT. 00208 let any Edit
 --       user post a row straight through PostgREST, so an editor could forge a
 --       "Recent activity" line (any verb, any object_ref) on the Overview. Every writer is
 --       now the service role, called by a server action AFTER its own Solar gate
@@ -13,19 +13,19 @@
 --       through it too). The bind trigger still derives organisation_id.
 --   (b) The manual export rule's source note left solar.studies.export_rule (readable at
 --       View). It lives only on the money rows solar.study_export_rates.source_note
---       (every verb on solar_can_see_money, 00213). studies_export_rule_shape now REFUSES
+--       (every verb on solar_can_see_money, 00214). studies_export_rule_shape now REFUSES
 --       a sourceNote key; save_export_rule takes the note from p_rule, writes it on every
 --       rate row, stores the rule WITHOUT it, and refuses a manual rule with no rate
 --       (the note would otherwise have nowhere to live). Existing rows are stripped
 --       (production holds none; the rate rows already carry the note).
 --   (c) Load double-count guard is app-only (packages/shared build-site-load): no SQL.
 --   (d) solar.cases.layout_id REFERENCES solar.layouts(id) ON DELETE RESTRICT (4b Q5,
---       the FK 00215 deferred to this merge). Deleting a layout a case uses is refused
+--       the FK 00216 deferred to this merge). Deleting a layout a case uses is refused
 --       (23503, mapped by humanLayoutError to "Used by a case"). cases_layout_bind
 --       refuses a layout from another project (23514).
 -- RULES
 --   * No transaction control here: the runner wraps the file.
---   * 00207's @verify block named audit_events_insert; that line is removed from 00207 in
+--   * 00208's @verify block named audit_events_insert; that line is removed from 00208 in
 --     the same PR, because the post-push verifier re-checks every migration >= 00185.
 -- ---------------------------------------------------------------------------
 
