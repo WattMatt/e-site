@@ -47,6 +47,42 @@ describe('GenerationImport (the existing meter pipeline, meter kind solar)', () 
     expect(JSON.parse(String((commit[1] as RequestInit).body)).meter).toEqual({ existingMeterId: 'm1' })
     expect(h.link).not.toHaveBeenCalled()
   })
+  it('answers the parser’s choices in place: re-parses with them, then commits with them (review B3)', async () => {
+    const needs = review({ canAccept: false, choicesNeeded: ['ambiguous_date_order', 'convention_required', 'unknown_unit'],
+      channels: [{ column: 'Energy', sourceUnit: 'unknown', suggestedUnit: 'kWh' }, { column: 'kW', sourceUnit: 'kW', suggestedUnit: null }] })
+    let parses = 0
+    const f = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.endsWith('/meter-files')) return res(201, { fileId: 'f1', duplicate: false })
+      if (url.endsWith('/parse')) { parses++; return res(200, { results: [{ fileId: 'f1', reviews: [parses === 1 ? needs : review()] }] }) }
+      if (url.endsWith('/commit')) return res(200, { meterId: 'm1', meterLabel: 'PV main', channels: [] })
+      return res(404, {})
+    })
+    vi.stubGlobal('fetch', f)
+    render(<GenerationImport projectId="p1" organisationId="o1" installationId="i1" generationMeters={[{ meterId: 'm1', label: 'PV main' }]} />)
+    fireEvent.change(screen.getByLabelText('Generation file'), { target: { files: [file()] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import generation data' }))
+    fireEvent.change(await screen.findByLabelText('Date order'), { target: { value: 'DMY' } })
+    fireEvent.change(screen.getByLabelText('Timestamps mark the'), { target: { value: 'begin' } })
+    expect((screen.getByLabelText('Unit of column "Energy"') as HTMLSelectElement).value).toBe('kWh')
+    expect(screen.queryByLabelText('Unit of column "kW"')).toBeNull()
+    expect(f.mock.calls.some(([u]) => String(u).endsWith('/commit'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Import with these choices' }))
+    await screen.findByText(/Imported to PV main/)
+    const options = { f1: { dateOrder: 'DMY', tsConvention: 'begin', units: { Energy: 'kWh' } } }
+    const parseCalls = f.mock.calls.filter(([u]) => String(u).endsWith('/parse'))
+    expect(JSON.parse(String((parseCalls[1]![1] as RequestInit).body))).toEqual({ fileIds: ['f1'], options })
+    const commit = f.mock.calls.find(([u]) => String(u).endsWith('/commit'))!
+    expect(JSON.parse(String((commit[1] as RequestInit).body)).options).toEqual(options.f1)
+    expect(h.upload).toHaveBeenCalledTimes(1)
+  })
+  it('a date-order choice left unanswered is asked for, not sent', async () => {
+    mockFetch({ canAccept: false, choicesNeeded: ['ambiguous_date_order'] })
+    render(<GenerationImport projectId="p1" organisationId="o1" installationId="i1" generationMeters={[{ meterId: 'm1', label: 'PV main' }]} />)
+    fireEvent.change(screen.getByLabelText('Generation file'), { target: { files: [file()] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import generation data' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import with these choices' }))
+    expect(await screen.findByText('Choose the date order.')).toBeTruthy()
+  })
   it('a file that needs choices is not committed; the reasons are shown', async () => {
     const f = mockFetch({ canAccept: false, blockingErrors: ['Timestamps go backwards at row 12'], choicesNeeded: ['unit for column "Energy"'] })
     render(<GenerationImport projectId="p1" organisationId="o1" installationId="i1" generationMeters={[{ meterId: 'm1', label: 'PV main' }]} />)
