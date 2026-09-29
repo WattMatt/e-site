@@ -7,7 +7,7 @@ vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel })
 vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
 vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
 
-import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
+import { fakeSupabase, callsTo, type FakeCall, type FakeOptions } from '@/test/fake-supabase'
 import {
   applyAutoMatchAction, acknowledgeCheckAction, ensureSolarStudyAction, excludeVacantAction, removeStudyMeterAction,
   saveLoadBasisAction, saveLoadSettingsAction, saveTenantBasisAction, updateStudyMeterAction,
@@ -113,19 +113,60 @@ describe('solar-load actions', () => {
       .toEqual({ error: 'That meter is not in this study.' })
   })
 
-  it('applyAutoMatchAction appends meters, links meters to their tenant on the meter version read, and counts', async () => {
-    const { calls } = setup({ writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] }, 'solar.meters:update': { data: [{ id: 'm2' }] } } })
-    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ ok: true, applied: 1, staleMeters: 0 })
+  // The DB's own behaviour for a version-pinned write: an UPDATE lands only when its `updated_at`
+  // filter equals the row's CURRENT version; an INSERT over an existing row is a 23505.
+  const pinned = (rows: Array<Record<string, unknown>>, key: string) => ({
+    update: (c: FakeCall) => {
+      const id = c.filters.find(([, col]) => col === key)?.[2]
+      const v = c.filters.find(([, col]) => col === 'updated_at')?.[2]
+      const row = rows.find((r) => r[key] === id)
+      return { data: row && row.updated_at === v ? [{ id: row.id ?? id }] : [] }
+    },
+    insert: (c: FakeCall) => (rows.some((r) => r[key] === (c.payload as Record<string, unknown>)[key])
+      ? { data: null, error: { code: '23505', message: 'duplicate' } } : {}),
+  })
+  const basisRows = base['solar.tenant_load_basis']!
+  const meterRows = base['solar.meters']!
+  const dbWrites = (b = basisRows, m = meterRows) => ({
+    'solar.tenant_load_basis:update': pinned(b, 'node_id').update, 'solar.tenant_load_basis:insert': pinned(b, 'node_id').insert,
+    'solar.meters:update': pinned(m, 'id').update,
+  })
+
+  it('applyAutoMatchAction appends meters and links each meter pinned on the versions the USER saw', async () => {
+    const { calls } = setup({ writes: dbWrites() })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2', meterUpdatedAt: 'M0', basisUpdatedAt: 'B0' }] })).toEqual({ ok: true, applied: 1, staleMeters: 0 })
     expect(callsTo(calls, 'solar.meters', 'update')[0]).toMatchObject({ payload: { node_id: 'n1' }, filters: [['eq', 'id', 'm2'], ['eq', 'updated_at', 'M0']] })
     expect(callsTo(calls, 'solar.tenant_load_basis', 'update')[0].filters).toContainEqual(['eq', 'updated_at', 'B0'])
   })
 
-  it('applyAutoMatchAction counts a meter link only when its row changed', async () => {
-    setup({ writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] }, 'solar.meters:update': { data: [] } } })
-    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ ok: true, applied: 0, staleMeters: 1 })
+  it('applyAutoMatchAction: a meter changed since the user loaded the page is reported, not re-linked', async () => {
+    const { calls } = setup({ writes: dbWrites() })
+    // The server row is at M0; the user saw M-old.
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2', meterUpdatedAt: 'M-old', basisUpdatedAt: 'B0' }] })).toEqual({ ok: true, applied: 0, staleMeters: 1 })
+    expect(callsTo(calls, 'solar.meters', 'update')[0].filters).toContainEqual(['eq', 'updated_at', 'M-old'])
   })
 
-  it('excludeVacantAction pins each tenant row, reports stale ones, keeps their meters, and counts only what landed', async () => {
+  it('applyAutoMatchAction: a meter with no version to pin on is stale, and no write is sent with an empty timestamp', async () => {
+    const { calls } = setup({ writes: dbWrites() })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2', meterUpdatedAt: null, basisUpdatedAt: 'B0' }] })).toEqual({ ok: true, applied: 0, staleMeters: 1 })
+    expect(callsTo(calls, 'solar.meters', 'update')).toHaveLength(0)
+  })
+
+  it('applyAutoMatchAction: a tenant assignment changed since the user loaded the page is refused', async () => {
+    const { calls } = setup({ writes: dbWrites() })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2', meterUpdatedAt: 'M0', basisUpdatedAt: 'B-old' }] })).toEqual({ error: STALE })
+    expect(callsTo(calls, 'solar.meters', 'update')).toHaveLength(0)
+    // The user saw no row for n1, but one exists now: the insert races and is refused too.
+    const r = setup({ writes: dbWrites() })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2', meterUpdatedAt: 'M0', basisUpdatedAt: null }] })).toEqual({ error: STALE })
+    expect(callsTo(r.calls, 'solar.tenant_load_basis', 'insert')).toHaveLength(1)
+  })
+
+  it('excludeVacantAction pins each row on the version the USER saw, reports stale ones, keeps meters, and counts what landed', async () => {
+    const basis = [
+      { id: 'b1', study_id: 's1', node_id: 'n1', source: 'metered', meters: [{ meter_id: 'm1', weight: 1 }], updated_at: 'B0' },
+      { id: 'b2', study_id: 's1', node_id: 'n2', source: 'synthesised', meters: [], updated_at: 'B9' },
+    ]
     const tables = {
       ...base,
       'structure.nodes': [
@@ -134,39 +175,36 @@ describe('solar-load actions', () => {
         { id: 'n3', project_id: P, kind: 'tenant_db', shop_number: '14', name: 'Vacant' },
         { id: 'n4', project_id: P, kind: 'tenant_db', shop_number: '15', name: 'Pep' },
       ],
-      'solar.tenant_load_basis': [
-        { id: 'b1', study_id: 's1', node_id: 'n1', source: 'metered', meters: [{ meter_id: 'm1', weight: 1 }], updated_at: 'B0' },
-        { id: 'b2', study_id: 's1', node_id: 'n2', source: 'synthesised', meters: [], updated_at: 'B9' },
-      ],
+      'solar.tenant_load_basis': basis,
     }
-    const { calls } = setup({
-      tables,
-      writes: { 'solar.tenant_load_basis:update': (c) => ({ data: c.filters.some(([, col, v]) => col === 'updated_at' && v === 'B9') ? [] : [{ id: 'x' }] }) },
-    })
-    const r = await excludeVacantAction({ projectId: P, nodeIds: ['n1', 'n2', 'n3', 'n4'] })
-    // n1 lands (pinned on B0), n2 changed underneath → reported, n3 inserted, n4 is not vacant → never touched.
+    const { calls } = setup({ tables, writes: dbWrites(basis) })
+    const r = await excludeVacantAction({ projectId: P, rows: [
+      { nodeId: 'n1', expectedUpdatedAt: 'B0' },
+      { nodeId: 'n2', expectedUpdatedAt: 'B1' }, // the user saw B1; the server row moved on to B9
+      { nodeId: 'n3', expectedUpdatedAt: null },
+      { nodeId: 'n4', expectedUpdatedAt: null },
+    ] })
+    // n1 lands, n2 changed since the user saw it → reported, n3 inserted, n4 is not vacant → never touched.
     expect(r).toEqual({ ok: true, count: 2, stale: ['13 Vacant unit'], notVacant: 1 })
     const ups = callsTo(calls, 'solar.tenant_load_basis', 'update')
     expect(ups[0]).toMatchObject({ payload: { source: 'excluded' }, filters: [['eq', 'study_id', 's1'], ['eq', 'node_id', 'n1'], ['eq', 'updated_at', 'B0']] })
-    expect(ups.map((u) => u.filters.find((f) => f[1] === 'node_id')?.[2])).toEqual(['n1', 'n2'])
+    expect(ups[1].filters).toContainEqual(['eq', 'updated_at', 'B1'])
     expect(callsTo(calls, 'solar.tenant_load_basis', 'insert').map((c) => (c.payload as { node_id: string }).node_id)).toEqual(['n3'])
   })
 
-  it('read-modify-write of a tenant assignment refuses a concurrent edit (auto-match and remove)', async () => {
-    const { calls } = setup({ writes: { 'solar.tenant_load_basis:update': { data: [] } } })
-    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ error: STALE })
-    expect(callsTo(calls, 'solar.meters', 'update')).toHaveLength(0)
+  it('read-modify-write of a tenant assignment refuses a concurrent edit (remove)', async () => {
     const r = setup({ writes: { 'solar.tenant_load_basis:update': { data: [] } } })
     expect(await removeStudyMeterAction({ projectId: P, meterId: 'm1', alsoDeleteFromLibrary: false })).toEqual({ error: STALE })
     expect(callsTo(r.calls, 'solar.study_meters', 'delete')).toHaveLength(0)
   })
 
-  it('excludeVacantAction: a racing first insert is reported stale, not an error', async () => {
+  it('excludeVacantAction: a row the user saw as missing but that now exists is reported stale, not an error', async () => {
+    const basis = [{ id: 'b5', study_id: 's1', node_id: 'n5', source: 'metered', meters: [], updated_at: 'B5' }]
     setup({
-      tables: { ...base, 'structure.nodes': [{ id: 'n5', project_id: P, kind: 'tenant_db', shop_number: null, name: 'VACANT' }] },
-      writes: { 'solar.tenant_load_basis:insert': { data: null, error: { code: '23505', message: 'duplicate' } } },
+      tables: { ...base, 'structure.nodes': [{ id: 'n5', project_id: P, kind: 'tenant_db', shop_number: null, name: 'VACANT' }], 'solar.tenant_load_basis': basis },
+      writes: dbWrites(basis),
     })
-    expect(await excludeVacantAction({ projectId: P, nodeIds: ['n5'] })).toEqual({ ok: true, count: 0, stale: ['VACANT'], notVacant: 0 })
+    expect(await excludeVacantAction({ projectId: P, rows: [{ nodeId: 'n5', expectedUpdatedAt: null }] })).toEqual({ ok: true, count: 0, stale: ['VACANT'], notVacant: 0 })
   })
 
   it('acknowledgeCheckAction records the key and note', async () => {

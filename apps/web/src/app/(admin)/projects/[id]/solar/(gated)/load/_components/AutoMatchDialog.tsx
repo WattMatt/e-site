@@ -5,7 +5,7 @@ import type { AutoMatchView } from '@/lib/solar/load/view-types'
 
 export function AutoMatchDialog({ proposals, busy, error, onApply, onClose }: {
   proposals: AutoMatchView[]; busy: boolean; error: string | null
-  onApply: (pairs: Array<{ nodeId: string; meterId: string }>) => void; onClose: () => void
+  onApply: (pairs: Array<{ nodeId: string; meterId: string; meterUpdatedAt: string | null; basisUpdatedAt: string | null }>) => void; onClose: () => void
 }) {
   const [ticked, setTicked] = useState<Set<string>>(new Set(proposals.filter((p) => p.preTicked).map((p) => p.meterId)))
   const n = ticked.size
@@ -29,7 +29,7 @@ export function AutoMatchDialog({ proposals, busy, error, onApply, onClose }: {
         {error && <p role="alert" style={{ color: '#dc2626' }}>{error}</p>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button type="button" onClick={onClose}>Close</button>
-          <button type="button" disabled={busy || n === 0} onClick={() => onApply(proposals.filter((p) => ticked.has(p.meterId)).map((p) => ({ nodeId: p.nodeId, meterId: p.meterId })))}>
+          <button type="button" disabled={busy || n === 0} onClick={() => onApply(proposals.filter((p) => ticked.has(p.meterId)).map((p) => ({ nodeId: p.nodeId, meterId: p.meterId, meterUpdatedAt: p.meterUpdatedAt, basisUpdatedAt: p.basisUpdatedAt })))}>
             {busy ? 'Applying…' : `Apply ${n} pair${n === 1 ? '' : 's'}`}
           </button>
         </div>

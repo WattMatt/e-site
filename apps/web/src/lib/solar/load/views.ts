@@ -162,6 +162,7 @@ export async function loadTenantsView(supabase: AnyClient, projectId: string): P
     assignedMeterIds: assigned,
   }).map((p) => ({
     ...p, nodeLabel: tenantLabel(nodeById.get(p.nodeId) as TenantNodeRow), meterLabel: meterById.get(p.meterId)?.label ?? p.meterId,
+    meterUpdatedAt: meterById.get(p.meterId)?.updated_at ?? null, basisUpdatedAt: basis.get(p.nodeId)?.updated_at ?? null,
   }))
   return {
     studyId: s?.id ?? null, studyUpdatedAt: s?.updated_at ?? null, commonAreaPct: s ? Number(s.common_area_pct) : 0,

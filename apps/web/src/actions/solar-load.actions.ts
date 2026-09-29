@@ -290,7 +290,16 @@ export async function saveTenantBasisAction(input: {
   return { ok: true, updatedAt: res.data[0]?.updated_at as string }
 }
 
-export async function applyAutoMatchAction(input: { projectId: string; pairs: Array<{ nodeId: string; meterId: string }> }): Promise<Ok<{ applied: number; staleMeters: number }> | Err> {
+/**
+ * Apply the auto-match pairs the user ticked. Every write is pinned on the version the USER SAW (sent
+ * with each pair from the Tenants view), not on one this call reads: a tenant assignment or meter
+ * changed by someone else since the page loaded is refused / reported, never overwritten. A pair
+ * with no meter version to pin on is reported stale (no write with an empty timestamp).
+ */
+export async function applyAutoMatchAction(input: {
+  projectId: string
+  pairs: Array<{ nodeId: string; meterId: string; meterUpdatedAt: string | null; basisUpdatedAt: string | null }>
+}): Promise<Ok<{ applied: number; staleMeters: number }> | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
   const pairs = (input.pairs ?? []).slice(0, 500)
@@ -299,31 +308,34 @@ export async function applyAutoMatchAction(input: { projectId: string; pairs: Ar
   if (!study) return { error: 'Set up the study first — save Site & Supply or any Load setting.' }
   if (!(await inStudy(supabase, study.id, pairs.map((p) => p.meterId)))) return { error: NOT_IN_STUDY }
   const solar = () => supabase.schema('solar')
-  const { data: rows } = await solar().from('tenant_load_basis').select('node_id, meters, updated_at').eq('study_id', study.id)
-  const existing = new Map(((rows ?? []) as Array<{ node_id: string; meters: Array<{ meter_id: string; weight: number }>; updated_at: string }>).map((r) => [r.node_id, r.meters]))
-  const versions = new Map(((rows ?? []) as Array<{ node_id: string; updated_at: string }>).map((r) => [r.node_id, r.updated_at]))
-  const { data: meterRows } = await solar().from('meters').select('id, node_id, updated_at').in('id', [...new Set(pairs.map((p) => p.meterId))])
-  const meterVersion = new Map(((meterRows ?? []) as Array<{ id: string; node_id: string | null; updated_at: string }>).map((m) => [m.id, m]))
-  const byNode = new Map<string, string[]>()
-  for (const p of pairs) byNode.set(p.nodeId, [...(byNode.get(p.nodeId) ?? []), p.meterId])
+  const { data: rows } = await solar().from('tenant_load_basis').select('node_id, meters').eq('study_id', study.id)
+  const existing = new Map(((rows ?? []) as Array<{ node_id: string; meters: Array<{ meter_id: string; weight: number }> }>).map((r) => [r.node_id, r.meters]))
+  const { data: meterRows } = await solar().from('meters').select('id, node_id').in('id', [...new Set(pairs.map((p) => p.meterId))])
+  const linkedTo = new Map(((meterRows ?? []) as Array<{ id: string; node_id: string | null }>).map((m) => [m.id, m.node_id]))
+  const pin = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : null)
+  const byNode = new Map<string, { basisUpdatedAt: string | null; meters: Array<{ meterId: string; meterUpdatedAt: string | null }> }>()
+  for (const p of pairs) {
+    const g = byNode.get(p.nodeId) ?? { basisUpdatedAt: pin(p.basisUpdatedAt), meters: [] }
+    g.meters.push({ meterId: p.meterId, meterUpdatedAt: pin(p.meterUpdatedAt) })
+    byNode.set(p.nodeId, g)
+  }
   let applied = 0
   let staleMeters = 0
-  for (const [nodeId, meterIds] of byNode) {
+  for (const [nodeId, g] of byNode) {
     if (!(await projectNode(supabase, input.projectId, nodeId))) return { error: 'That tenant is not in this project.' }
-    const have = existing.get(nodeId)
-    const merged = [...(have ?? []), ...meterIds.filter((id) => !(have ?? []).some((m) => m.meter_id === id)).map((meter_id) => ({ meter_id, weight: 1 }))]
-    const res = have
-      // Merged onto the version read: a concurrent assignment edit is refused, not overwritten.
-      ? await solar().from('tenant_load_basis').update({ source: 'metered', meters: merged }).eq('study_id', study.id).eq('node_id', nodeId).eq('updated_at', versions.get(nodeId) ?? '').select('id')
-      : await solar().from('tenant_load_basis').insert({ study_id: study.id, node_id: nodeId, source: 'metered', meters: merged }).select('id')
+    const have = existing.get(nodeId) ?? []
+    const merged = [...have, ...g.meters.filter((x) => !have.some((m) => m.meter_id === x.meterId)).map((x) => ({ meter_id: x.meterId, weight: 1 }))]
+    // No row seen → insert (a row created since races into 23505 → stale). A row seen → update pinned
+    // on the user's version (a concurrent edit matches zero rows → stale).
+    const res = g.basisUpdatedAt === null
+      ? await solar().from('tenant_load_basis').insert({ study_id: study.id, node_id: nodeId, source: 'metered', meters: merged }).select('id')
+      : await solar().from('tenant_load_basis').update({ source: 'metered', meters: merged }).eq('study_id', study.id).eq('node_id', nodeId).eq('updated_at', g.basisUpdatedAt).select('id')
     if (res.error) return { error: res.error.code === '23505' ? STALE_MESSAGE : human(res.error) }
     if (!Array.isArray(res.data) || res.data.length === 0) return { error: STALE_MESSAGE }
-    for (const meterId of meterIds) {
-      const m = meterVersion.get(meterId)
-      if (m?.node_id === nodeId) { applied++; continue }  // already linked: nothing to write
-      // Pinned on the meter's version: a concurrent Details edit is not overwritten, and only a
-      // row that actually changed is counted.
-      const { data, error } = await solar().from('meters').update({ node_id: nodeId }).eq('id', meterId).eq('updated_at', m?.updated_at ?? '').select('id')
+    for (const { meterId, meterUpdatedAt } of g.meters) {
+      if (linkedTo.get(meterId) === nodeId) { applied++; continue }  // already linked: nothing to write
+      if (meterUpdatedAt === null) { staleMeters++; continue }       // nothing to pin on: never write
+      const { data, error } = await solar().from('meters').update({ node_id: nodeId }).eq('id', meterId).eq('updated_at', meterUpdatedAt).select('id')
       if (error) return { error: human(error) }
       if (Array.isArray(data) && data.length > 0) applied++
       else staleMeters++
@@ -336,14 +348,23 @@ export async function applyAutoMatchAction(input: { projectId: string; pairs: Ar
 
 /**
  * Exclude the vacant tenants the user saw. Re-checks vacancy server-side (a directly-invoked call
- * cannot exclude a trading tenant), pins every existing row on the version read, and never clears a
- * row's meters (source only — including it again restores them). A row changed since it was read is
- * REPORTED, not overwritten; the count is what actually landed.
+ * cannot exclude a trading tenant), pins every row on the version the USER SAW (`expectedUpdatedAt`,
+ * null = the user saw no row → insert only), and never clears a row's meters (source only — including
+ * it again restores them). A row changed since the page loaded is REPORTED, not overwritten; the
+ * count is what actually landed.
  */
-export async function excludeVacantAction(input: { projectId: string; nodeIds: string[] }): Promise<Ok<{ count: number; stale: string[]; notVacant: number }> | Err> {
+export async function excludeVacantAction(input: {
+  projectId: string
+  rows: Array<{ nodeId: string; expectedUpdatedAt: string | null }>
+}): Promise<Ok<{ count: number; stale: string[]; notVacant: number }> | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
-  const nodeIds = [...new Set((input.nodeIds ?? []).filter((x) => typeof x === 'string'))].slice(0, 1000)
+  const seen = new Map<string, string | null>()
+  for (const r of input.rows ?? []) {
+    if (r && typeof r.nodeId === 'string' && !seen.has(r.nodeId)) seen.set(r.nodeId, typeof r.expectedUpdatedAt === 'string' && r.expectedUpdatedAt.length > 0 ? r.expectedUpdatedAt : null)
+    if (seen.size >= 1000) break
+  }
+  const nodeIds = [...seen.keys()]
   const study = await studyOf(supabase, input.projectId)
   if (!study) return { error: 'Set up the study first — save Site & Supply or any Load setting.' }
   if (nodeIds.length === 0) return { ok: true, count: 0, stale: [], notVacant: 0 }
@@ -352,15 +373,12 @@ export async function excludeVacantAction(input: { projectId: string; nodeIds: s
     .in('id', nodeIds).eq('project_id', input.projectId).eq('kind', 'tenant_db')
   const nodes = ((nodeRows ?? []) as Array<{ id: string; shop_number: string | null; shop_name: string | null; name: string | null }>).filter(isVacantTenant)
   const label = (n: (typeof nodes)[number]) => `${n.shop_number ?? ''} ${n.shop_name ?? n.name ?? ''}`.trim()
-  const { data: rows } = await solar().from('tenant_load_basis').select('node_id, source, updated_at').eq('study_id', study.id).in('node_id', nodes.map((n) => n.id))
-  const have = new Map(((rows ?? []) as Array<{ node_id: string; source: string; updated_at: string }>).map((r) => [r.node_id, r]))
   let count = 0
   const stale: string[] = []
   for (const n of nodes) {
-    const b = have.get(n.id)
-    if (b?.source === 'excluded') continue
-    const res = b
-      ? await solar().from('tenant_load_basis').update({ source: 'excluded' }).eq('study_id', study.id).eq('node_id', n.id).eq('updated_at', b.updated_at).select('id')
+    const expected = seen.get(n.id) ?? null
+    const res = expected !== null
+      ? await solar().from('tenant_load_basis').update({ source: 'excluded' }).eq('study_id', study.id).eq('node_id', n.id).eq('updated_at', expected).select('id')
       : await solar().from('tenant_load_basis').insert({ study_id: study.id, node_id: n.id, source: 'excluded', meters: [] }).select('id')
     if (res.error && res.error.code !== '23505') return { error: human(res.error) }
     if (res.error || !Array.isArray(res.data) || res.data.length === 0) { stale.push(label(n)); continue }

@@ -102,8 +102,10 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
   const [auto, setAuto] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // The study row is shared with the Load basis bar and the settings: re-seed on its version.
-  const [common, setCommon] = useResyncedState(String(view.commonAreaPct), view.studyUpdatedAt)
+  // The study row is shared with the Load basis bar and the settings. The VERSION re-seeds on every
+  // study save (so the next save is not refused as stale); the typed VALUE re-seeds only when the
+  // allowance itself changed, so a basis-bar save does not wipe a half-typed allowance.
+  const [common, setCommon] = useResyncedState(String(view.commonAreaPct), String(view.commonAreaPct))
   const [commonVersion, setCommonVersion] = useResyncedState(view.studyUpdatedAt, view.studyUpdatedAt)
   const [notice, setNotice] = useState<string | null>(null)
   const vacant = view.tenants.filter((t) => t.vacant && t.basis?.source !== 'excluded')
@@ -122,12 +124,13 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
             : <button type="button" disabled={busy} style={{ color: '#dc2626' }} onClick={async () => {
                 confirmVacant.disarm()
                 setBusy(true); setError(null)
-                const r = await excludeVacantAction({ projectId, nodeIds: vacant.map((t) => t.nodeId) })
+                const r = await excludeVacantAction({ projectId, rows: vacant.map((t) => ({ nodeId: t.nodeId, expectedUpdatedAt: t.basis?.updatedAt ?? null })) })
                 setBusy(false)
                 if ('error' in r) setError(r.error)
                 else {
                   const left = r.stale.length > 0 ? ` Changed by someone else since you loaded the page, so left as they are: ${r.stale.join(', ')} — review them after the reload.` : ''
-                  setNotice(`${r.count} vacant tenant${r.count === 1 ? '' : 's'} excluded.${left}`)
+                  const moved = r.notVacant > 0 ? ` ${r.notVacant} tenant${r.notVacant === 1 ? ' is' : 's are'} no longer vacant in the tenant schedule, so ${r.notVacant === 1 ? 'it was' : 'they were'} left as ${r.notVacant === 1 ? 'it is' : 'they are'}.` : ''
+                  setNotice(`${r.count} vacant tenant${r.count === 1 ? '' : 's'} excluded.${moved}${left}`)
                   router.refresh()
                 }
               }}>{`Exclude ${vacant.length} vacant tenant${vacant.length === 1 ? '' : 's'}?`}</button>)}

@@ -98,6 +98,10 @@ export interface AutoMatchView {
   confidence: 'high' | 'medium' | 'low'
   preTicked: boolean
   note: string
+  /** The meter row's version as loaded: the link is pinned on it (null = cannot be pinned → stale). */
+  meterUpdatedAt: string | null
+  /** The tenant's load-basis row version as loaded (null = no row seen → insert only). */
+  basisUpdatedAt: string | null
 }
 export interface TenantsView {
   studyId: string | null

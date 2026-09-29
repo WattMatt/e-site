@@ -16,7 +16,7 @@ const view: TenantsView = {
   ],
   studyMeters: [{ id: 'm1', label: 'Pep meter', kind: 'tenant' }],
   proposals: [
-    { nodeId: 'n1', nodeLabel: '12 · Pep', meterId: 'm1', meterLabel: 'Pep meter', source: 'register', confidence: 'low', preTicked: false, note: 'Meter register row matched by an LLM — check before applying' },
+    { nodeId: 'n1', nodeLabel: '12 · Pep', meterId: 'm1', meterLabel: 'Pep meter', source: 'register', confidence: 'low', preTicked: false, note: 'Meter register row matched by an LLM — check before applying', meterUpdatedAt: 'M0', basisUpdatedAt: 'B2' },
   ],
 }
 beforeEach(() => {
@@ -71,15 +71,30 @@ describe('TenantsPanel', () => {
     expect((screen.getByRole('button', { name: 'Apply 0 pairs' }) as HTMLButtonElement).disabled).toBe(true)
     await userEvent.click(box)
     await userEvent.click(screen.getByRole('button', { name: 'Apply 1 pair' }))
-    expect(h.apply).toHaveBeenCalledWith({ projectId: 'p1', pairs: [{ nodeId: 'n1', meterId: 'm1' }] })
+    // Each pair carries the versions the user SAW, so the server pins on them (not on a fresh read).
+    expect(h.apply).toHaveBeenCalledWith({ projectId: 'p1', pairs: [{ nodeId: 'n1', meterId: 'm1', meterUpdatedAt: 'M0', basisUpdatedAt: 'B2' }] })
   })
   it('exclude vacant is two-step and shows the count', async () => {
     render(<TenantsPanel projectId="p1" view={view} canEdit />)
     await userEvent.click(screen.getByRole('button', { name: 'Exclude vacant (1)' }))
     expect(h.vacant).not.toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'Exclude 1 vacant tenant?' }))
-    expect(h.vacant).toHaveBeenCalledWith({ projectId: 'p1', nodeIds: ['n2'] })
+    expect(h.vacant).toHaveBeenCalledWith({ projectId: 'p1', rows: [{ nodeId: 'n2', expectedUpdatedAt: null }] })
     expect((await screen.findByRole('status')).textContent).toBe('1 vacant tenant excluded.')
+  })
+  it('exclude vacant sends the version of each row the user saw', async () => {
+    const seen: TenantsView = { ...view, tenants: [view.tenants[0]!, { ...view.tenants[1]!, basis: { id: 'b2', source: 'synthesised', meters: [], archetype: null, densityOverride: null, updatedAt: 'B3' } }] }
+    render(<TenantsPanel projectId="p1" view={seen} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude vacant (1)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude 1 vacant tenant?' }))
+    expect(h.vacant).toHaveBeenCalledWith({ projectId: 'p1', rows: [{ nodeId: 'n2', expectedUpdatedAt: 'B3' }] })
+  })
+  it('exclude vacant says how many were no longer vacant', async () => {
+    h.vacant.mockResolvedValueOnce({ ok: true, count: 0, stale: [], notVacant: 1 })
+    render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude vacant (1)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude 1 vacant tenant?' }))
+    expect((await screen.findByRole('status')).textContent).toBe('0 vacant tenants excluded. 1 tenant is no longer vacant in the tenant schedule, so it was left as it is.')
   })
   it('exclude vacant says which tenants changed underneath instead of claiming them', async () => {
     h.vacant.mockResolvedValueOnce({ ok: true, count: 0, stale: ['13 VACANT'], notVacant: 0 })
@@ -112,6 +127,15 @@ describe('TenantsPanel', () => {
     expect((screen.getByLabelText('Common-area allowance (%)') as HTMLInputElement).value).toBe('8')
     await userEvent.click(screen.getByRole('button', { name: 'Save allowance' }))
     expect(h.common).toHaveBeenLastCalledWith({ projectId: 'p1', commonAreaPct: 8, expectedUpdatedAt: 'T4' })
+  })
+  it('a half-typed allowance survives a study save elsewhere (the basis bar) that did not change the allowance', async () => {
+    const { rerender } = render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    await userEvent.clear(screen.getByLabelText('Common-area allowance (%)'))
+    await userEvent.type(screen.getByLabelText('Common-area allowance (%)'), '7')
+    rerender(<TenantsPanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T9' }} canEdit />)
+    expect((screen.getByLabelText('Common-area allowance (%)') as HTMLInputElement).value).toBe('7')
+    await userEvent.click(screen.getByRole('button', { name: 'Save allowance' }))
+    expect(h.common).toHaveBeenLastCalledWith({ projectId: 'p1', commonAreaPct: 7, expectedUpdatedAt: 'T9' })
   })
   it('empty state points to the Tenant Schedule; View users see values, no controls', () => {
     const { unmount } = render(<TenantsPanel projectId="p1" view={{ ...view, tenants: [] }} canEdit />)
