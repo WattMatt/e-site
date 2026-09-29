@@ -1,6 +1,6 @@
 /** RFC 4180 CSV → rows of strings. Comma or semicolon (detected on the header line), quotes, CRLF, BOM. */
 export function parseCsvText(text: string): string[][] {
-  const src = text.replace(/^﻿/, '')
+  const src = text.replace(/^\uFEFF/, '')
   const header = src.split(/\r?\n/, 1)[0] ?? ''
   const delim = (header.match(/;/g)?.length ?? 0) > (header.match(/,/g)?.length ?? 0) ? ';' : ','
   const rows: string[][] = []

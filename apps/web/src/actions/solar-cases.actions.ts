@@ -69,7 +69,7 @@ export async function createSolarCaseAction(input: { projectId: string; name: st
   let config: CaseConfig
   let layoutId: string | null = null
   if (start.kind === 'manual' || start.kind === 'layout') {
-    let size = { dcKwp: 0, acKw: 0 }
+    let size: { dcKwp: number; acKw: number }
     if (start.kind === 'layout') {
       // Sizes from the layout's OWN objects (server-side), never from the client or stored summary.
       const design = await loadLayoutDesign(supabase, projectId, start.layoutId)
