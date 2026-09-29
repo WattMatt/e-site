@@ -3,9 +3,9 @@
 -- report row's file path must belong to the row
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: this is a security hotfix that applies BEFORE the Solar chain, so
--- it takes the first number above the ledger head (00206). The Solar chain
--- (release assembly, feat/solar-release) was renumbered +1 to 00208-00220 and
--- applies after this file. RE-CLAIM AT APPLY TIME regardless: check the ledger,
+-- it takes the first number above the ledger head (00206). The Solar branches
+-- (#203-#217, #216 final) currently carry 00207-00219 and are renumbered +1 at
+-- their own apply time. RE-CLAIM AT APPLY TIME regardless: check the ledger,
 -- origin/main and every open PR's migration filenames immediately before
 -- applying, and rename this file (plus report-path.test.ts and the assertion
 -- file header) if anything has moved. #191 (00201) and #193 (00202) are
@@ -66,10 +66,9 @@
 --    the 00205/00206 lesson). SELECT on projects.reports stays exactly 00117 +
 --    00183.
 --  * No BEGIN/COMMIT: the runner wraps the file.
---  * Overlap with the Solar proposals migration (00217, was #217's 00216): it
---    adds solar_pdfs_service_only_* on storage.objects and
---    reports_solar_service_only_* on projects.reports. Both sets are
---    RESTRICTIVE and AND together with these; 00217's
+--  * Overlap with PR #217's 00216 (Solar): 00216 adds solar_pdfs_service_only_*
+--    on storage.objects and reports_solar_service_only_* on projects.reports.
+--    Both sets are RESTRICTIVE and AND together with these; 00216's
 --    canonical-path clauses become redundant with this migration but are
 --    harmless. See the PR body for the exact list.
 -- ---------------------------------------------------------------------------
