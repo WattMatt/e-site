@@ -113,7 +113,7 @@ Who can invite: `ORG_WRITE_ROLES` on the project (owner/admin/PM), using a new *
    - Creates an auth user through the admin API with **no password**. It uses an internal, undeliverable placeholder email of the form `wa+<uuid>@invalid.e-site.live`, which is never mailed (the rbac-test lesson). `profiles.full_name` and `phone` are set, and so are `app_metadata.provisioned_via = 'whatsapp'` and `invited_by`.
    - Inserts `project_members (role='contractor', is_active=true)` on **this project only**.
    - Creates `phone_links (status='pending_optin', invited_by)`.
-   - Queues the **opt-in** template: *"Watson Mattheus has invited you to receive and respond to site items for {project} via E-Site. Reply STOP at any time. [Yes, I agree] [No thanks]"*.
+   - Queues the **opt-in** template: *"{inviter name} has invited you to receive and respond to site items for {project} via E-Site. Reply STOP at any time. [Yes, I agree] [No thanks]"*.
 4. **Only a Yes tap activates the link.** The tap proves the number reaches that person and records consent at that moment. A **No thanks** tap sets `opted_out` and tells the PM.
 5. While the link is pending, the external can be assigned items, because they are a real project member and the spine's assignee trigger is satisfied. **Nothing is delivered**, and the PM sees "Awaiting WhatsApp opt-in" on the person and the item.
 
@@ -228,9 +228,9 @@ Each test must be able to fail, and the refusal tests are mutation-proven.
 ## 8. Rollout
 
 **Step 0: Meta onboarding (WM, starts day one, 1–3 weeks of calendar time)**
-1. Create the Meta Business Manager for Watson Mattheus and complete business verification (CIPC documents, the same pack as the Paystack KYC).
+1. Create the Meta Business Manager for the business that operates E-Site and complete business verification (CIPC documents, the same pack as the Paystack KYC).
 2. Get a **new number**, a SIM that has never been registered on WhatsApp. The existing support number stays on the Business app.
-3. In the WhatsApp Manager, add the number, set the display name to "E-Site by Watson Mattheus" (subject to approval), and set up two-step PIN.
+3. In the WhatsApp Manager, add the number, set the display name to "E-Site" (subject to approval), and set up two-step PIN.
 4. Create a system user with a permanent token scoped to `whatsapp_business_messaging` and `whatsapp_business_management`, and store it as an edge secret.
 5. Submit the templates: `esite_otp` (authentication), `esite_optin`, `esite_item_assigned`, `esite_item_due_tomorrow`, `esite_item_overdue` (utility).
 6. Add a payment method and record the ZA per-message rates.

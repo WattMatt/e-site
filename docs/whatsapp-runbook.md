@@ -131,9 +131,9 @@ Merging to `main` deploys `/settings/account` (WhatsApp panel), `/settings/whats
 
 ## 9. Meta onboarding and templates (WM, starts day one, 1–3 weeks of calendar time)
 
-1. Create a Meta Business Manager for Watson Mattheus and complete **business verification** (CIPC documents, the same pack as the Paystack KYC).
+1. Create a Meta Business Manager for the business that operates E-Site and complete **business verification** (CIPC documents, the same pack as the Paystack KYC).
 2. Get a **new SIM that has never been registered on WhatsApp**. The existing support number stays on the Business app.
-3. In WhatsApp Manager, add the number, set the display name to "E-Site by Watson Mattheus" (subject to approval), and set a two-step PIN.
+3. In WhatsApp Manager, add the number, set the display name to "E-Site" (subject to approval), and set a two-step PIN.
 4. Create a **system user** with a permanent token scoped to `whatsapp_business_messaging` and `whatsapp_business_management`. It becomes `WHATSAPP_TOKEN`. The phone number ID becomes `WHATSAPP_PHONE_NUMBER_ID`, and the app secret becomes `WHATSAPP_APP_SECRET`.
 5. Add a payment method and record the ZA per-message rates.
 6. Submit these templates, language `en`. The parameter order must match `apps/edge-functions/supabase/functions/_shared/whatsapp/templates.ts`:
