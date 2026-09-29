@@ -115,6 +115,9 @@ Verify:
 
 ## 7. Vercel
 
+Set **`WHATSAPP_BUSINESS_NUMBER`** (Production) to E-Site's WhatsApp number in international digits (test number: `15551576223`). The Settings → Account panel uses it for the wa.me "send your link code" button; without it the panel names the number in text instead.
+
+
 Merging to `main` deploys `/settings/account` (WhatsApp panel), `/settings/whatsapp`, `/wa/[itemId]` and `/projects/[id]/items/[ref]`. Read the production deployment for the merge commit from the GitHub deployments API (state `success`).
 
 ## 8. Unauthenticated probes

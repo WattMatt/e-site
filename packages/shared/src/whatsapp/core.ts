@@ -226,3 +226,13 @@ export function matchProjects(query: string, projects: ProjectRef[]): ProjectMat
   const partial = projects.filter((p) => normaliseName(p.name).includes(q))
   return partial.length ? { kind: 'candidates', projects: partial.slice(0, 10) } : { kind: 'none' }
 }
+
+/** The user proves a number by SENDING "LINK <6 digits>" from it to E-Site (no auth template needed). */
+export function linkCodeMessage(code: string): string {
+  return `LINK ${code}`
+}
+
+export function parseLinkCode(text: string): string | null {
+  const m = /^\s*LINK\s*(\d{6})\s*$/i.exec(text ?? '')
+  return m ? m[1] : null
+}

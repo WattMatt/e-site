@@ -6,11 +6,12 @@
 // it never decides whether the user is ALLOWED — the database does.
 import {
   ACTIVE_ITEM_TTL_MS, BURST_WINDOW_MS, CONSENT_TEXT_VERSION, WRONG_ITEM_WINDOW_MS, classifyKeyword, decodePayload,
-  encodePayload, isWithin, resolveTarget,
+  encodePayload, isWithin, parseLinkCode, resolveTarget,
 } from './core.ts'
 import type { MetaClient } from './meta-client.ts'
 import type { InboundMessage } from './parse.ts'
 import { expireStalePost, handleChannelContent, handleChannelPayload, pickPrefixRows } from './channel.ts'
+import { linkByInboundCode, type PendingOtpLink } from './link-code.ts'
 
 export interface LinkRow {
   id: string
@@ -73,6 +74,8 @@ export interface ProcessorStore {
   /** True if we already told this unknown number "not linked" in the last 24 h; otherwise records now and returns false. */
   unknownSenderRecentlyAnswered(e164: string, now: Date): Promise<boolean>
   inboundById(id: string): Promise<InboundRow | null>
+  /** pending_otp links for this number (linking by inbound code). */
+  pendingOtpLinks(e164: string): Promise<PendingOtpLink[]>
   markInbound(id: string, patch: { outcome: Outcome; outcome_reason: string | null; resolved_user_id: string | null;
                                    resolved_item_id: string | null; processed_at: string }): Promise<void>
 }
@@ -221,6 +224,10 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
   const msg = asMessage(inbound.raw)
   const from = inbound.from_e164
   const nowIso = now().toISOString()
+  // "LINK 123456" sent FROM a number proves that number (linking without an auth template).
+  const linkCode = msg.type === 'text' && msg.text ? parseLinkCode(msg.text) : null
+  if (linkCode) return linkByInboundCode(deps, from, linkCode)
+
   const keyword = msg.type === 'text' && msg.text ? classifyKeyword(msg.text) : null
   const link = await store.linkByPhone(from)
 

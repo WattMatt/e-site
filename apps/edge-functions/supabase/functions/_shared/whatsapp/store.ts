@@ -77,6 +77,10 @@ export function createProcessorStore(sb: Sb): ProcessorStore & { claimInbound(li
       must(await wa(sb).from('unknown_senders').upsert({ phone_e164: e164, last_replied_at: now.toISOString() }, { onConflict: 'phone_e164' }), 'unknown record')
       return false
     },
+    async pendingOtpLinks(e164) {
+      return (must(await wa(sb).from('phone_links').select('id, user_id, otp_hash, otp_expires_at, otp_attempts')
+        .eq('phone_e164', e164).eq('status', 'pending_otp').order('created_at', { ascending: false }), 'pending otp links') ?? [])
+    },
     async inboundById(id) {
       return must(await wa(sb).from('inbound').select('id, meta_message_id, from_e164, raw, attempts').eq('id', id).maybeSingle(), 'inbound lookup')
     },

@@ -1,20 +1,26 @@
 // apps/web/src/actions/whatsapp-link.actions.ts
 'use server'
 /**
- * A signed-in user links their own WhatsApp number. Proof of ownership AND
- * POPIA consent are one step: we send a 6-digit code over WhatsApp, the user
- * types it back here. Only a hash of the code is stored (bound to the link id).
+ * A signed-in user links their own WhatsApp number by SENDING a code from it.
+ * The page shows "LINK 482917"; the user sends it from that phone to E-Site's
+ * number, and the whatsapp-webhook activates the link when it arrives FROM the
+ * number entered (_shared/whatsapp/link-code.ts). That message is the proof of
+ * ownership; sending it after reading the consent text is the consent. No
+ * outbound code is sent: Meta only permits authentication templates for
+ * verified businesses. Only a hash of the code is stored (bound to the link id).
  * Writes use the service client after the caller is identified, because
  * `authenticated` has no write grant on whatsapp.* (migration 00222).
  */
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { CONSENT_TEXT_VERSION, OTP_MAX_ATTEMPTS, OTP_MAX_SENDS_PER_HOUR, OTP_TTL_MS, maskPhone, normalisePhone } from '@esite/shared'
-import { hashOtp, newOtp, otpMatches } from '@/lib/whatsapp/otp'
-import { kickWhatsAppWorker } from '@/lib/whatsapp/kick-worker'
+import { OTP_MAX_SENDS_PER_HOUR, OTP_TTL_MS, linkCodeMessage, maskPhone, normalisePhone } from '@esite/shared'
+import { hashOtp, newOtp } from '@/lib/whatsapp/otp'
 
 type Result = { ok: true; masked?: string } | { error: string }
+export type LinkCodeResult =
+  | { ok: true; masked: string; message: string; waNumber: string | null; expiresAt: string }
+  | { error: string }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const wa = (sb: any) => sb.schema('whatsapp')
 
@@ -24,7 +30,13 @@ async function me(): Promise<string | null> {
   return user?.id ?? null
 }
 
-export async function requestWhatsAppCodeAction(input: { phone: string }): Promise<Result> {
+/** E-Site's WhatsApp number in international digits (wa.me format), or null if not configured. */
+function businessNumber(): string | null {
+  const d = (process.env.WHATSAPP_BUSINESS_NUMBER ?? '').replace(/\D/g, '')
+  return d.length >= 8 ? d : null
+}
+
+export async function requestWhatsAppCodeAction(input: { phone: string }): Promise<LinkCodeResult> {
   const userId = await me()
   if (!userId) return { error: 'Not authenticated' }
   const phone = normalisePhone(String(input?.phone ?? ''))
@@ -63,45 +75,28 @@ export async function requestWhatsAppCodeAction(input: { phone: string }): Promi
   }
 
   const code = newOtp()
+  const expiresAt = new Date(now + OTP_TTL_MS).toISOString()
   await wa(svc).from('phone_links').update({
     phone_e164: phone,
     otp_hash: hashOtp(linkId, code),
-    otp_expires_at: new Date(now + OTP_TTL_MS).toISOString(),
+    otp_expires_at: expiresAt,
     otp_attempts: 0,
     otp_window_start: windowFresh ? mine.otp_window_start : new Date(now).toISOString(),
     otp_window_count: (windowFresh ? mine.otp_window_count : 0) + 1,
   }).eq('id', linkId)
-  await wa(svc).from('outbox').insert({
-    user_id: userId, link_id: linkId, trigger: 'otp', idempotency_key: `${linkId}:otp:${now}`, payload: { code },
-  })
-  await kickWhatsAppWorker('otp')
-  return { ok: true, masked: maskPhone(phone) }
+  return { ok: true, masked: maskPhone(phone), message: linkCodeMessage(code), waNumber: businessNumber(), expiresAt }
 }
 
-export async function confirmWhatsAppCodeAction(input: { code: string }): Promise<Result> {
+/** Polled by the panel while the user sends the code from their phone. */
+export async function getWhatsAppLinkStatusAction(): Promise<{ status: 'active' | 'pending' | 'none'; masked?: string } | { error: string }> {
   const userId = await me()
   if (!userId) return { error: 'Not authenticated' }
-  const code = String(input?.code ?? '').trim()
-
   const svc = createServiceClient()
-  const { data: link } = await wa(svc).from('phone_links')
-    .select('id, user_id, status, otp_hash, otp_expires_at, otp_attempts')
-    .eq('user_id', userId).eq('status', 'pending_otp').maybeSingle()
-  if (!link) return { error: 'Request a code first.' }
-  if ((link.otp_attempts ?? 0) >= OTP_MAX_ATTEMPTS) return { error: 'Too many attempts — request a new code.' }
-  if (!link.otp_expires_at || Date.parse(link.otp_expires_at) < Date.now()) return { error: 'That code has expired — request a new one.' }
-  if (!otpMatches(link.id, code, link.otp_hash)) {
-    await wa(svc).from('phone_links').update({ otp_attempts: (link.otp_attempts ?? 0) + 1 }).eq('id', link.id)
-    return { error: "That code isn't right." }
-  }
-  const at = new Date().toISOString()
-  const { error } = await wa(svc).from('phone_links').update({
-    status: 'active', verified_at: at, consent_at: at, consent_text_version: CONSENT_TEXT_VERSION,
-    otp_hash: null, otp_expires_at: null, otp_attempts: 0,
-  }).eq('id', link.id)
-  if (error) return { error: 'That number was linked to another account a moment ago.' }
-  revalidatePath('/settings/account')
-  return { ok: true }
+  const { data } = await wa(svc).from('phone_links').select('status, phone_e164')
+    .eq('user_id', userId).in('status', ['active', 'pending_otp']).order('created_at', { ascending: false }).limit(1).maybeSingle()
+  if (!data) return { status: 'none' }
+  if (data.status === 'active') revalidatePath('/settings/account')
+  return { status: data.status === 'active' ? 'active' : 'pending', masked: maskPhone(data.phone_e164) }
 }
 
 export async function removeWhatsAppLinkAction(): Promise<Result> {

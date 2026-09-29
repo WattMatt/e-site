@@ -10,7 +10,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock, create
 vi.mock('@/lib/whatsapp/kick-worker', () => ({ kickWhatsAppWorker: kickMock }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
-import { requestWhatsAppCodeAction, confirmWhatsAppCodeAction, removeWhatsAppLinkAction } from './whatsapp-link.actions'
+import { requestWhatsAppCodeAction, getWhatsAppLinkStatusAction, removeWhatsAppLinkAction } from './whatsapp-link.actions'
 
 const ME = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const LINK = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -31,23 +31,30 @@ describe('requestWhatsAppCodeAction', () => {
     expect(r).toEqual({ error: 'That number is already linked to another E-Site account.' })
     expect(kickMock).not.toHaveBeenCalled()
   })
-  it('stores a HASH (never the code), queues the OTP, kicks the worker', async () => {
+  it('stores a HASH (never the code) and returns the message to SEND — nothing is sent outbound', async () => {
+    process.env.WHATSAPP_BUSINESS_NUMBER = '+1 555 157 6223'
     const svc = fakeSupabase({
       'phone_links:select': [{ data: [] }, { data: null }],
       'phone_links:insert': [{ data: { id: LINK } }],
-      'outbox:insert': [{ data: null }],
     })
     createServiceClientMock.mockReturnValue(svc)
     const r = await requestWhatsAppCodeAction({ phone: '082 123 4567' })
-    expect(r).toEqual({ ok: true, masked: '+27 82 *** 4567' })
+    if (!('ok' in r)) throw new Error('expected ok')
+    expect(r).toMatchObject({ ok: true, masked: '+27 82 *** 4567', waNumber: '15551576223' })
+    const code = /^LINK (\d{6})$/.exec(r.message)![1]
     const ins = svc.calls.find((c) => c.table === 'phone_links' && c.op === 'insert')!.args[0]
     expect(ins).toMatchObject({ user_id: ME, phone_e164: '+27821234567', status: 'pending_otp' })
-    expect(ins.otp_hash).toMatch(/^[0-9a-f]{64}$/)
     const upd = svc.calls.find((c) => c.table === 'phone_links' && c.op === 'update')!.args[0]
-    const out = svc.calls.find((c) => c.table === 'outbox' && c.op === 'insert')!.args[0]
-    expect(out).toMatchObject({ user_id: ME, link_id: LINK, trigger: 'otp' })
-    expect(upd.otp_hash).toBe(hashOtp(LINK, out.payload.code))
-    expect(kickMock).toHaveBeenCalledWith('otp')
+    expect(upd.otp_hash).toBe(hashOtp(LINK, code))
+    expect(JSON.stringify(svc.calls)).not.toContain(code)
+    expect(svc.calls.some((c) => c.table === 'outbox')).toBe(false)
+    expect(kickMock).not.toHaveBeenCalled()
+  })
+  it('works without a configured business number (the page then names the number in text)', async () => {
+    delete process.env.WHATSAPP_BUSINESS_NUMBER
+    createServiceClientMock.mockReturnValue(fakeSupabase({ 'phone_links:select': [{ data: [] }, { data: null }], 'phone_links:insert': [{ data: { id: LINK } }] }))
+    const r = await requestWhatsAppCodeAction({ phone: '082 123 4567' })
+    expect(r).toMatchObject({ ok: true, waNumber: null })
   })
   it('caps code sends at 3 per hour', async () => {
     const svc = fakeSupabase({
@@ -58,32 +65,18 @@ describe('requestWhatsAppCodeAction', () => {
   })
 })
 
-describe('confirmWhatsAppCodeAction', () => {
-  const pending = (over: Record<string, unknown> = {}) => ({ id: LINK, user_id: ME, status: 'pending_otp',
-    otp_hash: hashOtp(LINK, '123456'), otp_expires_at: new Date(Date.now() + 60_000).toISOString(), otp_attempts: 0, ...over })
-
-  it('a wrong code counts an attempt and fails', async () => {
-    const svc = fakeSupabase({ 'phone_links:select': [{ data: pending() }] }); createServiceClientMock.mockReturnValue(svc)
-    expect(await confirmWhatsAppCodeAction({ code: '000000' })).toEqual({ error: "That code isn't right." })
-    expect(svc.calls.find((c) => c.op === 'update')!.args[0]).toEqual({ otp_attempts: 1 })
+describe('getWhatsAppLinkStatusAction', () => {
+  it('active once the webhook has activated the link', async () => {
+    createServiceClientMock.mockReturnValue(fakeSupabase({ 'phone_links:select': [{ data: { status: 'active', phone_e164: '+27821234567' } }] }))
+    expect(await getWhatsAppLinkStatusAction()).toEqual({ status: 'active', masked: '+27 82 *** 4567' })
   })
-  it('the right code after 5 failures is still refused', async () => {
-    const svc = fakeSupabase({ 'phone_links:select': [{ data: pending({ otp_attempts: 5 }) }] }); createServiceClientMock.mockReturnValue(svc)
-    expect(await confirmWhatsAppCodeAction({ code: '123456' })).toEqual({ error: 'Too many attempts — request a new code.' })
+  it('pending while waiting for the code to arrive', async () => {
+    createServiceClientMock.mockReturnValue(fakeSupabase({ 'phone_links:select': [{ data: { status: 'pending_otp', phone_e164: '+27821234567' } }] }))
+    expect(await getWhatsAppLinkStatusAction()).toEqual({ status: 'pending', masked: '+27 82 *** 4567' })
   })
-  it('an expired code is refused', async () => {
-    const svc = fakeSupabase({ 'phone_links:select': [{ data: pending({ otp_expires_at: new Date(Date.now() - 1).toISOString() }) }] })
-    createServiceClientMock.mockReturnValue(svc)
-    expect(await confirmWhatsAppCodeAction({ code: '123456' })).toEqual({ error: 'That code has expired — request a new one.' })
-  })
-  it('the right code activates with recorded consent and clears the hash', async () => {
-    const svc = fakeSupabase({ 'phone_links:select': [{ data: pending() }], 'phone_links:update': [{ data: null }] })
-    createServiceClientMock.mockReturnValue(svc)
-    expect(await confirmWhatsAppCodeAction({ code: '123456' })).toEqual({ ok: true })
-    const upd = svc.calls.find((c) => c.op === 'update')!.args[0]
-    expect(upd).toMatchObject({ status: 'active', otp_hash: null, consent_text_version: '2026-09-28.1' })
-    expect(upd.consent_at).toBeTruthy()
-    expect(upd.verified_at).toBeTruthy()
+  it('none when nothing is in progress', async () => {
+    createServiceClientMock.mockReturnValue(fakeSupabase({ 'phone_links:select': [{ data: null }] }))
+    expect(await getWhatsAppLinkStatusAction()).toEqual({ status: 'none' })
   })
 })
 
