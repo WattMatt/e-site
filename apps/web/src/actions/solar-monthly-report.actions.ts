@@ -28,10 +28,18 @@ export async function generateSolarMonthlyReportAction(input: { projectId: strin
   if (!isMonthKey(input.month)) return { error: 'Choose a month.' }
   if (input.note != null && (typeof input.note !== 'string' || input.note.length > 2000)) return { error: 'The revision note is at most 2000 characters.' }
   if (!rateLimit(`solar-monthly:${user.id}`, 6, 60_000)) return { error: 'Too many reports at once — wait a minute and try again.' }
-  const r = await generateMonthlyReport({
-    projectId: input.projectId, month: input.month, note: input.note?.trim() || null, userId: user.id,
-    user: supabase, svc: createServiceClient() as unknown as AnyClient,
-  })
+  let r: Awaited<ReturnType<typeof generateMonthlyReport>>
+  try {
+    r = await generateMonthlyReport({
+      projectId: input.projectId, month: input.month, note: input.note?.trim() || null, userId: user.id,
+      user: supabase, svc: createServiceClient() as unknown as AnyClient,
+    })
+  } catch (e) {
+    // The aggregation wrappers throw on an RPC error (never "zero generation"); the browser gets a
+    // sentence, the log gets the detail (review A5).
+    console.error('[solar/monthly-report] generate failed', { projectId: input.projectId, month: input.month, error: e instanceof Error ? e.message : String(e) })
+    return { error: 'The month’s generation data could not be read — try again.' }
+  }
   if (!r.ok) return { error: r.error }
   await recordSolarAudit({ projectId: input.projectId, actorId: user.id, verb: 'monthly_report_generated', objectRef: { period: input.month, version: r.version, reportId: r.reportId } })
   await emitProductEvent({ actorId: user.id, projectId: input.projectId, event: 'solar_monthly_report_generated', properties: { period: input.month } })

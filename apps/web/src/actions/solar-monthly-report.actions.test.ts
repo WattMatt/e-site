@@ -53,4 +53,23 @@ describe('saveMonthlyReportNoteAction', () => {
     await expect(saveMonthlyReportNoteAction({ projectId: P, installationId: 'i1', month: '2026-03', section: 'nope' as never, body: '', expectedUpdatedAt: null }))
       .resolves.toEqual({ error: 'Unknown commentary section.' })
   })
+  it('an update is scoped to the gated project (review A2)', async () => {
+    const f = fakeSupabase({ userId: 'u1', writes: { 'solar.monthly_report_notes:update': { data: [{ updated_at: 'N2' }] } } })
+    h.createClient.mockResolvedValue(f.client)
+    await expect(saveMonthlyReportNoteAction({ projectId: P, installationId: 'i1', month: '2026-03', section: 'summary', body: 'Better', expectedUpdatedAt: 'N1' }))
+      .resolves.toEqual({ ok: true, updatedAt: 'N2' })
+    expect(callsTo(f.calls, 'solar.monthly_report_notes', 'update')[0]!.filters).toEqual([
+      ['eq', 'installation_id', 'i1'], ['eq', 'project_id', P], ['eq', 'period_month', '2026-03-01'], ['eq', 'section', 'summary'], ['eq', 'updated_at', 'N1']])
+  })
+})
+
+describe('generateSolarMonthlyReportAction when a read fails (review A5)', () => {
+  it('returns a sentence, never the database text, and records nothing', async () => {
+    h.gen.mockRejectedValue(new Error('meter totals could not be read: permission denied for table meter_readings_p3'))
+    const r = await generateSolarMonthlyReportAction({ projectId: P, month: '2026-03', note: '' })
+    expect(r).toEqual({ error: 'The month’s generation data could not be read — try again.' })
+    expect(JSON.stringify(r)).not.toMatch(/permission denied|meter_readings/)
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.emit).not.toHaveBeenCalled()
+  })
 })
