@@ -2,11 +2,13 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { OWNER_ADMIN, readSolarOrgSettings, solarSettingsToForm } from '@esite/shared'
+import { templateFromRow } from '@esite/shared/solar-operations/client'
 import { createClient } from '@/lib/supabase/server'
 import { requireRolePage } from '@/lib/auth/require-role'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { SolarSettingsForm } from './SolarSettingsForm'
 import { ProposalTemplatesForm } from './ProposalTemplatesForm'
+import { HandoverTemplateForm } from './HandoverTemplateForm'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Solar defaults' }
@@ -30,6 +32,10 @@ export default async function SolarSettingsPage() {
   const { data: tpl } = await supabase.schema('solar').from('proposal_templates')
     .select('terms_text, disclaimer_text, validity_days, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
   const t = tpl as { terms_text?: string; disclaimer_text?: string; validity_days?: number; updated_at?: string } | null
+  // Phase 7: the org's handover checklist template (00217 SELECT policy); none saved → the built-in default.
+  const { data: hoRow } = await supabase.schema('solar').from('handover_templates')
+    .select('name, items, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
+  const ho = hoRow as { name?: unknown; items?: unknown; updated_at?: string } | null
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
@@ -54,6 +60,9 @@ export default async function SolarSettingsPage() {
           initial={{ termsText: t?.terms_text ?? '', disclaimerText: t?.disclaimer_text ?? '', validityDays: t?.validity_days ?? 30 }}
           updatedAt={t?.updated_at ?? null}
         />
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <HandoverTemplateForm initial={templateFromRow(ho ? { name: ho.name, items: ho.items } : null)} updatedAt={ho?.updated_at ?? null} />
       </div>
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
         {LATER.map((s) => (
