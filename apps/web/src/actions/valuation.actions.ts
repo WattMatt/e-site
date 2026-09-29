@@ -41,6 +41,7 @@ import {
   type BoqSection,
 } from '@esite/shared'
 import { gatherValuationReportData } from '@/lib/reports/valuation-report-data'
+import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
 import { renderValuationReport } from '@/lib/reports/render-valuation'
 
 const REPORTS_BUCKET = 'reports'
@@ -682,7 +683,8 @@ export async function getValuationReportUrlAction(
   const { data: row } = await (service as any)
     .schema('projects')
     .from('reports')
-    .select('storage_path')
+    .select('storage_path, organisation_id')
+    .eq('project_id', projectId)
     .eq('source_table', 'valuations')
     .eq('source_id', valuationId)
     .eq('status', 'issued')
@@ -690,8 +692,14 @@ export async function getValuationReportUrlAction(
     .limit(1)
     .maybeSingle()
 
-  const storagePath = (row as { storage_path?: string } | null)?.storage_path
+  const report = row as { storage_path?: string; organisation_id?: string } | null
+  const storagePath = report?.storage_path
   if (!storagePath) return { error: 'No certificate found for this valuation' }
+  // Signed with the SERVICE client: the path must sit in this project's own folder (00220).
+  if (!reportPathBelongsTo(storagePath, report?.organisation_id, projectId)) {
+    console.error('getValuationReportUrlAction: refused a report path outside its row', { projectId, valuationId })
+    return { error: REPORT_PATH_REFUSED }
+  }
 
   const { data: signed, error } = await service.storage
     .from(REPORTS_BUCKET)

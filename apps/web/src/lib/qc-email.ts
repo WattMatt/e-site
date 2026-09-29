@@ -11,6 +11,7 @@
 import { projectSettingsService, renderQcIssuedEmail } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 import { notifyEntityEvent } from './notify'
+import { reportPathBelongsTo } from '@/lib/reports/report-path'
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
 const QC_REPORTS_BUCKET = 'qc-reports'
@@ -59,7 +60,8 @@ export async function notifyQcIssued(args: NotifyQcIssuedArgs): Promise<void> {
     // failure just omits the link — the deep link still gets people there.
     const { data: pdfRow } = await (svc as any)
       .schema('projects').from('reports')
-      .select('storage_path')
+      .select('storage_path, organisation_id')
+      .eq('project_id', args.projectId)
       .eq('source_table', 'qc_reports')
       .eq('source_id', args.reportId)
       .eq('status', 'issued')
@@ -67,7 +69,8 @@ export async function notifyQcIssued(args: NotifyQcIssuedArgs): Promise<void> {
       .limit(1)
       .maybeSingle()
     let pdfUrl: string | null = null
-    if (pdfRow?.storage_path) {
+    // Signed with the service client: only a path inside the row's own <org>/<project>/ (00220).
+    if (pdfRow?.storage_path && reportPathBelongsTo(pdfRow.storage_path, pdfRow.organisation_id, args.projectId)) {
       const { data: signed } = await svc.storage
         .from(QC_REPORTS_BUCKET)
         .createSignedUrl(pdfRow.storage_path as string, SIGNED_URL_TTL)

@@ -26,6 +26,7 @@ const PROJECT_ID  = '00000000-0000-0000-0000-000000000011'
 const ORG_ID      = '00000000-0000-0000-0000-000000000001'
 const REVISION_ID = '00000000-0000-0000-0000-000000000055'
 const USER_ID     = '00000000-0000-0000-0000-000000000077'
+const OTHER_ID    = '00000000-0000-0000-0000-0000000000ff'
 
 const REVISION_ROW = {
   id: REVISION_ID,
@@ -53,6 +54,7 @@ function makeSupabase(opts: {
   /** row returned by the single-revision lookup (select → eq → eq → maybeSingle) */
   revisionRow?: unknown | null
   deleteError?: { message: string } | null
+  deletedRows?: unknown[] | null
 }) {
   const {
     orgId = ORG_ID,
@@ -60,6 +62,7 @@ function makeSupabase(opts: {
     listError = null,
     revisionRow = null,
     deleteError = null,
+    deletedRows = [{ id: REVISION_ID }],
   } = opts
 
   // projects.projects resolve chain
@@ -78,7 +81,8 @@ function makeSupabase(opts: {
   const eq1 = vi.fn().mockReturnValue({ order, eq: eq2 })
   const select = vi.fn().mockReturnValue({ eq: eq1 })
 
-  const deleteEq2 = vi.fn().mockResolvedValue({ error: deleteError })
+  const deleteSelect = vi.fn().mockResolvedValue({ data: deleteError ? null : deletedRows, error: deleteError })
+  const deleteEq2 = vi.fn().mockReturnValue({ select: deleteSelect })
   const deleteEq1 = vi.fn().mockReturnValue({ eq: deleteEq2 })
   const del = vi.fn().mockReturnValue({ eq: deleteEq1 })
 
@@ -216,6 +220,28 @@ describe('getGcrReportUrlAction', () => {
       { download: REVISION_ROW.file_name },
     )
   })
+
+  // 00220: signed with the service client, so the path must sit in this project's own folder.
+  it.each([
+    ['another project', `${ORG_ID}/${OTHER_ID}/generator-cost-recovery/1-a.pdf`],
+    ['another org', `${OTHER_ID}/${OTHER_ID}/equipment-materials-v1.pdf`],
+    ['a traversal', `${ORG_ID}/${PROJECT_ID}/../../${OTHER_ID}/${OTHER_ID}/x.pdf`],
+  ])('refuses to sign a revision path in %s', async (_label, path) => {
+    const { client } = makeSupabase({ revisionRow: { ...REVISION_ROW, storage_path: path } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    hasFeatureSeatMock.mockResolvedValue(true)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { getGcrReportUrlAction } = await import('./gcr-reports.actions')
+    const result = await getGcrReportUrlAction(PROJECT_ID, REVISION_ID)
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be verified/) })
+    expect(service.createSignedUrl).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
 })
 
 // ─── deleteGcrReportRevisionAction ───────────────────────────────────────────
@@ -261,5 +287,35 @@ describe('deleteGcrReportRevisionAction', () => {
 
     expect(result).toEqual({ ok: true })
     expect(service.remove).toHaveBeenCalledWith([REVISION_ROW.storage_path])
+  })
+
+  it('does not remove the file when RLS deleted no row', async () => {
+    const { client } = makeSupabase({ revisionRow: REVISION_ROW, deletedRows: [] })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { deleteGcrReportRevisionAction } = await import('./gcr-reports.actions')
+    const result = await deleteGcrReportRevisionAction(PROJECT_ID, REVISION_ID)
+
+    expect('error' in result).toBe(true)
+    expect(service.remove).not.toHaveBeenCalled()
+  })
+
+  it('never removes a file outside the project’s own folder', async () => {
+    const { client } = makeSupabase({ revisionRow: { ...REVISION_ROW, storage_path: `${OTHER_ID}/${OTHER_ID}/valuation-x-v1.pdf` } })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { deleteGcrReportRevisionAction } = await import('./gcr-reports.actions')
+    const result = await deleteGcrReportRevisionAction(PROJECT_ID, REVISION_ID)
+
+    expect(result).toEqual({ ok: true })
+    expect(service.remove).not.toHaveBeenCalled()
+    err.mockRestore()
   })
 })

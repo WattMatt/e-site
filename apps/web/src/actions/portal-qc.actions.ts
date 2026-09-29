@@ -2,6 +2,7 @@
 
 import { z } from 'zod'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
 
 const QC_REPORTS_BUCKET = 'qc-reports'
 const SIGNED_URL_TTL_SECONDS = 300 // 5 minutes — portal downloads are one-shot
@@ -59,7 +60,7 @@ export async function getPortalQcReportPdfUrlAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: savedRow } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path, version')
+    .select('storage_path, version, organisation_id')
     .eq('project_id', projectId)
     .eq('kind', 'qc')
     .eq('source_table', 'qc_reports')
@@ -68,8 +69,14 @@ export async function getPortalQcReportPdfUrlAction(
     .order('version', { ascending: false })
     .limit(1)
     .maybeSingle()
-  const saved = savedRow as { storage_path: string; version: number } | null
+  const saved = savedRow as { storage_path: string; version: number; organisation_id: string } | null
   if (!saved) return { error: 'No PDF is available for this report yet' }
+  // Signed with the SERVICE client, so the row's path is trusted only inside its own
+  // <org>/<project>/ folder (00220 refuses writing any other row).
+  if (!reportPathBelongsTo(saved.storage_path, saved.organisation_id, projectId)) {
+    console.error('getPortalQcReportPdfUrlAction: refused a report path outside its row', { projectId, reportId })
+    return { error: REPORT_PATH_REFUSED }
+  }
 
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

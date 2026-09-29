@@ -11,7 +11,14 @@ vi.mock('@/lib/supabase/server', () => ({
 const PROJECT_ID = '00000000-0000-0000-0000-000000000011'
 const REPORT_ID = '00000000-0000-0000-0000-000000000055'
 
-const SAVED_PDF = { storage_path: 'org/proj/qc-report-x-v2.pdf', version: 2 }
+const ORG_ID = '00000000-0000-0000-0000-000000000001'
+const OTHER_ID = '00000000-0000-0000-0000-0000000000ff'
+
+const SAVED_PDF = {
+  storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v2.pdf`,
+  version: 2,
+  organisation_id: ORG_ID,
+}
 
 /**
  * Two RLS-client chains:
@@ -148,5 +155,28 @@ describe('getPortalQcReportPdfUrlAction', () => {
     expect('error' in result).toBe(true)
     if ('error' in result) expect(result.error).toMatch(/no pdf/i)
     expect(service.createSignedUrl).not.toHaveBeenCalled()
+  })
+
+  // 00220: signed with the service client, so the saved row's path must sit in its own folder.
+  it.each([
+    ['another org', `${OTHER_ID}/${OTHER_ID}/qc-report-x-v1.pdf`],
+    ['another project', `${ORG_ID}/${OTHER_ID}/qc-report-x-v1.pdf`],
+    ['a traversal', `${ORG_ID}/${PROJECT_ID}/../../${OTHER_ID}/${OTHER_ID}/qc-report-x-v1.pdf`],
+  ])('refuses to sign a saved path in %s', async (_label, path) => {
+    const sup = makeSupabase({
+      qcReportRow: { id: REPORT_ID, report_no: 7, status: 'issued' },
+      savedRow: { ...SAVED_PDF, storage_path: path },
+    })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(sup.client)
+    createServiceClientMock.mockReturnValue(service.client)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { getPortalQcReportPdfUrlAction } = await import('./portal-qc.actions')
+    const result = await getPortalQcReportPdfUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be verified/) })
+    expect(service.createSignedUrl).not.toHaveBeenCalled()
+    err.mockRestore()
   })
 })

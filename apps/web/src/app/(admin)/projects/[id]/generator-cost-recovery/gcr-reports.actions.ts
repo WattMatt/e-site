@@ -8,6 +8,7 @@ import {
   COST_VIEW_ROLES,
   type GcrReportRevisionRow,
 } from '@esite/shared'
+import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
@@ -87,6 +88,12 @@ export async function getGcrReportUrlAction(
   const revision = row as { storage_path: string; file_name: string } | null
   if (!revision) return { error: 'Not found' }
 
+  // Signed with the SERVICE client, so the path must belong to this project's own folder (00220).
+  if (!reportPathBelongsTo(revision.storage_path, orgId, projectId)) {
+    console.error('getGcrReportUrlAction: refused a revision path outside its project', { projectId, revisionId })
+    return { error: REPORT_PATH_REFUSED }
+  }
+
   const service = createServiceClient()
   const { data: signed, error: signErr } = await (service as any).storage
     .from(REPORTS_BUCKET)
@@ -128,14 +135,26 @@ export async function deleteGcrReportRevisionAction(
   const revision = row as { storage_path: string } | null
   if (!revision) return { error: 'Not found' }
 
-  const { error: deleteErr } = await (supabase as any)
+  const { data: deleted, error: deleteErr } = await (supabase as any)
     .schema('gcr')
     .from('report_revisions')
     .delete()
     .eq('id', revisionId)
     .eq('project_id', projectId)
+    .select('id')
 
   if (deleteErr) return { error: deleteErr.message ?? 'Failed to delete revision' }
+
+  // RLS answers a refused delete with zero rows, not an error: only remove the file when this row went.
+  if (!Array.isArray(deleted) || deleted.length !== 1) {
+    return { error: 'Nothing was deleted — the revision may already be gone, or you may not be allowed to delete it.' }
+  }
+
+  // Removed with the SERVICE client: never a file outside this project's own folder (00220).
+  if (!reportPathBelongsTo(revision.storage_path, orgId, projectId)) {
+    console.error('deleteGcrReportRevisionAction: kept an object outside its project', { projectId, revisionId })
+    return { ok: true }
+  }
 
   // Best-effort object removal — an orphaned object is invisible (private
   // bucket) and harmless; the row is the source of truth.
