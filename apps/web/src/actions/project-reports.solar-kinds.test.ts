@@ -68,3 +68,49 @@ describe('Solar report kinds follow the Solar level (00216 mirrors this)', () =>
     await expect(deleteProjectReportAction(P, 'r2')).resolves.toEqual({ error: 'You do not have Solar edit access on this project.' })
   })
 })
+
+// Review round 2 (C1): the URL action gates on a row's KIND and then service-signs its storage_path,
+// so a forged row (00117 reports_write lets owner/admin/PM write any row) could point an open or
+// View-level kind at a feasibility PDF. 00216 refuses the write; this refuses the sign as well.
+describe('a report URL is signed only for a path that belongs to the row (review round 2, C1)', () => {
+  const FEAS_PATH = 'o1/p1/solar-reports/solar_feasibility-v1-run1.pdf'
+  const REFUSED = 'This report’s file could not be verified, so it cannot be opened.'
+  function withRows(extra: Array<Record<string, unknown>>) {
+    const fake = fakeSupabase({ tables: { 'projects.reports': [...rows, ...extra], 'projects.projects': [{ id: P, organisation_id: 'o1' }] } })
+    h.createClient.mockResolvedValue(fake.client)
+    const svc = withStorage(fakeSupabase())
+    h.createServiceClient.mockReturnValue(svc.client)
+    return svc
+  }
+  const row = (id: string, kind: string, storage_path: string) =>
+    ({ id, project_id: P, organisation_id: 'o1', kind, title: 'X', storage_path, status: 'issued', version: 1 })
+
+  it('refuses an open kind pointed at a Solar PDF, even for a money user', async () => {
+    h.level.mockResolvedValue('edit_financials')
+    const svc = withRows([row('f1', 'tenant_schedule', FEAS_PATH)])
+    await expect(getProjectReportUrlAction(P, 'f1')).resolves.toEqual({ error: REFUSED })
+    expect(svc.bucket.createSignedUrl).not.toHaveBeenCalled()
+  })
+  it('refuses a technical row pointed at a feasibility PDF for a View/Edit user', async () => {
+    h.level.mockResolvedValue('edit')
+    const svc = withRows([row('f2', 'solar_technical', FEAS_PATH), row('f3', 'solar_technical', 'o1/p1/solar-proposals/x-v1.pdf')])
+    await expect(getProjectReportUrlAction(P, 'f2')).resolves.toEqual({ error: REFUSED })
+    await expect(getProjectReportUrlAction(P, 'f3')).resolves.toEqual({ error: REFUSED })
+    expect(svc.bucket.createSignedUrl).not.toHaveBeenCalled()
+  })
+  it('refuses a path outside the row’s own <org>/<project>/ prefix', async () => {
+    h.level.mockResolvedValue('edit_financials')
+    const svc = withRows([row('f4', 'tenant_schedule', 'o2/p9/tenant-schedule-v1.pdf'), row('f5', 'tenant_schedule', 'o1/p1x/tenant-schedule-v1.pdf')])
+    await expect(getProjectReportUrlAction(P, 'f4')).resolves.toEqual({ error: REFUSED })
+    await expect(getProjectReportUrlAction(P, 'f5')).resolves.toEqual({ error: REFUSED })
+    expect(svc.bucket.createSignedUrl).not.toHaveBeenCalled()
+  })
+  it('still signs a technical report on its own path for a View user, and a feasibility report for a money user', async () => {
+    h.level.mockResolvedValue('view')
+    const svc = withRows([row('ok1', 'solar_technical', 'o1/p1/solar-reports/solar_technical-v1-run1.pdf'), row('ok2', 'solar_feasibility', FEAS_PATH)])
+    await expect(getProjectReportUrlAction(P, 'ok1')).resolves.toEqual({ url: 'https://signed.example/x' })
+    h.level.mockResolvedValue('edit_financials')
+    await expect(getProjectReportUrlAction(P, 'ok2')).resolves.toEqual({ url: 'https://signed.example/x' })
+    expect(svc.bucket.createSignedUrl).toHaveBeenCalledTimes(2)
+  })
+})

@@ -24,6 +24,38 @@ async function solarReadDenied(supabase: unknown, projectId: string, kind: strin
   return solarLevelAllows(level, need) ? null : NO_SOLAR_ACCESS
 }
 
+const REPORT_PATH_REFUSED = 'This report’s file could not be verified, so it cannot be opened.'
+const SOLAR_PDF_PATH = /\/solar-(reports|proposals)\//
+
+/**
+ * The Solar kind a Solar PDF path holds: proposals under /solar-proposals/, and under /solar-reports/
+ * the `<kind>-v…` file name generate.ts writes. An unrecognised Solar file is treated as feasibility
+ * (the strictest read), never as technical.
+ */
+function solarKindForPath(path: string): string {
+  if (path.includes('/solar-proposals/')) return 'solar_proposal'
+  const file = path.slice(path.indexOf('/solar-reports/') + '/solar-reports/'.length)
+  return file.startsWith('solar_technical-') ? 'solar_technical' : 'solar_feasibility'
+}
+
+/**
+ * The URL action signs with the SERVICE client, so the row's storage_path is trusted only when it
+ * belongs to the row (review round 2, C1): it must sit under the row's own `<org>/<project>/`, and a
+ * Solar PDF path is signed only for a Solar kind whose file the caller's Solar level can read. 00216
+ * refuses a session write of such a row; this holds even for a row that predates it.
+ */
+async function reportPathDenied(
+  supabase: unknown, projectId: string, report: { storage_path: string; kind: string; organisation_id: string },
+): Promise<string | null> {
+  if (!report.organisation_id || !report.storage_path.startsWith(`${report.organisation_id}/${projectId}/`)) return REPORT_PATH_REFUSED
+  if (!SOLAR_PDF_PATH.test(report.storage_path)) return null
+  if (!solarLevelForKind(report.kind)) return REPORT_PATH_REFUSED
+  const need = solarLevelForKind(solarKindForPath(report.storage_path))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+  return need && solarLevelAllows(level, need) ? null : REPORT_PATH_REFUSED
+}
+
 /** A saved report artifact row (projects.reports) as listed in the UI. */
 export interface ProjectReportRow {
   id: string
@@ -181,12 +213,12 @@ export async function getProjectReportUrlAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: row } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path, kind, version')
+    .select('storage_path, kind, version, organisation_id')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const report = row as { storage_path: string; kind: string; version: number } | null
+  const report = row as { storage_path: string; kind: string; version: number; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
   // The kind is only known once the row is read, so the gate runs here. After
@@ -200,6 +232,8 @@ export async function getProjectReportUrlAction(
   }
   const solarDenied = await solarReadDenied(supabase, projectId, report.kind)
   if (solarDenied) return { error: solarDenied }
+  const pathDenied = await reportPathDenied(supabase, projectId, report)
+  if (pathDenied) return { error: pathDenied }
 
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
