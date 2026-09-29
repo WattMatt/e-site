@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { OneDriveProvider } from '../../services/cloud-storage/onedrive.provider'
 import { scriptFetch, withProviderCreds } from './test-helpers'
 
@@ -134,6 +134,23 @@ describe('OneDriveProvider', () => {
       })
       expect(r2.items).toHaveLength(0)
       cap.assertExhausted()
+    })
+
+    it('refuses a pageToken that is not a graph.microsoft.com URL, without fetching (the bearer never leaves)', async () => {
+      const fetchSpy = vi.fn()
+      globalThis.fetch = fetchSpy as unknown as typeof fetch
+      for (const bad of [
+        'https://attacker.example/x',
+        'http://graph.microsoft.com/v1.0/me/drive/items/F1/children',
+        'https://graph.microsoft.com.attacker.example/v1.0/x',
+        'https://evil@graph.microsoft.com.attacker.example/x',
+        'https://graph.microsoft.com:8443/v1.0/x',
+        'not a url',
+        '/v1.0/me/drive/root/children',
+      ]) {
+        await expect(provider.listFolder({ folderId: 'F1', accessToken: 'AT', pageToken: bad }), bad).rejects.toThrow(/page token/i)
+      }
+      expect(fetchSpy).not.toHaveBeenCalled()
     })
   })
 
