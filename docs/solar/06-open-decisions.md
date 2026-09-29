@@ -26,7 +26,6 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-03 | Tariff library maintained **by E-Site as an application process**: auto-ingest and automatic checks, **E-Site platform admin approves** each year before publishing | Platform role `is_platform_tariff_admin()` (E-Site staff), ingestion jobs + review queue; customers never edit reference data |
 | D-03b | Library readable by **subscribed orgs only** | Read policy on `tariffs.*` = caller's org has an active Solar subscription (or is a platform admin) |
 | D-04 | Solar access **granted per user by the project owner** | New `solar.project_access(project_id, user_id, level)`; levels **View / Edit / Edit + financials**; grantors = **org owner and org admin** of the project's org |
-| D-04c | **External project members** (active on the project, from another organisation) are eligible for **View only**; client viewers and suppliers never | `solar.user_max_grant_level` caps grants, requests and resolved level (2026-09-28) |
 | D-04b | Users without access **still see the Solar tab** | Locked tab with two actions: **Request access** (notifies org owners/admins, who approve with a level) and, if the org is not subscribed, **Subscribe** (visible to owner/admin; others see "Ask an admin to subscribe") |
 
 ## 4. Scope and timing
@@ -43,7 +42,7 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | ID | Decision | Build rule |
 |---|---|---|
 | D-22 | **New `solar` + `tariffs` schemas** | Full new-schema checklist incl. PostgREST `db_schema` PATCH |
-| D-23 | Meter readings storage **decided by a Phase 3 volume test** | Default partitioned Postgres table; switch to compressed files + aggregates only if it underperforms at ≥ 2 M rows |
+| D-23 | Meter readings storage **decided by a Phase 3 volume test** | Measured 2026-09-28 on a production dry run (`scripts/db/solar-readings-volume-test.sql` inside `dry-run-migration.sh`'s rolled-back transaction, 00208 + 00211 applied in-transaction, zero residue read back), **scaled** to stay under the owner's 500,000-row production cap: 27 channels × 17,520 = 473,040 rows bulk-inserted in 6,535 ms (→ 2,102,400 rows ≈ 29,044 ms, linear); write_readings 17,520 rows in 323 ms = 54,158 rows/s; one channel-year read under RLS 6.2 ms; hourly aggregate of one channel 12.9 ms; site monthly energy (28 channels, under RLS) 357 ms (→ 121 channels ≈ 1,544 ms, linear); 71,401,472 bytes for 490,560 rows = 145.6 bytes/row (→ 2,119,920 rows ≈ 309 MB). The per-channel read and aggregate are one PK index scan in one partition and do not grow with table size except via index depth. Cross-check at full scale on local plain PostgreSQL 17 (no RLS, no auth, same partitioned DDL + FK): 2,102,400 rows bulk-inserted in 17,642 ms; 121st channel upsert 17,520 rows in 57 ms; channel-year read 8.6 ms; hourly aggregate 5.6 ms; site monthly (121 channels) 162 ms; 329,097,216 bytes = 155.2 bytes/row, which confirms the linear size extrapolation within 7 %. **Decision: keep the partitioned table** (all under the limits: read 6.2 ms ≪ 500 ms, write 54,158 ≫ 10,000 rows/s; a 121-channel mall-year ≈ 0.31 GB, so 25 % of an 8 GB disk, the reference used because the plan's disk size was not read here, holds ≈ 6 such mall-years; the database is 81 MB today). Size is the limit that binds first: re-check the projected corpus against the actual disk before onboarding more than a handful of full malls. Switch criterion: RLS channel-year read > 500 ms, or write_readings < 10,000 rows/s, or projected size > 25 % of the DB plan. |
 
 ## 6. Numbers and proposals
 
@@ -62,7 +61,7 @@ is what the specs now say. A change to any of these is a new decision recorded h
 
 | ID | Decision | Build rule / action |
 |---|---|---|
-| D-29 | **2026/27 tariffs downloaded by Claude.** Eskom 2026/27: 7 files done (`005. NERSA TARIFFS/2026-27/ESKOM/`, manifest with sha256). Municipal: **175 of 177 licensees** collected (176 PDFs, `2026-27/MUNICIPAL/<province>/`, manifest.csv + COVERAGE.md). NERSA published no 2026/27 province workbooks — one Decision & RfD PDF per licensee (regulator-decisions/150, 30 Jun 2026). Missing: Phumelela (FS), Musina (LP) — no decision published. Rate tables absent in 4 (Dihlabeng, Merafong, Nelson Mandela Bay, Umuziwabantu) → use the municipality's own schedule. Phase 2 municipal 2026/27 ingestion is therefore PDF-based | **Done** |
+| D-29 | **2026/27 tariffs downloaded by Claude.** Eskom 2026/27: 7 files done (`005. NERSA TARIFFS/2026-27/ESKOM/`, manifest with sha256). Municipal: **all** NERSA 2026/27 decisions, collected by a paced background job (NERSA rate-limits); no consolidated 2026/27 province workbook found — per-municipality decision PDFs | Eskom done; municipal in progress |
 | D-27 | **PnP SCADA re-download — parked.** Finding (2026-09-28, thukela-kadesh.pnpscada.com, 1,029 meters / 34 meter accounts): the portal's "Download Profile CSV" (`_DataDownload`) is a meter-*account* export and **ignores the requested meter**, silently substituting the "closest" account (five Kuruman meters returned byte-identical data; Merino Checkers returned a Kuruman logger's data; others fell back to "Parkdene Generator DB1.2"). This is the root cause of the mis-filed PnP folders. Per-meter half-hour data needs a provider-side bulk export (Thukela Metering) or the portal's per-meter tools (CRF2/bulk) — not attempted. 3 suspect files quarantined in `PNP-2026-09/_UNVERIFIED-do-not-use/` | Parked by owner |
 | D-08b | **Solcast is a free/hobbyist tier → the 7-day forecast panel is dropped** (free terms do not permit commercial use) | Functional §10, §16 |
 | D-19 | Validation against **public references only**: PVGIS PVcalc (5 sites × 3 orientations, ±3 %) and the 10 hand-computed tariff cases; no PVsyst/real-bill dependency | Engine §3.7, §5 |
@@ -71,7 +70,71 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-09 | Grid-connection warning when **PV AC > 75 % of transformer/mini-sub rating** (warning only) | Functional §3.2 |
 | D-06 | Synthesised load **seeded from GCR kW/m² densities + 8 archetypes**, owner reviews the table once | Engine §2.4 |
 
+## Integration gaps found on feat/solar-final (2026-09-29) — Fixed 2026-09-29
+
+Plan: `docs/superpowers/plans/2026-09-29-solar-pricing-inputs.md`.
+
+- **I-1 — Fixed.** Yield & Financials priced on the published tariff only and ignored the project override,
+  the export rule and its rates, the Tariff tab escalation path and the Load tab load growth, so they
+  disagreed with the Tariff tab's own bill check. Now there is ONE pure resolver,
+  `resolveStudyPricing` (`packages/shared/src/solar/tariff/pricing.ts`), and ONE loader,
+  `loadStudyPricing` (`apps/web/src/lib/solar/pricing/load-study-pricing.ts`). The Tariff tab bill check
+  (`lib/solar/tariff/effective-tariff.ts`, caller's session) and the case run + financials
+  (`lib/solar/cases/tariff.ts`, service client) both go through it; a contract test refuses either
+  building a tariff itself. What the resolver decides:
+  - **Tariff:** the override's rows when `studies.tariff_override_id` points at them (D-10), else published.
+  - **Export:** the stored rule, else the Tariff tab default (linked if the tariff has one, else none).
+    Manual → `manualExportTariff(rates, note)`; linked → the Gen-offset tariff; **none → the effective SSEG
+    rule's crediting is `none`**, so no calculator credits export (even a tariff's own `export_credit` rows).
+  - **SSEG rule:** the library row, else the Net-Billing Rules default for the licensee kind — the rule the
+    Tariff tab shows. (Before, the run passed `null`, i.e. no credit at all, whatever the tab said.)
+  - **Escalation:** `escalationPathFromRows(buildEscalationRows(…))` — the Tariff tab table (D-07). The case
+    config's own `escalation*` fields are kept for compatibility and are not priced; Financials shows the
+    Tariff tab's year-2 / year-10 figures read-only.
+  - **Load growth:** `studies.load_growth_pct` (Load tab), NULL → 0; the case's own `loadGrowthPct` is not priced.
+  - **Hashes:** `studyPricingHash` (canonical; charge lists in one total order, so database row order never
+    moves it), HMAC-keyed server-side (`pricing-hash.ts`: `SOLAR_PRICING_HASH_KEY`, else the service-role key)
+    so the View-readable `case_runs.inputs_hash` cannot be tested against candidate rates, enters the case hash
+    (`inputsHash({ energy, pricing })`) and `fin_inputs_hash`: changing any of the four marks the case and
+    its financials **Stale**. Every run recorded before this change reads Stale once (nothing is in
+    production yet).
+  - **Load growth in the cashflow (engine spec §6, v1):** `G_n = (1+g)^(n-1)` scales Bill_before, Bill_after
+    and therefore the saving (the energy balance rescaled, not re-simulated); year 1 is unchanged. This is
+    an **upper bound** on the saving: a fully self-consumed system does not save more when load grows (its
+    extra load is all imported). A re-simulation per year remains a later refinement.
+  - Validated: the 2a golden cases 1–8 and 10 reproduce exactly through the resolver; an override case gives
+    the same March bill (R2,732.00) in the bill check and in the run's year-1 bills; manual R0.85/kWh
+    credits R85.00 on 100 kWh and 'none' credits R0; an escalation change moves NPV and the case hash;
+    3 %/yr growth leaves year 1 untouched and scales years 2+ by 1.03^(n−1).
+  - **The Tariff tab shows the resolver's values** (escalation table, SSEG rule in force, export source note)
+    whenever a tariff is pinned, so what it displays is what is priced (contract-tested).
+  - **Known, accepted:** a money-only change (override, export rate) flips a case to Stale for a View user
+    too — one bit, no value. A pricing change asks for an energy re-run although the energy did not change
+    (the case hash carries both, by design). The case's own CPI still drives opex and any analysis years
+    past the org's `analysis_years`; the Tariff tab rows (years 2..`analysis_years`) use the org CPI.
+- **I-2 — Fixed (00220).** Two DEFERRED constraint triggers enforce at COMMIT that a study's export rule is
+  `manual` **iff** it has `study_export_rates` rows: a direct PATCH of a manual rule with no rates, a direct
+  DELETE of the rates under a manual rule, and a stray rate under a non-manual rule are all refused (23514);
+  `save_export_rule` still passes.
+- **`solar.layouts.module_id` FK — Fixed (00220).** `REFERENCES solar.equipment(id) ON DELETE RESTRICT`,
+  NULL backfill of anything that is not a module of the layout's org or of the platform catalogue (nothing
+  writes `module_id` today), and `layouts_module_bind` refuses another org's row or a non-module.
+  `module_spec` stays the design-time snapshot.
+
 ## Still open (small, non-blocking)
 - Owner review of the seeded density/archetype table (Phase 3).
 - Owner to confirm WM Solar still works when signed in (after containment + key rotation).
 - PnP per-meter data route (parked, D-27).
+
+## Backlog — meter import (Phase 3a review, deferred)
+- **Concurrent first commits.** Two first commits of the same file running at once can each mint a meter
+  (the file→meter binding is read, then written, with nothing unique on it), and two register commits of
+  one summary can both insert their rows. Needs a unique key (e.g. one series-hash row per file) or the
+  whole commit moved into a single RPC.
+- **Wild-timestamp outliers in series gap-filling.** A single stray timestamp far outside a file's range
+  stretches the timeline and the gap-fill window around it; outliers should be flagged and dropped first.
+- **Generic-path detection samples the first 50 rows only** (timestamp column, date order, decimal
+  comma); a file whose early rows are unrepresentative can be mis-detected.
+- **`auth.uid() IS NULL` service path** in `solar.write_readings` / `solar.clear_channel_readings` skips the
+  Edit check by design (service role and migrations); `anon` has no EXECUTE. Worth a comment in the
+  function bodies stating that, so nobody "fixes" it into a hole or a lock-out.

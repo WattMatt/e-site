@@ -8,7 +8,16 @@
     ".": "./src/index.ts",
     "./placeholder-fill": "./src/lib/jbcc/placeholder-fill.ts",
     "./docx-letterhead": "./src/lib/jbcc/docx-letterhead.ts",
-    "./docx-preview": "./src/lib/jbcc/docx-html.ts"
+    "./docx-preview": "./src/lib/jbcc/docx-html.ts",
+    "./solar-engine": "./src/services/solar/index.ts",
+    "./tariffs/parsers": "./src/tariffs/parsers/index.ts",
+    "./tariffs/ingest": "./src/tariffs/ingest/index.ts",
+    "./meter-data": "./src/meter-data/index.ts",
+    "./solar-load": "./src/services/solar/load/index.ts",
+    "./solar-cases": "./src/solar/cases/index.ts",
+    "./solar-reports": "./src/solar/reports/index.ts",
+    "./solar-operations": "./src/solar/operations/index.ts",
+    "./solar-operations/client": "./src/solar/operations/client.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",

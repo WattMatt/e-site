@@ -4,7 +4,7 @@ Source: clean export of `origin/main` = **`b8cca2e`** (2026-09-22, PR #201) at
 `scratchpad/esite-main`. Citations are repo-relative `path:line`. Migration head on main
 is **`00206_floor_plan_markups_read_set.sql`**. Open PRs #191 (`00201`) and #193 (`00202`)
 are claimed but unapplied and sit below the head, so they are stranded. The next free number
-is **`00207`**, but claim it only at apply time, after checking the ledger, `origin/main` and
+is **`00208`**, but claim it only at apply time, after checking the ledger, `origin/main` and
 the migration filenames in open PRs (see CLAUDE.md, "Claiming a number is not holding it").
 
 ---

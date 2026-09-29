@@ -53,19 +53,33 @@ const SUMMARY_LABELS: Record<string, string> = {
   received: 'received',
   overdue: 'overdue',
   receivedPct: '% received',
+  // Solar reports and proposals (Phase 6).
+  kwp: 'kWp',
+  mwhYear1: 'MWh in year 1',
+  saving: 'year-1 saving',
+  irrPct: '% IRR',
+  offer: 'offer excl. VAT',
+  // Solar monthly reports (Phase 7).
+  period: '^period',
+  actualKwh: 'kWh generated',
+  guaranteeKwh: 'kWh guaranteed',
+  variancePct: '% variance',
 }
 
 /** Identifiers a kind stores in `summary` for its own lookups; never printed. */
-const HIDDEN_SUMMARY_KEYS = new Set(['revisionId'])
+const HIDDEN_SUMMARY_KEYS = new Set(['revisionId', 'runId', 'familyId'])
+/** Figures whose null is meaningful ("no guarantee to compare against") and print as n/a, never dropped or 0. */
+const NULL_AS_NA_KEYS = new Set(['variancePct'])
 
 /** "48 boards · 31 received · 6 overdue", or null when there is no summary. */
 function summaryLine(rep: ProjectReportRow): string | null {
   const summary = rep.summary
   if (!summary || typeof summary !== 'object') return null
   const parts = Object.entries(summary)
-    .filter(([k, v]) => !HIDDEN_SUMMARY_KEYS.has(k) && v !== null && v !== undefined && v !== '')
+    .filter(([k, v]) => !HIDDEN_SUMMARY_KEYS.has(k) && (NULL_AS_NA_KEYS.has(k) ? v !== undefined : v !== null && v !== undefined && v !== ''))
     .map(([k, v]) => {
       const label = SUMMARY_LABELS[k] ?? k
+      if (v === null) return `${label.replace(/^[%^]\s*/, '')} n/a`
       if (label.startsWith('%')) return `${v}${label}`
       if (label.startsWith('^')) return `${label.slice(1)} ${v}`
       return `${v} ${label}`

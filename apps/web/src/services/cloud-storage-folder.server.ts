@@ -69,6 +69,45 @@ export async function listCloudFolder(
   }
 }
 
+/**
+ * Download one file from the connected provider into memory, refusing anything over `maxBytes`
+ * (the stream is cancelled at the cap). Same token refresh-on-401 as listCloudFolder.
+ */
+export async function downloadCloudFile(
+  args: { connectionId: string; fileId: string; maxBytes: number },
+  supabase: SupabaseClient,
+): Promise<{ bytes: Uint8Array; filename: string }> {
+  const conn = await loadConnection(args.connectionId, supabase)
+  const provider = getCloudStorageProvider(conn.provider)
+  let accessToken = await getActiveAccessToken(conn, supabase)
+  let res
+  try {
+    res = await provider.downloadFile({ fileId: args.fileId, accessToken })
+  } catch (e) {
+    if (!(e instanceof CloudStorageError && e.status === 401)) throw e
+    accessToken = await refreshAndPersist(conn, supabase)
+    res = await provider.downloadFile({ fileId: args.fileId, accessToken })
+  }
+  if (res.contentLength !== undefined && res.contentLength > args.maxBytes) throw new Error('too_large')
+  const reader = res.body.getReader()
+  const parts: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > args.maxBytes) {
+      await reader.cancel()
+      throw new Error('too_large')
+    }
+    parts.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let off = 0
+  for (const p of parts) { bytes.set(p, off); off += p.byteLength }
+  return { bytes, filename: res.filename }
+}
+
 interface SetMappingArgs {
   projectId: string
   connectionId: string

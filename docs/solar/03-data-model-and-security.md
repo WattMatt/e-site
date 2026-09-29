@@ -5,7 +5,7 @@ Conventions follow E-Site's migration rules (repo `CLAUDE.md`): every migration 
 `@verify` block; RLS is proven with impersonation assertion scripts (`scripts/db/assert-*.sql`) run red
 first; all three suites (`web`, `@esite/shared`, `@esite/db`) green before merge; migration numbers are
 claimed **at apply time** after checking the ledger, `origin/main` and open-PR filenames (next free was
-`00207` on 2026-09-28, but #191/#193 are stranded below the head).
+`00208` on 2026-09-28, but #191/#193 are stranded below the head).
 
 ---
 
@@ -18,9 +18,9 @@ claimed **at apply time** after checking the ledger, `origin/main` and open-PR f
 | `billing` (existing) | `org_addon_subscriptions` (new) | Existing schema |
 | `projects` (existing) | `reports` rows for new kinds | Existing |
 
-Large meter readings volume (≈ 17,520 rows per channel-year at 30 min; a 40-tenant mall ≈ 1.4 M
-rows/yr) lives in `solar.meter_readings`, partitioned by `organisation_id` hash **[D-23]**, or as Parquet
-in Storage with only hourly aggregates in Postgres. Decision gate at Phase 3 with a volume test.
+Meter readings live in `solar.meter_readings` (double precision, quality smallint), hash-partitioned by
+`channel_id` into 8 partitions, `organisation_id` denormalised on each row for one-comparison RLS, written
+only through `solar.write_readings` (upsert on the PK). D-23 volume test result: see `06-open-decisions.md`.
 
 ---
 
@@ -31,12 +31,10 @@ in Storage with only hourly aggregates in Postgres. Decision gate at Phase 3 wit
 billing.org_addon_subscriptions (
   id uuid pk, organisation_id uuid not null references public.organisations,
   feature_key text not null check (feature_key in ('solar')),
-  status text not null default 'pending'
-    check (status in ('pending','active','non_renewing','past_due','cancelled','refunded')),
+  status text not null check (status in ('active','non_renewing','past_due','cancelled','refunded')),
   paystack_subscription_code text unique, paystack_customer_code text,
   amount_kobo bigint not null,                        -- 199900 = R1,999/yr excl. VAT
-  current_period_end timestamptz,            -- required unless status = 'pending' (CHECK)
-  last_event_id text,                         -- webhook idempotency
+  current_period_end timestamptz not null,
   started_at, cancelled_at, refunded_at, updated_at)
 unique (organisation_id, feature_key)
 -- RLS: SELECT for org owner/admin only (00187 billing read gate); writes service role (webhook) only
@@ -45,8 +43,7 @@ solar.project_access (
   project_id uuid references projects.projects on delete cascade, user_id uuid,
   organisation_id uuid not null,                      -- bound from the project by BEFORE trigger
   level text not null check (level in ('view','edit','edit_financials')),
-  granted_by uuid,                            -- bound to the caller by trigger; NULL only on service-path writes
-  granted_at timestamptz not null default now(),
+  granted_by uuid not null, granted_at timestamptz not null default now(),
   primary key (project_id, user_id))
 -- writes: org owner/admin of the project's org only; suppliers/client_viewers cannot be granted (trigger)
 
@@ -58,19 +55,13 @@ solar.access_requests (
 unique (project_id, requester_id, kind) where status = 'pending'
 ```
 
-### 2.2 Helpers (in `public`, so PostgREST RPC reaches them; SECURITY DEFINER, `SET search_path = ''`, `REVOKE ALL FROM PUBLIC, anon`, `GRANT EXECUTE TO authenticated, service_role`) — as built in migration 00207
+### 2.2 Helpers (SECURITY DEFINER, `SET search_path = ''`, `REVOKE ALL FROM PUBLIC, anon`, `GRANT EXECUTE TO authenticated, service_role`)
 - `public.org_has_solar(p_org uuid) → boolean`: active subscription with `current_period_end > now()`
   (status `active` or `non_renewing`), OR the WM-Consulting internal bypass (consistent with `has_feature`).
-  Answers only for the service/definer path or an active member of that org (no cross-org oracle).
-- `public.solar_is_grantor(p_project uuid)`: caller is an active owner/admin of the project's org.
-- `public.solar_access_level(p_project uuid) → text` (`null|view|edit|edit_financials`): NULL unless
-  `org_has_solar(project's org)`; `edit_financials` for org owner/admin of the project's org; NULL unless
-  `user_has_project_access` (active org membership, 00204) and the effective role is not client_viewer/supplier;
-  otherwise the caller's `project_access.level`.
-- `public.solar_can_view(p)`, `public.solar_can_edit(p)`, `public.solar_can_see_money(p)` thin wrappers.
-- **One eligibility rule** for requesting and being granted access: active member of the project's org whose
-  effective project role is non-null and not client_viewer/supplier (org-level PMs without a project row qualify).
-- Approval never silently downgrades an existing grant (highest level wins); grantors downgrade explicitly.
+- `solar.access_level(p_project uuid) → text` (`null|view|edit|edit_financials`): NULL unless
+  `org_has_solar(project's org)`; `edit_financials` for org owner/admin of the project's org; otherwise the
+  caller's `project_access.level`, and only while the caller is an active project member.
+- `solar.can_view(p)`, `solar.can_edit(p)`, `solar.can_see_money(p)` thin wrappers.
 - `@verify`: `anon_execute_absent` for all; `behaviour` directives proving (a) a lapsed org returns NULL,
   (b) a member without a grant returns NULL, (c) an org admin returns `edit_financials`.
 
@@ -103,24 +94,24 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
+| `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, monthly_bills jsonb (S4 input), schematic_waived, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
 | `roof_sources` | study_id, kind (drawing/satellite), floor_plan_id, page_index, file_path, source_revision_id, storage_path, m_per_px, north_bearing_deg, attribution | Anchor fields per `floor_plan_markups` |
-| `meter_files` | org_id, sha256 UNIQUE per org, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (parsed/accepted/skipped/failed), uploaded_by | Raw file kept once |
-| `meters` | org_id, site_label, serial, label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id | Org library |
-| `meter_series_hashes` | org_id, body_hash, meter_id, file_id | Detects identical data filed under different names/sites (1,311 distinct series in 2,050 source files) |
-| `meter_register` | org_id, site_label, file_name, tenant_name, shop_no, area_m2, match_method (exact / LLM / unmapped), confirmed_by | From consolidation summaries; LLM/unmapped rows never auto-applied |
-| `study_meters` | study_id, meter_id | Study ↔ library link |
-| `meter_channels` | meter_id, file_id, source_column, quantity, direction, unit (enum), interval_min, is_cumulative, tz_convention, is_primary | |
-| `meter_readings` | channel_id, ts_end timestamptz, value numeric NULL, quality smallint; PK (channel_id, ts_end) | Upsert on PK ⇒ re-import is idempotent |
-| `meter_import_reports` | file_id, report jsonb, accepted_by, accepted_at | |
+| `meter_files` | org_id, sha256 UNIQUE per org, size_bytes, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (uploaded/parsed/accepted/skipped/failed; `uploaded` = registered, not yet parsed), uploaded_by, project_id (upload route), body_sha256, source_serials, ts_convention, row_order, skip_reason | Raw file kept once; the same bytes through another project of the org are refused as `duplicate_in_other_project` |
+| `meters` | org_id, site_label, serials text[] (a virtual meter holds several), label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id → meter_channels (ON DELETE SET NULL) | Org library |
+| `meter_series_hashes` | org_id, body_hash, meter_id, file_id | Detects identical data filed under different names/sites (1,311 distinct series in 2,050 source files); also binds a file to the meter it feeds. The row is written **before** any channel and before the readings are verified — intended: a retry after a partial failure finds the meter and reuses it instead of minting a second one. It therefore does not by itself mean the import succeeded; the file's `accepted` status and the accepted import report do |
+| `meter_register` | org_id, kind (`summary` = consolidation summary / `download_log` = the E serial register), source_file_id, site_label, file_name, tenant_name, shop_no, area_m2, match_method (exact / llm / unmapped / manual / none), serial, mall_name, downloaded, qa jsonb, confirmed_by, confirmed_at (set together) | Consolidation summaries and downloader logs; LLM/unmapped rows never auto-applied |
+| `study_meters` | study_id, meter_id, project_id + organisation_id (bound from the study by trigger, never trusted from the client), added_by (default auth.uid()), added_at | Study ↔ library link |
+| `meter_channels` | organisation_id (bound from the meter), meter_id, file_id, source_column, quantity, direction, phase (l1/l2/l3), source_unit (as in the file), unit (stored enum), interval_min, is_cumulative, tz_convention, is_primary (at most one per meter and file), coverage_only (daily channels), parser_version | |
+| `meter_readings` | channel_id, organisation_id, ts_end timestamptz, value double precision NULL, quality smallint; PK (channel_id, ts_end) | Hash-partitioned × 8 on channel_id; written only via solar.write_readings (upsert on PK); a re-commit of a file first empties its stored channels via solar.clear_channel_readings (same Edit gate), so it REPLACES rather than merges |
+| `meter_import_reports` | organisation_id, file_id, parser_version, options jsonb (the user's confirmed parse options), report jsonb, created_by, accepted_by + accepted_at (set together) | |
 | `tenant_load_basis` | study_id, node_id, source (metered/synthesised/excluded), meters jsonb [{meter_id, weight}], archetype, density_override_w_m2 | |
-| `load_archetypes` | code, name, version, shape (8760 float4 array compressed), seasonal jsonb | Platform data |
-| `site_load` | study_id, basis, reference_year, series (8760 float4, kW), md_monthly jsonb (kVA), built_at, inputs_hash | Derived cache |
+| `load_archetypes` | code, version, name, profiles jsonb (24 h × weekday/saturday/sunday/holiday), operating jsonb, seasonal jsonb (12), is_current | Platform data; expanded to 8,760 per reference year (a fixed 8,760 cannot follow a year's weekdays and holidays) |
+| `site_load` | study_id, project_id, organisation_id, basis, reference_year, series (8760 float4, kW), md_monthly jsonb (kVA), coverage jsonb, inputs_hash, engine_version, built_by, built_at; UNIQUE (study_id, basis, reference_year) | Derived cache |
 | `tariff_overrides` + `tariff_override_charges` | study_id, base_tariff_id; charge rows as in `tariffs.charge` + reason | |
 | `bill_checks` | study_id, month, entered values, modelled values | |
 | `layouts` | study_id, name UNIQUE per study, roof_source_id, module_id, updated_at | |
 | `layout_objects` | layout_id, kind (roof/obstruction/array/module_block/inverter/string/equipment/north), geometry jsonb (image px), pixels_per_meter snapshot, props jsonb | **Register in `isAnnotated()`** |
-| `cases` | study_id, name, pv_source (layout/manual), layout_id, config jsonb (full case input), finance jsonb, updated_at | |
+| `cases` | study_id, name, pv_source (layout/manual), layout_id (FK → layouts, ON DELETE RESTRICT, same project — 00219), config jsonb (full case input), finance jsonb, updated_at | |
 | `case_runs` | case_id, engine_version, inputs jsonb, inputs_hash, weather_dataset_id, tariff_ref jsonb, status, error, outputs jsonb (KPIs, monthly), hourly_path (Storage, 8760 columns compressed), run_by, started_at, finished_at | Immutable after finish |
 | `weather_datasets` | source (pvgis_tmy/upload), lat_round, lng_round, fetched_at, storage_path, meta jsonb | Cache shared per org (lat/lng rounded to 0.01°) |
 | `equipment` | org_id (NULL = platform catalogue), kind (module/inverter/battery), make, model, specs jsonb, retired_at | Never hard-deleted |
@@ -128,9 +119,10 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `proposals` | study_id, case_id, version, status, snapshot jsonb, pdf_path, pdf_sha256, share_token_hash, expires_at, issued_by/at, withdrawn_at | Token stored hashed |
 | `proposal_events` | proposal_id, kind (issued/viewed/accepted/declined/withdrawn/expired), actor_name, actor_email, ip, user_agent, pdf_sha256, at | Append-only (no UPDATE/DELETE policies) |
 | `installations`, `guarantees`, `downtime`, `monthly_report_notes`, `handover_items` | Operations (Phase 7) | Handover items reference E-Site document ids |
-| `schematics` | study_id, name, description, floor_plan_id, page_index, file_path, source_revision_id | Anchored like `floor_plan_markups` |
-| `schematic_cards` | schematic_id, meter_id, x, y, w, h (image px) | **Register in `isAnnotated()`** |
-| `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (image px), line_type | Also defines the meter hierarchy; **`isAnnotated()`** |
+| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00215) |
+| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00215) |
+| `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (flat image px, even length ≤ 400), line_type (supply/check), floor_plan_id (denormalised) | Supply lines define the meter hierarchy; a loop anywhere in the study is refused; deleting a card deletes its lines; **in `isAnnotated()`** |
+| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00215); no UPDATE |
 | `schedule_tasks` | work_item_id → projects.work_items (type `solar_task`), category, zone, start_date date, end_date date, progress, colour, sort_order, is_milestone | Dates as `date`, never timestamptz |
 | `schedule_segments`, `schedule_dependencies` (type FS/SS/FF/SF, lag_days), `schedule_baselines` (+ baseline tasks), `schedule_filter_presets` (per user) | Gantt | |
 | `solar.schedule_templates`, `handover_templates` | org_id, content jsonb | Org settings |
@@ -142,14 +134,48 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   `solar.can_see_money(project_id)` — simpler to prove than column rules.
 - **INSERT / UPDATE / DELETE**: a PERMISSIVE policy per verb on `solar.can_view` plus one RESTRICTIVE policy
   **per verb** on `solar.can_edit` (money tables: `solar.can_see_money`) — the `00200` shape.
-- Org library tables (`meters`, `meter_files`, `meter_register`, `equipment` with org_id): SELECT when
-  `org_has_solar(organisation_id)` and the caller is a member of that org with a Solar grant on any of its
-  projects (or owner/admin); writes by the same with Edit level.
+- Org library tables (`meter_files`, `meters`, `meter_series_hashes`, `meter_register`, `meter_channels`,
+  `meter_import_reports`, `meter_readings`, `equipment` with org_id): SELECT when
+  `org_has_solar(organisation_id)` and the caller is an active member of that org with a Solar grant on any
+  of its projects (or owner/admin) — `solar.library_orgs('view')`; writes by the same with Edit level
+  (`library_orgs('edit')`). **Deletes (00211 as built):** `meter_files`, `meters`, `meter_register` need
+  org owner/admin (`library_orgs('admin')`); `meter_channels` and `meter_series_hashes` need Edit (a
+  re-import rebinds them); `meter_readings` has no DELETE grant at all — they go with their channel
+  (cascade) or through `solar.clear_channel_readings` (Edit); `meter_import_reports` cannot be deleted.
+- **Linked read for external View members (owner decision 2, 2026-09-28):** in addition, a caller who is
+  NOT in the org library but holds View on a project (`solar_can_view`) may SELECT the `meters`,
+  `meter_channels` and `meter_readings` of meters linked through `study_meters` to a study on that project
+  (`solar.linked_meter_ids()` / `solar.linked_channel_ids()`, re-checked per statement, so a revoked grant,
+  a lapse or an unlink hides them again). Never `meter_files`, `meter_register`, `meter_import_reports` or
+  `meter_series_hashes`, and no write. A raw object in `solar-meter-raw` needs `library_orgs('view')` on the
+  path's org **and** View on the path's project, so the linked read never reaches raw files.
 - Append-only tables: SELECT + INSERT policies only.
 - **Impersonation assertions** (red first, then green): View user reads layout, cannot write, sees no money;
   Edit user writes inputs, sees no money; Edit + financials sees money; member without a grant reads nothing;
   client_viewer and supplier read nothing even if a grant row is forged; user from another org reads nothing;
   **lapsed subscription ⇒ nobody reads or writes, rows unchanged**; service-role bypass holds.
+- **Phase 3b as built (00215, Load + Schematics):**
+  - **No new `product_events` verbs** (owner decision 2026-09-28): the Load build, schematic save and
+    schematic sheet export write `solar.audit_events` only; `00215` does not re-declare
+    `product_events_event_check`.
+  - **Meter comparison overlay** is built on the Load → Meters sub-tab (owner change to default 8): select
+    2–4 meters → one overlaid, downsampled chart that reuses the meter series route and the chart
+    component; only meters sharing one unit are overlaid (the rest are named with the reason). Energy /
+    power data only, no rand values, so View may use it.
+  - **Schematic sheets** are `projects.reports` kind `solar_schematic_sheet` (read: Solar View via
+    `user_can_read_report_kind`, redefined in 00215 with both `solar_layout_sheet` and
+    `solar_schematic_sheet`; delete: Solar Edit). SVG download is client-side (escaped; background
+    embedded as a data URL) and writes nothing.
+  - **`cloud-sync-project` deploy is an owner step AFTER 00215 is applied.** Its `isAnnotated()` now
+    queries `schematics`, `schematic_cards` and `schematic_lines`; deployed before the tables exist, the
+    lookups error and fail closed — every drawing reads as annotated and auto-adopt stops platform-wide.
+  - Point-of-connection offer from the schematic graph (spec §13.3 bullet 3) is deferred to the Site &
+    Supply follow-up (open question).
+
+- **Derived values that cross the money line (I-1, 00220 review).** `case_runs.inputs_hash` (View-readable) carries
+  the study pricing, so the pricing half is an HMAC keyed server-side (`apps/web/src/lib/solar/pricing/pricing-hash.ts`):
+  a View user cannot test candidate override or export rates against it. What a View user does learn is one bit —
+  a case turning Stale after a money user edits the override or an export rate. Accepted.
 
 ### 3.2 Storage buckets (private; signed URLs only)
 `solar-meter-raw` (raw meter exports, path `<org>/<project>/<sha256>.<ext>`), `solar-runs` (8760 outputs),

@@ -106,8 +106,15 @@ anything else goes to a generic path that requires the user to confirm every cho
   Σ tenants ≈ 2.5 × it). Meters of kind `check` are excluded from both S1 and S2.
 - **S2 Tenants:** `site[h] = (Σ_tenants Σ_meters w_m × meter_m[h] + Σ_unmetered synth_t[h]) × (1 + common_area_pct)`.
 - **S4 Monthly bills:** archetype shape per §2.4 scaled so that for each month m,
-  `Σ_{h∈m} site[h] = bill_kWh_m`; if billed kVA is given, the monthly peak is additionally scaled
-  so `max_{h∈m} site[h] / PF = kVA_m` (PF default 0.95) using a peak-only transform (§2.5).
+  `Σ_{h∈m} site[h] = bill_kWh_m`; if billed kVA is given, the month is additionally reshaped so
+  `max_{h∈m} site[h] = kVA_m × PF` (PF default 0.95) by an **energy-preserving stretch about the monthly
+  mean** (owner decision 5, 2026-09-28): `site'[h] = mean_m + (site[h] − mean_m) × s`, with
+  `s = (kVA_m × PF − mean_m) / (max_m − mean_m)`, which keeps `Σ_{h∈m}` unchanged. Guards: a flat month
+  cannot take a peak (left unchanged, warned); billed `kVA_m × PF` below the monthly mean would need
+  `s < 0` and invert the shape, so the month is left unchanged with "billed kVA below average demand;
+  check PF/kVA"; if the stretch drives hours negative they are clamped to 0 and the month re-scaled to
+  `bill_kWh_m`, and the warning reports the peak actually achieved against the billed one. (Diversity,
+  §2.5, is unrelated: S4 never applies `k`.)
 
 ### 2.4 Synthesis from the tenant schedule (S3)
 For tenant t with area `A_t` (m², `structure.nodes.shop_area_m2`), category → density `D_c` (W/m², org
@@ -133,7 +140,16 @@ disabled for them with the tooltip "Measured data already reflects diversity".
 Monthly maximum demand (kVA) for demand charges uses the **highest sub-hourly interval** available
 (30-min if present, else hourly) in the tariff's chargeable TOU windows. Per format: B/C with a measured
 `S (kVA)` channel use it directly; A files (mostly `p14` only) divide kW by the PF assumption (default 0.95,
-shown as assumed); daily B files cannot produce MD. The averaged profile's peak is never used as MD.
+shown as assumed); the choice is made per month. A month is **covered** by the kVA channel when it holds
+at least one usable (chargeable) kVA reading; a covered month uses the measured kVA ONLY (its kW is not
+consulted, even if the kVA readings are sparse), and an uncovered month falls back to kW / PF rather than
+being dropped. Daily B files cannot produce MD. The averaged profile's peak is never used as MD.
+
+For a site series with no sub-hourly data behind it — the S2 aggregate, S3 and S4 — MD is taken from the
+**hourly site series and the PF** (owner decision 7, 2026-09-28): `MD_m = max_{h∈m} site[h] / PF` (kVA),
+labelled hourly-based. Until the tariff calendar exists (Phase 2 TOU windows) it is taken over **all** hours
+of the month, not only the chargeable ones — conservative (it can only overstate). A month of the series
+with no data has no MD (null), never 0 kVA.
 
 ---
 
@@ -194,11 +210,8 @@ Applied **once**, in the cashflow (not also in the hourly model).
 
 ### 3.7 Validation targets (tests)
 - For 5 SA reference sites (Johannesburg, Pretoria, Cape Town, Durban, Upington) × 3 orientations the
-  engine's specific yield must be within **±3 % of PVGIS's own PV model run on the same TMY months** (identical
-  weather and loss inputs), and within **±5 % of PVGIS PVcalc** (2005–2020 average). Public references only — no
-  PVsyst dependency **[D-19]**. Why two gates: PVcalc averages 16 years while the engine runs a TMY; Durban's TMY
-  irradiation is 3.7 % below its 16-year mean, so a ±3 % PVcalc gate fails on weather, not on the model
-  (planning prototype, 2026-09-28: all 15 cases +0.27…+1.80 % vs PVGIS-on-TMY; all within ±5 % of PVcalc).
+  engine's specific yield must be within ±3 % of PVGIS PVcalc for identical loss inputs. Public references
+  only — no PVsyst dependency **[D-19]**.
 - The WM static curve (≈ 2,346 kWh/kWp everywhere) must fail this test — it is the regression guard.
 
 ---
@@ -303,9 +316,7 @@ Debt_n    = annuity on loan % × capex at the loan rate over the term (if debt-f
 Net_n     = Saving_n − Opex_n − Repl_n − Tax_n − Debt_n
 CF_0      = −capex × (1 − loan %)
 NPV       = Σ Net_n / (1+r)^n + CF_0
-IRR       = r such that NPV = 0 (bracketed bisection on [−99 %, 200 %], reported "n/a" if no sign change or empty/
-            all-zero/NaN flows). With several roots (e.g. a negative final-year flow) take the root where NPV falls
-            through zero as r rises (investment-type flows); the mirror rule for borrowing-type flows
+IRR       = r such that NPV = 0 (bracketed bisection on [−99 %, 200 %], reported "n/a" if no sign change)
 Simple payback = first year cumulative Net ≥ −CF_0 (interpolated)
 Discounted payback = same on discounted flows
 LCOE      = (capex + Σ PV(Opex_n + Repl_n)) / Σ PV(Energy_n)          (discounted, standard definition)
@@ -313,12 +324,14 @@ LCOE      = (capex + Σ PV(Opex_n + Repl_n)) / Σ PV(Energy_n)          (discoun
 Rules: one discount rate `r` (default org WACC **[D-07]**); tariff escalation `e_n` = approved % for years
 with a published tariff, then the org default path; load growth applies to `Bill_before` and
 `Bill_after` via re-simulation factors per year (energy balance rescaled, not re-run hourly per year).
+*As built (v1, 2026-09-29):* `G_n = (1+g)^(n−1)` multiplies `Bill_before`, `Bill_after` and so the saving in
+year n; year 1 is unchanged. `g` is `studies.load_growth_pct` (Load tab) and the escalation path is the
+Tariff tab's, both through `resolveStudyPricing`. Scaling the saving too is an upper bound (a fully
+self-consumed system's saving does not grow with its load); a per-year re-simulation is a later refinement.
 Load-shedding value is computed separately and shown as an additional line, never merged into IRR by default.
 
-**Validation:** an independently built reference model of a 25-year case must match NPV/IRR/LCOE to 4 significant
-figures — `docs/solar/validation/finance-reference-model.py` (Python, accepted in place of XLSX, 2026-09-28), plus a
-hand-computed 3-year toy case. Debt terms longer than the analysis period pay the outstanding balance as a final-year
-balloon; a PPA bills delivered energy (generation − curtailment).
+**Validation:** a spreadsheet reference model (XLSX) of one case, built independently, must match
+NPV/IRR/LCOE to 4 significant figures.
 
 ---
 

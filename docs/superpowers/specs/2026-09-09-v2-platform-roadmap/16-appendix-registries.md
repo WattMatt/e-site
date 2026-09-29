@@ -184,6 +184,7 @@ One row per type in `projects.work_item_types (key, label, source_table, source_
 | `form_action` | Q1 | `field.site_forms` | +3 wd | site | `triage_owner_id` | project PM |
 | `order_followup` | Q1 | `structure.node_orders` — **explicit chase only, one control on the order line; no bulk backfill and no automatic path** | +10 wd | office | `triage_owner_id` | project PM |
 | `task` | Q1 | none (sourceless) | +5 wd | office | creator | creator |
+| `solar_task` | Solar | none (sourceless; `solar.schedule_tasks.work_item_id` points back at it) | +5 wd | office | the owner chosen in the Schedule task dialog (a Solar-eligible project member: not a client viewer or supplier), else `triage_owner_id` | creator |
 | `instruction` | Q2 | `projects.instruction_recipients` (one item per `to` recipient) | `respond_by` | office | the recipient | the issuer |
 | `approval` | Q3 | none (sourceless; `projects.approvals.request_id` points back at it) | +5 wd | office | the named approver | the requesting PM |
 | `valuation` | Q4 | `projects.valuations` | valuation date +5 wd | office | the certifier | the certifier |

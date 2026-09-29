@@ -7,10 +7,24 @@ import { addBillingPeriod } from '@/lib/paystack/billing-period'
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
-/** Append query params to a path that may already carry a query string. */
-function withParams(path: string, params: Record<string, string>): string {
-  const query = new URLSearchParams(params).toString()
-  return `${path}${path.includes('?') ? '&' : '?'}${query}`
+/**
+ * Set query params on a path that may already carry a query string. A key the
+ * path already has is REPLACED, not duplicated (Solar's return_to arrives as
+ * `…/solar/locked?payment=received`). Keys in `drop` are removed first: a
+ * failed charge must never reach the page still flagged `payment=received`.
+ * The path itself is kept verbatim — it has already been through safeReturnTo.
+ */
+function withParams(path: string, params: Record<string, string>, drop: string[] = []): string {
+  const hashAt = path.indexOf('#')
+  const hash = hashAt >= 0 ? path.slice(hashAt) : ''
+  const beforeHash = hashAt >= 0 ? path.slice(0, hashAt) : path
+  const queryAt = beforeHash.indexOf('?')
+  const base = queryAt >= 0 ? beforeHash.slice(0, queryAt) : beforeHash
+  const query = new URLSearchParams(queryAt >= 0 ? beforeHash.slice(queryAt + 1) : '')
+  for (const key of drop) query.delete(key)
+  for (const [key, value] of Object.entries(params)) query.set(key, value)
+  const qs = query.toString()
+  return `${base}${qs ? `?${qs}` : ''}${hash}`
 }
 
 export async function GET(req: NextRequest) {
@@ -39,26 +53,28 @@ export async function GET(req: NextRequest) {
   const returnTo = safeReturnTo(metadata.return_to)
 
   if (!body?.status || data.status !== 'success') {
-    return NextResponse.redirect(new URL(withParams(returnTo, { error: 'failed' }), req.url))
+    return NextResponse.redirect(new URL(withParams(returnTo, { error: 'failed' }, ['payment']), req.url))
   }
 
   // ── Non-subscription purchases ───────────────────────────────────────────
   // Branch on metadata.type BEFORE the org_id/tier gate below. feature_unlock,
-  // feature_seat and mv_subscription carry no `tier` (mv carries no `org_id`
-  // either), so every one of them used to fall into ?error=meta — a customer
-  // who had just paid R250, R1,999 or R2,000 landed on an unrelated page with
-  // no confirmation, which is the realistic path into paying twice.
+  // feature_seat, mv_subscription and org_addon_subscription carry no `tier`
+  // (mv carries no `org_id` either), so every one of them used to fall into
+  // ?error=meta — a customer who had just paid R250, R1,999 or R2,000 landed on
+  // an unrelated page with no confirmation, which is the realistic path into
+  // paying twice.
   //
   // The webhook remains the SOLE writer of these entitlements: a single writer
-  // keeps the duplicate-purchase (23505) handling in one place. The buyer may
-  // therefore arrive a second or two before the grant lands, so the
-  // destination is told `payment=received` rather than being asserted as
-  // already unlocked.
+  // keeps the duplicate-purchase (23505 / live-subscription) handling in one
+  // place. The buyer may therefore arrive a second or two before the grant
+  // lands, so the destination is told `payment=received` rather than being
+  // asserted as already unlocked (the Solar locked page polls — spec §1.2).
   const purchaseType = metadata.type
   if (
     purchaseType === 'feature_unlock' ||
     purchaseType === 'feature_seat' ||
-    purchaseType === 'mv_subscription'
+    purchaseType === 'mv_subscription' ||
+    purchaseType === 'org_addon_subscription'
   ) {
     return NextResponse.redirect(
       new URL(withParams(returnTo, { payment: 'received', ref: reference }), req.url),

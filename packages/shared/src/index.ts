@@ -67,3 +67,10 @@ export * from './lib/analytics/product-events'
 // the ball-in-court mirror. Pure; safe from the barrel (no next/*, react-pdf,
 // pizzip or node:fs).
 export * from './work-items'
+
+// Solar add-on — per-user project access levels (view/edit/edit_financials).
+export * from './solar'
+
+// Tariff library core — canonical tariff model, validators, YoY diff and the
+// bill engine (docs/solar/02 §5, 03 §4). Pure; safe from the barrel.
+export * from './tariffs'

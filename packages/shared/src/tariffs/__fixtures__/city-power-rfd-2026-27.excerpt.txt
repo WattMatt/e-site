@@ -1,0 +1,50 @@
+3. Residential Single Phase 60A
+                                  Approved       d%         proposed       Recommended           nded
+                                  Tariffs        increase   Tariffs        tariffs            increase Analysis and Key Findings
+
+                                        264,44      9,01%         288,27            288,27      9,01%
+Block 1 (0-500kWh)
+
+                                        303,48      9,01%         330,82            330,82      9,01%
+Block 2 (501-1000kWh)
+                                                                                                      The Residential Single Phase 60A tariff
+                                        325,87      9,01%         355,23            355,23      9,01% category reflects a uniform increase of
+Block 3 (1001-2000kWh)                                                                                9.01% across all consumption blocks,
+                                        343,81      9,01%         374,79            374,79      9,01% while both the service charge and
+Block 4 (2001-3000kWh)                                                                                capacity charge remain unchanged.
+                                                                                                      The absence of increases in fixed
+                                        360,69      9,01%         393,19            393,19      9,01%
+Block 5 (>3000kWh)                                                                                    charges reduces the financial burden
+                                                                                                      on customers while still allowing for
+                                        235,79      0,00%         235,79            235,79      0,00% recovery through energy charges. The
+Service Charge (R/month)                                                                              tariff structure maintains affordability
+                                        694,58      0,00%         694,58            694,58      0,00% for residential consumers with
+Capacity Charge (R/month)                                                                             moderate to high consumption levels.
+
+                                                 2026/27                                      2026/27
+                                  2025/26        propose    2026/27        2026/27           Recomme
+8. Residential Time of Use (<=80A)
+                                     Approved        d%         proposed       Recommended           nded
+                                     Tariffs         increase   Tariffs        tariffs            increase Analysis and Key Findings
+Summer Energy Charges c/kWh
+
+Peak                                      312,28        9,01%        340,42             340,42      9,01%
+
+Standard                                  247,04        9,01%        269,30             269,30      9,01%
+                                                                                                            The Residential TOU tariff category
+Off-peak                                  194,35        9,01%        211,86             211,86      9,01%
+                                                                                                            reflects increases of 9.01% across all
+Winter Energy Charges c/kWh                                               -                                 peak, standard, and off-peak charges
+Peak                                      718,47        9,01%        783,20             783,20      9,01%   for both summer and winter periods.
+                                                                                                            Winter peak tariffs remain significantly
+Standard                                  294,31        9,01%        320,83             320,83      9,01%
+                                                                                                            higher than other TOU periods, thereby
+Off-peak                                  207,68        9,01%        226,39             226,39      9,01%   encouraging load shifting and efficient
+                                                                          -                                 energy usage. The service and capacity
+                                                                                                            charges also increased by 9.01%,
+Service Charge (R/month)                    278,98      9,01%        304,12             304,12      9,01%
+                                                                                                            supporting recovery of network-related
+Capacity Charge (R/month)                 1125,75       9,01%       1 227,18           1227,18      9,01%   costs.
+
+                                                     2026/27                                      2026/27
+                                     2025/26         propose    2026/27        2026/27           Recomme

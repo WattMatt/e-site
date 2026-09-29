@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { classifyWheel, isPanPress } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
-import { fitTransform, zoomAbout } from './viewport-math'
+import { DEFAULT_FIT_KEYS, fitTransform, viewportKeyAction, zoomAbout } from './viewport-math'
 
 /**
  * Zoom, pan and fit for a sheet drawn on a Konva Stage — shared by the markup
@@ -28,6 +28,7 @@ export function useSheetViewport({
   image,
   resetKey,
   onPinchStart,
+  fitKeys = DEFAULT_FIT_KEYS,
 }: {
   containerRef: RefObject<HTMLDivElement | null>
   /** The sheet's backing size; null until loaded. Auto-fit runs once per `resetKey` once this is set. */
@@ -36,6 +37,8 @@ export function useSheetViewport({
   resetKey: string
   /** A second finger landed: the first one's press was half a pinch, not a tap. */
   onPinchStart?: () => void
+  /** Keys that fit the sheet. Default F, f, 0; a canvas that binds F to a tool passes ['0']. */
+  fitKeys?: readonly string[]
 }) {
   const [viewport, setViewport] = useState({ w: 800, h: 560 })
   const [scale, setScale] = useState(1)
@@ -311,26 +314,25 @@ export function useSheetViewport({
     }
   }, [])
 
-  // Keyboard: F or 0 → fit, +/= zoom in, - zoom out. Skipped while typing.
+  // Keyboard: F or 0 → fit (configurable), +/= zoom in, - zoom out. Skipped while typing.
+  // Keyed on the joined string so a fresh array identity each render does not re-bind.
+  const fitKeysKey = fitKeys.join('|')
   useEffect(() => {
+    const keys = fitKeysKey.split('|')
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === 'f' || e.key === 'F' || e.key === '0') {
-        e.preventDefault()
-        fitToView()
-      } else if (e.key === '+' || e.key === '=') {
-        e.preventDefault()
-        zoomIn()
-      } else if (e.key === '-' || e.key === '_') {
-        e.preventDefault()
-        zoomOut()
-      }
+      const act = viewportKeyAction(e.key, keys)
+      if (act === null) return
+      e.preventDefault()
+      if (act === 'fit') fitToView()
+      else if (act === 'in') zoomIn()
+      else zoomOut()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fitToView, zoomIn, zoomOut])
+  }, [fitToView, zoomIn, zoomOut, fitKeysKey])
 
   return {
     viewport,

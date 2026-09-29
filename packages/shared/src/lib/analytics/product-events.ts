@@ -18,6 +18,30 @@ export const PRODUCT_EVENTS = [
   'cable_route_leg_saved',
   'cable_route_assigned',
   'cable_route_sheet_exported',
+  // Solar (00209).
+  'solar_subscribe_requested',
+  'solar_access_requested',
+  'solar_access_changed',
+  'solar_site_saved',
+  'solar_settings_saved',
+  // Solar Phase 4b (00216).
+  'solar_case_created',
+  'solar_case_run',
+  'solar_weather_fetched',
+  'solar_financials_run',
+  'solar_equipment_saved',
+  // Solar Phase 6 (00217).
+  'solar_report_generated',
+  'solar_proposal_created',
+  'solar_proposal_issued',
+  'solar_proposal_withdrawn',
+  'solar_proposal_responded',
+  'solar_narrative_drafted',
+  'solar_installation_saved',
+  'solar_guarantee_saved',
+  'solar_downtime_saved',
+  'solar_monthly_report_generated',
+  'solar_handover_updated',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 

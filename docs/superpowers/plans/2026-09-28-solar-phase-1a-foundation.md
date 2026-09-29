@@ -15,7 +15,7 @@
 ## Ground rules (read once)
 
 - Repo root: the worktree created in Task 1. All paths below are relative to it.
-- **Migration number:** the file is named `00207_solar_foundation.sql`. Numbers are claimed **at apply time**, not now: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and migration filenames in open PRs (#191 `00201` and #193 `00202` are stranded below the head). If `00207` is taken, rename the file and every reference to it in this plan's files.
+- **Migration number:** the file is named `00208_solar_foundation.sql`. Numbers are claimed **at apply time**, not now: before the owner applies it, re-check the ledger `max(version)`, `origin/main`, and migration filenames in open PRs (#191 `00201` and #193 `00202` are stranded below the head). If `00208` is taken, rename the file and every reference to it in this plan's files.
 - **Do not apply this migration to production.** Task 5 runs it inside a rolled-back transaction only. Applying (plus the PostgREST `db_schema` PATCH for the new `solar` schema) is an owner-approved step after merge.
 - Run all three suites before claiming done: `pnpm --filter web test`, `pnpm --filter @esite/shared test`, `pnpm --filter @esite/db test:ci`.
 - `requireEffectiveRole` returns an object — always check `.ok`.
@@ -31,7 +31,7 @@
 | `packages/shared/src/solar/access.test.ts` | Unit tests for the above |
 | `packages/shared/src/solar/index.ts` | Barrel |
 | `packages/shared/src/index.ts` | Re-export `./solar` |
-| `apps/edge-functions/supabase/migrations/00207_solar_foundation.sql` | The migration |
+| `apps/edge-functions/supabase/migrations/00208_solar_foundation.sql` | The migration |
 | `apps/edge-functions/supabase/config.toml` | Expose `solar` schema locally |
 | `scripts/db/assert-solar-foundation-roles.sql` | Behavioural impersonation assertions |
 | `apps/web/src/lib/solar/access.ts` | `getSolarAccessLevel`, `requireSolarLevel`, `orgHasSolar` |
@@ -182,9 +182,9 @@ The fixture builds its own organisation, project and users inside the transactio
 
 `scripts/db/assert-solar-foundation-roles.sql`:
 ```sql
--- BEHAVIOURAL assertions for 00207_solar_foundation, run as real roles.
+-- BEHAVIOURAL assertions for 00208_solar_foundation, run as real roles.
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql scripts/db/assert-solar-foundation-roles.sql   (expect RED)
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql  (expect GREEN)
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00208_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql  (expect GREEN)
 -- Fixtures are minted inside the transaction and rolled back. The WM-Consulting
 -- org is deliberately NOT used: it bypasses the paywall, so it has no negative case.
 -- Mechanics (paid for before): request.jwt.claims is transaction-local and
@@ -382,7 +382,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 4: The migration
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00207_solar_foundation.sql`
+- Create: `apps/edge-functions/supabase/migrations/00208_solar_foundation.sql`
 - Modify: `apps/edge-functions/supabase/config.toml:9`
 
 - [ ] **Step 1: Expose the schema locally**
@@ -394,10 +394,10 @@ schemas = ["public", "projects", "field", "tenants", "suppliers", "billing", "ma
 
 - [ ] **Step 2: Write the migration**
 
-`apps/edge-functions/supabase/migrations/00207_solar_foundation.sql`:
+`apps/edge-functions/supabase/migrations/00208_solar_foundation.sql`:
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00207: Solar add-on foundation
+-- Migration 00208: Solar add-on foundation
 -- ---------------------------------------------------------------------------
 -- Spec: docs/solar/03-data-model-and-security.md §2–3; decisions D-01, D-02,
 -- D-04 in docs/solar/06-open-decisions.md (owner, 2026-09-28).
@@ -789,8 +789,8 @@ NOTIFY pgrst, 'reload schema';
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00207_solar_foundation.sql apps/edge-functions/supabase/config.toml
-git commit -m "feat(solar): 00207 solar foundation — org subscription, per-user access, studies, audit
+git add apps/edge-functions/supabase/migrations/00208_solar_foundation.sql apps/edge-functions/supabase/config.toml
+git commit -m "feat(solar): 00208 solar foundation — org subscription, per-user access, studies, audit
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -804,15 +804,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Green run with the migration**
 
 ```bash
-scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql
+scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00208_solar_foundation.sql scripts/db/assert-solar-foundation-roles.sql
 ```
-Expected: every row `ok = t` (29 checks). Before running, `grep -n "COMMIT" apps/edge-functions/supabase/migrations/00207_solar_foundation.sql` must print nothing. Nothing persists — the script rolls back.
+Expected: every row `ok = t` (29 checks). Before running, `grep -n "COMMIT" apps/edge-functions/supabase/migrations/00208_solar_foundation.sql` must print nothing. Nothing persists — the script rolls back.
 If a check is `f`: fix the **migration**, never the assertion, unless the assertion contradicts the spec (then stop and report which).
 
 - [ ] **Step 2: Mutation check — prove the level gate bites**
 
 Temporarily edit the migration: change `studies_update_authz` to `USING (true) WITH CHECK (true)`. Re-run Step 1.
-Expected: `view_user_update_affects_nothing` and `lapsed_admin_update_affects_nothing` go `f`. Revert the edit (`git checkout -- apps/edge-functions/supabase/migrations/00207_solar_foundation.sql`) and re-run Step 1 → all `t`.
+Expected: `view_user_update_affects_nothing` and `lapsed_admin_update_affects_nothing` go `f`. Revert the edit (`git checkout -- apps/edge-functions/supabase/migrations/00208_solar_foundation.sql`) and re-run Step 1 → all `t`.
 
 - [ ] **Step 3: Mutation check — prove the grant trigger bites**
 
@@ -904,7 +904,7 @@ Expected: FAIL — cannot resolve `./access`.
 ```ts
 /**
  * Solar access gates (Phase 1A). Thin wrappers over the SQL helpers in
- * migration 00207 so every page, action and API route asks the database the
+ * migration 00208 so every page, action and API route asks the database the
  * same question the RLS policies ask. All fail CLOSED.
  *
  *   public.solar_access_level(project) → 'view' | 'edit' | 'edit_financials' | NULL
@@ -1006,7 +1006,7 @@ gh pr create --repo WattMatt/e-site --draft --base main --head feat/solar-phase-
   --body-file /tmp/solar-1a-pr.md
 ```
 `/tmp/solar-1a-pr.md` must contain: what the migration creates; the three dry-run outputs from Task 5; suite counts before/after; and this **apply checklist** for the owner:
-1. Re-check ledger `max(version)`, `origin/main`, open-PR migration filenames; renumber if `00207` is taken.
+1. Re-check ledger `max(version)`, `origin/main`, open-PR migration filenames; renumber if `00208` is taken.
 2. PATCH production PostgREST `db_schema` to add `solar` **before** merging (otherwise `PGRST002`).
 3. Merge → deploy workflow applies → `scripts/verify-migration-applied.ts` checks the `@verify` block.
 4. Re-run `scripts/db/assert-solar-foundation-roles.sql` against production with the no-op file → all `t`.

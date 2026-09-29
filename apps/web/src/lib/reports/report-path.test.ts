@@ -22,12 +22,21 @@ describe('isCanonicalReportPath', () => {
       `${O}/${P}/site-form-${X}-v1.pdf`,
       `${O}/${P}/cable-route-sheets/${X}-p2-v1.pdf`,
       `${O}/${P}/generator-cost-recovery/1785735377383-cfe9847b.pdf`,
+      `${O}/${P}/solar-reports/solar_feasibility-v1-${X}.pdf`,
+      `${O}/${P}/solar-reports/solar_technical-v3-${X}.pdf`,
+      `${O}/${P}/solar-proposals/${X}-v1.pdf`,
+      `${O}/${P}/solar-layout-sheets/${X}-v1.pdf`,
+      `${O}/${P}/solar-schematic-sheets/${X}-v1.pdf`,
     ]) expect(isCanonicalReportPath(p), p).toBe(true)
   })
 
   it('refuses every form the URL parser would rewrite into a different object', () => {
     for (const p of [
       `${O}/${P}/x\\f.pdf`,
+      `${O}/${P}/solar-reports\\f.pdf`,
+      `${O}/${P}/solar-rep\torts/f.pdf`,
+      `${O}/${P}/x/..\\solar-proposals\\f.pdf`,
+      `${O}/${P}/solar-reports%2Ff.pdf`,
       `${O}/${P}/x\ty/f.pdf`,
       `${O}/${P}/x\ry/f.pdf`,
       `${O}/${P}/x\ny/f.pdf`,
@@ -69,7 +78,7 @@ describe('reportPathBelongsTo', () => {
 })
 
 describe('the SQL twin', () => {
-  it('is the same pattern 00207 enforces on session-written report rows', () => {
+  it('is the same pattern 00208 enforces on session-written report rows', () => {
     expect(CANONICAL_REPORT_PATH_SQL).toBe('^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.pdf$')
     const sql = readFileSync(
       resolve(__dirname, '../../../../edge-functions/supabase/migrations/00207_reports_storage_hardening.sql'), 'utf8')
@@ -77,5 +86,12 @@ describe('the SQL twin', () => {
     expect(fn).toContain(`coalesce(_path, '') ~ '${CANONICAL_REPORT_PATH_SQL}'`)
     expect(fn).toContain(`strpos(_path, '..') = 0`)
     expect(fn).toContain(`starts_with(_path, _org::text || '/' || _project::text || '/')`)
+  })
+
+  it('is the same pattern the Solar proposals migration enforces on session-written Solar report rows', () => {
+    const sql = readFileSync(
+      resolve(__dirname, '../../../../edge-functions/supabase/migrations/00217_solar_proposals.sql'), 'utf8')
+    const policies = sql.slice(sql.indexOf('CREATE POLICY reports_solar_service_only_insert'))
+    expect(policies).toContain(`storage_path, '') ~ '${CANONICAL_REPORT_PATH_SQL}'`)
   })
 })

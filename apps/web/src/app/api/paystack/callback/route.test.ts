@@ -294,6 +294,45 @@ describe('GET /api/paystack/callback — non-subscription purchases (#18)', () =
     expect(location(res)).not.toContain('/settings/billing')
   })
 
+  it('returns a Solar subscriber to the project Solar locked page, acknowledged, writing nothing', async () => {
+    // org_addon_subscription metadata carries org_id but NO tier — under the
+    // old allow-list this was a guaranteed ?error=meta after a R1,999 charge.
+    const res = await purchase({
+      type: 'org_addon_subscription',
+      feature_key: 'solar',
+      org_id: ORG_ID,
+      project_id: 'p1',
+      return_to: '/projects/p1/solar/locked?payment=received',
+    })
+    const loc = new URL(location(res))
+    expect(loc.pathname).toBe('/projects/p1/solar/locked')
+    // The return_to already carries payment=received; the callback must not
+    // append a second copy.
+    expect(loc.searchParams.getAll('payment')).toEqual(['received'])
+    expect(loc.searchParams.get('ref')).toBe(REFERENCE)
+    expect(location(res)).not.toContain('error=meta')
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled()
+    expect(recordInvoiceMock).not.toHaveBeenCalled()
+  })
+
+  it('a FAILED Solar charge never tells the locked page the payment was received', async () => {
+    fetchMock.mockResolvedValue(
+      paystackSuccess(
+        {
+          type: 'org_addon_subscription',
+          feature_key: 'solar',
+          org_id: ORG_ID,
+          return_to: '/projects/p1/solar/locked?payment=received',
+        },
+        { status: 'failed' },
+      ),
+    )
+    const loc = new URL(location(await GET(req())))
+    expect(loc.pathname).toBe('/projects/p1/solar/locked')
+    expect(loc.searchParams.get('error')).toBe('failed')
+    expect(loc.searchParams.has('payment')).toBe(false)
+  })
+
   it('does NOT write entitlements from the callback — the webhook is the sole writer', async () => {
     await purchase({ type: 'feature_unlock', org_id: ORG_ID, feature_key: 'jbcc', return_to: '/x' })
     expect(upsertSubscriptionMock).not.toHaveBeenCalled()

@@ -2,14 +2,62 @@
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES } from '@esite/shared'
-import { readRolesForKind } from '@/lib/reports/report-kind-access'
+import { ORG_WRITE_ROLES, OWNER_ADMIN } from '@esite/shared'
+import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
+import { getSolarAccessLevel } from '@/lib/solar/access'
+import { solarLevelAllows } from '@esite/shared'
 import { reportPathBelongsTo, REPORT_PATH_REFUSED } from '@/lib/reports/report-path'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
 
 type ErrResult = { error: string }
+
+const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
+
+/** Solar kinds read on the caller's Solar level (00212/00217 mirror this in SQL). Null when allowed or not a Solar kind. */
+async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
+  const need = solarLevelForKind(kind)
+  if (!need) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+  return solarLevelAllows(level, need) ? null : NO_SOLAR_ACCESS
+}
+
+const SOLAR_PDF_PATH = /\/solar-(reports|proposals)\//
+
+/**
+ * The Solar kind a Solar PDF path holds: proposals under /solar-proposals/, and under /solar-reports/
+ * the `<kind>-v…` file name generate.ts writes. An unrecognised Solar file is treated as feasibility
+ * (the strictest read), never as technical.
+ */
+function solarKindForPath(path: string): string {
+  if (path.includes('/solar-proposals/')) return 'solar_proposal'
+  const file = path.slice(path.indexOf('/solar-reports/') + '/solar-reports/'.length)
+  if (file.startsWith('solar_monthly-')) return 'solar_monthly'
+  return file.startsWith('solar_technical-') ? 'solar_technical' : 'solar_feasibility'
+}
+
+/**
+ * The URL action signs with the SERVICE client, so the row's storage_path is trusted only when it
+ * belongs to the row (review round 2, C1): it must sit under the row's own `<org>/<project>/`, and a
+ * Solar PDF path is signed only for a Solar kind whose file the caller's Solar level can read. 00217
+ * refuses a session write of such a row; this holds even for a row that predates it.
+ */
+async function reportPathDenied(
+  supabase: unknown, projectId: string, report: { storage_path: string; kind: string; organisation_id: string },
+): Promise<string | null> {
+  // FIRST: every check below reads the raw string, and the URL parser rewrites a non-canonical one
+  // into a different object before it is signed (review round 3). See lib/reports/report-path.ts.
+  if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) return REPORT_PATH_REFUSED
+  if (!SOLAR_PDF_PATH.test(report.storage_path)) return null
+  if (!solarLevelForKind(report.kind)) return REPORT_PATH_REFUSED
+  const need = solarLevelForKind(solarKindForPath(report.storage_path))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+  return need && solarLevelAllows(level, need) ? null : REPORT_PATH_REFUSED
+}
 
 /** A saved report artifact row (projects.reports) as listed in the UI. */
 export interface ProjectReportRow {
@@ -29,7 +77,7 @@ export interface ProjectReportRow {
   /** Optional revision note captured at generate time (migration 00183). */
   note?: string | null
   /** Headline figures for the list, so it never re-gathers (migration 00183). */
-  summary?: Record<string, number | string> | null
+  summary?: Record<string, number | string | null> | null
   /** Resolved display name for generated_by — not a column. */
   generated_by_name?: string | null
 }
@@ -124,6 +172,8 @@ export async function listProjectReportsAction(
     const guard = await requireEffectiveRole(supabase, projectId, readRoles)
     if (!guard.ok) return { error: guard.error }
   }
+  const solarDenied = await solarReadDenied(supabase, projectId, kind)
+  if (solarDenied) return { error: solarDenied }
 
   const run = async (cols: string) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,7 +233,8 @@ export async function getProjectReportUrlAction(
     const guard = await requireEffectiveRole(supabase, projectId, readRoles)
     if (!guard.ok) return { error: guard.error }
   }
-
+  const solarDenied = await solarReadDenied(supabase, projectId, report.kind)
+  if (solarDenied) return { error: solarDenied }
   // The path is signed with the SERVICE client, which bypasses storage RLS, so it is trusted only when
   // it is canonical and under the row's own <org>/<project>/ (00207 refuses writing any other; this also
   // holds for a row that predates it). See lib/reports/report-path.ts.
@@ -191,6 +242,9 @@ export async function getProjectReportUrlAction(
     console.error('getProjectReportUrlAction: refused a report path outside its row', { projectId, reportId })
     return { error: REPORT_PATH_REFUSED }
   }
+  // Then the Solar rule: a Solar PDF path is signed only for a Solar kind the caller's level can read.
+  const pathDenied = await reportPathDenied(supabase, projectId, report)
+  if (pathDenied) return { error: pathDenied }
 
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -206,7 +260,7 @@ export async function getProjectReportUrlAction(
   return { url: signed.signedUrl as string }
 }
 
-/** Delete a saved report (row + best-effort storage object). Gate: ORG_WRITE_ROLES. */
+/** Delete a saved report (row + best-effort storage object). Gate: ORG_WRITE_ROLES; a Solar kind needs OWNER_ADMIN + Solar Edit (spec §9.2). */
 export async function deleteProjectReportAction(
   projectId: string,
   reportId: string,
@@ -230,6 +284,23 @@ export async function deleteProjectReportAction(
   const report = row as { storage_path: string; kind: string; organisation_id: string } | null
   if (!report) return { error: 'Not found' }
 
+  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00217).
+  if (report.kind === 'solar_proposal') {
+    return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
+  }
+  // A generated monthly report is the record of what the client received (00218 keeps its snapshot).
+  if (report.kind === 'solar_monthly') {
+    return { error: 'A monthly report is kept as the record of what the client received — generate a new version instead.' }
+  }
+  // A Solar kind is removed by OWNER_ADMIN only (spec §9.2) and on the Solar EDIT level.
+  if (solarLevelForKind(report.kind)) {
+    const admin = await requireRole(supabase, orgId, OWNER_ADMIN)
+    if (!admin.ok) return { error: admin.error }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+    if (!solarLevelAllows(level, 'edit')) return { error: 'You do not have Solar edit access on this project.' }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: deleted, error: deleteErr } = await (supabase as any)
     .schema('projects').from('reports')
@@ -238,10 +309,14 @@ export async function deleteProjectReportAction(
     .eq('project_id', projectId)
     .select('id')
 
-  if (deleteErr) return { error: deleteErr.message ?? 'Failed to delete report' }
+  if (deleteErr) {
+    // The raw database message can name tables, policies and triggers — log it, show a sentence.
+    console.error('deleteProjectReportAction: delete failed', { projectId, reportId, kind: report.kind, error: deleteErr.message ?? deleteErr })
+    return { error: 'The report could not be deleted — try again.' }
+  }
 
-  // RLS answers a refused delete with zero rows, not an error: only remove the file when exactly this
-  // one row went, or a caller who may not delete the row would still remove its file.
+  // RLS answers a refused delete with zero rows, not an error: only remove the file when exactly
+  // this one row went (review round 3), or a caller who may not delete the row still removes its file.
   if (!Array.isArray(deleted) || deleted.length !== 1) {
     return { error: 'Nothing was deleted — the report may already be gone, or you may not be allowed to delete it.' }
   }
