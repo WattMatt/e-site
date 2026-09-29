@@ -79,7 +79,9 @@ describe.skipIf(!DIR)('real source books', () => {
   // Every 2026/27 RfD that yielded a tariff before the extended pass (164: the 33 above plus the
   // column reader's 131; all loaded to production). Digests taken on main at 84677997 with
   // scripts/tariffs/rfd-coverage.ts --digests. The extended pass must never change any of them.
-  // The 6 files only the extended pass reads are pinned too, so a later change to them is deliberate.
+  // The 6 files only the extended pass reads are pinned too, so a later change to them is deliberate:
+  // those digests fix today's output, right or wrong, and any change to them needs a hand review
+  // against the PDFs before the new digest is committed.
   it.each([
     ['164 files parsed before the extended pass', 'all-readers-before-extended.digests.json', 164],
     ['6 files only the extended pass reads', 'extended-pass.digests.json', 6],

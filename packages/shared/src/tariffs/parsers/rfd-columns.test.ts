@@ -375,6 +375,10 @@ describe('extended pass: only for files every other reader leaves empty', () => 
     // The Khai-Ma tables' "2026/27FY" headers are extended vocabulary: not read here.
     expect(r.tariffs.map((t) => t.name)).not.toContain('Commercial single-phase')
   })
+  it('resets the extended rules even when a parse throws', () => {
+    expect(() => parseRfdColumns(undefined as unknown as string, { fileSha256: 'x' }, { extended: true })).toThrow()
+    expect(parseRfdColumns(fixture('khai-ma'), { fileSha256: 'x' }).tariffs.map((t) => t.name)).not.toContain('Domestic low single-phase tariff: 30 A')
+  })
   it('keeps the strict result (and its issues) when the extended pass finds nothing either', () => {
     expect(parse('nala')).toEqual(strictOnly('nala'))
   })
@@ -552,5 +556,46 @@ describe('Nala: both the % and the amount column are headed "Recommended % Incre
     const r = parse('nala')
     expect(r.tariffs).toEqual([])
     expect(codes(r.issues)).toEqual(['rfd_table_skipped', 'rfd_table_skipped', 'rfd_table_skipped'])
+  })
+})
+
+describe('extended pass: refuses to guess', () => {
+  const edit = (name: string, from: string, to: string): string => {
+    const text = fixture(name)
+    expect(text).toContain(from)
+    return text.replace(from, to)
+  }
+  it('skips a season-paired table when one season\'s row fails its arithmetic (Tokologo, winter 2,7468 -> 2,9999)', () => {
+    const r = parseRfdText(edit('tokologo', '2,6782          2,7468', '2,6782          2,9999'), { fileSha256: 'x' })
+    expect(r.tariffs).toEqual([])
+    expect(codes(r.issues)).toContain('rfd_table_skipped')
+  })
+  it('does not place a row on the next page that fills only some columns (Tokologo, one number removed)', () => {
+    const r = parseRfdText(edit('tokologo', 'Unit Charge: Per kWh                  1,6175', 'Unit Charge: Per kWh                        '), { fileSha256: 'x' })
+    const dropped = withCode(r.issues, 'rfd_row_dropped', 'Industrial supply (E012 & E013)')
+    expect(dropped.some((i) => i.severity === 'block' && /could not be placed/.test(i.message))).toBe(true)
+    expect(tariff(r.tariffs, 'Industrial supply (E012 & E013)').charges.filter((c) => c.component === 'energy')).toEqual([])
+  })
+  it('skips when both columns named Recommended verify (Siyancuma, proposal equal to the recommendation)', () => {
+    let text = edit('siyancuma', 'R3,30              9,6%                  R3,21', 'R3,21              9,6%                  R3,21')
+    text = text.replace('R3,92              9,6%                  R3,82', 'R3,82              9,6%                  R3,82')
+    const r = parseRfdText(text, { fileSha256: 'x' })
+    expect(r.tariffs.map((t) => t.name).some((n) => n.startsWith('DOMESTIC PRE-PAID'))).toBe(false)
+    expect(r.tariffs.map((t) => t.name).some((n) => n.startsWith('DOMESTIC CONVENTIONAL'))).toBe(true)
+  })
+  it('skips the duplicated "Proposed" column when one row does not verify (Gamagara)', () => {
+    const r = parseRfdText(edit('gamagara', '193,52      193,52', '193,52      199,99'), { fileSha256: 'x' })
+    expect(r.tariffs.map((t) => t.name)).toEqual(['Domestic Conventional'])
+  })
+  it('skips a table whose header ties a column to one season when the columns do not pair by season', () => {
+    const r = parseRfdColumns([
+      '                         2025/26       Proposed %     2026/27        2026/27          Recommended',
+      ' Domestic                Approved      Increase       Proposed       Recommended      % Increase',
+      '                                                                     Winter',
+      ' Energy charge           2,00          15%            2,30           2,18             9%',
+      ' Basic charge            100,00        15%            115,00         109,00           9%',
+    ].join('\n'), { fileSha256: 'x' }, { extended: true })
+    expect(r.tariffs).toEqual([])
+    expect(r.issues.map((i) => i.message).join(' ')).toContain('do not pair by season')
   })
 })
