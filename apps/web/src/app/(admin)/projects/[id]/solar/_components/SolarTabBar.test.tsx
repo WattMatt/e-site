@@ -18,16 +18,15 @@ beforeEach(() => { vi.clearAllMocks() })
 afterEach(() => { setSolarDirty(false) })
 
 describe('SolarTabBar', () => {
-  it('links built tabs, disables the rest with "Coming in a later phase"', () => {
+  it('links every tab once phases 1–7 are assembled; none says "Coming in a later phase"', () => {
     render(<SolarTabBar projectId="p1" level="view" readiness={computeSolarReadiness(site, 'view')} />)
     expect(screen.getByRole('link', { name: /Overview/ }).getAttribute('href')).toBe('/projects/p1/solar/overview')
     expect(screen.getByRole('link', { name: /Site & Supply/ }).getAttribute('href')).toBe('/projects/p1/solar/site')
-    // Every tab through Phase 5b is built; Reports & Proposal is the one still unbuilt.
     expect(screen.getByRole('link', { name: /Load/ }).getAttribute('href')).toBe('/projects/p1/solar/load')
     expect(screen.getByRole('link', { name: /Layout/ }).getAttribute('href')).toBe('/projects/p1/solar/layout')
-    const reports = screen.getByText('Reports & Proposal').closest('[aria-disabled="true"]') as HTMLElement
-    expect(reports.getAttribute('title')).toBe('Coming in a later phase')
-    expect(screen.queryByRole('link', { name: /Reports/ })).toBeNull()
+    expect(screen.getByRole('link', { name: /Reports/ }).getAttribute('href')).toBe('/projects/p1/solar/reports')
+    expect(screen.getByRole('link', { name: /Schedule/ }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
+    expect(screen.queryByTitle('Coming in a later phase')).toBeNull()
   })
 
   it('hides Tariff and Financials below Edit + financials, shows them at it; links Operations at every level', () => {

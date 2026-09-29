@@ -6,7 +6,7 @@ import 'server-only'
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  buildFinanceInput, capexTotals, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials,
+  buildFinanceInput, financeInputReasons, capexTotals, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials,
 } from '@esite/shared/solar-cases'
 import { inputsHash } from '@esite/shared/solar-engine'
 import {
@@ -65,20 +65,26 @@ export async function prepareProposalSnapshot(a: PrepareInput): Promise<PrepareR
   if (!(base > 0)) return { ok: false, error: PREPARE_ERRORS.noCapex }
   const price = offerPrice(base, draft.marginPct)
 
-  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: k.dcKwp, acKw: k.acKw })
+  const early = financeInputReasons(fin.fin, { dcKwp: k.dcKwp })
+  if (early.length > 0) return { ok: false, error: early.join(' ') }
+  // The same tariff year and study pricing the Financials run used (executeFinancialsRun): tariff
+  // escalation (Tariff tab) and load growth (Load tab) are the study's, never the case config's.
+  const year = Number(sel.run.outputs.provenance?.loadReferenceYear)
+  const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })
+  if (!tariff.ok) return { ok: false, error: tariff.reason }
+  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: k.dcKwp, acKw: k.acKw }, tariff.pricing)
   if (!built.ok) return { ok: false, error: built.reasons.join(' ') }
   const priced = proposalFinanceInput(built.input, price.offerExclVatZar, draft.financeOptions)
   if (!priced.ok) {
     return { ok: false, error: `Enable ${priced.missing.map((m) => FINANCE_OPTION_LABELS[m]).join(', ')} on the Financials tab first — its inputs live there.` }
   }
-  const tariff = await resolveStudyTariff(a.svc, a.projectId)
-  if (!tariff.ok) return { ok: false, error: tariff.reason }
+  const exportCredited = (sel.run.exportSettings as { credited?: unknown } | null | undefined)?.credited !== false && tariff.pricing.exportCredited
 
   let options: ReturnType<typeof summariseFinanceOptions>
   let bills: { beforeZar: number; afterZar: number }
   try {
     const hourly = decodeHourlyCsv(await getGzipText(a.svc, RUNS_BUCKET, sel.run.hourlyPath))
-    const result = runStoredFinancials({ hourly, year1PvKwh: k.annualAcKwh, year1DeliveredKwh: k.deliveredKwh }, priced.input, tariff.calc)
+    const result = runStoredFinancials({ hourly, year1PvKwh: k.annualAcKwh, year1DeliveredKwh: k.deliveredKwh, exportCredited }, priced.input, tariff.calc)
     options = summariseFinanceOptions(result.finance, priced.input.models)
     bills = { beforeZar: result.year1Bills.beforeZar, afterZar: result.year1Bills.afterZar }
   } catch (e) {

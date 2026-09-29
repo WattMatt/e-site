@@ -28,7 +28,7 @@ export interface SelectedCaseOk {
   ok: true
   shared: StudyInputs
   caseRow: SelectedCaseRow
-  run: { id: string; finishedAt: string; inputsHash: string; outputs: CaseRunOutputs; configSnapshot: unknown; hourlyPath: string }
+  run: { id: string; finishedAt: string; inputsHash: string; outputs: CaseRunOutputs; configSnapshot: unknown; hourlyPath: string; exportSettings?: unknown }
 }
 export type SelectedCaseResult = SelectedCaseOk | { ok: false; stale: boolean; reason: string }
 
@@ -58,7 +58,7 @@ export async function loadSelectedCase(user: AnyClient, svc: AnyClient, projectI
   if (st.status === 'running') return no(SELECTED_CASE_REASONS.running)
   if (st.status === 'failed') return no(SELECTED_CASE_REASONS.failed)
   const { data: r } = await user.schema('solar').from('case_runs')
-    .select('id, finished_at, inputs_hash, outputs, config_snapshot, hourly_path').eq('id', lastOk.id as string).maybeSingle()
+    .select('id, finished_at, inputs_hash, outputs, config_snapshot, hourly_path, export_settings').eq('id', lastOk.id as string).maybeSingle()
   const run = r as Row | null
   if (!run?.outputs || !run.hourly_path) return no(SELECTED_CASE_REASONS.noRun)
   return {
@@ -66,6 +66,7 @@ export async function loadSelectedCase(user: AnyClient, svc: AnyClient, projectI
     run: {
       id: String(run.id), finishedAt: String(run.finished_at), inputsHash: String(run.inputs_hash),
       outputs: run.outputs as CaseRunOutputs, configSnapshot: run.config_snapshot, hourlyPath: String(run.hourly_path),
+      exportSettings: run.export_settings ?? null,
     },
   }
 }

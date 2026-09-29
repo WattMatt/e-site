@@ -19,8 +19,10 @@ import { fakeSupabase } from '@/test/fake-supabase'
 
 const P = '00000000-0000-0000-0000-000000000011'
 const R = '00000000-0000-0000-0000-000000000055'
+// The URL and delete actions trust a stored path only when it is canonical and under the row's org + project (00207).
+const O = '00000000-0000-0000-0000-0000000000aa'
 const ROW = {
-  id: R, project_id: P, organisation_id: 'o', kind: 'solar_schematic_sheet', title: 'Schematic — Main SLD', storage_path: 'o/p/s.pdf',
+  id: R, project_id: P, organisation_id: O, kind: 'solar_schematic_sheet', title: 'Schematic — Main SLD', storage_path: `${O}/${P}/solar-schematic-sheets/sheet-v1.pdf`,
   mime_type: 'application/pdf', size_bytes: 1, status: 'issued', version: 1, generated_by: null, generated_at: 't', created_at: 't',
 }
 
@@ -60,14 +62,18 @@ describe('Solar report kinds read on the Solar level', () => {
 
 describe('deleteProjectReportAction — Solar kinds need Solar Edit', () => {
   it('an org writer with only Solar View cannot delete a schematic sheet', async () => {
-    const { client } = fakeSupabase({ tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: 'o' }] } })
+    const { client } = fakeSupabase({ tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: O }] } })
     h.createClient.mockResolvedValue(client)
     h.requireRole.mockResolvedValue({ ok: true })
     h.getSolarAccessLevel.mockResolvedValue('view')
     await expect(deleteProjectReportAction(P, R)).resolves.toEqual({ error: 'You do not have Solar edit access on this project.' })
   })
   it('Solar Edit may delete it', async () => {
-    const { client } = fakeSupabase({ tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: 'o' }] } })
+    const { client } = fakeSupabase({
+      tables: { 'projects.reports': [ROW], 'projects.projects': [{ id: P, organisation_id: O }] },
+      // RLS let exactly this row go (the action removes the file only then).
+      writes: { 'projects.reports:delete': { data: [{ id: R }] } },
+    })
     h.createClient.mockResolvedValue(client)
     h.requireRole.mockResolvedValue({ ok: true })
     h.getSolarAccessLevel.mockResolvedValue('edit')

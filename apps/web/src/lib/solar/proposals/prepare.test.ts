@@ -11,6 +11,8 @@ import { readSolarOrgSettings } from '@esite/shared'
 import { prepareProposalSnapshot, PREPARE_ERRORS } from './prepare'
 import { fakeSupabase } from '@/test/fake-supabase'
 
+const STUDY_ESCALATION = { mode: 'published', published: [0.12, 0.1] }
+
 const settings = readSolarOrgSettings(null)
 const cfg = defaultCaseConfig(settings, { dcKwp: 500, acKw: 400 })
 const fin = {
@@ -49,7 +51,11 @@ const args = (over: Record<string, unknown> = {}) => {
 beforeEach(() => {
   vi.clearAllMocks()
   h.sel.mockResolvedValue(sel)
-  h.tariff.mockResolvedValue({ ok: true, calc: {}, tariffRef: { tariffId: 't', tariffName: 'B1', financialYear: '2026/27', licenseeName: 'City' } })
+  h.tariff.mockResolvedValue({
+    ok: true, calc: {}, tariffRef: { tariffId: 't', tariffName: 'B1', financialYear: '2026/27', licenseeName: 'City' },
+    // The STUDY pricing (I-1): escalation from the Tariff tab, growth from the Load tab, export credit.
+    pricing: { escalationPath: STUDY_ESCALATION, loadGrowthPct: 3, exportCredited: false }, pricingHash: 'p'.repeat(64),
+  })
   h.run.mockReturnValue(finResult)
 })
 
@@ -63,6 +69,11 @@ describe('prepareProposalSnapshot', () => {
     const fi = h.run.mock.calls[0]![1] as { capex: { totalZar: number }; models: Array<{ kind: string }> }
     expect(fi.capex.totalZar).toBe(1_150_000)
     expect(fi.models.map((m) => m.kind)).toEqual(['cash'])
+    // Integration fix: the offer is priced on the study pricing, exactly as the Financials run is.
+    const analysis = (h.run.mock.calls[0]![1] as { analysis: { loadGrowth: number; escalation: unknown } }).analysis
+    expect(analysis.loadGrowth).toBeCloseTo(0.03)
+    expect(analysis.escalation).toBe(STUDY_ESCALATION)
+    expect((h.run.mock.calls[0]![0] as { exportCredited?: boolean }).exportCredited).toBe(false)
     expect(h.gz).toHaveBeenCalledWith(expect.anything(), 'solar-runs', 'o1/r1.csv.gz')
     expect(r.snapshot.bills).toEqual({ beforeZar: 1_000_000, afterZar: 600_000, savingZar: 400_000 })
     expect(r.snapshot.proposal.validUntil).toBe('2026-10-29T08:00:00.000Z')
