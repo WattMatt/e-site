@@ -53,10 +53,16 @@ const SUMMARY_LABELS: Record<string, string> = {
   received: 'received',
   overdue: 'overdue',
   receivedPct: '% received',
+  // Solar reports and proposals (Phase 6).
+  kwp: 'kWp',
+  mwhYear1: 'MWh in year 1',
+  saving: 'year-1 saving',
+  irrPct: '% IRR',
+  offer: 'offer excl. VAT',
 }
 
 /** Identifiers a kind stores in `summary` for its own lookups; never printed. */
-const HIDDEN_SUMMARY_KEYS = new Set(['revisionId'])
+const HIDDEN_SUMMARY_KEYS = new Set(['revisionId', 'runId', 'familyId'])
 
 /** "48 boards · 31 received · 6 overdue", or null when there is no summary. */
 function summaryLine(rep: ProjectReportRow): string | null {

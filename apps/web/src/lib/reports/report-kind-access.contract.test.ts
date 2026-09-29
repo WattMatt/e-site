@@ -18,6 +18,7 @@ import path from 'node:path'
 import {
   REPORT_KIND_READ_ROLES,
   OPEN_READ_REPORT_KINDS,
+  SOLAR_READ_REPORT_KINDS,
   hasDeclaredReadPolicy,
 } from './report-kind-access'
 
@@ -111,5 +112,34 @@ describe('report kind read policy contract', () => {
     expect(m, 'report_kind_is_sensitive() not found in migration 00183').toBeTruthy()
     const sqlKinds = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort()
     expect(sqlKinds).toEqual(Object.keys(REPORT_KIND_READ_ROLES).sort())
+  })
+
+  it('a kind is in exactly one of the three sets', () => {
+    const solar = Object.keys(SOLAR_READ_REPORT_KINDS)
+    for (const k of solar) {
+      expect(k in REPORT_KIND_READ_ROLES, `${k} is both Solar-gated and role-gated`).toBe(false)
+      expect(OPEN_READ_REPORT_KINDS.includes(k), `${k} is both Solar-gated and open`).toBe(false)
+    }
+  })
+
+  it('every Solar-gated kind is gated in the FINAL user_can_read_report_kind()', () => {
+    const dir = path.resolve(SRC_ROOT, '../../edge-functions/supabase/migrations')
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
+    let body: string | null = null
+    for (const f of files) {
+      const sql = fs.readFileSync(path.join(dir, f), 'utf8')
+      const i = sql.indexOf('CREATE OR REPLACE FUNCTION public.user_can_read_report_kind(')
+      if (i === -1) continue
+      const start = sql.indexOf('$function$', i)
+      const end = sql.indexOf('$function$', start + 10)
+      if (start !== -1 && end !== -1) body = sql.slice(start + 10, end)
+    }
+    expect(body, 'user_can_read_report_kind() not found in any migration').toBeTruthy()
+    for (const [kind, level] of Object.entries(SOLAR_READ_REPORT_KINDS)) {
+      const helper = level === 'view' ? 'solar_can_view' : level === 'edit' ? 'solar_can_edit' : 'solar_can_see_money'
+      expect(body!, `${kind} is not gated in the final user_can_read_report_kind()`).toMatch(
+        new RegExp(`_kind = '${kind}' THEN COALESCE\\(public\\.${helper}\\(_project_id\\), FALSE\\)`),
+      )
+    }
   })
 })

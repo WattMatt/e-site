@@ -3,12 +3,26 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
-import { readRolesForKind } from '@/lib/reports/report-kind-access'
+import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
+import { getSolarAccessLevel } from '@/lib/solar/access'
+import { solarLevelAllows } from '@esite/shared'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
 
 type ErrResult = { error: string }
+
+const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
+
+/** Solar kinds read on the caller's Solar level (00211/00216 mirror this in SQL). Null when allowed or not a Solar kind. */
+async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
+  const need = solarLevelForKind(kind)
+  if (!need) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+  return solarLevelAllows(level, need) ? null : NO_SOLAR_ACCESS
+}
 
 /** A saved report artifact row (projects.reports) as listed in the UI. */
 export interface ProjectReportRow {
@@ -123,6 +137,8 @@ export async function listProjectReportsAction(
     const guard = await requireEffectiveRole(supabase, projectId, readRoles)
     if (!guard.ok) return { error: guard.error }
   }
+  const solarDenied = await solarReadDenied(supabase, projectId, kind)
+  if (solarDenied) return { error: solarDenied }
 
   const run = async (cols: string) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -182,6 +198,8 @@ export async function getProjectReportUrlAction(
     const guard = await requireEffectiveRole(supabase, projectId, readRoles)
     if (!guard.ok) return { error: guard.error }
   }
+  const solarDenied = await solarReadDenied(supabase, projectId, report.kind)
+  if (solarDenied) return { error: solarDenied }
 
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -220,6 +238,17 @@ export async function deleteProjectReportAction(
 
   const report = row as { storage_path: string; kind: string } | null
   if (!report) return { error: 'Not found' }
+
+  // An issued proposal's PDF is the evidence the client's acceptance is stamped against (00216).
+  if (report.kind === 'solar_proposal') {
+    return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
+  }
+  // A Solar kind is removed on the Solar EDIT level, not just an org write role.
+  if (solarLevelForKind(report.kind)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+    if (!solarLevelAllows(level, 'edit')) return { error: 'You do not have Solar edit access on this project.' }
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error: deleteErr } = await (supabase as any)
