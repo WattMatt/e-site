@@ -22,9 +22,12 @@ vi.mock('@/lib/solar/proposals/notify', () => ({ sendProposalToClients: h.sendCl
 
 import {
   createSolarProposalAction, saveSolarProposalDraftAction, deleteSolarProposalDraftAction, reviseSolarProposalAction,
+  issueSolarProposalAction, withdrawSolarProposalAction, newSolarProposalLinkAction,
 } from './solar-proposals.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 import { withStorage } from '@/test/fake-storage'
+import { createHash } from 'node:crypto'
+import { proposalSnapshot } from '@/test/proposal-fixture'
 
 export const P = '11111111-1111-4111-8111-111111111111'
 export const PR = '22222222-2222-4222-8222-222222222222'
@@ -136,5 +139,90 @@ describe('deleteSolarProposalDraftAction / reviseSolarProposalAction', () => {
       writes: { 'solar.proposals:insert': { error: { code: '23505', message: 'proposals_one_draft_per_family' } } },
     }); setupSvc()
     await expect(reviseSolarProposalAction({ projectId: P, proposalId: PR })).resolves.toEqual({ error: 'A draft of this proposal already exists — edit it instead.' })
+  })
+})
+
+const draftRow = { id: PR, project_id: P, study_id: 's1', organisation_id: 'o1', family_id: PR, version: 2, status: 'draft', case_id: 'c1', draft: goodDraft, updated_at: 'T0' }
+const issueSetup = (rpc: unknown = { data: { ok: true, version: 2 }, error: null }) => {
+  const user = setupUser({ tables: { 'solar.proposals': [draftRow, { id: 'old', project_id: P, family_id: PR, version: 1, status: 'issued' }] } })
+  const svc = setupSvc({
+    tables: { 'public.profiles': [{ id: U, full_name: 'Pat', email: 'pat@sun.example' }, { id: 'cv1', email: 'client@acme.example' }], 'projects.reports': [{ id: 'rep-old', project_id: P, kind: 'solar_proposal', source_id: 'old', status: 'issued' }], 'projects.projects': [{ id: P, name: 'Acme Mall', organisation_id: 'o1' }], 'projects.project_members': [{ project_id: P, user_id: 'cv1', role: 'client_viewer', is_active: true }] },
+    writes: { 'projects.reports:insert': { data: [{ id: 'rep-new' }] } },
+    rpc: { solar_issue_proposal: rpc as never },
+  })
+  h.prepare.mockResolvedValue({ ok: true, snapshot: proposalSnapshot(), runId: 'r1' })
+  h.brandData.mockResolvedValue({ orgName: 'Sun Co', orgLogoDataUri: null, orgAccent: null, projectAccent: null, clientLogoDataUri: null, projectName: 'Acme Mall' })
+  return { user, svc }
+}
+
+describe('issueSolarProposalAction', () => {
+  it('freezes: stores the PDF, records its SHA-256, passes the token HASH (never the token) and the snapshot to the service function', async () => {
+    const { svc } = issueSetup()
+    const r = await issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: [] })
+    expect(r).toEqual({ ok: true, link: `https://www.e-site.live/proposal/${'T'.repeat(43)}`, emailed: 0, emailNote: null })
+    const path = `o1/${P}/solar-proposals/${PR}-v2.pdf`
+    expect(svc.bucket.upload).toHaveBeenCalledWith(path, expect.any(Uint8Array), { contentType: 'application/pdf', upsert: false })
+    const rpc = (svc.client.rpc as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === 'solar_issue_proposal')![1] as Record<string, unknown>
+    expect(rpc).toMatchObject({
+      p_proposal_id: PR, p_expected_updated_at: 'T0', p_case_run_id: 'r1', p_pdf_path: path,
+      p_pdf_sha256: createHash('sha256').update(Buffer.from('%PDF-proposal')).digest('hex'),
+      p_token_hash: 'f'.repeat(64), p_report_id: 'rep-new', p_actor: U,
+      p_snapshot: proposalSnapshot(), p_expires_at: proposalSnapshot().proposal.validUntil,
+    })
+    expect(JSON.stringify(rpc)).not.toContain('T'.repeat(43))
+    expect(callsTo(svc.calls, 'projects.reports', 'insert')[0]!.payload).toMatchObject({ kind: 'solar_proposal', source_table: 'solar.proposals', source_id: PR, version: 2, status: 'issued' })
+    expect(callsTo(svc.calls, 'projects.reports', 'update')[0]!.payload).toEqual({ status: 'superseded', superseded_by: 'rep-new' })
+    expect(h.emit).toHaveBeenCalledWith({ actorId: U, projectId: P, event: 'solar_proposal_issued', properties: { version: 2, emailed: 0 } })
+  })
+  it('never emails when the project toggle is off, and says so', async () => {
+    issueSetup()
+    h.emailOn.mockResolvedValue(false)
+    const r = await issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: ['cv1'] })
+    expect(r).toMatchObject({ ok: true, emailed: 0, emailNote: 'Solar emails are off for this project (Project settings, Integrations), so no email was sent.' })
+    expect(h.sendClients).not.toHaveBeenCalled()
+  })
+  it('emails only project client viewers among the ids given, when the toggle is on', async () => {
+    issueSetup()
+    h.emailOn.mockResolvedValue(true)
+    h.sendClients.mockResolvedValue(1)
+    const r = await issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: ['cv1', 'not-a-client'] })
+    expect(r).toMatchObject({ ok: true, emailed: 1 })
+    expect(h.sendClients).toHaveBeenCalledWith(expect.objectContaining({ emails: ['client@acme.example'] }))
+  })
+  it('refuses when prepare refuses (Stale), writing nothing', async () => {
+    const { svc } = issueSetup()
+    h.prepare.mockResolvedValue({ ok: false, error: 'The selected case is stale — re-run it first.' })
+    await expect(issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: [] })).resolves.toEqual({ error: 'The selected case is stale — re-run it first.' })
+    expect(svc.bucket.upload).not.toHaveBeenCalled()
+  })
+  it('rolls back the stored PDF and report row when the database refuses (stale)', async () => {
+    const { svc } = issueSetup({ data: { ok: false, error: 'stale' }, error: null })
+    await expect(issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0', emailClientUserIds: [] })).resolves.toEqual({ error: 'Someone else changed this — reload to see their version.' })
+    expect(svc.bucket.remove).toHaveBeenCalledWith([`o1/${P}/solar-proposals/${PR}-v2.pdf`])
+    expect(callsTo(svc.calls, 'projects.reports', 'delete')[0]!.filters).toContainEqual(['eq', 'id', 'rep-new'])
+  })
+  it('refuses a stale expectedUpdatedAt before rendering', async () => {
+    issueSetup()
+    await expect(issueSolarProposalAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T-old', emailClientUserIds: [] })).resolves.toEqual({ error: 'Someone else changed this — reload to see their version.' })
+    expect(h.render).not.toHaveBeenCalled()
+  })
+})
+
+describe('withdraw / new link', () => {
+  it('withdraw calls the service function with the actor and words not_live', async () => {
+    setupUser({ tables: { 'solar.proposals': [{ id: PR, project_id: P, version: 2 }] } })
+    const svc = setupSvc({ rpc: { solar_withdraw_proposal: { data: { ok: false, error: 'not_live' }, error: null } } })
+    await expect(withdrawSolarProposalAction({ projectId: P, proposalId: PR })).resolves.toEqual({ error: 'Only an issued proposal can be withdrawn.' })
+    expect(svc.client.rpc).toHaveBeenCalledWith('solar_withdraw_proposal', { p_proposal_id: PR, p_actor: U })
+  })
+  it('new link rotates to a fresh token hash and returns the new link once', async () => {
+    setupUser({ tables: { 'solar.proposals': [{ id: PR, project_id: P, version: 2 }] } })
+    const svc = setupSvc({ rpc: { solar_rotate_proposal_link: { data: { ok: true }, error: null } } })
+    await expect(newSolarProposalLinkAction({ projectId: P, proposalId: PR })).resolves.toEqual({ ok: true, link: `https://www.e-site.live/proposal/${'T'.repeat(43)}` })
+    expect(svc.client.rpc).toHaveBeenCalledWith('solar_rotate_proposal_link', { p_proposal_id: PR, p_token_hash: 'f'.repeat(64), p_actor: U })
+  })
+  it('a proposal the caller cannot see is not found (RLS read through the session)', async () => {
+    setupUser(); setupSvc()
+    await expect(withdrawSolarProposalAction({ projectId: P, proposalId: PR })).resolves.toEqual({ error: 'This proposal no longer exists — reload.' })
   })
 })
