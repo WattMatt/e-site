@@ -307,6 +307,7 @@ export const projectSettingsService = {
       notifyQcEmail: snap.notifyQcEmail,
       notifyDiaryEmail: snap.notifyDiaryEmail,
       notifyFormEmail: snap.notifyFormEmail,
+      notifyWhatsapp: snap.notifyWhatsapp,
       notifySolarEmail: snap.notifySolarEmail,
     }
     return this.update(client, projectId, patch)
@@ -387,6 +388,7 @@ export const projectSettingsService = {
         diaryEmail: projectSettingsDefaults.notifyDiaryEmail,
         qcEmail: projectSettingsDefaults.notifyQcEmail,
         formEmail: projectSettingsDefaults.notifyFormEmail,
+        whatsapp: projectSettingsDefaults.notifyWhatsapp,
         solarEmail: projectSettingsDefaults.notifySolarEmail,
       }
     }
@@ -405,6 +407,7 @@ export const projectSettingsService = {
       diaryEmail: s.notifyDiaryEmail,
       qcEmail: s.notifyQcEmail,
       formEmail: s.notifyFormEmail,
+      whatsapp: s.notifyWhatsapp,
       solarEmail: s.notifySolarEmail,
     }
   },

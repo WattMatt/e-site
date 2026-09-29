@@ -25,6 +25,7 @@ import { Webhook } from 'https://esm.sh/standardwebhooks@1.0.0'
 // test outside Deno (apps/web/src/lib/email/auth-email-hook-render.test.ts).
 // This file keeps only the transport: signature verification + Resend.
 import { renderAuthEmail, type HookPayload } from './render.ts'
+import { isPlaceholderEmail } from '../_shared/whatsapp/core.ts'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const HOOK_SECRET = Deno.env.get('SEND_EMAIL_HOOK_SECRET') // base64, no "v1,whsec_" prefix
@@ -51,6 +52,13 @@ Deno.serve(async (req) => {
     }
 
     const { to, subject, html } = renderAuthEmail(payload)
+    // WhatsApp-invited externals carry a placeholder address on a no-MX domain
+    // (spec §9.8). Never hand it to Resend: that is a guaranteed bounce, and
+    // bounces are what put the sending domain at risk in July.
+    if (isPlaceholderEmail(to)) {
+      console.warn('auth-email-hook: skipped placeholder address')
+      return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } })
+    }
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },

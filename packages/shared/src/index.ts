@@ -68,6 +68,8 @@ export * from './lib/analytics/product-events'
 // pizzip or node:fs).
 export * from './work-items'
 
+// WhatsApp reply-to-act — pure core shared with the edge (byte-copied).
+export * from './whatsapp'
 // Solar add-on — per-user project access levels (view/edit/edit_financials).
 export * from './solar'
 

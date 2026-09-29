@@ -63,6 +63,7 @@ export default async function Page({ params }: Props) {
   const notifyQcEmail = settings?.notifyQcEmail ?? true
   const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
   const notifyFormEmail = settings?.notifyFormEmail ?? true
+  const notifyWhatsapp = settings?.notifyWhatsapp ?? false
   // 00217: notify_solar_email DEFAULT TRUE.
   const notifySolarEmail = settings?.notifySolarEmail ?? true
 
@@ -123,6 +124,7 @@ export default async function Page({ params }: Props) {
         initialNotifyQcEmail={notifyQcEmail}
         initialNotifyDiaryEmail={notifyDiaryEmail}
         initialNotifyFormEmail={notifyFormEmail}
+        initialNotifyWhatsapp={notifyWhatsapp}
         initialNotifySolarEmail={notifySolarEmail}
       />
     </div>

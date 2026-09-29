@@ -74,6 +74,10 @@ membership.
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
 | `/metrics` | R | R | — | — | — | — | — |
+| `/settings/account` (WhatsApp panel — own number only) | W | W | W | W | W | W | W |
+| `/settings/whatsapp` | W | W | → | → | → | → | → |
+| `/projects/[id]/items/[ref]` | R | R | R | R | R | R | R⁽ʷᵃ⁾ |
+| `/wa/[itemId]` ("Open in E-Site" redirect) | R | R | R | R | R | R | R⁽ʷᵃ⁾ |
 | `/projects/[id]/jbcc/unlock` | R⁴ | R⁴ | R⁴ | R⁴ | R⁴ | — | — |
 | `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
@@ -776,6 +780,18 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 >
 > **`work_item_events` has no write policy at all**, and `INSERT`/`UPDATE`/`DELETE` are revoked from `authenticated`. It is written solely by a `SECURITY DEFINER` append trigger, so the assignment and status history cannot be forged by the person it incriminates.
 
+### WhatsApp (`whatsapp-link.actions.ts`, `whatsapp-invite.actions.ts`, `whatsapp-admin.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `requestWhatsAppCodeAction` / `confirmWhatsAppCodeAction` / `removeWhatsAppLinkAction` / `setWhatsAppQuietHoursAction` (own number only) | W | W | W | W | W | W | W |
+| `inviteWhatsAppExternalAction` / `resendWhatsAppOptInAction` (per project, `requireEffectiveRole(ORG_WRITE_ROLES)`) | W | W | W | — | — | — | — |
+| `setWhatsAppSendingAction` / `setWhatsAppAlertEmailAction` | W | W | — | — | — | — | — |
+
+> ⁽ʷᵃ⁾ The item page and `/wa/[itemId]` read through the caller's RLS (`work_items_select`): a `client_viewer` sees only items they are assigned, gatekeep or watch; anything else is a 404 / redirect to `/dashboard`, indistinguishable from a missing item.
+>
+> **Acting on WhatsApp is acting as the user.** Every WhatsApp action runs through a `whatsapp.wa_*` function owned by the `whatsapp_actor` role (NOLOGIN, no BYPASSRLS, member of `authenticated`) after setting the user's JWT claims, so the table's real RLS policies and the work-item transition guard judge it — there is no parallel rule set (migration `00222`; proven by `scripts/db/assert-whatsapp-actor.sql` including a re-own-to-`postgres` mutation). **Edge functions:** `whatsapp-webhook` is deployed `--no-verify-jwt` and authenticates Meta by the `X-Hub-Signature-256` HMAC only; `whatsapp-worker` is gateway-verified + `requireServiceRole`.
+
 ## Public / unauthenticated
 
 | Route | Access |
@@ -838,6 +854,8 @@ Rules, each of which was violated in production until 2026-09-10:
 
 These are tracked outside this doc:
 
+- **`whatsapp.settings` is one platform row, but `OWNER_ADMIN` admits every org's owner/admin** (the `/metrics` trade-off). Accepted while only WM operates the WhatsApp number.
+- **WhatsApp is stricter than the web on removal, deliberately.** A removed or deactivated member who is still an item's assignee can act on the web (the spine's `assignee_id = auth.uid()` arm) but not via WhatsApp (`wa_*` require an effective project role).
 - ~~**`POST /api/paystack/subaccount` has no role gate.**~~ **Closed 2026-09-11** — `requireRole(…, OWNER_ADMIN)` against the *supplier's* organisation, plus a rate limit, insert-only semantics, and migration `00191` removing the table's write grants from `authenticated`. See footnote ¹².
 - **`PAYSTACK_WEBHOOK_SECRET` is required by no code and exists as a live secret.** Two runbooks listed it as a required environment variable and one instructed pasting it into a Paystack "Signature field" that does not exist. Every occurrence of the name in this repo is markdown — both handlers verify `HMAC-SHA512` of the raw body against **`PAYSTACK_SECRET_KEY`** (`apps/web/src/app/api/paystack/webhook/route.ts:52-70`; the edge `paystack-webhook` reads the same key). The docs were corrected 2026-09-10 ([`launch-checklist.md`](launch-checklist.md), [`staging-deployment-checklist.md`](staging-deployment-checklist.md)); the **secret itself is still set in the Supabase Edge secret store** and should be removed under its own reviewed change — deleting a production secret is not a documentation edit.
 - **Multi-org callers resolve to an arbitrary organisation in one remaining billing surface.** `requireRoleAPI`'s default (via `getOrgContext`) is the general primary-org limitation tracked below. The two acute cases are **closed 2026-09-11**: `cancelSubscriptionAction` now resolves through `getOrgContext()` — the same resolver `/settings/billing` uses via `requireRolePage(OWNER_ADMIN)`, so it honours the OrgSwitcher's `profiles.active_organisation_id` and cancels the org the user was looking at (adding `.order('created_at')` was rejected as a fix: it deterministically targets the OLDEST org and still ignores the switcher); and `POST /api/paystack/subaccount` no longer resolves a caller org at all, gating on the supplier's own organisation instead.

@@ -128,6 +128,7 @@ export const FUNCTIONS_REQUIRING_GATEWAY_JWT: readonly string[] = [
   'reengagement-check',
   'send-email',
   'send-notification',
+  'whatsapp-worker',
 ]
 
 /**
