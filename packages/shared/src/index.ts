@@ -67,3 +67,6 @@ export * from './lib/analytics/product-events'
 // the ball-in-court mirror. Pure; safe from the barrel (no next/*, react-pdf,
 // pizzip or node:fs).
 export * from './work-items'
+
+// WhatsApp reply-to-act — pure core shared with the edge (byte-copied).
+export * from './whatsapp'
