@@ -204,14 +204,15 @@ BEGIN
   SELECT count(*) INTO v_n FROM solar.studies WHERE id = v_study AND tariff_id = v_t25 AND licensee_id = v_lic;
   INSERT INTO _r VALUES ('fin_pins_published_tariff_licensee_rebound', v_n = 1);
   BEGIN
-    UPDATE solar.studies SET export_rule = '{"version": 1, "method": "manual"}' WHERE id = v_study;
+    -- 00218: the source note is money — it lives on study_export_rates, never on the study row.
+    UPDATE solar.studies SET export_rule = '{"version": 1, "method": "manual", "sourceNote": "on the study"}' WHERE id = v_study;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
-    WHEN check_violation THEN INSERT INTO _r VALUES ('manual_export_rule_without_note_REFUSED', true);
-    WHEN raise_exception THEN INSERT INTO _r VALUES ('manual_export_rule_without_note_REFUSED', false);
-    WHEN OTHERS THEN INSERT INTO _r VALUES ('manual_export_rule_without_note_REFUSED', false);
+    WHEN check_violation THEN INSERT INTO _r VALUES ('export_rule_note_on_study_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('export_rule_note_on_study_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('export_rule_note_on_study_REFUSED', false);
   END;
-  UPDATE solar.studies SET export_rule = '{"version": 1, "method": "manual", "sourceNote": "City SSEG schedule 2026/27 p4"}',
+  UPDATE solar.studies SET export_rule = '{"version": 1, "method": "manual"}',
                            escalation = '{"version": 1, "overrides": {"2": 12.5}}' WHERE id = v_study;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO _r VALUES ('fin_saves_export_rule_and_escalation', v_n = 1);
@@ -252,7 +253,7 @@ BEGIN
       AND EXISTS (SELECT 1 FROM solar.study_export_rates WHERE study_id = v_study AND amount_excl_vat = 90
                     AND source_note = 'City SSEG schedule 2026/27 p5' AND project_id = v_project)
       AND EXISTS (SELECT 1 FROM solar.studies WHERE id = v_study
-                    AND export_rule->>'sourceNote' = 'City SSEG schedule 2026/27 p5' AND updated_at = v_upd2);
+                    AND export_rule->>'method' = 'manual' AND NOT (export_rule ? 'sourceNote') AND updated_at = v_upd2);
   EXCEPTION WHEN OTHERS THEN v_ok := false;
   END;
   INSERT INTO _r VALUES ('fin_save_export_rule_atomic', v_ok);

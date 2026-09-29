@@ -221,13 +221,23 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('study_project_move_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('study_project_move_REFUSED', false);
   END;
-  -- activity: actor and org are bound even when supplied
-  INSERT INTO solar.audit_events (project_id, verb, actor_id, organisation_id)
-  VALUES (v_project, 'probe.edit', v_admin, v_org2);
+  -- activity is SERVICE-written since 00218: an editor cannot post a line directly
+  BEGIN
+    INSERT INTO solar.audit_events (project_id, verb, actor_id, organisation_id)
+    VALUES (v_project, 'probe.forged', v_admin, v_org2);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('edit_user_audit_insert_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('edit_user_audit_insert_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('edit_user_audit_insert_REFUSED', false);
+  END;
   -- a request for LESS than the contractor already holds (M6 re-approval path)
   INSERT INTO solar.access_requests (project_id, kind, requested_level) VALUES (v_project, 'access', 'view')
   RETURNING id INTO v_req3;
   RESET ROLE;
+  -- the trusted path (the JWT claim still names the contractor): actor and org are bound even when supplied
+  INSERT INTO solar.audit_events (project_id, verb, actor_id, organisation_id)
+  VALUES (v_project, 'probe.edit', v_admin, v_org2);
   SELECT count(*) INTO v_n FROM solar.audit_events WHERE project_id = v_project AND verb = 'probe.edit' AND actor_id = v_con;
   INSERT INTO _r VALUES ('audit_actor_bound_to_caller', v_n = 1);
   SELECT count(*) INTO v_n FROM solar.audit_events WHERE project_id = v_project AND verb = 'probe.edit' AND organisation_id = v_org;

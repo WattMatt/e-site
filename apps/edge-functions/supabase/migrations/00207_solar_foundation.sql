@@ -89,7 +89,6 @@
 -- policy: studies_update_authz ON solar.studies RESTRICTIVE
 -- policy: studies_delete_authz ON solar.studies RESTRICTIVE
 -- policy: audit_events_select ON solar.audit_events PERMISSIVE
--- policy: audit_events_insert ON solar.audit_events PERMISSIVE
 -- grant_absent: anon SELECT ON solar.studies
 -- grant_absent: anon SELECT ON solar.project_access
 -- grant_absent: anon SELECT ON solar.access_requests
