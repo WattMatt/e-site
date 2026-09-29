@@ -36,7 +36,7 @@ describe('solarBranding', () => {
 describe('no hard-coded Watson Mattheus in Solar report code (spec §9.2)', () => {
   it('holds for every Solar report/proposal source file', () => {
     const SRC = path.resolve(__dirname, '../../..')
-    const roots = ['lib/solar/reports', 'lib/solar/proposals', 'components/solar/proposal', 'app/(proposal)']
+    const roots = ['lib/solar/reports', 'lib/solar/proposals', 'components/solar/proposal', 'app/(proposal)', 'lib/solar/operations']
     const offenders: string[] = []
     for (const r of roots) {
       const dir = path.join(SRC, r)
