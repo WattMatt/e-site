@@ -14,6 +14,7 @@ import { emitProductEvent } from '@/lib/analytics/product-events'
 import { rateLimit } from '@/lib/rate-limit'
 import { generateMonthlyReport } from '@/lib/solar/operations/monthly-report'
 import { opsError } from '@/lib/solar/operations/errors'
+import { installationNotInProject } from '@/lib/solar/operations/own-installation'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -60,6 +61,10 @@ export async function saveMonthlyReportNoteAction(input: {
   if (!user) return { error: 'You are not signed in.' }
   const t = () => supabase.schema('solar').from('monthly_report_notes')
   const period = monthFirstDay(input.month)
+  if (input.expectedUpdatedAt === null) {
+    const notHere = await installationNotInProject(supabase, input.projectId, input.installationId)
+    if (notHere) return notHere
+  }
   const { data, error } = input.expectedUpdatedAt === null
     ? await t().insert({ installation_id: input.installationId, period_month: period, section: input.section, body }).select('updated_at')
     : await t().update({ body }).eq('installation_id', input.installationId).eq('project_id', input.projectId)

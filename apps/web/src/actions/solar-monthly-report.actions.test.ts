@@ -42,8 +42,17 @@ describe('generateSolarMonthlyReportAction', () => {
 })
 
 describe('saveMonthlyReportNoteAction', () => {
+  it('a first note addressed by another project’s installation writes nothing (review round 2)', async () => {
+    const f = fakeSupabase({ userId: 'u1', tables: { 'solar.installations': [{ id: 'i1', project_id: 'another-project' }] } })
+    h.createClient.mockResolvedValue(f.client)
+    await expect(saveMonthlyReportNoteAction({ projectId: P, installationId: 'i1', month: '2026-03', section: 'summary', body: 'Good', expectedUpdatedAt: null }))
+      .resolves.toEqual({ error: 'That installation is not in this project — reload.' })
+    expect(callsTo(f.calls, 'solar.monthly_report_notes', 'insert')).toHaveLength(0)
+    expect(callsTo(f.calls, 'solar.installations', 'select')[0]!.filters).toEqual([['eq', 'id', 'i1'], ['eq', 'project_id', P]])
+    expect(h.revalidate).not.toHaveBeenCalled()
+  })
   it('inserts the first note, then updates on the loaded version; never touches a stored report', async () => {
-    const f = fakeSupabase({ userId: 'u1', writes: { 'solar.monthly_report_notes:insert': { data: [{ updated_at: 'N1' }] } } })
+    const f = fakeSupabase({ userId: 'u1', tables: { 'solar.installations': [{ id: 'i1', project_id: P }] }, writes: { 'solar.monthly_report_notes:insert': { data: [{ updated_at: 'N1' }] } } })
     h.createClient.mockResolvedValue(f.client)
     await expect(saveMonthlyReportNoteAction({ projectId: P, installationId: 'i1', month: '2026-03', section: 'summary', body: ' Good ', expectedUpdatedAt: null }))
       .resolves.toEqual({ ok: true, updatedAt: 'N1' })

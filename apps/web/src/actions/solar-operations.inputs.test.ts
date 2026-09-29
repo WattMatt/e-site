@@ -16,8 +16,9 @@ import {
 } from './solar-operations.actions'
 import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 
+const OWN = { 'solar.installations': [{ id: I, project_id: P }] }
 function setup(extra: Parameters<typeof fakeSupabase>[0] = {}) {
-  const f = fakeSupabase({ userId: 'u1', ...extra })
+  const f = fakeSupabase({ userId: 'u1', ...extra, tables: { ...OWN, ...extra.tables } })
   h.createClient.mockResolvedValue(f.client)
   return f
 }
@@ -74,6 +75,23 @@ describe('guarantee', () => {
     await saveGuaranteeAction({ projectId: P, installationId: I, guarantee: { basis: 'p50', pct: null, manualMonthlyKwh: null, degradationPctPerYear: 0.5 }, expectedUpdatedAt: null })
     expect(callsTo(f2.calls, 'solar.guarantees', 'insert')[0]!.payload).toMatchObject({ installation_id: I, basis: 'p50' })
     expect(h.emit).toHaveBeenCalledWith({ actorId: 'u1', projectId: P, event: 'solar_guarantee_saved', properties: { basis: 'p50' } })
+  })
+})
+
+describe('an insert addressed by another project’s installation (review round 2)', () => {
+  const OTHER = { 'solar.installations': [{ id: I, project_id: 'another-project' }] }
+  const NOT_HERE = { error: 'That installation is not in this project — reload.' }
+  it('link meter, first guarantee and a new irradiation month write nothing, audit nothing, revalidate nothing', async () => {
+    const f = setup({ tables: OTHER })
+    await expect(linkMeterAction({ projectId: P, installationId: I, meterId: M, role: 'generation' })).resolves.toEqual(NOT_HERE)
+    await expect(saveGuaranteeAction({ projectId: P, installationId: I, guarantee: { basis: 'p50', pct: null, manualMonthlyKwh: null, degradationPctPerYear: 0.5 }, expectedUpdatedAt: null }))
+      .resolves.toEqual(NOT_HERE)
+    await expect(saveIrradiationAction({ projectId: P, installationId: I, month: '2026-03', plane: 'poa', kwhPerM2: 150, sourceNote: 'Station X' })).resolves.toEqual(NOT_HERE)
+    expect(f.calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+    expect(callsTo(f.calls, 'solar.installations', 'select')[0]!.filters).toEqual([['eq', 'id', I], ['eq', 'project_id', P]])
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 })
 

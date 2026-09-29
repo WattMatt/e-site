@@ -15,6 +15,7 @@ import { STALE_MESSAGE } from '@/lib/solar/errors'
 import { emitProductEvent } from '@/lib/analytics/product-events'
 import { INSTALL_REASONS, loadInstallationSeed } from '@/lib/solar/operations/baseline-loader'
 import { opsError } from '@/lib/solar/operations/errors'
+import { installationNotInProject } from '@/lib/solar/operations/own-installation'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -106,6 +107,8 @@ export async function saveInstallationAction(input: {
 
 // Every update/delete addressed by row id is also scoped to the GATED project, and a write that
 // touched no row (another project's ids, or already gone) returns a sentence with no audit (review A2).
+// Every INSERT addressed by installation id first reads that installation in the gated project
+// (installationNotInProject), for the same reason (review round 2).
 const NOT_LINKED = 'That meter is not linked to this installation — reload.'
 const NO_IRRADIATION = 'There is no irradiation entry for that month — reload.'
 const NO_DOWNTIME = 'That downtime entry no longer exists — reload.'
@@ -117,6 +120,8 @@ export async function linkMeterAction(input: { projectId: string; installationId
   if (!(ROLES as readonly string[]).includes(input.role)) return { error: 'Unknown meter role.' }
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
+  const notHere = await installationNotInProject(g.supabase, input.projectId, input.installationId)
+  if (notHere) return notHere
   const { error } = await g.supabase.schema('solar').from('installation_meters')
     .insert({ installation_id: input.installationId, meter_id: input.meterId, role: input.role })
   if (error) return { error: error.code === '23505' ? 'That meter is already linked.' : opsError(error) }
@@ -159,6 +164,10 @@ export async function saveGuaranteeAction(input: { projectId: string; installati
   const v = parsed.value
   const values = { basis: v.basis, pct: v.pct, manual_monthly_kwh: v.manualMonthlyKwh, degradation_pct_per_year: v.degradationPctPerYear }
   const t = () => g.supabase.schema('solar').from('guarantees')
+  if (input.expectedUpdatedAt === null) {
+    const notHere = await installationNotInProject(g.supabase, input.projectId, input.installationId)
+    if (notHere) return notHere
+  }
   const { data, error } = input.expectedUpdatedAt === null
     ? await t().insert({ installation_id: input.installationId, ...values }).select('updated_at')
     : await t().update(values).eq('installation_id', input.installationId).eq('project_id', input.projectId)
@@ -188,6 +197,10 @@ export async function saveIrradiationAction(input: {
   const month = monthFirstDay(input.month)
   const { data: existing } = await t().select('month').eq('installation_id', input.installationId).eq('month', month).eq('project_id', input.projectId).maybeSingle()
   const values = { plane: input.plane, kwh_per_m2: input.kwhPerM2, source_note: note }
+  if (!existing) {
+    const notHere = await installationNotInProject(g.supabase, input.projectId, input.installationId)
+    if (notHere) return notHere
+  }
   const { data, error } = existing
     ? await t().update(values).eq('installation_id', input.installationId).eq('month', month).eq('project_id', input.projectId).select('month')
     : await t().insert({ installation_id: input.installationId, month, ...values }).select('month')
@@ -247,6 +260,8 @@ export async function addDowntimeAction(input: {
   const source = input.source === 'detected' ? 'detected' : 'manual'
   const g = await gate(input.projectId, 'edit')
   if ('error' in g) return g
+  const notHere = await installationNotInProject(g.supabase, input.projectId, input.installationId)
+  if (notHere) return notHere
   const { data, error } = await g.supabase.schema('solar').from('downtime').insert({
     installation_id: input.installationId, starts_at: c.startsAt, ends_at: c.endsAt, cause: input.cause,
     description: c.description, excluded_from_guarantee: input.excludedFromGuarantee === true, source,

@@ -15,7 +15,8 @@ import { addDowntimeAction, deleteDowntimeAction, updateDowntimeAction } from '.
 import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 
 function setup(extra: Parameters<typeof fakeSupabase>[0] = {}) {
-  const f = fakeSupabase({ userId: 'u1', writes: { 'solar.downtime:insert': { data: [{ id: D }] } }, ...extra })
+  const f = fakeSupabase({ userId: 'u1', writes: { 'solar.downtime:insert': { data: [{ id: D }] } }, ...extra,
+    tables: { 'solar.installations': [{ id: I, project_id: P }], ...extra.tables } })
   h.createClient.mockResolvedValue(f.client)
   return f
 }
@@ -45,6 +46,17 @@ describe('addDowntimeAction', () => {
     await expect(addDowntimeAction({ ...good, cause: 'aliens' })).resolves.toEqual({ fieldErrors: { cause: 'Choose a cause.' } })
     await expect(addDowntimeAction({ ...good, startsAt: 'yesterday' })).resolves.toEqual({ fieldErrors: { startsAt: 'Enter a date and time.' } })
     expect(f.calls).toHaveLength(0)
+  })
+  it('another project’s installation (manual or a confirmed candidate) writes nothing (review round 2)', async () => {
+    const f = setup({ tables: { 'solar.installations': [{ id: I, project_id: 'another-project' }] } })
+    for (const input of [good, { ...good, startsAt: '2026-03-10T09:30:00.000Z', endsAt: '2026-03-10T11:00:00.000Z', source: 'detected' as const }]) {
+      await expect(addDowntimeAction(input)).resolves.toEqual({ error: 'That installation is not in this project — reload.' })
+    }
+    expect(callsTo(f.calls, 'solar.downtime', 'insert')).toHaveLength(0)
+    expect(callsTo(f.calls, 'solar.installations', 'select')[0]!.filters).toEqual([['eq', 'id', I], ['eq', 'project_id', P]])
+    expect(h.audit).not.toHaveBeenCalled()
+    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
   it('the overlap refusal is shown in words', async () => {
     setup({ writes: { 'solar.downtime:insert': { error: { code: '23P01', message: 'solar.downtime: this window overlaps recorded downtime' } } } })
