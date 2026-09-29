@@ -6,7 +6,7 @@ import 'server-only'
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  buildFinanceInput, financeInputReasons, capexTotals, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials,
+  buildFinanceInput, financeCaseConfig, financeInputReasons, capexTotals, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials,
 } from '@esite/shared/solar-cases'
 import { inputsHash } from '@esite/shared/solar-engine'
 import {
@@ -28,6 +28,7 @@ export const PREPARE_ERRORS = {
   noFinancials: 'Save the Financials tab for the selected case first.',
   badFinancials: 'The saved financials are invalid — review them on the Financials tab.',
   badRun: 'The run’s stored configuration could not be read — re-run the case.',
+  badCase: 'The selected case’s saved settings could not be read — open it on Yield & Scenarios, check each section and save it again.',
   noCapex: 'Add capex on the Financials tab first.',
   compute: 'The finance options could not be computed — try again.',
 } as const
@@ -59,6 +60,9 @@ export async function prepareProposalSnapshot(a: PrepareInput): Promise<PrepareR
   if (!fin.ok) return { ok: false, error: PREPARE_ERRORS.badFinancials }
   const cfg = parseCaseConfig(sel.run.configSnapshot)
   if (!cfg.ok) return { ok: false, error: PREPARE_ERRORS.badRun }
+  // YF-01: degradation / load shedding are the case's current values, as Run financials prices them.
+  const current = parseCaseConfig(sel.caseRow.config)
+  if (!current.ok) return { ok: false, error: PREPARE_ERRORS.badCase }
   const k = sel.run.outputs.kpis
 
   const base = offerBaseZar(capexTotals(fin.fin.capex, k.dcKwp))
@@ -72,7 +76,7 @@ export async function prepareProposalSnapshot(a: PrepareInput): Promise<PrepareR
   const year = Number(sel.run.outputs.provenance?.loadReferenceYear)
   const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })
   if (!tariff.ok) return { ok: false, error: tariff.reason }
-  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: k.dcKwp, acKw: k.acKw }, tariff.pricing)
+  const built = buildFinanceInput(fin.fin, financeCaseConfig(cfg.config, current.config), { dcKwp: k.dcKwp, acKw: k.acKw }, tariff.pricing)
   if (!built.ok) return { ok: false, error: built.reasons.join(' ') }
   const priced = proposalFinanceInput(built.input, price.offerExclVatZar, draft.financeOptions)
   if (!priced.ok) {

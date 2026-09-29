@@ -26,7 +26,7 @@ const fin = {
 const outputs = { kpis: { dcKwp: 500, acKw: 400, batteryKwh: null, batteryKw: null, annualAcKwh: 845_000, deliveredKwh: 840_000, specificYieldKwhPerKwp: 1690, selfConsumption: 0.83, solarFraction: 0.58, exportKwh: 140_000 }, provenance: { engineVersion: '0.1.0' } }
 const sel = {
   ok: true, shared: { study: { id: 's1', organisation_id: 'o1' } },
-  caseRow: { id: 'c1', name: 'Base', pv_source: 'manual', layout_id: null },
+  caseRow: { id: 'c1', name: 'Base', pv_source: 'manual', layout_id: null, config: cfg },
   run: { id: 'r1', finishedAt: '2026-09-28T10:00:00Z', inputsHash: 'a'.repeat(64), outputs, configSnapshot: cfg, hourlyPath: 'o1/r1.csv.gz' },
 }
 const draft = { clientName: 'Acme', marginPct: 15, validityDays: 30, financeOptions: ['cash'], summary: 'S ≤ Ω', scope: '', priceTerms: '', assumptions: '', inclusions: [], exclusions: [], terms: 'T', narrative: '' }
@@ -101,5 +101,13 @@ describe('prepareProposalSnapshot', () => {
   it('returns field errors for an incomplete draft', async () => {
     const r = await prepareProposalSnapshot(args({ proposal: { id: 'pr1', family_id: 'pr1', version: 1, case_id: 'c1', draft: { ...draft, clientName: '' } } }))
     expect(r).toMatchObject({ ok: false, error: PREPARE_ERRORS.incomplete, fieldErrors: { clientName: 'Enter the client name' } })
+  })
+
+  it('YF-01: degradation is the case’s current value, as Run financials prices it', async () => {
+    h.sel.mockResolvedValueOnce({ ...sel, caseRow: { ...sel.caseRow, config: { ...cfg, degradation: { firstYearPct: 0.5, annualPct: 0.2 } } } })
+    const r = await prepareProposalSnapshot(args())
+    expect(r.ok).toBe(true)
+    const priced = h.run.mock.calls[0]![1] as { degradation: { firstYear: number; annual: number } }
+    expect(priced.degradation).toMatchObject({ firstYear: 0.005, annual: 0.002 })
   })
 })

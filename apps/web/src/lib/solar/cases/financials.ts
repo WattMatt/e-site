@@ -11,7 +11,10 @@ import 'server-only'
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ENGINE_VERSION, inputsHash } from '@esite/shared/solar-engine'
-import { buildFinanceInput, capexTotals, financeInputReasons, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials, type CaseRunOutputs } from '@esite/shared/solar-cases'
+import {
+  buildFinanceInput, capexTotals, financeCaseConfig, financeInputReasons, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials,
+  type CaseRunOutputs,
+} from '@esite/shared/solar-cases'
 import { humanSolarError } from '@/lib/solar/errors'
 import { resolveStudyTariff } from './tariff'
 import { getGzipText, RUNS_BUCKET } from './storage'
@@ -25,6 +28,7 @@ export const FIN_RUN_REASONS = {
   noFinancials: 'Save the financials first.',
   badFinancials: 'The saved financials are invalid — review each section and save again.',
   badRun: 'The run’s stored configuration could not be read — re-run the case.',
+  badCase: 'This case’s saved settings could not be read — open it on Yield & Scenarios, check each section and save it again.',
   fileMissing: 'The stored hourly file for this run is missing — re-run the case.',
   computeFailed: 'Financials could not be computed from these inputs — check each Financials section and save again.',
 } as const
@@ -54,11 +58,16 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   const kpis = outputs.kpis
   const early = financeInputReasons(fin.fin, { dcKwp: kpis.dcKwp })
   if (early.length > 0) return { ok: false, status: 422, error: early.join(' ') }
+  // YF-01: degradation and load shedding are money-only (the run never read them), so they are the
+  // case's CURRENT values; everything the energy used stays the run's snapshot.
+  const { data: caseRow } = await a.user.schema('solar').from('cases').select('config').eq('id', a.caseId).eq('project_id', a.projectId).maybeSingle()
+  const current = caseRow ? parseCaseConfig((caseRow as Row).config) : null
+  if (!current?.ok) return { ok: false, status: 422, error: FIN_RUN_REASONS.badCase }
   const year = Number(outputs.provenance?.loadReferenceYear)
   const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })
   if (!tariff.ok) return { ok: false, status: 422, error: tariff.reason }
   // Escalation (Tariff tab) and load growth (Load tab) are the study's (I-1), not the case config's.
-  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, tariff.pricing)
+  const built = buildFinanceInput(fin.fin, financeCaseConfig(cfg.config, current.config), { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, tariff.pricing)
   if (!built.ok) return { ok: false, status: 422, error: built.reasons.join(' ') }
 
   let hourly: ReturnType<typeof decodeHourlyCsv>

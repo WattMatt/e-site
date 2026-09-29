@@ -7,7 +7,7 @@ import { solarOrgSettingDefaults } from '@esite/shared'
 const h = vi.hoisted(() => ({ shared: vi.fn(), ctx: vi.fn() }))
 vi.mock('./run-context', () => ({ loadStudyInputs: h.shared, contextForCase: h.ctx }))
 import { loadFinancialsPageData } from './financials-page-data'
-import { finInputsHash } from './financials'
+import { finInputsHash, FIN_RUN_REASONS } from './financials'
 
 const P = 'p1', ORG = 'o1', H = 'a'.repeat(64)
 const s = solarOrgSettingDefaults()
@@ -80,6 +80,17 @@ describe('loadFinancialsPageData', () => {
     const changed = { ...fin, analysis: { ...fin.analysis, discountRatePct: 12 } }
     const d = await loadFinancialsPageData(fakeSupabase({ tables: tables({ 'solar.case_financials': [{ case_id: 'c1', config: changed, updated_at: 'F2' }] }) }).client as never, fakeSupabase({}).client as never, P, 'c1')
     expect(d.financialsStale).toBe(true)
+  })
+  it('YF-01: a degradation edit on Yield (after the run) makes the stored financials stale', async () => {
+    const edited = { ...cfg, degradation: { firstYearPct: 0.5, annualPct: 0.2 } }
+    const cases = [{ ...tables()['solar.cases']![0] as object, config: edited }]
+    const d = await loadFinancialsPageData(fakeSupabase({ tables: tables({ 'solar.cases': cases }) }).client as never, fakeSupabase({}).client as never, P, 'c1')
+    expect(d.financialsStale).toBe(true)
+  })
+  it('YF-01: an unreadable current case config is named, not priced from the run snapshot', async () => {
+    const cases = [{ ...tables()['solar.cases']![0] as object, config: { version: 99 } }]
+    const d = await loadFinancialsPageData(fakeSupabase({ tables: tables({ 'solar.cases': cases }) }).client as never, fakeSupabase({}).client as never, P, 'c1')
+    expect(d.runReasons).toContain(FIN_RUN_REASONS.badCase)
   })
   it('a newer succeeded run makes the stored financials stale', async () => {
     const runs = [

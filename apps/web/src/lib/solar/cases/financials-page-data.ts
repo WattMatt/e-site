@@ -9,7 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings, solarOrgSettingDefaults } from '@esite/shared'
 import { SOLAR_ENGINE_DEFAULTS } from '@esite/shared/solar-engine'
 import {
-  buildFinanceInput, defaultFinanceConfig, parseCaseConfig, parseFinanceConfig, VAT_RATE,
+  buildFinanceInput, defaultFinanceConfig, financeCaseConfig, parseCaseConfig, parseFinanceConfig, VAT_RATE,
   type CaseFinanceConfig, type CaseRunOutputs,
 } from '@esite/shared/solar-cases'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
@@ -141,7 +141,11 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
     // Without a resolved tariff the reasons are still named (tariffReason carries the tariff's own);
     // the engine default path stands in for validation only and is never hashed or priced.
     const pricing = shared.tariff.ok ? shared.tariff.pricing : { escalationPath: SOLAR_ENGINE_DEFAULTS.finance.escalation, loadGrowthPct: 0 }
-    const built = buildFinanceInput(config, snap.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, pricing)
+    // YF-01: degradation / load shedding priced from the case as it stands now (as Run financials does).
+    const current = parseCaseConfig(row.config)
+    const built = current.ok
+      ? buildFinanceInput(config, financeCaseConfig(snap.config, current.config), { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, pricing)
+      : { ok: false as const, reasons: [FIN_RUN_REASONS.badCase] }
     if (!built.ok) runReasons.push(...built.reasons)
     else if (shared.tariff.ok) currentFinHash = finInputsHash(built.input, shared.tariff.tariffRef, lastOk.id as string, shared.tariff.pricingHash)
   }

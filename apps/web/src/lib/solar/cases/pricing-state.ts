@@ -11,7 +11,8 @@ import 'server-only'
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  buildFinanceInput, caseStatus, parseCaseConfig, parseFinanceConfig, type CaseRunOutputs, type CaseStatus, type LatestRunLite,
+  buildFinanceInput, caseStatus, financeCaseConfig, financeCaseInputsKey, parseCaseConfig, parseFinanceConfig,
+  type CaseConfig, type CaseRunOutputs, type CaseStatus, type LatestRunLite,
 } from '@esite/shared/solar-cases'
 import type { RunContextResult, StudyInputs } from './run-context'
 import { finInputsHash } from './financials'
@@ -20,8 +21,14 @@ import { finInputsHash } from './financials'
 type AnyClient = SupabaseClient<any, any, any>
 type Row = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
-/** True when the latest case_run_financials row prices `runId` on the study pricing as it stands now. */
-export async function financialsOnCurrentPricing(svc: AnyClient, shared: StudyInputs, caseId: string, runId: string): Promise<boolean> {
+/**
+ * True when the latest case_run_financials row prices `runId` on the study pricing as it stands now —
+ * and on the case's CURRENT degradation / load shedding (YF-01; `current` = the saved case config,
+ * null = the run's own snapshot).
+ */
+export async function financialsOnCurrentPricing(
+  svc: AnyClient, shared: StudyInputs, caseId: string, runId: string, current: CaseConfig | null = null,
+): Promise<boolean> {
   if (!shared.tariff.ok) return false
   const solar = svc.schema('solar')
   const [{ data: fin }, { data: run }, { data: res }] = await Promise.all([
@@ -35,7 +42,7 @@ export async function financialsOnCurrentPricing(svc: AnyClient, shared: StudyIn
   const snap = parseCaseConfig((run as Row).config_snapshot)
   const kpis = ((run as Row).outputs as CaseRunOutputs | undefined)?.kpis
   if (!parsedFin.ok || !snap.ok || !kpis) return false
-  const built = buildFinanceInput(parsedFin.fin, snap.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, shared.tariff.pricing)
+  const built = buildFinanceInput(parsedFin.fin, current ? financeCaseConfig(snap.config, current) : snap.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, shared.tariff.pricing)
   if (!built.ok) return false
   return latest.fin_inputs_hash === finInputsHash(built.input, shared.tariff.tariffRef, runId, shared.tariff.pricingHash)
 }
@@ -43,6 +50,10 @@ export async function financialsOnCurrentPricing(svc: AnyClient, shared: StudyIn
 /**
  * The one status every Solar surface shows (Yield card, Overview, Financials, Reports): caseStatus with
  * the energy hashes, asking the financials question only when the verdict would be "Pricing changed".
+ * Degradation and load shedding are money-only (not in the energy input, so not in the run's hash):
+ * when the case's current values differ from the run snapshot's (`lastOk.snap_degradation` /
+ * `snap_load_shedding`, selected by runsByCase), a Done case is "Pricing changed" until the financials
+ * are re-run on them (YF-01).
  */
 export async function resolveCaseStatus(
   svc: AnyClient,
@@ -57,7 +68,11 @@ export async function resolveCaseStatus(
   const current = ctx.ok ? ctx.ctx.currentHash : null
   const energy = { currentEnergyHash: ctx.ok ? ctx.ctx.energyHash : null }
   const first = caseStatus(latestLite, stored, current, Date.now(), energy)
-  if (first.status !== 'pricing_changed' || !lastOk) return first
-  const absorbed = await financialsOnCurrentPricing(svc, shared, caseId, String(lastOk.id))
+  const cfg = ctx.ok ? (ctx.ctx.config ?? null) : null
+  const snapKey = lastOk ? financeCaseInputsKey({ degradation: lastOk.snap_degradation, loadShedding: lastOk.snap_load_shedding }) : null
+  const financeMoved = first.status === 'done' && cfg !== null && snapKey !== null && financeCaseInputsKey(cfg) !== snapKey
+  if ((first.status !== 'pricing_changed' && !financeMoved) || !lastOk) return first
+  const absorbed = await financialsOnCurrentPricing(svc, shared, caseId, String(lastOk.id), cfg)
+  if (financeMoved) return absorbed ? first : { status: 'pricing_changed', label: 'Pricing changed' }
   return caseStatus(latestLite, stored, current, Date.now(), { ...energy, financialsOnCurrentPricing: absorbed })
 }
