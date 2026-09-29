@@ -25,9 +25,8 @@ export interface FinancePricing {
   loadGrowthPct: number
 }
 
-export function buildFinanceInput(
-  fin: CaseFinanceConfig, c: CaseConfig, size: { dcKwp: number; acKw: number }, pricing: FinancePricing,
-): { ok: true; input: FinanceInput } | { ok: false; reasons: string[] } {
+/** What stops a finance input being built — independent of the study pricing, so callers can name it before reading any tariff. */
+export function financeInputReasons(fin: CaseFinanceConfig, size: { dcKwp: number }): string[] {
   const t = capexTotals(fin.capex, size.dcKwp)
   const m = fin.models
   const reasons: string[] = []
@@ -35,6 +34,15 @@ export function buildFinanceInput(
   if (m.debt.enabled && !(m.debt.loanPct > 0 && m.debt.ratePct > 0)) reasons.push(FINANCE_REASONS.debt)
   if (m.ppa.enabled && !(m.ppa.startTariffZarPerKwh > 0)) reasons.push(FINANCE_REASONS.ppa)
   if (m.lease.enabled && !(m.lease.monthlyPaymentZar > 0)) reasons.push(FINANCE_REASONS.lease)
+  return reasons
+}
+
+export function buildFinanceInput(
+  fin: CaseFinanceConfig, c: CaseConfig, size: { dcKwp: number; acKw: number }, pricing: FinancePricing,
+): { ok: true; input: FinanceInput } | { ok: false; reasons: string[] } {
+  const t = capexTotals(fin.capex, size.dcKwp)
+  const m = fin.models
+  const reasons = financeInputReasons(fin, size)
   if (reasons.length > 0) return { ok: false, reasons }
 
   const models: FinanceModel[] = []

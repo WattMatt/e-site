@@ -11,7 +11,7 @@ import 'server-only'
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ENGINE_VERSION, inputsHash } from '@esite/shared/solar-engine'
-import { buildFinanceInput, capexTotals, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials, type CaseRunOutputs } from '@esite/shared/solar-cases'
+import { buildFinanceInput, capexTotals, financeInputReasons, decodeHourlyCsv, parseCaseConfig, parseFinanceConfig, runStoredFinancials, type CaseRunOutputs } from '@esite/shared/solar-cases'
 import { humanSolarError } from '@/lib/solar/errors'
 import { resolveStudyTariff } from './tariff'
 import { getGzipText, RUNS_BUCKET } from './storage'
@@ -37,8 +37,8 @@ export async function latestSucceededRun(user: AnyClient, projectId: string, cas
   return (Array.isArray(data) ? (data[0] as Row | undefined) : undefined) ?? null
 }
 
-/** The hash that makes a stored financial result current: finance input + tariff + the run it priced. */
-export const finInputsHash = (input: unknown, tariffRef: unknown, runId: string) => inputsHash({ input, tariffRef, runId })
+/** The hash that makes a stored financial result current: finance input + tariff + the study pricing (I-1) + the run it priced. */
+export const finInputsHash = (input: unknown, tariffRef: unknown, runId: string, pricingHash: string) => inputsHash({ input, tariffRef, runId, pricing: pricingHash })
 
 export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient; projectId: string; caseId: string; userId: string }): Promise<FinRunOutcome> {
   const run = await latestSucceededRun(a.user, a.projectId, a.caseId)
@@ -52,11 +52,14 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   if (!cfg.ok) return { ok: false, status: 422, error: FIN_RUN_REASONS.badRun }
   const outputs = run.outputs as CaseRunOutputs
   const kpis = outputs.kpis
-  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, /* legacy until the study pricing is wired (next commit) */ { escalationPath: { published: [], startRate: fin.fin.analysis.escalationStartPct / 100, endRate: fin.fin.analysis.escalationYear10Pct / 100, linearToYear: 10, cpiMargin: fin.fin.analysis.escalationAfterCpiPlusPct / 100 }, loadGrowthPct: fin.fin.analysis.loadGrowthPct })
-  if (!built.ok) return { ok: false, status: 422, error: built.reasons.join(' ') }
+  const early = financeInputReasons(fin.fin, { dcKwp: kpis.dcKwp })
+  if (early.length > 0) return { ok: false, status: 422, error: early.join(' ') }
   const year = Number(outputs.provenance?.loadReferenceYear)
   const tariff = await resolveStudyTariff(a.svc, a.projectId, { year: Number.isInteger(year) && year > 0 ? year : undefined })
   if (!tariff.ok) return { ok: false, status: 422, error: tariff.reason }
+  // Escalation (Tariff tab) and load growth (Load tab) are the study's (I-1), not the case config's.
+  const built = buildFinanceInput(fin.fin, cfg.config, { dcKwp: kpis.dcKwp, acKw: kpis.acKw }, tariff.pricing)
+  if (!built.ok) return { ok: false, status: 422, error: built.reasons.join(' ') }
 
   let hourly: ReturnType<typeof decodeHourlyCsv>
   try {
@@ -68,7 +71,8 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   let results: Record<string, unknown>
   try {
     // "Yes (no credit)" is part of the run's hashed input (CaseInput.export.credited): price export at zero.
-    const exportCredited = (run.export_settings as { credited?: unknown } | null | undefined)?.credited !== false
+    // The study's export rule 'none' prices at zero too (its SSEG rule is crediting 'none'); both agree here.
+    const exportCredited = (run.export_settings as { credited?: unknown } | null | undefined)?.credited !== false && tariff.pricing.exportCredited
     const result = runStoredFinancials({ hourly, year1PvKwh: kpis.annualAcKwh, year1DeliveredKwh: kpis.deliveredKwh, exportCredited }, built.input, tariff.calc)
     results = { version: 1, capex: capexTotals(fin.fin.capex, kpis.dcKwp), ...result }
   } catch (e) {
@@ -78,7 +82,7 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
   }
   const { data, error } = await a.svc.schema('solar').from('case_run_financials').insert({
     case_run_id: run.id, engine_version: ENGINE_VERSION, fin_inputs: { finance: built.input, config: fin.fin },
-    fin_inputs_hash: finInputsHash(built.input, tariff.tariffRef, run.id as string), tariff_ref: tariff.tariffRef, results,
+    fin_inputs_hash: finInputsHash(built.input, tariff.tariffRef, run.id as string, tariff.pricingHash), tariff_ref: tariff.tariffRef, results,
     run_by: a.userId,
   }).select('id')
   if (error) {

@@ -22,16 +22,18 @@ const results = {
   tornado: { model: 'cash', view: 'owner', baseNpvZar: 900_000, swing: 0.2, bars: [{ variable: 'capex', lowNpvZar: 1_140_000, highNpvZar: 660_000, spreadZar: 480_000 }] },
   engineVersion: '0.1.0',
 }
-const built = buildFinanceInput(fin, cfg, { dcKwp: 100, acKw: 80 }, /* legacy until the study pricing is wired (next commit) */ { escalationPath: { published: [], startRate: fin.analysis.escalationStartPct / 100, endRate: fin.analysis.escalationYear10Pct / 100, linearToYear: 10, cpiMargin: fin.analysis.escalationAfterCpiPlusPct / 100 }, loadGrowthPct: fin.analysis.loadGrowthPct })
+const PRICING = { escalationPath: { published: [0.101, 0.09], startRate: 0.09, endRate: 0.07, linearToYear: 10, cpiMargin: 0.01 }, loadGrowthPct: 2, exportCredited: true }
+const PH = 'p'.repeat(64)
+const built = buildFinanceInput(fin, cfg, { dcKwp: 100, acKw: 80 }, PRICING)
 const tables = (over: Record<string, unknown[]> = {}) => ({
   'solar.cases': [{ id: 'c1', study_id: 's1', project_id: P, name: 'Base', pv_source: 'manual', config: cfg, updated_at: 'T1' }],
   'solar.case_runs': [{ id: 'r1', case_id: 'c1', project_id: P, status: 'succeeded', inputs_hash: H, started_at: '2026-09-28T09:00:00Z', config_snapshot: cfg, outputs: { kpis: { dcKwp: 100, acKw: 80, batteryKwh: null } } }],
   'solar.case_financials': [{ case_id: 'c1', config: fin, updated_at: 'F1' }],
-  'solar.case_run_financials': [{ case_id: 'c1', case_run_id: 'r1', created_at: '2026-09-28T10:00:00Z', engine_version: '0.1.0', tariff_ref: tariffRef, fin_inputs_hash: built.ok ? finInputsHash(built.input, tariffRef, 'r1') : '', results }],
+  'solar.case_run_financials': [{ case_id: 'c1', case_run_id: 'r1', created_at: '2026-09-28T10:00:00Z', engine_version: '0.1.0', tariff_ref: tariffRef, fin_inputs_hash: built.ok ? finInputsHash(built.input, tariffRef, 'r1', PH) : '', results }],
   ...over,
 })
 const study = { id: 's1', organisation_id: ORG, selected_case_id: 'c1' }
-const sharedOk = { study, siteLoad: null, loadError: null, referenceYear: 2025, touPeriods: null, tariff: { ok: true, tariffRef } }
+const sharedOk = { study, siteLoad: null, loadError: null, referenceYear: 2025, touPeriods: null, tariff: { ok: true, tariffRef, pricing: PRICING, pricingHash: PH } }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -117,5 +119,18 @@ describe('loadFinancialsPageData', () => {
   it('an unknown ?case= falls back to the selected case', async () => {
     const d = await loadFinancialsPageData(fakeSupabase({ tables: tables() }).client as never, fakeSupabase({}).client as never, P, 'nope')
     expect(d.caseId).toBe('c1')
+  })
+})
+
+describe('I-1: a change to the study pricing marks the stored financials Stale', () => {
+  it('(d) a Tariff-tab escalation change (the finance input moves)', async () => {
+    h.shared.mockResolvedValue({ ...sharedOk, tariff: { ...sharedOk.tariff, pricing: { ...PRICING, escalationPath: { ...PRICING.escalationPath, published: [0.2, 0.09] } } } })
+    const d = await loadFinancialsPageData(fakeSupabase({ tables: tables() }).client as never, fakeSupabase({ tables: { 'solar.org_settings': [] } }).client as never, P, undefined)
+    expect(d.financialsStale).toBe(true)
+  })
+  it('an override / export-rule change (the pricing hash moves)', async () => {
+    h.shared.mockResolvedValue({ ...sharedOk, tariff: { ...sharedOk.tariff, pricingHash: 'q'.repeat(64) } })
+    const d = await loadFinancialsPageData(fakeSupabase({ tables: tables() }).client as never, fakeSupabase({ tables: { 'solar.org_settings': [] } }).client as never, P, undefined)
+    expect(d.financialsStale).toBe(true)
   })
 })

@@ -23,11 +23,14 @@ const calc: BillCalculator = {
   withExportRateScaled: () => calc,
 }
 const tables = { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, project_id: P, config: fin }] }
+// The study pricing (resolveStudyPricing): the Tariff tab escalation path and the Load tab growth.
+const PRICING = { escalationPath: { published: [0.101, 0.045], startRate: 0.09, endRate: 0.07, linearToYear: 10, cpiMargin: 0.01 }, loadGrowthPct: 3, exportCredited: true }
+const PH = 'a'.repeat(64)
 
 beforeEach(() => {
   vi.clearAllMocks()
   h.get.mockResolvedValue(encodeHourlyCsv(hourly()))
-  h.tariff.mockResolvedValue({ ok: true, calc, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' } })
+  h.tariff.mockResolvedValue({ ok: true, calc, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' }, pricing: PRICING, pricingHash: PH })
 })
 
 describe('executeFinancialsRun', () => {
@@ -60,7 +63,7 @@ describe('executeFinancialsRun', () => {
       }),
       withExportRateScaled: () => crediting,
     }
-    h.tariff.mockResolvedValue({ ok: true, calc: crediting, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' } })
+    h.tariff.mockResolvedValue({ ok: true, calc: crediting, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' }, pricing: PRICING, pricingHash: PH })
     h.get.mockResolvedValue(encodeHourlyCsv({ ...hourly(), export: new Float64Array(8760).fill(5), exportPvOnly: new Float64Array(8760).fill(5) }))
     const after = async (exportSettings: unknown) => {
       const svcFake = fakeSupabase()
@@ -86,7 +89,7 @@ describe('executeFinancialsRun', () => {
   it('an engine validation failure → a human sentence, not the engine’s own message', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const bad: BillCalculator = { monthlyBills: () => [], withExportRateScaled: () => bad }
-    h.tariff.mockResolvedValueOnce({ ok: true, calc: bad, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' } })
+    h.tariff.mockResolvedValueOnce({ ok: true, calc: bad, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' }, pricing: PRICING, pricingHash: PH })
     const out = await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: fakeSupabase().client as never, projectId: P, caseId: C, userId: U })
     expect(out).toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.computeFailed })
     expect(FIN_RUN_REASONS.computeFailed).not.toMatch(/BillCalculator|monthly bills/)
@@ -126,5 +129,33 @@ describe('executeFinancialsRun', () => {
     h.get.mockRejectedValueOnce(new Error('stored file not found'))
     await expect(executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: {} as never, projectId: P, caseId: C, userId: U }))
       .resolves.toEqual({ ok: false, status: 500, error: FIN_RUN_REASONS.fileMissing })
+  })
+
+  it('I-1: escalation and load growth are the study’s; the export rule "none" prices export at zero; the pricing hash is in fin_inputs_hash', async () => {
+    const svcFake = fakeSupabase({ writes: { 'solar.case_run_financials:insert': { data: [{ id: 'f1' }] } } })
+    await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: svcFake.client as never, projectId: P, caseId: C, userId: U })
+    const ins = callsTo(svcFake.calls, 'solar.case_run_financials', 'insert')[0]!.payload as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(ins.fin_inputs.finance.analysis.escalation).toEqual(PRICING.escalationPath)
+    expect(ins.fin_inputs.finance.analysis.loadGrowth).toBeCloseTo(0.03, 12)
+    const hashWith = async (pricingHash: string) => {
+      h.tariff.mockResolvedValueOnce({ ok: true, calc, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' }, pricing: PRICING, pricingHash })
+      const f = fakeSupabase()
+      await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: f.client as never, projectId: P, caseId: C, userId: U })
+      return (callsTo(f.calls, 'solar.case_run_financials', 'insert')[0]!.payload as { fin_inputs_hash: string }).fin_inputs_hash
+    }
+    expect(await hashWith('b'.repeat(64))).not.toBe(await hashWith('c'.repeat(64)))
+    // 'none': a calculator that WOULD credit export is given zero export.
+    const crediting: BillCalculator = {
+      monthlyBills: (f) => Array.from({ length: 12 }, (_, i) => {
+        const exp = f.exportKwh.reduce((a, v) => a + v, 0) / 12
+        return { month: i + 1, totalZar: 100 - exp, exportCreditUsedZar: exp }
+      }),
+      withExportRateScaled: () => crediting,
+    }
+    h.tariff.mockResolvedValueOnce({ ok: true, calc: crediting, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' }, pricing: { ...PRICING, exportCredited: false }, pricingHash: PH })
+    h.get.mockResolvedValueOnce(encodeHourlyCsv({ ...hourly(), export: new Float64Array(8760).fill(5), exportPvOnly: new Float64Array(8760).fill(5) }))
+    const f = fakeSupabase()
+    await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: f.client as never, projectId: P, caseId: C, userId: U })
+    expect((callsTo(f.calls, 'solar.case_run_financials', 'insert')[0]!.payload as { results: { year1Bills: { exportCreditUsedZar: number } } }).results.year1Bills.exportCreditUsedZar).toBe(0)
   })
 })

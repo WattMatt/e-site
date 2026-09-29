@@ -24,7 +24,8 @@ function ctx() {
       study: { id: 's1', project_id: P, organisation_id: ORG, nmd_kva: 300, load_basis: 'S1', reference_year: 2024 },
       siteLoad, loadError: null, referenceYear: 2024, tariff: { ok: false, reason: 'x' }, touPeriods: null,
       caseRow: { id: C, config }, config, weather: { id: W, storage_path: 'o1/w.csv.gz', fetched_at: '2026-09-28T00:00:00Z', gsa_pvout_kwh_per_kwp: 1750 },
-      build, currentHash: build.ok ? inputsHash(build.input) : null,
+      // The row's hash carries pricing too (I-1), so it differs from the energy hash simulateCase returns.
+      build, energyHash: build.ok ? inputsHash(build.input) : null, currentHash: build.ok ? inputsHash({ energy: inputsHash(build.input), pricing: null }) : null,
     },
   }
 }

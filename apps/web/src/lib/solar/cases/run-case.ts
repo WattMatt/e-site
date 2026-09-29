@@ -63,7 +63,8 @@ export async function executeCaseRun(a: { user: AnyClient; svc: AnyClient; proje
   try {
     const year = await loadWeatherYear(a.svc, weather as { storage_path: string; radiation_db?: string | null })
     const result = simulateCase(input, { id: weather.id, year })
-    if (result.inputsHash !== ctx.currentHash) throw new RunSentence(RUN_REASONS.inputsChanged)
+    // simulateCase hashes the energy input; the row's inputs_hash (currentHash) also carries the pricing.
+    if (result.inputsHash !== ctx.energyHash) throw new RunSentence(RUN_REASONS.inputsChanged)
     const gsa = weather.gsa_pvout_kwh_per_kwp
     const outputs = buildRunOutputs(result, input, {
       weatherFetchedAt: weather.fetched_at ?? null,

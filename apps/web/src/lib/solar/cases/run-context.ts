@@ -43,9 +43,19 @@ export interface RunContext extends StudyInputs {
   config: CaseConfig
   weather: WeatherDatasetRow | null
   build: BuildResult
+  /** inputsHash(build.input): what simulateCase hashes (the stored run's provenance.inputsHash). */
+  energyHash: string | null
+  /**
+   * The case's "current inputs": energy AND the study pricing (I-1), so a change to the override, the
+   * export rule or its rates, the escalation path or load growth marks the case Stale. Stored as
+   * case_runs.inputs_hash. The pricing hash is salted by money-row ids a View user cannot read.
+   */
   currentHash: string | null
 }
 export type RunContextResult = { ok: true; ctx: RunContext } | { ok: false; status: 404 | 422; error: string }
+
+/** The case hash: the energy input's hash + the study pricing hash (null when no tariff resolves). */
+export const caseInputsHash = (energyHash: string, pricingHash: string | null): string => inputsHash({ energy: energyHash, pricing: pricingHash })
 
 export const loadRefusedReason = (e: LoadModelError) => `The stored site load cannot be simulated: ${e.message} Rebuild it on the Load tab.`
 
@@ -102,7 +112,9 @@ export async function contextForCase(svc: AnyClient, shared: StudyInputs, caseRo
   if (!build.ok && shared.loadError) {
     build = { ok: false, reasons: build.reasons.map((r) => (r === BUILD_REASONS.noLoad ? shared.loadError! : r)) }
   }
-  return { ok: true, ctx: { ...shared, caseRow, config: parsed.config, weather, build, currentHash: build.ok ? inputsHash(build.input) : null } }
+  const energyHash = build.ok ? inputsHash(build.input) : null
+  const currentHash = energyHash === null ? null : caseInputsHash(energyHash, shared.tariff.ok ? shared.tariff.pricingHash : null)
+  return { ok: true, ctx: { ...shared, caseRow, config: parsed.config, weather, build, energyHash, currentHash } }
 }
 
 export async function loadRunContext(svc: AnyClient, projectId: string, caseId: string): Promise<RunContextResult> {
