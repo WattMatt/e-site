@@ -102,7 +102,7 @@ The buttons carry `post:diary:<postId>` and `post:issue:<postId>`.
   - `item_type = 'task'`, `origin = 'manual'`, `status = 'triage'`;
   - `title` = the first 120 characters of the text, or "Photo from site" when the post is photo-only;
   - `assignee_id` = `projects.resolve_triage_owner(project)`, falling back to `projects.resolve_project_pm(project)`;
-  - `gatekeeper_id` = the same person;
+  - `gatekeeper_id = p_user`. This follows the spine rule that the creator is a task's gatekeeper (Appendix A(b)), the same as `createWorkItemTaskAction`. The triage owner works it; marking it done hands the ball back to the foreman to confirm and close.
   - `created_by = p_user`.
 - It is subject to the existing `work_items_insert` / `work_items_insert_gate` policies and the membership trigger.
 - The full text goes to `work_item_notes` (via `whatsapp`), and the photos to `work_item_attachments`.
