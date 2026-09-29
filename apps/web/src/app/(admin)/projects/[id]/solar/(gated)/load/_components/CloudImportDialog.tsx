@@ -18,18 +18,22 @@ export function CloudImportDialog({ projectId, onReviews, onClose }: { projectId
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<string[]>([])
+  // The server lists the whole folder (no client page tokens); a very large one is cut at its page cap.
+  const [truncated, setTruncated] = useState(false)
   const trail = stack.slice(1).map((f) => f.id as string)
   const trailKey = trail.join('/')
 
   const load = useCallback(async (path: string[]) => {
     setBusy(true)
     setError(null)
+    setTruncated(false)
     const q = path.map((id) => `trail=${encodeURIComponent(id)}`).join('&')
     const res = await fetch(`/api/projects/${projectId}/solar/cloud-files${q ? `?${q}` : ''}`)
     const body = await res.json().catch(() => ({}))
     setBusy(false)
     if (!res.ok) { setError(loadErrorMessage(body.error === 'no_mapping' || body.error === 'outside_mapped_folder' ? body.error : 'commit_failed')); return }
     setItems(body.items as Item[])
+    setTruncated(body.truncated === true)
   }, [projectId])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- trailKey is the trail's identity
   useEffect(() => { void load(trail) }, [trailKey, load])
@@ -76,6 +80,7 @@ export function CloudImportDialog({ projectId, onReviews, onClose }: { projectId
           ))}
         </nav>
         {error && <p role="alert" style={{ color: '#dc2626', fontSize: 13 }}>{error}</p>}
+        {!error && truncated && <p role="status" style={{ fontSize: 12 }}>This folder is very large, so only the first part of this folder is shown. Move the meter files into a smaller sub-folder to see them all.</p>}
         {!error && items.length === 0 && !busy && <p style={{ fontSize: 13 }}>No meter files (.csv, .txt, .xlsx, .xls) in this folder.</p>}
         <ul style={{ listStyle: 'none', padding: 0, maxHeight: 360, overflow: 'auto', fontSize: 13 }}>
           {items.map((it) => (

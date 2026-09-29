@@ -1,10 +1,15 @@
 // apps/web/src/app/api/projects/[id]/solar/cloud-files/route.ts
 /**
- * GET …/solar/cloud-files?trail=<id>&trail=<id>&pageToken= — browse the project's mapped cloud folder
+ * GET …/solar/cloud-files?trail=<id>&trail=<id> — browse the project's mapped cloud folder
  * for meter exports (spec §4.3 "Import from Dropbox folder"). Folders + .csv/.txt/.xlsx/.xls ≤ 50 MB only.
  * `trail` is the folder ids from the mapped root down; each step is proven by listing its parent, so no
  * folder outside the mapped root can be browsed (403 outside_mapped_folder). A legacy `folderId` must be
  * the root or the trail's last id. Gate: Solar Edit. The connection row is read through RLS.
+ *
+ * NO client page token is accepted: providers ignore the folder id when a token is present (OneDrive
+ * fetches the token as a URL with the org's bearer; a Dropbox cursor can name any folder), so a token
+ * from the client would escape the proven folder. The server pages the proven folder itself (capped
+ * at the probe's page limit) and returns every item, with `truncated: true` when the cap was hit.
  */
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -35,13 +40,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (asked !== null && asked !== (trail.length > 0 ? trail[trail.length - 1] : rootId)) return outside()
   try {
     const listPage = (folderId: string, pageToken?: string) => listCloudFolder({ connectionId, folderId, pageToken }, supabase as unknown as SupabaseClient)
-    const folderId = await mappedFolderProbe(rootId, listPage).folderOf(trail)
+    const probe = mappedFolderProbe(rootId, listPage)
+    const folderId = await probe.folderOf(trail)
     if (folderId === null) return outside()
-    const r = await listPage(folderId, url.searchParams.get('pageToken') ?? undefined)
-    const items = r.items
+    const listed = (await probe.children(folderId)) ?? []
+    const items = listed
       .filter((i) => i.type === 'folder' || (METER_FILE_RE.test(i.name) && (i.size ?? 0) <= MAX_METER_FILE_BYTES))
       .map((i) => ({ id: i.id, name: i.name, type: i.type, size: i.size ?? null, path: i.path ?? null }))
-    return NextResponse.json({ rootFolderId: m.cloud_storage_folder_id, rootPath: m.cloud_storage_folder_path ?? null, items, nextPageToken: r.nextPageToken ?? null })
+    return NextResponse.json({ rootFolderId: m.cloud_storage_folder_id, rootPath: m.cloud_storage_folder_path ?? null, items, truncated: probe.truncated(folderId) })
   } catch (e) {
     console.error('[solar/cloud-files]', { projectId, error: e instanceof Error ? e.message : String(e) })
     return NextResponse.json({ error: 'cloud_list_failed' }, { status: 502 })

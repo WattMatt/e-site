@@ -66,6 +66,31 @@ describe('GET cloud-files', () => {
     }
     expect(h.list).not.toHaveBeenCalledWith(expect.objectContaining({ folderId: 'id:elsewhere' }), expect.anything())
   })
+  it('never forwards a client pageToken to the provider: the server pages the proven folder itself', async () => {
+    h.list.mockImplementation(async ({ pageToken }: { pageToken?: string }) =>
+      pageToken === undefined
+        ? { items: [{ id: 'a', name: 'a.csv', type: 'file', size: 1 }], nextPageToken: 'srv-2' }
+        : pageToken === 'srv-2' ? { items: [{ id: 'b', name: 'b.csv', type: 'file', size: 1 }] } : { items: [{ id: 'leak', name: 'leak.csv', type: 'file', size: 1 }] })
+    for (const q of ['?pageToken=https%3A%2F%2Fattacker.example%2Fx', '?pageToken=dbx-cursor-elsewhere']) {
+      h.list.mockClear()
+      const res = await GET(new Request(`http://x/cloud-files${q}`), ctx)
+      expect(res.status, q).toBe(200)
+      const body = await res.json()
+      expect(body.items.map((i: { id: string }) => i.id), q).toEqual(['a', 'b'])
+      expect(body.truncated, q).toBe(false)
+      expect(body).not.toHaveProperty('nextPageToken')
+      const tokens = h.list.mock.calls.map((c) => (c[0] as { pageToken?: string }).pageToken)
+      expect(tokens, q).toEqual([undefined, 'srv-2'])
+    }
+  })
+  it('caps a very large folder and says so (truncated)', async () => {
+    let n = 0
+    h.list.mockImplementation(async () => ({ items: [{ id: `f${n}`, name: `f${n}.csv`, type: 'file', size: 1 }], nextPageToken: `t${++n}` }))
+    const body = await (await GET(new Request('http://x/cloud-files'), ctx)).json()
+    expect(h.list).toHaveBeenCalledTimes(20)
+    expect(body.items).toHaveLength(20)
+    expect(body.truncated).toBe(true)
+  })
   it('404 no_mapping when the project has no cloud folder', async () => {
     h.project.current = { organisation_id: ORG, cloud_storage_connection_id: null, cloud_storage_folder_id: null }
     expect((await GET(new Request('http://x/cloud-files'), ctx)).status).toBe(404)

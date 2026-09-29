@@ -20,7 +20,7 @@ export async function projectMapping(supabase: SupabaseClient<any, any, any>, pr
 
 export const OUTSIDE_MAPPED_FOLDER = "That folder is outside this project's mapped cloud folder."
 
-interface ListedItem { id: string; name: string; type: 'file' | 'folder'; size?: number }
+interface ListedItem { id: string; name: string; type: 'file' | 'folder'; size?: number; path?: string }
 type ListPage = (folderId: string, pageToken?: string) => Promise<{ items: ListedItem[]; nextPageToken?: string }>
 
 const MAX_TRAIL_DEPTH = 20
@@ -36,6 +36,7 @@ const MAX_PAGES_PER_FOLDER = 20
  */
 export function mappedFolderProbe(rootId: string, listPage: ListPage) {
   const listings = new Map<string, Promise<ListedItem[] | null>>()
+  const truncatedFolders = new Set<string>()
   const children = (folderId: string) => {
     let p = listings.get(folderId)
     if (!p) {
@@ -48,6 +49,7 @@ export function mappedFolderProbe(rootId: string, listPage: ListPage) {
           token = r.nextPageToken
           if (!token) return all
         }
+        truncatedFolders.add(folderId)
         return all  // a very large folder: the first pages only (a child beyond them reads as outside)
       })()
       listings.set(folderId, p)
@@ -71,5 +73,7 @@ export function mappedFolderProbe(rootId: string, listPage: ListPage) {
     if (folder === null) return null
     return (await children(folder))?.find((k) => k.id === fileId && k.type === 'file') ?? null
   }
-  return { folderOf, fileIn, children }
+  /** True once `children(folderId)` stopped at the page cap with more pages left. */
+  const truncated = (folderId: string) => truncatedFolders.has(folderId)
+  return { folderOf, fileIn, children, truncated }
 }

@@ -35,6 +35,19 @@ describe('CloudImportDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Import 1 file' }))
     expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ items: [{ id: 's', name: 's.csv', trail: ['d'] }] })
   })
+  it('never sends a page token, and says so when a very large folder was cut short', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ rootFolderId: 'root', rootPath: '/Meters', items: [{ id: 'a', name: 'a.csv', type: 'file', size: 10 }], truncated: true }))
+    render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)
+    expect((await screen.findByRole('status')).textContent).toMatch(/only the first part of this folder/i)
+    expect(String(fetchMock.mock.calls[0][0])).not.toMatch(/pageToken/)
+  })
+  it('shows no cut-short note for a folder listed in full', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json({ rootFolderId: 'root', rootPath: '/Meters', items: [{ id: 'a', name: 'a.csv', type: 'file', size: 10 }], truncated: false }))
+    render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)
+    await screen.findByLabelText('a.csv')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
   it('a folder outside the mapped root reads as a sentence', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json({ error: 'outside_mapped_folder', message: "That folder is outside this project's mapped cloud folder." }, 403))
     render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)
