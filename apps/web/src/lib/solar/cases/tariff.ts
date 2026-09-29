@@ -12,13 +12,14 @@ import 'server-only'
  * SA public holidays of that same year (`referenceYearHolidays`).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { DEFAULT_REFERENCE_YEAR, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
+import { DEFAULT_REFERENCE_YEAR, studyPricingHash, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
 import {
   SOLAR_ENGINE_DEFAULTS, referenceYearHolidays, tariffBillCalculator,
   type BillCalculator, type TariffBillCalculatorOptions,
 } from '@esite/shared/solar-engine'
 import type { TariffRef } from '@esite/shared/solar-cases'
 import { loadStudyPricing, ssegFromRow } from '../pricing/load-study-pricing'
+import { keyedPricingHash } from '../pricing/pricing-hash'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -34,7 +35,7 @@ export const TARIFF_REASONS = {
 export type StudyTariff =
   | {
       ok: true; calc: BillCalculator; calendar: TouCalendar; holidays: ReadonlySet<string>; tariffRef: TariffRef; year: number
-      /** The resolved study pricing the calculator was built from, and its canonical hash (I-1). */
+      /** The resolved study pricing the calculator was built from, and its KEYED canonical hash (I-1, pricing-hash.ts). */
       pricing: ResolvedStudyPricing; pricingHash: string
     }
   | { ok: false; reason: string }
@@ -102,7 +103,7 @@ export async function resolveStudyTariff(svc: AnyClient, projectId: string, opts
     ...(nmd !== null ? { demandForMonth: () => ({ nmdKva: nmd }) } : {}),
   })
   return {
-    ok: true, calc, calendar, holidays, year, pricing, pricingHash: loaded.pricingHash,
+    ok: true, calc, calendar, holidays, year, pricing, pricingHash: keyedPricingHash(studyPricingHash(pricing)),
     tariffRef: { tariffId: loaded.study.tariffId, tariffName: pricing.tariff.name, financialYear: loaded.tariffYear.financialYear, licenseeName: loaded.licenseeName },
   }
 }

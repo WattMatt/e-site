@@ -50,6 +50,15 @@ describe('loadStudyPricing', () => {
     expect(r.licenseeName).toBe('City Power')
   })
 
+  it('money rows RLS hid (an empty read, no error) are unreadable, never priced as "no override" / "none" (security review S-6)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await loadStudyPricing(fakeSupabase({ tables: { ...tables(), 'solar.tariff_override_charges': [] } as never }).client as never, P))
+      .toEqual({ ok: false, code: 'unreadable' })
+    expect(await loadStudyPricing(fakeSupabase({ tables: { ...tables({ tariff_override_id: null }), 'solar.study_export_rates': [] } as never }).client as never, P))
+      .toEqual({ ok: false, code: 'unreadable' })
+    err.mockRestore()
+  })
+
   it('names what is missing', async () => {
     expect(await loadStudyPricing(fakeSupabase({}).client as never, P)).toEqual({ ok: false, code: 'noStudy' })
     const t = tables({ tariff_id: null })

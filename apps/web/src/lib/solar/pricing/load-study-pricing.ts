@@ -8,10 +8,11 @@ import 'server-only'
  * `pricing-single-source.contract.test.ts` pins that neither builds a tariff on its own.
  *
  * Every failed read is an error (fail closed): a pricing built from a partial read would be a
- * plausible wrong number, which is worse than no number.
+ * plausible wrong number, which is worse than no number. That includes money rows RLS hid.
+ * The hash that marks cases Stale is keyed server-side (pricing-hash.ts), in the run path only.
  */
 import {
-  overrideChargeFromDb, readSolarOrgSettings, resolveStudyPricing, studyPricingHash,
+  overrideChargeFromDb, parseExportRule, readSolarOrgSettings, resolveStudyPricing,
   LICENSEE_KINDS, type LicenseeKind, type ResolvedStudyPricing, type SsegRule, type Tariff,
 } from '@esite/shared'
 import { tariffFromRows } from '@esite/shared/tariffs/ingest'
@@ -29,7 +30,6 @@ export type StudyPricingLoad =
   | {
       ok: true
       pricing: ResolvedStudyPricing
-      pricingHash: string
       study: { id: string; organisationId: string; tariffId: string; nmdKva: number | null; licenseeId: string | null }
       tariffYear: { id: string; financialYear: string; state: string; licenseeId: string }
       licenseeName: string
@@ -95,6 +95,13 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
     if (r.error) return unreadable(projectId, what, r.error)
   }
   if (linked && linked !== 'missing' && 'error' in linked) return unreadable(projectId, 'export tariff', linked.error)
+  // RLS hides money rows from a caller without financials access WITHOUT an error. An override the
+  // study points at has at least its copied charges, and 00219 ties a manual rule to its rates, so
+  // an empty read there means "not allowed to see it" — never price the partial picture.
+  const ovRows = (ov.data ?? []) as Row[]
+  const rateRows = (rates.data ?? []) as Row[]
+  if (overrideId && ovRows.length === 0) return unreadable(projectId, 'tariff_override_charges (none visible)', null)
+  if (parseExportRule(study.export_rule)?.method === 'manual' && rateRows.length === 0) return unreadable(projectId, 'study_export_rates (none visible)', null)
   const licRow = lic.data as Row | null
   const kind = String(licRow?.kind ?? '')
 
@@ -117,13 +124,13 @@ export async function loadStudyPricing(client: AnyClient, projectId: string): Pr
         approvedIncreasePct: r.approved_increase_pct === null || r.approved_increase_pct === undefined ? null : Number(r.approved_increase_pct),
       })),
     },
-    override: overrideId ? { id: overrideId, rows: ((ov.data ?? []) as Row[]).map(overrideChargeFromDb) } : null,
-    exportRates: ((rates.data ?? []) as Row[]).map((r) => ({ ...exportRateFromRow(r), sourceNote: (r.source_note ?? null) as string | null })),
+    override: overrideId ? { id: overrideId, rows: ovRows.map(overrideChargeFromDb) } : null,
+    exportRates: rateRows.map((r) => ({ ...exportRateFromRow(r), sourceNote: (r.source_note ?? null) as string | null })),
     orgSettings: readSolarOrgSettings((os.data as { settings?: unknown } | null)?.settings ?? null),
   })
   const nmd = study.nmd_kva
   return {
-    ok: true, pricing, pricingHash: studyPricingHash(pricing),
+    ok: true, pricing,
     study: {
       id: String(study.id), organisationId: String(study.organisation_id), tariffId,
       nmdKva: nmd === null || nmd === undefined ? null : Number(nmd), licenseeId: (study.licensee_id ?? null) as string | null,

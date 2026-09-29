@@ -52,7 +52,10 @@ describe('resolveStudyPricing', () => {
           tariff: g.tariff,
           published: { ...input().published, tariff: g.tariff, exportTariff: g.exportTariff ?? null, sseg: g.sseg ?? null, licenseeKind: g.sseg ? 'eskom' : 'municipal' },
         }))
-        expect(p.tariff).toEqual(g.tariff)
+        // The same tariff, charges in the resolver's canonical order.
+        expect({ ...p.tariff, charges: [] }).toEqual({ ...g.tariff, charges: [] })
+        expect(p.tariff.charges).toHaveLength(g.tariff.charges.length)
+        expect(p.tariff.charges).toEqual(expect.arrayContaining(g.tariff.charges))
         expect(costMonth(p.tariff, g.usage, { exportTariff: p.exportTariff, sseg: p.ssegRule }).totalExclVat).toBe(g.totalExclVat)
       })
     }
@@ -119,7 +122,7 @@ describe('resolveStudyPricing', () => {
       const linked = makeTariff({ name: 'Gen-offset', structure: 'flat', category: 'sseg', charges: [makeCharge({ component: 'export_credit', unit: 'c_per_kWh', amountExclVat: 60 })] })
       const p = resolveStudyPricing(input({ published: { ...input().published, exportTariff: linked } }))
       expect(p.exportMethod).toBe('linked_tariff')
-      expect(p.exportTariff).toBe(linked)
+      expect(p.exportTariff).toEqual(linked)
     })
 
     it('a manual rule with no rate rows is priced as "none" (00219 makes it unreachable)', () => {
@@ -168,7 +171,30 @@ describe('studyPricingHash', () => {
     expect(h(input({ study: { ...input().study, escalation: { version: 1, overrides: { 4: 6 } } } }))).not.toBe(base)
     expect(h(input({ study: { ...input().study, loadGrowthPct: 3 } }))).not.toBe(base)
   })
-  it('is salted by the money rows’ ids (unreadable at View), so a View user cannot brute-force a rate from it', () => {
+  it('moves when a money row id changes (provenance is part of the hash)', () => {
     expect(h(manual(0.85, 'r1'))).not.toBe(h(manual(0.85, 'r2')))
+  })
+})
+
+describe('studyPricingHash is independent of the order the database returns rows (review I-A)', () => {
+  it('reversed tariff charges, override rows and export rates hash (and price) the same', () => {
+    const tariff = flat(250, [makeCharge({ component: 'export_credit', unit: 'c_per_kWh', amountExclVat: 100 })])
+    const rows = [
+      overrideRow({ id: 'oc1', component: 'energy', unit: 'c_per_kWh', amountExclVat: 300, reason: 'resale' }),
+      overrideRow({ id: 'oc2', component: 'basic', unit: 'R_per_month', amountExclVat: 500 }),
+    ]
+    const rates = [
+      { id: 'r1', season: 'high' as const, tou: 'all' as const, unit: 'R_per_kWh' as const, amountExclVat: 0.9, sourceNote: 'n' },
+      { id: 'r2', season: 'low' as const, tou: 'all' as const, unit: 'R_per_kWh' as const, amountExclVat: 0.8, sourceNote: 'n' },
+    ]
+    const mk = (rev: boolean) => input({
+      tariff: rev ? { ...tariff, charges: [...tariff.charges].reverse() } : tariff,
+      study: { ...input().study, tariffOverrideId: 'ov1', exportRule: { version: 1, method: 'manual' } },
+      override: { id: 'ov1', rows: rev ? [...rows].reverse() : rows },
+      exportRates: rev ? [...rates].reverse() : rates,
+    })
+    expect(studyPricingHash(resolveStudyPricing(mk(true)))).toBe(studyPricingHash(resolveStudyPricing(mk(false))))
+    const pub = (rev: boolean) => input({ tariff: rev ? { ...tariff, charges: [...tariff.charges].reverse() } : tariff })
+    expect(studyPricingHash(resolveStudyPricing(pub(true)))).toBe(studyPricingHash(resolveStudyPricing(pub(false))))
   })
 })

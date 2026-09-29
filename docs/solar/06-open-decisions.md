@@ -92,8 +92,9 @@ Plan: `docs/superpowers/plans/2026-09-29-solar-pricing-inputs.md`.
     config's own `escalation*` fields are kept for compatibility and are not priced; Financials shows the
     Tariff tab's year-2 / year-10 figures read-only.
   - **Load growth:** `studies.load_growth_pct` (Load tab), NULL → 0; the case's own `loadGrowthPct` is not priced.
-  - **Hashes:** `studyPricingHash` (canonical, salted with the money rows' ids — unreadable at View — so the
-    View-readable `case_runs.inputs_hash` cannot be brute-forced back to a rate) enters the case hash
+  - **Hashes:** `studyPricingHash` (canonical; charge lists in one total order, so database row order never
+    moves it), HMAC-keyed server-side (`pricing-hash.ts`: `SOLAR_PRICING_HASH_KEY`, else the service-role key)
+    so the View-readable `case_runs.inputs_hash` cannot be tested against candidate rates, enters the case hash
     (`inputsHash({ energy, pricing })`) and `fin_inputs_hash`: changing any of the four marks the case and
     its financials **Stale**. Every run recorded before this change reads Stale once (nothing is in
     production yet).
@@ -105,6 +106,12 @@ Plan: `docs/superpowers/plans/2026-09-29-solar-pricing-inputs.md`.
     the same March bill (R2,732.00) in the bill check and in the run's year-1 bills; manual R0.85/kWh
     credits R85.00 on 100 kWh and 'none' credits R0; an escalation change moves NPV and the case hash;
     3 %/yr growth leaves year 1 untouched and scales years 2+ by 1.03^(n−1).
+  - **The Tariff tab shows the resolver's values** (escalation table, SSEG rule in force, export source note)
+    whenever a tariff is pinned, so what it displays is what is priced (contract-tested).
+  - **Known, accepted:** a money-only change (override, export rate) flips a case to Stale for a View user
+    too — one bit, no value. A pricing change asks for an energy re-run although the energy did not change
+    (the case hash carries both, by design). The case's own CPI still drives opex and any analysis years
+    past the org's `analysis_years`; the Tariff tab rows (years 2..`analysis_years`) use the org CPI.
 - **I-2 — Fixed (00219).** Two DEFERRED constraint triggers enforce at COMMIT that a study's export rule is
   `manual` **iff** it has `study_export_rates` rows: a direct PATCH of a manual rule with no rates, a direct
   DELETE of the rates under a manual rule, and a stray rate under a non-manual rule are all refused (23514);

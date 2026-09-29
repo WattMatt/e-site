@@ -172,6 +172,11 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   - Point-of-connection offer from the schematic graph (spec §13.3 bullet 3) is deferred to the Site &
     Supply follow-up (open question).
 
+- **Derived values that cross the money line (I-1, 00219 review).** `case_runs.inputs_hash` (View-readable) carries
+  the study pricing, so the pricing half is an HMAC keyed server-side (`apps/web/src/lib/solar/pricing/pricing-hash.ts`):
+  a View user cannot test candidate override or export rates against it. What a View user does learn is one bit —
+  a case turning Stale after a money user edits the override or an export rate. Accepted.
+
 ### 3.2 Storage buckets (private; signed URLs only)
 `solar-meter-raw` (raw meter exports, path `<org>/<project>/<sha256>.<ext>`), `solar-runs` (8760 outputs),
 `solar-weather`, `solar-roof-images` (satellite captures), `tariff-sources` (platform). Policies keyed on

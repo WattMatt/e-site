@@ -48,7 +48,7 @@ export interface RunContext extends StudyInputs {
   /**
    * The case's "current inputs": energy AND the study pricing (I-1), so a change to the override, the
    * export rule or its rates, the escalation path or load growth marks the case Stale. Stored as
-   * case_runs.inputs_hash. The pricing hash is salted by money-row ids a View user cannot read.
+   * case_runs.inputs_hash. The pricing hash is KEYED server-side (pricing-hash.ts), so a View user cannot test candidate rates against it.
    */
   currentHash: string | null
 }

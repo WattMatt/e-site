@@ -16,6 +16,7 @@ import {
 import { normaliseAlias } from '@esite/shared/tariffs/ingest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { loadStudyCalendar } from './calendar-loader'
+import { loadStudyPricing } from '../pricing/load-study-pricing'
 import {
   billCheckFromRow, exportRateFromRow, isTouTariff, pinnedChargeFromRow, tariffListItemFromRow, yearOptionFromRow,
   type BillCheckRow, type PinnedCharge,
@@ -204,7 +205,16 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
   const holidays = ((hol ?? []) as Array<{ d: string; name: string }>)
     .filter((h) => h.d <= `${year}-12-31`).map((h) => ({ date: h.d, name: h.name }))
   const settings = escalationSettingsFrom(readSolarOrgSettings((settingsRow.data as { settings?: unknown } | null)?.settings ?? null))
-  const escalation = buildEscalationRows({
+  // With a pinned tariff, the escalation table, the SSEG rule in force and the export source note
+  // are the PRICING RESOLVER's (loadStudyPricing, I-1) — the same values Yield & Financials price —
+  // so what the tab shows cannot drift from what is priced. Without a pin nothing is priced and
+  // the table is the org default path.
+  const priced = pinned ? await loadStudyPricing(supabase, projectId) : null
+  const pricing = priced?.ok ? priced.pricing : null
+  if (pinned && pricing) {
+    pinned = { ...pinned, sseg: pricing.ssegRuleInForce, ssegFromLibrary: pricing.ssegFromLibrary }
+  }
+  const escalation = pricing ? pricing.escalationRows : buildEscalationRows({
     pinnedFinancialYear: pinned?.financialYear || null,
     published: years.map((y) => ({ financialYear: y.financialYear, approvedIncreasePct: y.approvedIncreasePct })),
     settings, stored: parseStoredEscalation(st.escalation),
@@ -223,7 +233,7 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
     pinned,
     override: overrideId ? { id: overrideId, rows: ((ov.data ?? []) as Row[]).map(overrideChargeFromDb) } : null,
     exportRates: rateRows.map(exportRateFromRow),
-    exportSourceNote: (rateRows[0]?.source_note as string | undefined) ?? null,
+    exportSourceNote: pricing ? pricing.provenance.exportSourceNote : ((rateRows[0]?.source_note as string | undefined) ?? null),
     calendar: cal.calendar, calendarAssumedEskom: cal.assumedEskom, calendarFromEskomFallback: cal.fromEskomFallback,
     holidays, escalation, analysisYears: settings.analysisYears,
     billChecks: ((checks.data ?? []) as Row[]).map(billCheckFromRow),

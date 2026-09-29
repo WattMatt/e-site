@@ -173,6 +173,9 @@ export function FinancialsEditor({ projectId, data }: { projectId: string; data:
           <>
             <span style={{ fontSize: 12 }}>{`Tariff escalation: year 2 ${pctText(data.studyPricing.escalationYear2Pct)}, year 10 ${pctText(data.studyPricing.escalationYear10Pct)} — from the Tariff tab`}</span>
             <span style={{ fontSize: 12 }}>{`Load growth: ${Number(data.studyPricing.loadGrowthPct.toFixed(3))} %/yr — from the Load tab`}</span>
+            {data.studyPricing.loadGrowthPct !== 0 && (
+              <span style={{ fontSize: 12 }}>Savings are scaled with the load from year 2 (engine v1): an upper bound when the system is already fully self-consumed.</span>
+            )}
           </>
         ) : <span style={{ fontSize: 12 }}>Tariff escalation and load growth come from the Tariff and Load tabs once a tariff is pinned.</span>}
       </Section>

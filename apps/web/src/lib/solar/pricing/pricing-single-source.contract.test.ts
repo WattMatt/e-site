@@ -37,3 +37,11 @@ describe('the screens no longer say Yield & Financials ignore these inputs', () 
     })
   }
 })
+
+describe('the Tariff tab displays the resolver’s escalation / SSEG rule / export note when a tariff is pinned (review I-B)', () => {
+  const src = strip(readFileSync(join(ROOT, 'tariff/load-tariff-tab.ts'), 'utf8'))
+  it('load-tariff-tab.ts reads loadStudyPricing and shows its values', () => {
+    expect(src).toMatch(/loadStudyPricing\(/)
+    for (const used of ['pricing.escalationRows', 'pricing.ssegRuleInForce', 'pricing.provenance.exportSourceNote']) expect(src).toContain(used)
+  })
+})

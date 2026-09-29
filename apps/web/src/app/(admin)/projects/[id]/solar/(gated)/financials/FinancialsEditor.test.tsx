@@ -121,6 +121,7 @@ describe('FinancialsEditor', () => {
     }
     expect(screen.getByText('Tariff escalation: year 2 10.1 %, year 10 7 % — from the Tariff tab')).toBeTruthy()
     expect(screen.getByText('Load growth: 3 %/yr — from the Load tab')).toBeTruthy()
+    expect(screen.getByText(/an upper bound when the system is already fully self-consumed/)).toBeTruthy()
   })
   it('without a resolved tariff it says where escalation will come from', () => {
     render(<FinancialsEditor projectId="p1" data={data()} />)

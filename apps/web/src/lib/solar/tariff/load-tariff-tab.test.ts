@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { loadTariffTab } from './load-tariff-tab'
 import { fakeSupabase } from '@/test/fake-supabase'
+import { loadStudyPricing } from '../pricing/load-study-pricing'
 
 const tables = {
   'solar.studies': [{ id: 's1', project_id: 'p1', organisation_id: 'org1', updated_at: 'T1', licensee_name: 'city of probe', licensee_id: null,
@@ -72,5 +73,30 @@ describe('loadTariffTab', () => {
       .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
     expect((await loadTariffTab(client as never, 'p1', { fy: '2025/26', todayIso: '2026-08-01' })).yearNote)
       .toBe('2026/27 not yet published in the library — using 2025/26 with escalation')
+  })
+})
+
+describe('what the Tariff tab SHOWS is what Yield & Financials PRICE (review I-B)', () => {
+  it('escalation table, SSEG rule in force and export source note equal the pricing resolver’s', async () => {
+    const t = {
+      ...tables,
+      'solar.studies': [{ ...tables['solar.studies'][0], licensee_id: 'l1', tariff_id: 't0', export_rule: { version: 1, method: 'manual' },
+        escalation: { version: 1, overrides: { 4: 6.5 } }, load_growth_pct: 2 }],
+      'tariffs.tariff': [...tables['tariffs.tariff'], { id: 't0', tariff_year_id: 'y24', name: 'Commercial', code: null, category: 'commercial', metering: 'conventional', structure: 'flat', export_tariff_id: null }],
+      'tariffs.charge': [{ id: 'c1', tariff_id: 't0', component: 'energy', season: 'all', tou: 'all', day_type: 'all', unit: 'c_per_kWh', amount_excl_vat: '250', vat_basis: 'stated_excl', extraction_method: 'manual', source_locator: {} }],
+      'solar.study_export_rates': [{ id: 'r1', study_id: 's1', season: 'all', tou: 'all', unit: 'R_per_kWh', amount_excl_vat: '0.85', source_note: 'City SSEG schedule p4' }],
+      'solar.org_settings': [{ organisation_id: 'org1', settings: { escalation_start_pct: 11 } }],
+    }
+    const client = fakeSupabase({ tables: t as never }).client as never
+    const tab = await loadTariffTab(client, 'p1', { fy: null, todayIso: '2026-01-10' })
+    const priced = await loadStudyPricing(client, 'p1')
+    if (!priced.ok) throw new Error(priced.code)
+    expect(tab.escalation).toEqual(priced.pricing.escalationRows)
+    expect(tab.escalation.find((r) => r.year === 2)).toMatchObject({ source: 'published', financialYear: '2025/26' })
+    expect(tab.escalation.find((r) => r.year === 4)).toMatchObject({ pct: 6.5, source: 'override' })
+    expect(tab.pinned?.sseg).toEqual(priced.pricing.ssegRuleInForce)
+    expect(tab.pinned?.ssegFromLibrary).toBe(false)
+    expect(tab.exportSourceNote).toBe(priced.pricing.provenance.exportSourceNote)
+    expect(tab.exportSourceNote).toBe('City SSEG schedule p4')
   })
 })
