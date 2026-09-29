@@ -149,6 +149,8 @@ CREATE ROLE whatsapp_actor_spike NOLOGIN NOINHERIT;
 ALTER ROLE whatsapp_actor_spike INHERIT;
 GRANT authenticated TO whatsapp_actor_spike;
 GRANT whatsapp_actor_spike TO postgres;
+CREATE SCHEMA wa_spike;
+GRANT USAGE, CREATE ON SCHEMA wa_spike TO whatsapp_actor_spike;  -- ALTER OWNER needs CREATE on the schema
 
 SELECT set_config('x.c', '018f2d31-bbe8-4cc1-bbdd-63af0187081e', true);
 SELECT set_config('x.kw', (SELECT pm.project_id::text FROM projects.project_members pm
@@ -187,7 +189,7 @@ WITH ins AS (
   RETURNING id)
 SELECT set_config('x.b', (SELECT id::text FROM ins), true);
 
-CREATE FUNCTION public.wa_spike_advance(p_user uuid, p_item uuid, p_to text)
+CREATE FUNCTION wa_spike.wa_spike_advance(p_user uuid, p_item uuid, p_to text)
 RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
 DECLARE n int;
 BEGIN
@@ -200,15 +202,15 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RETURN -1;
 END $fn$;
-ALTER FUNCTION public.wa_spike_advance(uuid,uuid,text) OWNER TO whatsapp_actor_spike;
+ALTER FUNCTION wa_spike.wa_spike_advance(uuid,uuid,text) OWNER TO whatsapp_actor_spike;
 
 CREATE TEMP TABLE _r (k text PRIMARY KEY, v text);
 INSERT INTO _r VALUES
-  ('owner',       (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'public.wa_spike_advance(uuid,uuid,text)'::regprocedure)),
-  ('b_by_c',      public.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.b')::uuid, 'answered')::text),
-  ('a_close_by_c',public.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.a')::uuid, 'closed')::text),
-  ('a_ans_by_c',  public.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.a')::uuid, 'answered')::text),
-  ('a_close_by_pm',public.wa_spike_advance(current_setting('x.pm')::uuid, current_setting('x.a')::uuid, 'closed')::text);
+  ('owner',       (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'wa_spike.wa_spike_advance(uuid,uuid,text)'::regprocedure)),
+  ('b_by_c',      wa_spike.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.b')::uuid, 'answered')::text),
+  ('a_close_by_c',wa_spike.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.a')::uuid, 'closed')::text),
+  ('a_ans_by_c',  wa_spike.wa_spike_advance(current_setting('x.c')::uuid,  current_setting('x.a')::uuid, 'answered')::text),
+  ('a_close_by_pm',wa_spike.wa_spike_advance(current_setting('x.pm')::uuid, current_setting('x.a')::uuid, 'closed')::text);
 INSERT INTO _r VALUES
   ('a_status', (SELECT status FROM projects.work_items WHERE id = current_setting('x.a')::uuid)),
   ('ev_actor', (SELECT string_agg(coalesce(actor_id::text,'NULL') || ':' || verb, ',' ORDER BY seq)
