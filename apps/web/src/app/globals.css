@@ -1112,16 +1112,22 @@ body {
 }
 
 /* ─── Animations ─────────────────────────────────────────────── */
+/* Entrance fade for page content — used at 100+ call sites, so it is
+   effectively global. It MUST stay opacity-only. An animated `transform`
+   (even translateY) promotes the wrapper to a WebKit composited layer whose
+   hit-test region goes STALE after the animation ends: on Safari, clicks then
+   land ~8px off (hitting the neighbouring row/control) until a reflow re-syncs
+   it — a browser zoom is what "fixes" it. Opacity does not promote a layer, so
+   paint and hit-testing stay aligned. Do NOT reintroduce transform/translate
+   here. (A retained translate also used to make the wrapper a containing block
+   for position:fixed descendants like StickySaveBar — another reason it's gone.) */
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-/* fill-mode must stay `backwards`, never `forwards`/`both`: a retained
-   transform (even translateY(0)) makes the wrapper the containing block for
-   position:fixed descendants, pinning StickySaveBar to the page instead of
-   the viewport. `backwards` still holds the from-state through the staggered
-   delays below, then releases the transform when the animation ends. */
+/* `backwards` fill holds the opacity:0 from-state through the staggered delays
+   below, so delayed items start hidden instead of flashing in first. */
 .animate-fadeup {
   animation: fadeUp 0.3s ease backwards;
 }
@@ -1131,6 +1137,15 @@ body {
 .animate-fadeup-3 { animation-delay: 0.15s; }
 .animate-fadeup-4 { animation-delay: 0.20s; }
 .animate-fadeup-5 { animation-delay: 0.25s; }
+
+/* Honour reduced-motion: skip entrance animations entirely (covers the JBCC
+   variants defined further down too; !important so it wins over their later
+   unconditional `animation:` declarations). */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeup,
+  .jbcc-shell > *,
+  .jbcc-page-fade { animation: none !important; }
+}
 
 /* Loading-state placeholders — used by components/ui/Skeleton.tsx. */
 @keyframes skeleton-pulse {
@@ -1273,8 +1288,9 @@ body {
 
 /* Procedural stagger on-load animation (Notice Library only) */
 @keyframes jbcc-rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  /* opacity-only — see the .animate-fadeup note re: WebKit hit-test staleness */
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .jbcc-shell > * {
   animation: jbcc-rise .55s cubic-bezier(.2,.7,.2,1) backwards;
@@ -1289,8 +1305,9 @@ body {
 
 /* Simple single fade-in for non-library JBCC pages */
 @keyframes jbcc-fade {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  /* opacity-only — see the .animate-fadeup note re: WebKit hit-test staleness */
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .jbcc-page-fade {
   animation: jbcc-fade .4s cubic-bezier(.2,.7,.2,1) backwards;
