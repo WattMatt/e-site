@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { siteSupplyFormFromRow } from '@esite/shared'
 import { SiteSupplyForm, type SiteNode } from './SiteSupplyForm'
+import { loadRoofSources } from '@/lib/solar/layout-loader'
+import { RoofSourcesPanel } from './RoofSourcesPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,11 +22,14 @@ export default async function SolarSitePage({ params }: { params: Promise<{ id: 
   const supabase = (await createClient()) as unknown as AnyClient
   const level = await requireSolarLevel(id, 'view', supabase)
 
-  const [{ data: project }, { data: study }, { data: nodeRows }] = await Promise.all([
+  const [{ data: project }, { data: study }, { data: nodeRows }, roof, { data: planRows }] = await Promise.all([
     supabase.schema('projects').from('projects').select('address, city, province').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select(STUDY_COLUMNS).eq('project_id', id).maybeSingle(),
     supabase.schema('structure').from('nodes').select('id, code, name, kind, rating_kva')
       .eq('project_id', id).eq('status', 'active').in('kind', POC_KINDS).order('code'),
+    loadRoofSources(supabase, id),
+    supabase.schema('tenants').from('floor_plans').select('id, name, file_path')
+      .eq('project_id', id).eq('is_active', true).order('name'),
   ])
 
   const p = (project ?? {}) as { address?: string | null; city?: string | null; province?: string | null }
@@ -42,15 +47,29 @@ export default async function SolarSitePage({ params }: { params: Promise<{ id: 
   const s = study as Record<string, unknown> | null
   const incomer = s?.nmd_kva == null ? nodes.find((n) => INCOMER_KINDS.includes(n.kind) && n.ratingKva !== null) : undefined
 
+  const drawings = ((planRows ?? []) as Array<{ id: string; name: string; file_path: string }>)
+    .filter((p) => /\.(pdf|png|jpe?g|webp)$/i.test(p.file_path))
+    .map((p) => ({ id: p.id, name: p.name }))
+
   return (
-    <SiteSupplyForm
-      projectId={id}
-      initialForm={siteSupplyFormFromRow(s)}
-      updatedAt={(s?.updated_at as string | undefined) ?? null}
-      canEdit={level !== 'view'}
-      address={address}
-      nodes={nodes}
-      nmdPrefill={incomer ? { value: String(incomer.ratingKva), from: incomer.label } : null}
-    />
+    <>
+      <SiteSupplyForm
+        projectId={id}
+        initialForm={siteSupplyFormFromRow(s)}
+        updatedAt={(s?.updated_at as string | undefined) ?? null}
+        canEdit={level !== 'view'}
+        address={address}
+        nodes={nodes}
+        nmdPrefill={incomer ? { value: String(incomer.ratingKva), from: incomer.label } : null}
+      />
+      <RoofSourcesPanel
+        projectId={id}
+        canEdit={level !== 'view'}
+        sources={roof.sources}
+        drawings={drawings}
+        hasStudy={roof.studyId !== null}
+        satelliteConfigured={Boolean(process.env.MAPBOX_ACCESS_TOKEN)}
+      />
+    </>
   )
 }

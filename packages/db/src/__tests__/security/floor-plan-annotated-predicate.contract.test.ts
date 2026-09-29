@@ -192,6 +192,8 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
         'solar.schematics',
         'solar.schematic_cards',
         'solar.schematic_lines',
+        'solar.roof_sources',
+        'solar.layout_objects',
       ]) {
         expect([...discovered.keys()], `discovery missed ${known}`).toContain(known)
       }

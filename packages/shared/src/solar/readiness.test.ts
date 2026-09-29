@@ -12,8 +12,8 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('built tabs: Overview, Site & Supply, Load, Schematics (3b), Tariff (2b), Yield & Scenarios and Financials (4b)', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'load', 'schematics', 'tariff', 'yield', 'financials'])
+  it('built tabs: Overview, Site & Supply, Load, Schematics (3b), Tariff (2b), Layout (5), Yield & Scenarios and Financials (4b)', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials'])
   })
   it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
@@ -151,5 +151,18 @@ describe('computeSolarReadiness with Load and Schematics', () => {
     })
     expect(withBoth.find((s) => s.slug === 'load')).toMatchObject({ status: 'green', live: true })
     expect(withBoth.find((s) => s.slug === 'schematics')).toMatchObject({ status: 'green', live: true })
+  })
+})
+
+describe('computeSolarReadiness — Layout step (Phase 5)', () => {
+  const site = { latitude: -26, longitude: 28, licenseeName: 'City Power', nmdKva: 400 }
+  it('without layout input the Layout step stays grey, as before', () => {
+    const step = computeSolarReadiness(site, 'edit').find((s) => s.slug === 'layout')
+    expect(step?.status).toBe('grey')
+  })
+  it('with layout input it reports the layout rule', () => {
+    const step = computeSolarReadiness(site, 'edit', { layout: { layouts: 1, arraysWithModules: 1, northSet: false, arrayOutsideRoof: false } })
+      .find((s) => s.slug === 'layout')
+    expect(step).toMatchObject({ status: 'amber', reason: 'Layout started but no north reference' })
   })
 })

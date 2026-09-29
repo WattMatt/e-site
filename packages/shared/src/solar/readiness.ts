@@ -6,6 +6,7 @@
  * is grey "available in a later phase". No statuses are hard-coded per project.
  */
 import type { SolarAccessLevel } from './access'
+import { layoutReadiness, type LayoutReadinessInput } from './layout/readiness'
 
 export type SolarTabSlug =
   | 'overview' | 'site' | 'load' | 'schematics' | 'tariff' | 'layout'
@@ -28,7 +29,7 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'load',       label: 'Load',               built: true,  financial: false, hidden: false },
   { slug: 'schematics', label: 'Schematics',         built: true,  financial: false, hidden: false },
   { slug: 'tariff',     label: 'Tariff',             built: true,  financial: true,  hidden: false },
-  { slug: 'layout',     label: 'Layout',             built: false, financial: false, hidden: false },
+  { slug: 'layout',     label: 'Layout',             built: true , financial: false, hidden: false },
   { slug: 'yield',      label: 'Yield & Scenarios',  built: true,  financial: false, hidden: false },
   { slug: 'financials', label: 'Financials',         built: true,  financial: true,  hidden: false },
   { slug: 'reports',    label: 'Reports & Proposal', built: false, financial: false, hidden: false },
@@ -156,6 +157,8 @@ export interface SolarReadinessExtra {
   financials?: FinancialsReadinessInput | null
   /** The selected case uses a manual system size (§2.3 Layout rule). */
   layoutManual?: boolean
+  /** Phase 5: the layout aggregate (undefined = not computed). */
+  layout?: LayoutReadinessInput | null
   /** Phase 3b: computed only when the caller passes the aggregate (undefined = not computed). */
   load?: LoadReadinessInput | null
   schematics?: SchematicsReadinessInput | null
@@ -190,6 +193,9 @@ export function computeSolarReadiness(site: SiteReadinessInput | null, level: So
       // their status is computed only when the caller passes the aggregate.
       if (t.slug === 'load' && extra.load !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...loadReadiness(extra.load) }
       if (t.slug === 'schematics' && extra.schematics !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...schematicsReadiness(extra.schematics) }
+      // The Layout step (Phase 5) is computed only when the caller passes the aggregate; a manual-size
+      // selected case (4b, above) wins because that case needs no layout.
+      if (t.slug === 'layout' && extra.layout !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...layoutReadiness(extra.layout) }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
 }

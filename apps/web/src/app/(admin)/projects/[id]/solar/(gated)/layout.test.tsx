@@ -17,6 +17,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createServiceClient: h.svc }))
 vi.mock('@/lib/solar/cases/page-data', () => ({ loadSolarReadinessExtra: h.extra }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
+vi.mock('@/lib/solar/layout-readiness', () => ({ loadLayoutReadiness: vi.fn(async () => null) }))
 vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: vi.fn() }))
 vi.mock('@/lib/solar/load/views', () => ({ loadLoadReadiness: h.loadReadiness }))
 

@@ -6,6 +6,7 @@ import { loadHeadlineKpis, loadSolarReadinessExtra, runsByCase } from '@/lib/sol
 import { computeSolarReadiness, toSiteReadinessInput, withTariffReadiness } from '@esite/shared'
 import { loadTariffReadinessInput } from '@/lib/solar/tariff/readiness-input'
 import { loadLoadReadiness } from '@/lib/solar/load/views'
+import { loadLayoutReadiness } from '@/lib/solar/layout-readiness'
 import { ReadinessChecklist } from '../../_components/ReadinessChecklist'
 import { StudyHeader } from '../../_components/StudyHeader'
 import { OverviewKpis } from '../../_components/OverviewKpis'
@@ -24,7 +25,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
 
   // Everything below runs only after the level gate; the service client reads study inputs for the Stale rule.
   const svc = createServiceClient() as unknown as AnyClient
-  const [{ data: project }, { data: study }, { data: isGrantor }, activity, extra, { data: caseRows }, runs, loadReady] = await Promise.all([
+  const [{ data: project }, { data: study }, { data: isGrantor }, activity, extra, { data: caseRows }, runs, loadReady, layoutReady] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, address, city, province').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva, tariff_id, export_rule, selected_case_id, updated_at').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
@@ -33,6 +34,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
     supabase.schema('solar').from('cases').select('id, name').eq('project_id', id),
     runsByCase(supabase, id),
     loadLoadReadiness(supabase, id),
+    loadLayoutReadiness(supabase, id),
   ])
   const studyRow = study as { selected_case_id?: string | null; updated_at?: string } | null
   const selectedCaseId = studyRow?.selected_case_id ?? null
@@ -46,7 +48,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <StudyHeader projectName={p.name ?? ''} address={address} supplyAuthority={licensee} />
-      <ReadinessChecklist projectId={id} steps={withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level, { ...extra, load: loadReady.load, schematics: loadReady.schematics }), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))} />
+      <ReadinessChecklist projectId={id} steps={withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level, { ...extra, load: loadReady.load, schematics: loadReady.schematics, layout: layoutReady }), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))} />
       <OverviewKpis projectId={id} level={level} kpis={kpis} selectable={selectable} selectedCaseId={selectedCaseId}
         studyUpdatedAt={studyRow?.updated_at ?? null} stale={extra.stale !== null} />
       <ActivityList projectId={id} items={activity} isGrantor={isGrantor === true} />
