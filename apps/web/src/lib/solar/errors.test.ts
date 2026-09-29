@@ -16,6 +16,20 @@ describe('humanSolarError', () => {
     expect(humanSolarError({ code: '42501', message: 'access_requests: only members of the project\'s organisation may request a subscription' }))
       .toBe('Only members of this project’s organisation can ask for a subscription.')
   })
+  it('maps the 00215 cases_bind catalogue refusals (23514) to a pick-again sentence', () => {
+    expect(humanSolarError({ code: '23514', message: 'solar.cases: the module is not in this organisation\'s catalogue' }))
+      .toBe('Pick the module again — it is not in your catalogue.')
+    expect(humanSolarError({ code: '23514', message: 'solar.cases: the inverter must name a catalogue item' }))
+      .toBe('Pick the inverter again — it is not in your catalogue.')
+    expect(humanSolarError({ code: '23514', message: 'solar.cases: the battery is not in this organisation\'s catalogue' }))
+      .toBe('Pick the battery again — it is not in your catalogue.')
+    // An unrecognised kind never echoes the raw text.
+    expect(humanSolarError({ code: '23514', message: 'solar.cases: the <b>x</b> is not in this organisation\'s catalogue' }))
+      .toBe('Pick the equipment again — it is not in your catalogue.')
+    // The platform-catalogue guard on solar.equipment is a permission refusal, not this.
+    expect(humanSolarError({ code: '42501', message: 'solar.equipment: the platform catalogue is maintained by E-Site' }))
+      .toBe('You do not have permission to do that.')
+  })
   it('never leaks a raw message', () => {
     expect(humanSolarError({ code: 'XX000', message: 'internal error at pg_foo.c:12' })).toBe('Something went wrong — try again.')
     expect(humanSolarError({ code: '42501', message: 'new row violates row-level security policy' })).toBe('You do not have permission to do that.')

@@ -4,6 +4,8 @@ import { render, screen } from '@testing-library/react'
 const h = vi.hoisted(() => ({
   createClient: vi.fn(),
   requireSolarLevel: vi.fn(),
+  extra: vi.fn(async (): Promise<Record<string, unknown>> => ({ stale: null })),
+  svc: vi.fn(() => ({ svc: true })),
   redirect: vi.fn((p: string) => { throw new Error(`REDIRECT:${p}`) }),
 }))
 vi.mock('next/navigation', () => ({
@@ -11,7 +13,8 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/projects/p1/solar/overview',
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createServiceClient: h.svc }))
+vi.mock('@/lib/solar/cases/page-data', () => ({ loadSolarReadinessExtra: h.extra }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
 vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: vi.fn() }))
 
@@ -67,5 +70,23 @@ describe('Solar gated layout — Manage access link', () => {
     render(await SolarGatedLayout(args))
     expect(screen.queryByRole('button', { name: 'Request edit access' })).toBeNull()
     expect(screen.getByText('You have view access. Members from outside the organisation can have View only.')).toBeDefined()
+  })
+})
+
+describe('Solar gated layout — Phase 4b readiness dots', () => {
+  it('feeds the stored-run readiness (Yield / Financials) into the tab dots, at the caller\'s level', async () => {
+    setup(false, 'edit_financials')
+    h.extra.mockResolvedValueOnce({ yield: { caseCount: 2, selectedCaseId: 'c1', selectedStatus: 'stale' }, financials: { capexZar: 1, hasModel: true, usingOrgDefaults: false }, stale: { caseId: 'c1', caseName: 'Base' } })
+    render(await SolarGatedLayout(args))
+    expect(h.extra).toHaveBeenCalledWith(expect.anything(), { svc: true }, 'p1', 'edit_financials')
+    expect(screen.getByRole('img', { name: 'Incomplete: The selected case is stale — re-run it' })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Complete: Capex and a finance model are set' })).toBeDefined()
+  })
+  it('a refused caller never reaches the readiness loader', async () => {
+    setup(false, 'view')
+    h.requireSolarLevel.mockRejectedValueOnce(new Error('REDIRECT:/projects/p1/solar/locked'))
+    await expect(SolarGatedLayout(args)).rejects.toThrow('REDIRECT')
+    expect(h.extra).not.toHaveBeenCalled()
+    expect(h.svc).not.toHaveBeenCalled()
   })
 })

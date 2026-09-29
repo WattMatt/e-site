@@ -68,6 +68,7 @@ membership.
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
 | `/settings/solar` | W | W | — | — | — | — | — |
+| `/settings/solar/equipment` | W | W | — | — | — | — | — |
 | `/settings/users` | W | W | — | — | — | — | — |
 | `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
@@ -126,11 +127,13 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/site` | W | W | W | R (values as text, no Save) | → locked | → locked | → locked |
+| `/projects/[id]/solar/yield` | W | W | W | R (no controls; no rand values) | → locked | → locked | → locked |
+| `/projects/[id]/solar/financials` | W | W | → locked | → locked | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
 >
-> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs without a route render disabled in the tab bar ("Coming in a later phase"). Phase 4b adds routes for **Yield & Scenarios** (`requireSolarLevel(project, 'view')`; View sees stored results with no controls, and rand values — the compare money row and case-card saving — only render at Edit + financials) and **Financials** (`requireSolarLevel(project, 'edit_financials')` FIRST, before any service-client read; every rand value on the page — and the Overview's money KPIs, which also render only at Edit + financials — is from stored `case_run_financials` rows read under money RLS). Tariff and Financials are **hidden** (not disabled) below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12). `/settings/solar/equipment` is `requireRolePage(OWNER_ADMIN)` on the active org; rows are read through the caller's session and narrowed to the active org + platform rows.
 
 ### Solar server actions
 
@@ -147,6 +150,12 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 | `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
 | `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
+| `createSolarCaseAction` / `duplicateSolarCaseAction` / `renameSolarCaseAction` / `deleteSolarCaseAction` (`solar-cases.actions.ts`) | `requireSolarLevel(project, 'edit')` FIRST; rename stale-guarded; From-layout refused until Phase 5 | `cases_*` (00215: permissive membership + RESTRICTIVE `cases_*_authz` on `solar_can_edit` per verb); `cases_bind` binds study/project/org; unique name per study (`cases_study_name_uniq`); deleting the selected case fails on `studies_selected_case_fk` (23503) |
+| `setSelectedSolarCaseAction` | `requireSolarLevel(project, 'edit')`; stale-guarded on `studies.updated_at` | `studies_update_authz`; `studies_selected_case_check` trigger (case in this study with a succeeded run, 23514) |
+| `saveSolarCaseAction` | `requireSolarLevel(project, 'edit')`; stale-guarded; equipment snapshots re-derived server-side from the catalogue (org or platform rows only); weather id must be the org's | `cases_update_authz` |
+| `fetchSolarWeatherAction` | `requireSolarLevel(project, 'edit')` FIRST, then `rateLimit('solar-weather:<org>', 5, 10 min)`; PVGIS + GSA called server-side only | `solar.weather_datasets` has no user write policy or grant — written by the service client after the gate; bucket `solar-weather` service-only |
+| `saveSolarFinancialsAction` / `applySolarRateCardAction` / `runSolarFinancialsAction` (`solar-financials.actions.ts`) | `requireSolarLevel(project, 'edit_financials')` FIRST; save stale-guarded (`expectedUpdatedAt` null = first save); rate card read from `org_settings` with the service client (owner/admin-only by RLS) after the gate; run reads the saved financials through the caller's session (money RLS), then INSERTs the result with the service client, `run_by` = the caller | `case_financials_*` on `solar_can_see_money` (SELECT and every write verb); `case_run_financials_select` on `solar_can_see_money`; **no INSERT/UPDATE/DELETE policy or grant** for authenticated on `case_run_financials` (service-written — a user-session insert could post forged figures); `case_run_financials_bind` requires a succeeded run. `cases_bind` rebuilds every written equipment snapshot (`pv.module`, `pv.inverter`, `battery.unit`) from `solar.equipment` and refuses an unknown, wrong-kind or other-org id (23514) |
+| `saveSolarEquipmentAction` / `retireSolarEquipmentAction` / `importSolarEquipmentCsvAction` (`solar-equipment.actions.ts`) | `requireRole(active org, OWNER_ADMIN)` (`.ok`); edit stale-guarded; CSV ≤ 512 KB, all-or-nothing on parse errors | `equipment_*_authz` RESTRICTIVE on `solar.library_orgs('admin')` (owner/admin, subscribed); `equipment_bind` refuses platform rows from any user session; no DELETE policy or grant (retire only) |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 
@@ -312,6 +321,17 @@ Storage bucket `solar-meter-raw` (private): read needs the path's org in the cal
 | Org library member (View+) | yes | yes | yes | yes, with View on the path's project |
 | External project member, Solar View on the project | no | yes (read only) | no | no |
 | Member without a grant, client viewer, supplier, other org | no | no | no | no |
+
+### Solar cases, runs and financials API (Phase 4b)
+
+`app/api/*` sits outside `(admin)/layout.tsx`: every route below gates itself with `requireSolarLevelAPI` (JSON 401/403) BEFORE any other work, UUID-validates its params and answers errors as sentences. Run rows are INSERTed through the caller's session (00215 RLS); only the service client finishes a run, and only while it is `running` (`case_runs_freeze`). Both buckets (`solar-runs`, `solar-weather`) have **no** `storage.objects` policy for `authenticated`.
+
+| Route | Needs | Notes |
+|---|---|---|
+| `POST /api/projects/[id]/solar/cases/[caseId]/run` | Solar Edit | `runtime='nodejs'`, `maxDuration=60`; `rateLimit('solar-run:<user>', 10, 60 s)`; 422 with every blocking reason; 409 when a run is already running (`case_runs_one_running`); a run left running > 90 s is closed as timed out by the next run |
+| `POST /api/projects/[id]/solar/cases/[caseId]/cancel` | Solar Edit | flips the case's running run to `cancelled`; the running request then discards its CSV and returns 409; 409 "This run has already finished." when nothing is running |
+| `GET /api/projects/[id]/solar/cases/[caseId]/runs/[runId]/export?kind=hourly\|monthly\|slice` | Solar View | the run row is read through the caller's session (404 if not visible / not succeeded); hourly = stored 8760 CSV, monthly = from stored outputs, slice ≤ 31 whole days JSON (range validated before storage is read); a lost stored file is a 404 sentence |
+| `GET /api/projects/[id]/solar/cases/[caseId]/financials/xlsx` | Solar Edit + financials | latest stored `case_run_financials` row under money RLS; 404 "Run financials first." before Run financials |
 
 ## Server actions (`apps/web/src/actions/*`)
 

@@ -20,6 +20,12 @@ export function humanSolarError(err: { code?: string; message?: string } | null 
   if (m.includes('request a subscription')) return 'Only members of this project’s organisation can ask for a subscription.'
   if (m.includes('request already')) return ALREADY_ANSWERED
   if (m.includes('point-of-connection node')) return 'That board belongs to another project.'
+  // 00215 cases_bind: an equipment snapshot that does not name a row of the case org's (or the
+  // platform) catalogue. The kind is read from a fixed list, never echoed from the message.
+  if (err?.code === '23514' && m.startsWith('solar.cases:') && m.includes('catalogue')) {
+    const kind = (['module', 'inverter', 'battery'] as const).find((k) => m.includes(`the ${k} `)) ?? 'equipment'
+    return `Pick the ${kind} again — it is not in your catalogue.`
+  }
   if (err?.code === '42501') return 'You do not have permission to do that.'
   return GENERIC_ERROR
 }

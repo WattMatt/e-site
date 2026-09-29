@@ -9,7 +9,7 @@
  *     writes: { 'solar.project_access:update': { data: [] } },   // 0 rows affected
  *   })
  *
- * SELECTs filter `tables[schema.table]` by eq / neq / in / gte (string order). Writes are recorded
+ * SELECTs filter `tables[schema.table]` by eq / neq / in / gte / lt (string order). Writes are recorded
  * in `calls` and resolve to `writes['schema.table:op']` (default: the payload
  * echoed back as one row; delete → []). `client.from(t)` is schema `public`.
  */
@@ -17,7 +17,7 @@ import { vi } from 'vitest'
 
 export type FakeError = { message: string; code?: string }
 export type FakeResult = { data: unknown; error: FakeError | null }
-type Filter = ['eq' | 'neq' | 'in' | 'gte', string, unknown]
+type Filter = ['eq' | 'neq' | 'in' | 'gte' | 'lt', string, unknown]
 
 export interface FakeCall {
   table: string
@@ -42,6 +42,7 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       op === 'eq' ? row[col] === val
         : op === 'neq' ? row[col] !== val
           : op === 'gte' ? String(row[col] ?? '') >= String(val)
+            : op === 'lt' ? String(row[col] ?? '') < String(val)
             : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
@@ -68,6 +69,7 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       neq: (c: string, v: unknown) => { state.filters.push(['neq', c, v]); return b },
       in: (c: string, v: unknown[]) => { state.filters.push(['in', c, v]); return b },
       gte: (c: string, v: unknown) => { state.filters.push(['gte', c, v]); return b },
+      lt: (c: string, v: unknown) => { state.filters.push(['lt', c, v]); return b },
       order: () => b,
       limit: (n: number) => { state.limit = n; return b },
       maybeSingle: first,

@@ -1,0 +1,40 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+const h = vi.hoisted(() => ({ create: vi.fn(), push: vi.fn() }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: h.push, refresh: vi.fn() }) }))
+vi.mock('@/actions/solar-cases.actions', () => ({ createSolarCaseAction: h.create }))
+import { NewCaseDialog } from './NewCaseDialog'
+
+beforeEach(() => vi.clearAllMocks())
+describe('NewCaseDialog', () => {
+  it('From layout is disabled with the reason; Manual creates and opens the case', async () => {
+    h.create.mockResolvedValue({ ok: true, caseId: 'c9' })
+    render(<NewCaseDialog projectId="p1" cases={[{ id: 'c1', name: 'Base' }]} onClose={() => {}} />)
+    const layout = screen.getByLabelText('From layout') as HTMLInputElement
+    expect(layout.disabled).toBe(true)
+    expect(screen.getByText('Arrives with the Layout tab')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Option B' } })
+    fireEvent.change(screen.getByLabelText('DC size (kWp)'), { target: { value: '600' } })
+    fireEvent.change(screen.getByLabelText('AC size (kW)'), { target: { value: '500' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+    await waitFor(() => expect(h.push).toHaveBeenCalledWith('/projects/p1/solar/yield?case=c9'))
+    expect(h.create).toHaveBeenCalledWith({ projectId: 'p1', name: 'Option B', start: { kind: 'manual', dcKwp: 600, acKw: 500 } })
+  })
+  it('Copy of case sends the source case', async () => {
+    h.create.mockResolvedValue({ ok: true, caseId: 'c9' })
+    render(<NewCaseDialog projectId="p1" cases={[{ id: 'c1', name: 'Base' }, { id: 'c2', name: 'Big' }]} onClose={() => {}} />)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Big copy' } })
+    fireEvent.click(screen.getByLabelText('Copy of case'))
+    fireEvent.change(screen.getByLabelText('Case to copy'), { target: { value: 'c2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith({ projectId: 'p1', name: 'Big copy', start: { kind: 'copy', fromCaseId: 'c2' } }))
+  })
+  it('field errors render beside their fields', async () => {
+    h.create.mockResolvedValue({ fieldErrors: { name: 'A case with this name already exists' } })
+    render(<NewCaseDialog projectId="p1" cases={[]} onClose={() => {}} />)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Base' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+    await screen.findByText('A case with this name already exists')
+    expect(h.push).not.toHaveBeenCalled()
+  })
+})

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SOLAR_TABS, visibleSolarTabs, siteReadiness, computeSolarReadiness, toSiteReadinessInput,
-  isInSouthAfrica, LATER_PHASE_REASON,
+  isInSouthAfrica, LATER_PHASE_REASON, yieldReadiness, financialsReadiness,
 } from './readiness'
 
 const full = { latitude: -26.1, longitude: 28.05, licenseeName: 'City Power', nmdKva: 500 }
@@ -12,8 +12,8 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('only Overview and Site & Supply are built in Phase 1', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site'])
+  it('Overview, Site & Supply, Yield & Scenarios and Financials are built (Phase 4b)', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'yield', 'financials'])
   })
   it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
@@ -54,12 +54,13 @@ describe('isInSouthAfrica', () => {
 })
 
 describe('computeSolarReadiness', () => {
-  it('has one row per visible tab except Overview; only Site & Supply is live', () => {
+  it('has one row per visible tab except Overview; Site & Supply and Yield are live', () => {
     const steps = computeSolarReadiness(full, 'view')
     expect(steps.map((s) => s.slug)).toEqual(['site', 'load', 'schematics', 'layout', 'yield', 'reports', 'schedule'])
     expect(steps[0]).toMatchObject({ slug: 'site', status: 'green', live: true })
     for (const s of steps.slice(1)) {
-      expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
+      if (s.slug === 'yield') expect(s).toMatchObject({ status: 'grey', reason: 'No cases yet', live: true })
+      else expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
     }
   })
   it('includes Tariff and Financials for Edit + financials', () => {
@@ -72,5 +73,47 @@ describe('toSiteReadinessInput', () => {
     expect(toSiteReadinessInput(null)).toBeNull()
     expect(toSiteReadinessInput({ latitude: '-26.1', longitude: 28.05, licensee_name: 'X', nmd_kva: '500.00' }))
       .toEqual({ latitude: -26.1, longitude: 28.05, licenseeName: 'X', nmdKva: 500 })
+  })
+})
+
+describe('Yield & Scenarios readiness (§2.3)', () => {
+  it.each([
+    [{ caseCount: 0, selectedCaseId: null, selectedStatus: null }, 'grey', 'No cases yet'],
+    [{ caseCount: 2, selectedCaseId: null, selectedStatus: null }, 'amber', 'Cases exist but none is selected'],
+    [{ caseCount: 2, selectedCaseId: 'c', selectedStatus: 'failed' }, 'red', 'The selected case’s last run failed'],
+    [{ caseCount: 2, selectedCaseId: 'c', selectedStatus: 'stale' }, 'amber', 'The selected case is stale — re-run it'],
+    [{ caseCount: 2, selectedCaseId: 'c', selectedStatus: 'done' }, 'green', 'The selected case’s run is current'],
+  ] as const)('%j → %s', (input, status, reason) => {
+    expect(yieldReadiness(input)).toEqual({ status, reason })
+  })
+})
+
+describe('Financials readiness (§2.3)', () => {
+  it('grey without financials; amber on untouched org defaults; green with capex and a model', () => {
+    expect(financialsReadiness(null)).toEqual({ status: 'grey', reason: 'No financials yet' })
+    expect(financialsReadiness({ capexZar: 0, hasModel: true, usingOrgDefaults: false }).status).toBe('amber')
+    expect(financialsReadiness({ capexZar: 5e6, hasModel: true, usingOrgDefaults: true })).toEqual({ status: 'amber', reason: 'Using org defaults — review the capex' })
+    expect(financialsReadiness({ capexZar: 5e6, hasModel: true, usingOrgDefaults: false })).toEqual({ status: 'green', reason: 'Capex and a finance model are set' })
+  })
+  it('a selected case with no saved financials is amber "using org defaults" (spec 01 §2.3), not grey', () => {
+    expect(financialsReadiness({ capexZar: 0, hasModel: true, usingOrgDefaults: true, saved: false }))
+      .toEqual({ status: 'amber', reason: 'Using org defaults — review the capex' })
+  })
+})
+
+describe('computeSolarReadiness with Phase 4b inputs', () => {
+  it('yield and financials are live; layout is green for a manual selected case', () => {
+    const steps = computeSolarReadiness(null, 'edit_financials', {
+      yield: { caseCount: 1, selectedCaseId: 'c', selectedStatus: 'done' },
+      financials: { capexZar: 1, hasModel: true, usingOrgDefaults: false },
+      layoutManual: true,
+    })
+    const by = Object.fromEntries(steps.map((s) => [s.slug, s]))
+    expect(by.yield).toMatchObject({ live: true, status: 'green' })
+    expect(by.financials).toMatchObject({ live: true, status: 'green' })
+    expect(by.layout).toMatchObject({ status: 'green', reason: 'The selected case uses a manual system size' })
+  })
+  it('an Edit user never gets a financials step', () => {
+    expect(computeSolarReadiness(null, 'edit').some((s) => s.slug === 'financials')).toBe(false)
   })
 })
