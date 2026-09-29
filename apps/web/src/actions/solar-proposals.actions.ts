@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseFinanceConfig } from '@esite/shared/solar-cases'
 import { readSolarOrgSettings } from '@esite/shared'
-import { defaultProposalDraft, parseProposalDraft, readProposalDraft, zar, type FinanceOptionKind } from '@esite/shared/solar-reports'
+import { FINANCE_OPTION_LABELS, defaultProposalDraft, parseProposalDraft, readProposalDraft, zar, zarCents, type FinanceOptionKind } from '@esite/shared/solar-reports'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
@@ -23,6 +23,7 @@ import { renderProposalPdf } from '@/lib/solar/reports/render-proposal'
 import { newShareToken } from '@/lib/solar/proposals/token'
 import { solarEmailEnabled } from '@/lib/solar/proposals/email-toggle'
 import { sendProposalToClients } from '@/lib/solar/proposals/notify'
+import { draftNarrative, narrativeAvailable, NO_KEY_REASON } from '@/lib/solar/proposals/narrative'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -276,4 +277,42 @@ export async function newSolarProposalLinkAction(input: { projectId: string; pro
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'proposal_link_rotated', objectRef: { proposalId: p.id, version: p.version } })
   revalidate(input.projectId)
   return { ok: true, link: proposalLink(token) }
+}
+
+/**
+ * Optional AI narrative (D-17, owner decision). Only the proposal's figures (computed from the
+ * selected case's STORED run by the same builder as Issue) and the project/client names are sent.
+ * The text is saved into the draft, stale-guarded, and stays editable.
+ */
+export async function draftSolarProposalNarrativeAction(input: { projectId: string; proposalId: string; expectedUpdatedAt: string }):
+  Promise<{ ok: true; narrative: string; updatedAt: string } | { error: string }> {
+  const g = await gate(input.projectId)
+  if ('error' in g) return g
+  if (!narrativeAvailable()) return { error: NO_KEY_REASON }
+  const { data: row } = await g.supabase.schema('solar').from('proposals')
+    .select('id, organisation_id, family_id, version, status, case_id, draft, updated_at').eq('id', input.proposalId).eq('project_id', input.projectId).maybeSingle()
+  const p = row as { id: string; organisation_id: string; family_id: string; version: number; status: string; case_id: string | null; draft: unknown; updated_at: string } | null
+  if (!p) return { error: NOT_FOUND }
+  if (p.status !== 'draft') return { error: 'Only a draft can be changed.' }
+  if (!rateLimit(`solar-narrative:${p.organisation_id}`, 10, 10 * 60_000)) return { error: 'Too many AI drafts for your organisation — try again in a few minutes.' }
+  const svc = createServiceClient() as unknown as AnyClient
+  const prepared = await prepareProposalSnapshot({ user: g.supabase, svc, projectId: input.projectId, proposal: p, actor: await actorOf(svc, g.userId), issuedAt: new Date() })
+  if (!prepared.ok) return { error: prepared.error }
+  const s = prepared.snapshot
+  const r = await draftNarrative({
+    projectName: s.project.name, clientName: s.client.name,
+    dcKwp: s.system.dcKwp, acKw: s.system.acKw, batteryKwh: s.system.batteryKwh,
+    year1Mwh: Math.round(s.system.year1PvKwh / 100) / 10, solarSharePct: Math.round(s.system.solarFraction * 1000) / 10,
+    offerExclVat: zarCents(s.price.offerExclVatZar),
+    financeOptions: s.financeOptions.map((o) => FINANCE_OPTION_LABELS[o.kind]),
+  })
+  if (!r.ok) return { error: r.error }
+  const draft = { ...readProposalDraft(p.draft), narrative: r.text }
+  const { data, error } = await g.supabase.schema('solar').from('proposals').update({ draft })
+    .eq('id', p.id).eq('project_id', input.projectId).eq('status', 'draft').eq('updated_at', input.expectedUpdatedAt).select('updated_at')
+  if (error) return { error: humanSolarError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
+  await emitProductEvent({ actorId: g.userId, projectId: input.projectId, event: 'solar_narrative_drafted' })
+  revalidate(input.projectId)
+  return { ok: true, narrative: r.text, updatedAt: String((data[0] as Row).updated_at) }
 }

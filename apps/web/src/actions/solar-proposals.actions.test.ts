@@ -19,10 +19,11 @@ vi.mock('@/lib/solar/reports/render-proposal', () => ({ renderProposalPdf: h.ren
 vi.mock('@/lib/solar/proposals/token', () => ({ newShareToken: h.token }))
 vi.mock('@/lib/solar/proposals/email-toggle', () => ({ solarEmailEnabled: h.emailOn }))
 vi.mock('@/lib/solar/proposals/notify', () => ({ sendProposalToClients: h.sendClients }))
+vi.mock('@/lib/solar/proposals/narrative', async (orig) => ({ ...(await orig<typeof import('@/lib/solar/proposals/narrative')>()), draftNarrative: h.narrative, narrativeAvailable: h.narrativeAvailable }))
 
 import {
   createSolarProposalAction, saveSolarProposalDraftAction, deleteSolarProposalDraftAction, reviseSolarProposalAction,
-  issueSolarProposalAction, withdrawSolarProposalAction, newSolarProposalLinkAction,
+  issueSolarProposalAction, withdrawSolarProposalAction, newSolarProposalLinkAction, draftSolarProposalNarrativeAction,
 } from './solar-proposals.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 import { withStorage } from '@/test/fake-storage'
@@ -224,5 +225,50 @@ describe('withdraw / new link', () => {
   it('a proposal the caller cannot see is not found (RLS read through the session)', async () => {
     setupUser(); setupSvc()
     await expect(withdrawSolarProposalAction({ projectId: P, proposalId: PR })).resolves.toEqual({ error: 'This proposal no longer exists — reload.' })
+  })
+})
+
+describe('draftSolarProposalNarrativeAction', () => {
+  const row = { id: PR, project_id: P, organisation_id: 'o1', status: 'draft', draft: goodDraft, updated_at: 'T0' }
+  it('disabled with the reason when there is no key', async () => {
+    setupUser({ tables: { 'solar.proposals': [row] } }); setupSvc()
+    h.narrativeAvailable.mockReturnValueOnce(false)
+    await expect(draftSolarProposalNarrativeAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0' }))
+      .resolves.toEqual({ error: 'The AI narrative is not configured on this server (no Anthropic API key).' })
+    expect(h.narrative).not.toHaveBeenCalled()
+  })
+  it('drafts from the selected case’s stored figures (figures + names only) and SAVES the text into the draft (stale-guarded)', async () => {
+    const user = setupUser({
+      tables: { 'solar.proposals': [row], 'projects.projects': [{ id: P, name: 'Acme Mall' }] },
+      writes: { 'solar.proposals:update': { data: [{ updated_at: 'T1' }] } },
+    }); setupSvc()
+    h.prepare.mockResolvedValue({ ok: true, snapshot: proposalSnapshot(), runId: 'r1' })
+    h.narrative.mockResolvedValue({ ok: true, text: 'Narrative text.' })
+    await expect(draftSolarProposalNarrativeAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0' }))
+      .resolves.toEqual({ ok: true, narrative: 'Narrative text.', updatedAt: 'T1' })
+    const facts = h.narrative.mock.calls[0]![0] as Record<string, unknown>
+    expect(Object.keys(facts).sort()).toEqual(['acKw', 'batteryKwh', 'clientName', 'dcKwp', 'financeOptions', 'offerExclVat', 'projectName', 'solarSharePct', 'year1Mwh'])
+    expect(facts).toMatchObject({ clientName: 'Acme Retail (Pty) Ltd', dcKwp: 500, offerExclVat: 'R 1 150 000.00', financeOptions: ['Cash purchase', 'Power purchase agreement (PPA)'] })
+    const up = callsTo(user.calls, 'solar.proposals', 'update')[0]!
+    expect(up.payload).toEqual({ draft: { ...goodDraft, narrative: 'Narrative text.' } })
+    expect(up.filters).toContainEqual(['eq', 'updated_at', 'T0'])
+    expect(h.emit).toHaveBeenCalledWith({ actorId: U, projectId: P, event: 'solar_narrative_drafted' })
+  })
+  it('passes the named "unavailable" sentence through and saves nothing', async () => {
+    const user = setupUser({ tables: { 'solar.proposals': [row] } }); setupSvc()
+    h.prepare.mockResolvedValue({ ok: true, snapshot: proposalSnapshot(), runId: 'r1' })
+    h.narrative.mockResolvedValue({ ok: false, error: 'Narrative unavailable — write it yourself' })
+    await expect(draftSolarProposalNarrativeAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0' }))
+      .resolves.toEqual({ error: 'Narrative unavailable — write it yourself' })
+    expect(callsTo(user.calls, 'solar.proposals', 'update')).toHaveLength(0)
+    expect(h.emit).not.toHaveBeenCalled()
+  })
+  it('rate-limits per organisation (10 per 10 minutes)', async () => {
+    setupUser({ tables: { 'solar.proposals': [row] } }); setupSvc()
+    h.rateLimit.mockReturnValueOnce(false)
+    await expect(draftSolarProposalNarrativeAction({ projectId: P, proposalId: PR, expectedUpdatedAt: 'T0' }))
+      .resolves.toEqual({ error: 'Too many AI drafts for your organisation — try again in a few minutes.' })
+    expect(h.rateLimit).toHaveBeenCalledWith('solar-narrative:o1', 10, 600_000)
+    expect(h.narrative).not.toHaveBeenCalled()
   })
 })
