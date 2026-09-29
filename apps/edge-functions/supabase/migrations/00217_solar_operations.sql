@@ -746,6 +746,11 @@ CREATE POLICY handover_items_delete_authz ON solar.handover_items AS RESTRICTIVE
 -- overlapping its span [ts_end - interval, ts_end), and then one per (meter, ts_end): a second file
 -- covering the same dates REPLACES rather than adds, at the same or a different interval (review
 -- B1). Month = SAST month of the interval START.
+-- Known limit (review round 2, accepted): the anti-join drops a WHOLE older reading when a newer
+-- file overlaps any part of its span, so where a re-imported range starts or ends inside an older
+-- interval at most one older interval is lost at each edge (e.g. up to 60 min of a 60-minute file
+-- beside a 30-minute re-import that begins on the half hour). Splitting a reading pro rata would
+-- invent sub-interval data the meter never recorded.
 -- One jsonb document per call, so no PostgREST row cap can truncate a month.
 CREATE OR REPLACE FUNCTION public.solar_ops_monthly_kwh(p_installation_id UUID, p_role TEXT)
 RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$

@@ -37,6 +37,14 @@ const r6 = (x: number) => Math.round(x * 1e6) / 1e6
  * weighted by overlap. Within a slot each interval group's kW is its energy over the time IT covers,
  * so a missing reading is a gap and never a zero (WM G14); the groups are then summed. One interval
  * in, the same points out.
+ *
+ * Known limits (review round 2, accepted): slots are aligned to the Unix epoch, which is SAST-aligned
+ * only when the coarse interval divides 120 min (SAST is UTC+2) — true of every logger interval seen
+ * (5/10/15/30/60 min). Groups are keyed by INTERVAL, not meter, so one meter holding readings on two
+ * channels of different intervals inside one slot (the edge of a re-import the aggregation kept both
+ * sides of) is counted in both groups for that slot. Detection only asks whether the plant's kW is at
+ * or below the zero threshold, and a double-counted non-zero output is still non-zero, so neither
+ * changes a candidate in practice; do not reuse this series for energy totals.
  */
 export function plantSeries(points: readonly SeriesPoint[]): SeriesPoint[] {
   const sorted = [...points].sort((a, b) => a.endMs - b.endMs || a.intervalMin - b.intervalMin)

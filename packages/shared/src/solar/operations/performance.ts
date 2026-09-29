@@ -104,6 +104,10 @@ export function performanceRow(i: PerformanceInput, month: MonthKey): Performanc
   }
   const guaranteeKwh = Math.max(0, exp.kwh - excludedKwh)
   const a = i.actual[month]
+  // Known limit (review round 2, accepted): the commissioning month's actual is the whole month's
+  // metered energy, NOT clipped to the active window, so pre-commissioning test energy counts toward
+  // it while the expectation is prorated. Clipping needs the day-level series; the monthly aggregate
+  // cannot split a month.
   const actualKwh = a ? a.kwh : null
   const varianceKwh = actualKwh === null ? null : actualKwh - guaranteeKwh
   const variancePct = varianceKwh === null || guaranteeKwh <= 0 ? null : (varianceKwh / guaranteeKwh) * 100

@@ -6,6 +6,11 @@
  * has to line up with the data. The
  * hourly series places each step's loss on the bill engine's 365-day hour index so the pinned
  * tariff's TOU calendar values it (lost-revenue.ts in the web app).
+ *
+ * Deliberate (review round 2): a gap INSIDE a recorded downtime window counts as zero actual, so the
+ * whole shaped expectation of that step is lost. Loggers often stop during the very outage being
+ * recorded; the user has asserted the plant was down for the window, so missing data there is not
+ * "unknown output". (Outside a recorded window a gap is never downtime: downtime-detect.ts.)
  */
 import type { OpsBaseline } from './baseline'
 import type { SeriesPoint, TimeWindow } from './downtime-detect'
