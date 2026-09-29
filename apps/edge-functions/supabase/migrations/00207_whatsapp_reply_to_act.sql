@@ -251,3 +251,229 @@ GRANT SELECT (id, work_item_id, trigger, status, error_code, error_text, created
   ON whatsapp.outbox TO authenticated;
 GRANT SELECT (id, received_at, kind, resolved_item_id, outcome, outcome_reason)
   ON whatsapp.inbound TO authenticated;
+
+-- ═══ Part B: acting as the user ═══════════════════════════════════════════
+-- whatsapp_actor OWNS the wa_* functions. It is a member of `authenticated` and
+-- has no BYPASSRLS, so inside a wa_* function the table's REAL policies judge
+-- the write. act_as() sets the user's claims first, so auth.uid(), every
+-- auth.uid()-based helper and the work-item transition guard see the user.
+-- Nothing here re-states a rule the web path enforces.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'whatsapp_actor') THEN
+    CREATE ROLE whatsapp_actor NOLOGIN INHERIT NOBYPASSRLS;
+  END IF;
+END $$;
+GRANT authenticated TO whatsapp_actor;
+GRANT whatsapp_actor TO postgres;
+GRANT USAGE, CREATE ON SCHEMA whatsapp TO whatsapp_actor;
+GRANT INSERT ON projects.work_item_notes, projects.work_item_attachments TO whatsapp_actor;
+GRANT UPDATE (body, redacted_at, redacted_by) ON projects.work_item_notes TO whatsapp_actor;
+GRANT UPDATE (redacted_at, redacted_by) ON projects.work_item_attachments TO whatsapp_actor;
+
+CREATE POLICY work_item_notes_insert_wa ON projects.work_item_notes FOR INSERT TO whatsapp_actor
+  WITH CHECK (author_id = auth.uid() AND via = 'whatsapp'
+              AND projects.user_can_read_work_item(work_item_id)
+              AND COALESCE(public.user_effective_project_role(project_id, auth.uid()), 'client_viewer') <> 'client_viewer');
+CREATE POLICY work_item_attachments_insert_wa ON projects.work_item_attachments FOR INSERT TO whatsapp_actor
+  WITH CHECK (uploaded_by = auth.uid() AND via = 'whatsapp'
+              AND projects.user_can_read_work_item(work_item_id)
+              AND COALESCE(public.user_effective_project_role(project_id, auth.uid()), 'client_viewer') <> 'client_viewer');
+CREATE POLICY work_item_notes_redact_wa ON projects.work_item_notes FOR UPDATE TO whatsapp_actor
+  USING (author_id = auth.uid() AND redacted_at IS NULL AND created_at > now() - interval '15 minutes')
+  WITH CHECK (redacted_by = auth.uid() AND redacted_at IS NOT NULL);
+CREATE POLICY work_item_attachments_redact_wa ON projects.work_item_attachments FOR UPDATE TO whatsapp_actor
+  USING (uploaded_by = auth.uid() AND redacted_at IS NULL AND created_at > now() - interval '15 minutes')
+  WITH CHECK (redacted_by = auth.uid() AND redacted_at IS NOT NULL);
+
+CREATE FUNCTION whatsapp.act_as(p_user uuid) RETURNS void
+LANGUAGE plpgsql SET search_path = '' AS $fn$
+BEGIN
+  IF p_user IS NULL THEN RAISE EXCEPTION 'act_as: a user is required'; END IF;
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', p_user, 'role', 'authenticated')::text, true);
+  PERFORM set_config('request.jwt.claim.sub', p_user::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.act_as(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION whatsapp.act_as(uuid) FROM anon;
+REVOKE ALL ON FUNCTION whatsapp.act_as(uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION whatsapp.act_as(uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.act_as(uuid) TO whatsapp_actor;
+
+-- Events are trigger-written and `authenticated` has no INSERT, so the one verb
+-- WhatsApp adds is written by this postgres-owned helper, gated on readability.
+CREATE FUNCTION whatsapp.record_ack(p_item uuid) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security TO 'off' AS $fn$
+DECLARE
+  v_actor uuid := auth.uid();
+  v_wi    projects.work_items;
+  v_last  record;
+BEGIN
+  IF v_actor IS NULL OR NOT projects.user_can_read_work_item(p_item) THEN RETURN false; END IF;
+  SELECT * INTO v_wi FROM projects.work_items WHERE id = p_item;
+  SELECT e.verb, e.actor_id INTO v_last FROM projects.work_item_events e
+   WHERE e.work_item_id = p_item ORDER BY e.created_at DESC, e.seq DESC LIMIT 1;
+  IF FOUND AND v_last.verb = 'acknowledged' AND v_last.actor_id = v_actor THEN RETURN true; END IF;
+  INSERT INTO projects.work_item_events (work_item_id, project_id, organisation_id, verb, actor_id, actor_role,
+                                         from_status, to_status, from_ball_in_court_id, to_ball_in_court_id)
+  VALUES (p_item, v_wi.project_id, v_wi.organisation_id, 'acknowledged', v_actor,
+          public.user_effective_project_role(v_wi.project_id, v_actor),
+          v_wi.status, v_wi.status, v_wi.ball_in_court_id, v_wi.ball_in_court_id);
+  RETURN true;
+END $fn$;
+REVOKE ALL ON FUNCTION whatsapp.record_ack(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION whatsapp.record_ack(uuid) FROM anon;
+REVOKE ALL ON FUNCTION whatsapp.record_ack(uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION whatsapp.record_ack(uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.record_ack(uuid) TO whatsapp_actor;
+
+CREATE FUNCTION whatsapp.wa_acknowledge(p_user uuid, p_item uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE v_wi projects.work_items; v_role text;
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  SELECT * INTO v_wi FROM projects.work_items WHERE id = p_item;          -- RLS, as the user
+  IF NOT FOUND THEN RETURN jsonb_build_object('code', 'not_found'); END IF;
+  v_role := public.user_effective_project_role(v_wi.project_id, p_user);
+  IF v_role IS NULL OR v_role = 'client_viewer' THEN
+    RETURN jsonb_build_object('code', 'no_access', 'ref', v_wi.ref);
+  END IF;
+  IF NOT whatsapp.record_ack(p_item) THEN RETURN jsonb_build_object('code', 'not_found'); END IF;
+  RETURN jsonb_build_object('code', 'ok', 'ref', v_wi.ref, 'status', v_wi.status);
+END $fn$;
+
+CREATE FUNCTION whatsapp.wa_mark_done(p_user uuid, p_item uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE v_wi projects.work_items; v_role text; v_target text; n int;
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  SELECT * INTO v_wi FROM projects.work_items WHERE id = p_item;          -- RLS, as the user
+  IF NOT FOUND THEN RETURN jsonb_build_object('code', 'not_found'); END IF;
+  v_role := public.user_effective_project_role(v_wi.project_id, p_user);
+  IF v_role IS NULL OR v_role = 'client_viewer' THEN
+    RETURN jsonb_build_object('code', 'no_access', 'ref', v_wi.ref);
+  END IF;
+  IF v_wi.status IN ('closed', 'void') THEN
+    RETURN jsonb_build_object('code', 'already_closed', 'ref', v_wi.ref, 'status', v_wi.status);
+  END IF;
+  -- Mirrors take status FROM their source (#193 map_source_status). Phase 2
+  -- (Task 21) replaces this arm with the snag and RFI adapters.
+  IF v_wi.origin = 'mirror' THEN
+    RETURN jsonb_build_object('code', 'use_module', 'ref', v_wi.ref, 'item_type', v_wi.item_type);
+  END IF;
+  IF v_wi.ball_in_court_id IS DISTINCT FROM p_user THEN
+    RETURN jsonb_build_object('code', 'not_holder', 'ref', v_wi.ref,
+      'holder_name', (SELECT full_name FROM public.profiles WHERE id = v_wi.ball_in_court_id));
+  END IF;
+  v_target := CASE WHEN v_wi.status = 'answered' OR v_wi.assignee_id = v_wi.gatekeeper_id
+                   THEN 'closed' ELSE 'answered' END;
+  BEGIN
+    IF v_wi.status = 'triage' THEN
+      UPDATE projects.work_items SET status = 'open' WHERE id = p_item AND status = 'triage';
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n = 0 THEN RETURN jsonb_build_object('code', 'nothing_changed', 'ref', v_wi.ref); END IF;
+      v_wi.status := 'open';
+    END IF;
+    UPDATE projects.work_items SET status = v_target WHERE id = p_item AND status = v_wi.status;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN OTHERS THEN
+    -- The guard's sentence ("Only the person who signs X off can close it…") is the message.
+    RETURN jsonb_build_object('code', 'refused', 'ref', v_wi.ref, 'message', SQLERRM);
+  END;
+  IF n = 0 THEN RETURN jsonb_build_object('code', 'nothing_changed', 'ref', v_wi.ref); END IF;
+  RETURN jsonb_build_object('code', 'ok', 'ref', v_wi.ref, 'status', v_target,
+    'gatekeeper_name', (SELECT full_name FROM public.profiles WHERE id = v_wi.gatekeeper_id));
+END $fn$;
+
+CREATE FUNCTION whatsapp.wa_add_note(p_user uuid, p_item uuid, p_body text, p_inbound uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE v_ref text; v_id uuid;
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  SELECT ref INTO v_ref FROM projects.work_items WHERE id = p_item;       -- RLS, as the user
+  IF v_ref IS NULL THEN RETURN jsonb_build_object('code', 'not_found'); END IF;
+  BEGIN
+    INSERT INTO projects.work_item_notes (work_item_id, author_id, body, via, inbound_id)
+    VALUES (p_item, p_user, left(p_body, 4096), 'whatsapp', p_inbound)
+    RETURNING id INTO v_id;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('code', 'refused', 'ref', v_ref, 'message', SQLERRM);
+  END;
+  RETURN jsonb_build_object('code', 'ok', 'ref', v_ref, 'id', v_id);
+END $fn$;
+
+CREATE FUNCTION whatsapp.wa_add_attachment(p_user uuid, p_item uuid, p_bucket text, p_path text,
+                                           p_mime text, p_role text, p_inbound uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE v_ref text; v_id uuid;
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  SELECT ref INTO v_ref FROM projects.work_items WHERE id = p_item;       -- RLS, as the user
+  IF v_ref IS NULL THEN RETURN jsonb_build_object('code', 'not_found'); END IF;
+  BEGIN
+    INSERT INTO projects.work_item_attachments (work_item_id, uploaded_by, bucket, storage_path, mime_type, role, via, inbound_id)
+    VALUES (p_item, p_user, p_bucket, p_path, p_mime, p_role, 'whatsapp', p_inbound)
+    RETURNING id INTO v_id;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('code', 'refused', 'ref', v_ref, 'message', SQLERRM);
+  END;
+  RETURN jsonb_build_object('code', 'ok', 'ref', v_ref, 'id', v_id);
+END $fn$;
+
+CREATE FUNCTION whatsapp.wa_redact(p_user uuid, p_kind text, p_id uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE n int := 0; v_ref text;
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  BEGIN
+    IF p_kind = 'note' THEN
+      SELECT wi.ref INTO v_ref FROM projects.work_item_notes x JOIN projects.work_items wi ON wi.id = x.work_item_id WHERE x.id = p_id;
+      UPDATE projects.work_item_notes SET body = '', redacted_at = now(), redacted_by = p_user
+       WHERE id = p_id AND redacted_at IS NULL;
+    ELSIF p_kind = 'attachment' THEN
+      SELECT wi.ref INTO v_ref FROM projects.work_item_attachments x JOIN projects.work_items wi ON wi.id = x.work_item_id WHERE x.id = p_id;
+      UPDATE projects.work_item_attachments SET redacted_at = now(), redacted_by = p_user
+       WHERE id = p_id AND redacted_at IS NULL;
+    ELSE
+      RETURN jsonb_build_object('code', 'invalid');
+    END IF;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('code', 'refused', 'ref', v_ref, 'message', SQLERRM);
+  END;
+  RETURN jsonb_build_object('code', CASE WHEN n = 1 THEN 'ok' ELSE 'refused' END, 'ref', v_ref);
+END $fn$;
+
+CREATE FUNCTION whatsapp.wa_open_items(p_user uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+BEGIN
+  PERFORM whatsapp.act_as(p_user);
+  RETURN COALESCE((
+    SELECT jsonb_agg(to_jsonb(x) ORDER BY x.due_date, x.ref) FROM (
+      SELECT wi.id, wi.ref, wi.title, wi.due_date, p.name AS project_name
+        FROM projects.work_items wi JOIN projects.projects p ON p.id = wi.project_id
+       WHERE wi.ball_in_court_id = p_user AND wi.status IN ('triage', 'open', 'answered')
+         AND COALESCE(public.user_effective_project_role(wi.project_id, p_user), 'client_viewer') <> 'client_viewer'
+       ORDER BY wi.due_date, wi.ref LIMIT 10) x), '[]'::jsonb);
+END $fn$;
+
+-- Ownership + grants, written out one statement each: packages/db's static
+-- scanners read this file's TEXT and cannot see a REVOKE built with format().
+ALTER FUNCTION whatsapp.wa_acknowledge(uuid,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_mark_done(uuid,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_add_note(uuid,uuid,text,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_add_attachment(uuid,uuid,text,text,text,text,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_redact(uuid,text,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_open_items(uuid) OWNER TO whatsapp_actor;
+REVOKE ALL ON FUNCTION whatsapp.wa_acknowledge(uuid,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_mark_done(uuid,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_add_note(uuid,uuid,text,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_add_attachment(uuid,uuid,text,text,text,text,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_redact(uuid,text,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_open_items(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_acknowledge(uuid,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_mark_done(uuid,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_add_note(uuid,uuid,text,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_add_attachment(uuid,uuid,text,text,text,text,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_redact(uuid,text,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_open_items(uuid) TO service_role;
