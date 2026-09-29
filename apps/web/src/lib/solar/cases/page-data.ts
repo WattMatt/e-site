@@ -214,7 +214,8 @@ export interface ReadinessState extends SolarReadinessExtra { stale: { caseId: s
 /** Tab readiness inputs + the Stale banner decision (current hash vs the latest succeeded run's inputs_hash). */
 export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, projectId: string, level: SolarAccessLevel): Promise<ReadinessState> {
   const shared = await loadStudyInputs(svc, projectId)
-  if (!shared) return { stale: null }
+  // A cost-view caller with nothing to report on yet sees "not yet", never the no-access reason.
+  if (!shared) return level === 'edit_financials' ? { stale: null, reports: { hasCurrentFeasibility: false } } : { stale: null }
   const { data: caseData } = await user.schema('solar').from('cases').select('id, study_id, project_id, name, pv_source, config, updated_at').eq('project_id', projectId)
   const rows = (caseData ?? []) as CaseRow[]
   const sel = rows.find((r) => r.id === shared.study.selected_case_id) ?? null
@@ -241,9 +242,22 @@ export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, p
       }
     }
   }
+  // Reports (Phase 6): green when a feasibility report exists for the selected case's CURRENT run
+  // (its source_id); a superseded version for that same run still counts. Null below Edit + financials.
+  let reports: { hasCurrentFeasibility: boolean } | null = level === 'edit_financials' ? { hasCurrentFeasibility: false } : null
+  if (sel && level === 'edit_financials') {
+    const { ok } = await runsByCase(user, projectId)
+    const lastOk = ok.get(sel.id)
+    if (lastOk) {
+      const { data } = await user.schema('projects').from('reports').select('id')
+        .eq('project_id', projectId).eq('kind', 'solar_feasibility').eq('source_id', lastOk.id as string).in('status', ['issued', 'superseded']).limit(1)
+      reports = { hasCurrentFeasibility: Array.isArray(data) && data.length > 0 }
+    }
+  }
   return {
     yield: { caseCount: rows.length, selectedCaseId: sel?.id ?? null, selectedStatus },
     financials,
+    reports,
     layoutManual: sel?.pv_source === 'manual',
     stale: sel && selectedStatus === 'stale' ? { caseId: sel.id, caseName: sel.name } : null,
   }

@@ -28,4 +28,17 @@ describe('loadSolarActivity', () => {
     const { client } = fakeSupabase()
     await expect(loadSolarActivity('p1', client as never)).resolves.toEqual([])
   })
+  it('a token response (no actor) reads "The client"; any other actorless event stays "Someone"', async () => {
+    const { client } = fakeSupabase({
+      tables: {
+        'solar.audit_events': [
+          { id: 5, project_id: 'p1', verb: 'proposal_accepted', object_ref: { version: 2, via: 'token' }, actor_id: null, created_at: '2026-09-29T09:00:00Z' },
+          { id: 4, project_id: 'p1', verb: 'site_saved', object_ref: {}, actor_id: null, created_at: '2026-09-29T08:00:00Z' },
+        ],
+      },
+    })
+    h.service = fakeSupabase().client
+    const items = await loadSolarActivity('p1', client as never)
+    expect(items.map((i) => [i.id, i.actorName, i.target])).toEqual([[5, 'The client', 'reports'], [4, 'Someone', 'site']])
+  })
 })

@@ -15,6 +15,9 @@ export type { SolarActivityItem }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
 
+/** Client responses by secure link are audited with no actor (there is no E-Site user). */
+const CLIENT_VERBS = new Set(['proposal_accepted', 'proposal_declined'])
+
 interface AuditRow { id: number; verb: string; object_ref: Record<string, unknown> | null; actor_id: string | null; created_at: string }
 
 export async function loadSolarActivity(projectId: string, supabase: AnyClient): Promise<SolarActivityItem[]> {
@@ -40,7 +43,7 @@ export async function loadSolarActivity(projectId: string, supabase: AnyClient):
   return rows.map((r) => ({
     id: r.id,
     at: r.created_at,
-    actorName: (r.actor_id && names.get(r.actor_id)) || 'Someone',
+    actorName: r.actor_id ? names.get(r.actor_id) || 'Someone' : CLIENT_VERBS.has(r.verb) ? 'The client' : 'Someone',
     ...describeSolarAuditEvent(r.verb, r.object_ref ?? {}),
   }))
 }

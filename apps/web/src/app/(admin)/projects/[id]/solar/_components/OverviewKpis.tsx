@@ -12,8 +12,8 @@ import type { SolarAccessLevel } from '@esite/shared'
 import type { HeadlineKpis } from '@/lib/solar/cases/page-data'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { Button } from '@/components/ui/Button'
 import { setSelectedSolarCaseAction } from '@/actions/solar-cases.actions'
+import { GenerateFeasibilityButton } from './GenerateFeasibilityButton'
 import { mwh, num, pct, rand, years } from '@/components/solar/format'
 
 export function OverviewKpis({ projectId, level, kpis, selectable, selectedCaseId, studyUpdatedAt, stale }: {
@@ -80,9 +80,10 @@ export function OverviewKpis({ projectId, level, kpis, selectable, selectedCaseI
             </>
           )}
           {canMoney && (
-            <Button type="button" size="sm" variant="secondary" disabled title={stale ? 'The selected case is stale — re-run it first' : kpis ? 'Available with Reports & Proposal' : 'Available once a case has been run'}>
-              Generate feasibility report
-            </Button>
+            <GenerateFeasibilityButton
+              projectId={projectId}
+              disabledReason={!kpis ? 'Run a case on Yield & Scenarios first' : stale ? 'The selected case is stale — re-run it first' : !m ? 'Run financials for the selected case first' : null}
+            />
           )}
           {error && <span role="alert">{error}</span>}
         </div>
