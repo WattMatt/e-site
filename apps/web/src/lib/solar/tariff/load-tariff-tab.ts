@@ -90,6 +90,12 @@ async function chargesWithTitles(supabase: AnyClient, tariffId: string): Promise
     .sort((a, b) => [a.component, a.season, a.tou, a.blockMin ?? -1].join('|').localeCompare([b.component, b.season, b.tou, b.blockMin ?? -1].join('|')))
 }
 
+/** The note is read from the money rows (this loader runs only at Edit + financials); see 00218. */
+function withMoneyNote(rule: ReturnType<typeof parseExportRule>, rateRows: Row[]): ReturnType<typeof parseExportRule> {
+  if (!rule) return null
+  return { ...rule, sourceNote: rule.method === 'manual' ? ((rateRows[0]?.source_note as string | undefined) ?? null) : null }
+}
+
 export async function loadTariffTab(supabase: AnyClient, projectId: string, opts: { fy: string | null; todayIso: string }): Promise<TariffTabData> {
   const solar = supabase.schema('solar')
   const tariffs = supabase.schema('tariffs')
@@ -208,7 +214,7 @@ export async function loadTariffTab(supabase: AnyClient, projectId: string, opts
     projectId,
     study: {
       id: String(st.id), updatedAt: String(st.updated_at), licenseeName: name || null, tariffId,
-      tariffOverrideId: overrideId, exportRule: parseExportRule(st.export_rule),
+      tariffOverrideId: overrideId, exportRule: withMoneyNote(parseExportRule(st.export_rule), rateRows),
     },
     supply: { nmdKva: num(st.nmd_kva), supplyVoltageV: num(st.supply_voltage_v) },
     licensee, licenseeOptions, years, selectedYearId,

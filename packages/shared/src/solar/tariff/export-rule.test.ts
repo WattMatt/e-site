@@ -10,6 +10,8 @@ describe('export rule', () => {
   it('parses stored JSON and rejects junk', () => {
     expect(parseExportRule({ version: 1, method: 'none' })).toEqual({ version: 1, method: 'none', sourceNote: null })
     expect(parseExportRule({ method: 'cash' })).toBeNull()
+    // 00218: the source note is money (study_export_rates); a stored study row never surfaces one.
+    expect(parseExportRule({ version: 1, method: 'manual', sourceNote: 'leaked from studies' })).toEqual({ version: 1, method: 'manual', sourceNote: null })
     expect(parseExportRule(null)).toBeNull()
   })
   it('offers the linked Gen-offset method only when the tariff has one; defaults to it, else R0', () => {

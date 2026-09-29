@@ -34,6 +34,16 @@ describe('loadTariffTab', () => {
     expect((await loadTariffTab(client as never, 'p1', { fy: '2024/25', todayIso: '2026-01-10' })).selectedYearId).toBe('y24')
     expect((await loadTariffTab(client as never, 'p1', { fy: '1999/00', todayIso: '2026-01-10' })).selectedYearId).toBe('y25')
   })
+  it('the export source note comes from the money rows, never from studies.export_rule (00218)', async () => {
+    const t = {
+      ...tables,
+      'solar.studies': [{ ...tables['solar.studies'][0], export_rule: { version: 1, method: 'manual', sourceNote: 'stale copy on the study' } }],
+      'solar.study_export_rates': [{ id: 'r1', study_id: 's1', season: 'all', tou: 'all', unit: 'c_per_kWh', amount_excl_vat: '95', source_note: 'City SSEG schedule p4' }],
+    }
+    const d = await loadTariffTab(fakeSupabase({ tables: t }).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
+    expect(d.exportSourceNote).toBe('City SSEG schedule p4')
+    expect(d.study?.exportRule).toEqual({ version: 1, method: 'manual', sourceNote: 'City SSEG schedule p4' })
+  })
   it('no study: says so', async () => {
     const d = await loadTariffTab(fakeSupabase({}).client as never, 'p1', { fy: null, todayIso: '2026-01-10' })
     expect(d.study).toBeNull()

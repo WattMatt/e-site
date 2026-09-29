@@ -2,8 +2,10 @@
  * Export / SSEG rule on the Tariff tab (spec §5). Eskom: the tariff's linked
  * Gen-offset export tariff. Municipal: the NERSA books publish no export
  * rates, so "No export credit (R0)" (default) or a manually entered rate with
- * a mandatory source note. The rate is money: it is stored in
- * solar.study_export_rates, not in studies.export_rule (plan D2b-2).
+ * a mandatory source note. The rate AND its source note are money: both are
+ * stored in solar.study_export_rates, never in studies.export_rule (plan D2b-2;
+ * the note moved there in 00218). validateExportRuleForm's rule carries the
+ * note only in flight, to solar.save_export_rule, which strips it.
  */
 import { makeCharge, makeTariff, type Tariff } from '../../tariffs/types'
 import { ENERGY_RAND_RANGE, randPerKwh } from '../../tariffs/units'
@@ -39,11 +41,16 @@ export interface ExportRuleForm {
   rates: Array<{ season: ExportSeason; tou: ExportTou; unit: 'c_per_kWh' | 'R_per_kWh'; amount: string }>
 }
 
+/**
+ * A STORED rule (solar.studies.export_rule). It never carries the source note: the note is money
+ * and lives only on solar.study_export_rates.source_note (00218 refuses a sourceNote key on the
+ * study row). A caller that may see money attaches it from the rate rows (loadTariffTab).
+ */
 export function parseExportRule(v: unknown): ExportRule | null {
   if (!v || typeof v !== 'object') return null
-  const o = v as { method?: unknown; sourceNote?: unknown }
+  const o = v as { method?: unknown }
   if (typeof o.method !== 'string' || !(EXPORT_METHODS as readonly string[]).includes(o.method)) return null
-  return { version: 1, method: o.method as ExportMethod, sourceNote: typeof o.sourceNote === 'string' && o.sourceNote.trim() ? o.sourceNote : null }
+  return { version: 1, method: o.method as ExportMethod, sourceNote: null }
 }
 
 export function exportMethodsFor(hasLinkedExportTariff: boolean): ExportMethod[] {
