@@ -6,6 +6,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { loadSolarReadinessExtra } from '@/lib/solar/cases/page-data'
 import { computeSolarReadiness, toSiteReadinessInput, withTariffReadiness } from '@esite/shared'
 import { loadTariffReadinessInput } from '@/lib/solar/tariff/readiness-input'
+import { loadLoadReadiness } from '@/lib/solar/load/views'
 import { SolarTabBar } from '../_components/SolarTabBar'
 import { ViewOnlyBanner } from '../_components/ViewOnlyBanner'
 
@@ -34,10 +35,11 @@ export default async function SolarGatedLayout({
   if (!user) redirect('/login')
 
   const level = await requireSolarLevel(id, 'view', supabase)
-  const [{ data: project }, { data: study }, grantorRes] = await Promise.all([
+  const [{ data: project }, { data: study }, grantorRes, loadReady] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, organisation_id').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva, tariff_id, export_rule').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
+    loadLoadReadiness(supabase, id),
   ])
   // Owner default 1 (2026-09-28): grantors get a way to the Access panel from
   // the module chrome. Hidden (not disabled) for everyone else; the panel's
@@ -57,7 +59,7 @@ export default async function SolarGatedLayout({
   // tariff_id / export_rule hold no rand value (the manual export RATE lives in
   // the money table), so this select is safe at View; the tariff step itself
   // exists only at Edit + financials (visibleSolarTabs).
-  const readiness = withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level, extra), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))
+  const readiness = withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level, { ...extra, load: loadReady.load, schematics: loadReady.schematics }), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))
 
   return (
     <div className="animate-fadeup">

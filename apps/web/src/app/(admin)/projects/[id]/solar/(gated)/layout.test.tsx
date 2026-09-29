@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   extra: vi.fn(async (): Promise<Record<string, unknown>> => ({ stale: null })),
   svc: vi.fn(() => ({ svc: true })),
   redirect: vi.fn((p: string) => { throw new Error(`REDIRECT:${p}`) }),
+  loadReadiness: vi.fn(async (_s: unknown, _p: string): Promise<unknown> => ({ load: null, schematics: null })),
 }))
 vi.mock('next/navigation', () => ({
   redirect: (p: string) => h.redirect(p),
@@ -17,6 +18,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient, createSe
 vi.mock('@/lib/solar/cases/page-data', () => ({ loadSolarReadinessExtra: h.extra }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
 vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: vi.fn() }))
+vi.mock('@/lib/solar/load/views', () => ({ loadLoadReadiness: h.loadReadiness }))
 
 import SolarGatedLayout from './layout'
 import { fakeSupabase } from '@/test/fake-supabase'
@@ -106,5 +108,18 @@ describe('Solar gated layout — Tariff readiness', () => {
     render(await SolarGatedLayout(args))
     expect(screen.getByRole('link', { name: /Tariff/ })).toBeDefined()
     expect(screen.getByTitle('Missing: export credit rule')).toBeDefined()
+  })
+})
+
+describe('Solar gated layout — Load readiness dot', () => {
+  it('the Load tab dot reflects the Load aggregate', async () => {
+    setup(false, 'edit')
+    h.loadReadiness.mockResolvedValueOnce({
+      load: { hasSiteLoad: false, stale: false, basis: 'S2', fullYearFromData: false, unassignedTenants: 3, totalTenants: 3, failingAcceptedImports: 1 },
+      schematics: null,
+    })
+    render(await SolarGatedLayout(args))
+    expect(h.loadReadiness).toHaveBeenCalledWith(expect.anything(), 'p1')
+    expect(screen.getByLabelText(/1 accepted import\(s\) carry a validation error/)).toBeDefined()
   })
 })

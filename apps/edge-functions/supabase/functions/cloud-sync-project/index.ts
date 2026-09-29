@@ -775,7 +775,7 @@ function decideTarget(
  * A drawing is "annotated" when anything is pinned to its active file's
  * geometry: RFI annotations, QC markup lineage, snag pins, a measure
  * calibration (drawing-level OR per-page), a traced cable-route leg, a zone
- * polygon, or a saved markup layer. Annotated drawings are never auto-adopted — a layout change
+ * polygon, a saved markup layer, a Solar schematic, meter card or supply line. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
  *
  * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
@@ -868,6 +868,39 @@ async function isAnnotated(
     .limit(1)
     .maybeSingle()
   if (me || markup) return true
+
+  // A Solar schematic (00214): a single-line diagram anchored to this drawing page.
+  // Its own file_path records the revision it was placed on and the editor warns when
+  // they diverge — but, as for markup layers, not adopting silently is the protection.
+  const { data: schematic, error: sce } = await supabase
+    .schema('solar')
+    .from('schematics')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (sce || schematic) return true
+
+  // Meter cards and supply lines (00214): x/y and waypoints in raw image pixels of THIS
+  // file. Covered by the schematic above today (the FK chain), queried in their own right
+  // so a future path that writes them cannot make the predicate blind.
+  const { data: schematicCard, error: scc } = await supabase
+    .schema('solar')
+    .from('schematic_cards')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (scc || schematicCard) return true
+
+  const { data: schematicLine, error: scl } = await supabase
+    .schema('solar')
+    .from('schematic_lines')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (scl || schematicLine) return true
 
   return false
 }

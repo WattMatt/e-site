@@ -11,6 +11,7 @@ import { sha256Hex } from '@esite/shared/meter-data'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevelAPI } from '@/lib/solar/api-gate'
 import { createMeterImportRepo, MAX_METER_FILE_BYTES } from '@/lib/solar/meter-import/repo'
+import { registerStoredRawFile } from '@/lib/solar/meter-import/register'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -46,20 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const sha = await sha256Hex(bytes)
   if (sha !== m[3]) return NextResponse.json({ error: 'sha256_mismatch', expected: m[3], actual: sha }, { status: 400 })
 
-  const existing = await repo.fileBySha(orgId, sha)
-  if (existing && existing.project_id !== projectId) {
-    // meter_files is unique per (org, sha256), so these bytes cannot get a row of their own here, and
-    // parse/commit only act on this project's files: returning the other project's id would dead-end.
-    // Say where the data already lives (the meters it feeds, as far as the caller's RLS lets them
-    // read) so the dialog can offer "Same data as <meter> at <site>". Linking that meter into this
-    // study is Phase 3b's Copy-from-library, not this route.
-    const meters = await repo.metersForFile(existing.id)
-    return NextResponse.json({ error: 'duplicate_in_other_project', fileId: existing.id, meters }, { status: 409 })
-  }
-  if (existing) return NextResponse.json({ fileId: existing.id, duplicate: true, status: existing.status }, { status: 200 })
-  const row = await repo.insertFile({
-    project_id: projectId, organisation_id: orgId, sha256: sha, size_bytes: bytes.byteLength,
-    storage_path: parsed.data.storagePath, original_name: parsed.data.originalName,
-  })
-  return NextResponse.json({ fileId: row.id, duplicate: false }, { status: 201 })
+  // Duplicate handling (same project → 200, another project → 409 with the meters) lives in the helper.
+  const out = await registerStoredRawFile(repo, { projectId, orgId, storagePath: parsed.data.storagePath, originalName: parsed.data.originalName, bytes, sha })
+  return NextResponse.json(out.body, { status: out.status })
 }
