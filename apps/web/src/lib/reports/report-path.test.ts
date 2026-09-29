@@ -69,10 +69,10 @@ describe('reportPathBelongsTo', () => {
 })
 
 describe('the SQL twin', () => {
-  it('is the same pattern 00220 enforces on session-written report rows', () => {
+  it('is the same pattern 00207 enforces on session-written report rows', () => {
     expect(CANONICAL_REPORT_PATH_SQL).toBe('^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.pdf$')
     const sql = readFileSync(
-      resolve(__dirname, '../../../../edge-functions/supabase/migrations/00220_reports_storage_hardening.sql'), 'utf8')
+      resolve(__dirname, '../../../../edge-functions/supabase/migrations/00207_reports_storage_hardening.sql'), 'utf8')
     const fn = sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION public.report_path_belongs'))
     expect(fn).toContain(`coalesce(_path, '') ~ '${CANONICAL_REPORT_PATH_SQL}'`)
     expect(fn).toContain(`strpos(_path, '..') = 0`)

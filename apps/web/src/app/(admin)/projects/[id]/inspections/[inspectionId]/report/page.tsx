@@ -47,7 +47,7 @@ export default async function ReportPage({ params }: Props) {
     .limit(1)
     .maybeSingle()
 
-  // The `reports` bucket is service-only (00220): no session role may read it directly. The row above
+  // The `reports` bucket is service-only (00207): no session role may read it directly. The row above
   // was read through the caller's session, so RLS (project access + the report-kind gate) has already
   // decided they may see this report; the service client only signs a path inside that row's own
   // <org>/<project>/ folder.

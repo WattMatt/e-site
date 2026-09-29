@@ -9,7 +9,7 @@
  * dot and no `%`, the file name must end `.pdf`, and `..` is refused outright, so no character the parser
  * rewrites can appear.
  *
- * Migration 00220 enforces the same rule on every session-written projects.reports and
+ * Migration 00207 enforces the same rule on every session-written projects.reports and
  * gcr.report_revisions row (public.report_path_belongs); report-path.test.ts pins the two together.
  */
 export const CANONICAL_REPORT_PATH_SQL = '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\\.pdf$'

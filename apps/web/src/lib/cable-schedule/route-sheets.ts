@@ -61,7 +61,7 @@ interface ReportRow {
   size_bytes: number | null
   source_id: string
   summary: Record<string, unknown> | null
-  /** Read so the path can be checked against the row's own folder (00220); absent in pure-test rows. */
+  /** Read so the path can be checked against the row's own folder (00207); absent in pure-test rows. */
   organisation_id?: string
 }
 
@@ -138,7 +138,7 @@ export async function listRouteSheetsForRevision(
     if (!prev || new Date(route.updated_at).getTime() > new Date(prev).getTime()) touched.set(key, route.updated_at)
   }
   // Sheets are later DOWNLOADED with the service client and copied into an export pack, so a row whose
-  // path is not canonical and inside its own <org>/<project>/ folder is never listed (00220 refuses
+  // path is not canonical and inside its own <org>/<project>/ folder is never listed (00207 refuses
   // writing one; this also covers a row that predates it).
   const owned = ((reports ?? []) as ReportRow[]).filter((r) =>
     reportPathBelongsTo(r.storage_path, r.organisation_id, projectId))

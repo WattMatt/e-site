@@ -695,7 +695,7 @@ export async function getValuationReportUrlAction(
   const report = row as { storage_path?: string; organisation_id?: string } | null
   const storagePath = report?.storage_path
   if (!storagePath) return { error: 'No certificate found for this valuation' }
-  // Signed with the SERVICE client: the path must sit in this project's own folder (00220).
+  // Signed with the SERVICE client: the path must sit in this project's own folder (00207).
   if (!reportPathBelongsTo(storagePath, report?.organisation_id, projectId)) {
     console.error('getValuationReportUrlAction: refused a report path outside its row', { projectId, valuationId })
     return { error: REPORT_PATH_REFUSED }

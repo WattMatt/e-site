@@ -69,7 +69,7 @@ export async function notifyQcIssued(args: NotifyQcIssuedArgs): Promise<void> {
       .limit(1)
       .maybeSingle()
     let pdfUrl: string | null = null
-    // Signed with the service client: only a path inside the row's own <org>/<project>/ (00220).
+    // Signed with the service client: only a path inside the row's own <org>/<project>/ (00207).
     if (pdfRow?.storage_path && reportPathBelongsTo(pdfRow.storage_path, pdfRow.organisation_id, args.projectId)) {
       const { data: signed } = await svc.storage
         .from(QC_REPORTS_BUCKET)

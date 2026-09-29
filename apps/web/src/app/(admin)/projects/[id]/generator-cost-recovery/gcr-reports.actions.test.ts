@@ -221,7 +221,7 @@ describe('getGcrReportUrlAction', () => {
     )
   })
 
-  // 00220: signed with the service client, so the path must sit in this project's own folder.
+  // 00207: signed with the service client, so the path must sit in this project's own folder.
   it.each([
     ['another project', `${ORG_ID}/${OTHER_ID}/generator-cost-recovery/1-a.pdf`],
     ['another org', `${OTHER_ID}/${OTHER_ID}/equipment-materials-v1.pdf`],

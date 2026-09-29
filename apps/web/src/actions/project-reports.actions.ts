@@ -185,7 +185,7 @@ export async function getProjectReportUrlAction(
   }
 
   // The path is signed with the SERVICE client, which bypasses storage RLS, so it is trusted only when
-  // it is canonical and under the row's own <org>/<project>/ (00220 refuses writing any other; this also
+  // it is canonical and under the row's own <org>/<project>/ (00207 refuses writing any other; this also
   // holds for a row that predates it). See lib/reports/report-path.ts.
   if (!reportPathBelongsTo(report.storage_path, report.organisation_id, projectId)) {
     console.error('getProjectReportUrlAction: refused a report path outside its row', { projectId, reportId })

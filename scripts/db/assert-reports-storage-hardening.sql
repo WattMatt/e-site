@@ -1,9 +1,9 @@
--- BEHAVIOURAL assertions for the `reports` bucket and the report-row path
--- gate (migration 00220_reports_storage_hardening.sql), run as real
+-- BEHAVIOURAL assertions for the `reports` and `qc-reports` buckets and the report-row path
+-- gate (migration 00207_reports_storage_hardening.sql), run as real
 -- production roles inside a rolled-back transaction.
 --
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql  scripts/db/assert-reports-storage-hardening.sql   # RED on today's production
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00220_reports_storage_hardening.sql \
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_reports_storage_hardening.sql \
 --                                   scripts/db/assert-reports-storage-hardening.sql                    # GREEN
 --
 -- Every ok=true row is the SECURE answer. Against production before the
@@ -36,6 +36,8 @@ DECLARE
   v_eq_path      TEXT;
   v_eq_proj      UUID;
   v_gcr_path     TEXT;
+  v_qc_path      TEXT;
+  v_qc_proj      UUID;
   v_open_row     UUID;
   v_open_path    TEXT;
   v_open_proj    UUID;
@@ -58,6 +60,21 @@ BEGIN
    WHERE kind = 'equipment_materials' ORDER BY created_at LIMIT 1;
   -- A generator-cost-recovery PDF (COST_VIEW_ROLES + a paid seat in the app).
   SELECT storage_path INTO v_gcr_path FROM gcr.report_revisions ORDER BY created_at LIMIT 1;
+  -- A QC PDF (bucket qc-reports) in a project the contractor is NOT a member of.
+  SELECT storage_path, project_id INTO v_qc_path, v_qc_proj FROM projects.reports r
+   WHERE kind = 'qc' AND NOT EXISTS (SELECT 1 FROM projects.project_members pm
+     WHERE pm.project_id = r.project_id AND pm.user_id = c_contractor AND pm.is_active)
+   ORDER BY created_at LIMIT 1;
+  IF v_qc_path IS NULL THEN RAISE EXCEPTION 'no qc report outside the contractor''s project'; END IF;
+  INSERT INTO _r SELECT 'qc_fixture_object_exists_control',
+    EXISTS (SELECT 1 FROM storage.objects WHERE bucket_id = 'qc-reports' AND name = v_qc_path);
+  INSERT INTO _r SELECT 'existing_qc_rows_all_canonical_control',
+    count(*) = count(*) FILTER (WHERE
+      storage_path ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/([A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.pdf$'
+      AND strpos(storage_path, '..') = 0
+      AND starts_with(storage_path, organisation_id::text || '/' || project_id::text || '/'))
+    FROM projects.reports WHERE kind = 'qc';
+
   -- An open-kind row the admin may legitimately manage.
   SELECT id, storage_path, project_id INTO v_open_row, v_open_path, v_open_proj FROM projects.reports
    WHERE kind = 'tenant_schedule' AND project_id <> v_eq_proj ORDER BY created_at LIMIT 1;
@@ -119,6 +136,30 @@ BEGIN
             WHEN insufficient_privilege THEN v_n := 0;
   END;
   INSERT INTO _r VALUES ('contractor_delete_REFUSED', v_n = 0);
+
+  -- ── bucket qc-reports: another project's QC PDF, same org ──────────────
+  SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'qc-reports' AND name = v_qc_path;
+  INSERT INTO _r VALUES ('contractor_cannot_read_other_project_qc_pdf', v_n = 0);
+  SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'qc-reports';
+  INSERT INTO _r VALUES ('contractor_lists_no_qc_objects', v_n = 0);
+  BEGIN
+    INSERT INTO storage.objects (bucket_id, name, owner_id)
+    VALUES ('qc-reports', c_wm::text || '/' || v_qc_proj::text || '/qc-report-probe-v99.pdf', c_contractor::text);
+    INSERT INTO _r VALUES ('contractor_qc_upload_REFUSED', false);
+  EXCEPTION WHEN insufficient_privilege THEN
+    INSERT INTO _r VALUES ('contractor_qc_upload_REFUSED', true);
+  END;
+  UPDATE storage.objects SET metadata = metadata WHERE bucket_id = 'qc-reports' AND name = v_qc_path;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('contractor_qc_overwrite_REFUSED', v_n = 0);
+  BEGIN
+    DELETE FROM storage.objects WHERE bucket_id = 'qc-reports' AND name = v_qc_path;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'undo' USING ERRCODE = 'P0099';
+  EXCEPTION WHEN SQLSTATE 'P0099' THEN NULL;
+            WHEN insufficient_privilege THEN v_n := 0;
+  END;
+  INSERT INTO _r VALUES ('contractor_qc_delete_REFUSED', v_n = 0);
   RESET ROLE;
 
   -- ═══ 2. CLIENT VIEWER — read-only role, still reads by path today ═════════
@@ -143,6 +184,8 @@ BEGIN
             WHEN insufficient_privilege THEN v_n := 0;
   END;
   INSERT INTO _r VALUES ('admin_direct_object_delete_REFUSED', v_n = 0);
+  SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'qc-reports';
+  INSERT INTO _r VALUES ('admin_direct_qc_read_REFUSED', v_n = 0);
 
   -- projects.reports: a row pointing at ANOTHER project's sensitive PDF
   -- (getProjectReportUrlAction gates on the row's KIND, then service-signs its path).
@@ -267,6 +310,8 @@ BEGIN
   SET LOCAL ROLE service_role;
   SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'reports';
   INSERT INTO _r VALUES ('service_role_reads_all_report_objects_control', v_n > 0);
+  SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'qc-reports' AND name = v_qc_path;
+  INSERT INTO _r VALUES ('service_role_reads_qc_pdf_control', v_n = 1);
   RESET ROLE;
 END $$;
 

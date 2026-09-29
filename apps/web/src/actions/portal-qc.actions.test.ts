@@ -157,7 +157,7 @@ describe('getPortalQcReportPdfUrlAction', () => {
     expect(service.createSignedUrl).not.toHaveBeenCalled()
   })
 
-  // 00220: signed with the service client, so the saved row's path must sit in its own folder.
+  // 00207: signed with the service client, so the saved row's path must sit in its own folder.
   it.each([
     ['another org', `${OTHER_ID}/${OTHER_ID}/qc-report-x-v1.pdf`],
     ['another project', `${ORG_ID}/${OTHER_ID}/qc-report-x-v1.pdf`],

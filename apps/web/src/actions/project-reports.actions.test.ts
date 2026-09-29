@@ -203,7 +203,7 @@ describe('getProjectReportUrlAction', () => {
     expect(service.storageFrom).not.toHaveBeenCalledWith('reports')
   })
 
-  // 00220: a row's path is trusted by the SERVICE client only when it belongs to the row.
+  // 00207: a row's path is trusted by the SERVICE client only when it belongs to the row.
   it.each([
     ['another project in the same org', `${ORG_ID}/${OTHER_ID}/equipment-materials-v1.pdf`],
     ['another org', `${OTHER_ID}/${PROJECT_ID}/tenant-schedule-v1.pdf`],

@@ -221,7 +221,7 @@ describe('notifyQcIssued — never throws (best-effort contract)', () => {
   })
 })
 
-describe('notifyQcIssued — the signed PDF path (00220)', () => {
+describe('notifyQcIssued — the signed PDF path (00207)', () => {
   it('never signs a saved path outside the row’s own org/project folder', async () => {
     const service = mockService({
       pdfRow: { storage_path: `${ORG_ID}/44444444-4444-4444-4444-444444444444/valuation-x-v1.pdf`, organisation_id: ORG_ID },

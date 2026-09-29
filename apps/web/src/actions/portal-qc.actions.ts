@@ -72,7 +72,7 @@ export async function getPortalQcReportPdfUrlAction(
   const saved = savedRow as { storage_path: string; version: number; organisation_id: string } | null
   if (!saved) return { error: 'No PDF is available for this report yet' }
   // Signed with the SERVICE client, so the row's path is trusted only inside its own
-  // <org>/<project>/ folder (00220 refuses writing any other row).
+  // <org>/<project>/ folder (00207 refuses writing any other row).
   if (!reportPathBelongsTo(saved.storage_path, saved.organisation_id, projectId)) {
     console.error('getPortalQcReportPdfUrlAction: refused a report path outside its row', { projectId, reportId })
     return { error: REPORT_PATH_REFUSED }

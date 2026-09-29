@@ -88,7 +88,7 @@ export async function getGcrReportUrlAction(
   const revision = row as { storage_path: string; file_name: string } | null
   if (!revision) return { error: 'Not found' }
 
-  // Signed with the SERVICE client, so the path must belong to this project's own folder (00220).
+  // Signed with the SERVICE client, so the path must belong to this project's own folder (00207).
   if (!reportPathBelongsTo(revision.storage_path, orgId, projectId)) {
     console.error('getGcrReportUrlAction: refused a revision path outside its project', { projectId, revisionId })
     return { error: REPORT_PATH_REFUSED }
@@ -150,7 +150,7 @@ export async function deleteGcrReportRevisionAction(
     return { error: 'Nothing was deleted — the revision may already be gone, or you may not be allowed to delete it.' }
   }
 
-  // Removed with the SERVICE client: never a file outside this project's own folder (00220).
+  // Removed with the SERVICE client: never a file outside this project's own folder (00207).
   if (!reportPathBelongsTo(revision.storage_path, orgId, projectId)) {
     console.error('deleteGcrReportRevisionAction: kept an object outside its project', { projectId, revisionId })
     return { ok: true }

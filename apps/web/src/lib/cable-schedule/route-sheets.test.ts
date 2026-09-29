@@ -246,7 +246,7 @@ describe('loadRouteSheetAttachments — bytes under the caps, never a throw', ()
   })
 })
 
-describe('route sheets — only files inside the row’s own folder (00220)', () => {
+describe('route sheets — only files inside the row’s own folder (00207)', () => {
   it('never lists or downloads a sheet whose path points outside its org/project', async () => {
     const good = await sheetPdf(1, 'GOOD')
     const foreign = `${OTHER}/${OTHER}/valuation-x-v1.pdf`
