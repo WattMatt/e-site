@@ -124,7 +124,7 @@ export function schematicsReadiness(i: SchematicsReadinessInput | null): { statu
 export interface YieldReadinessInput {
   caseCount: number
   selectedCaseId: string | null
-  selectedStatus: 'not_run' | 'running' | 'done' | 'failed' | 'stale' | null
+  selectedStatus: 'not_run' | 'running' | 'done' | 'failed' | 'stale' | 'pricing_changed' | null
 }
 export function yieldReadiness(y: YieldReadinessInput): { status: ReadinessStatus; reason: string } {
   if (y.caseCount === 0) return { status: 'grey', reason: 'No cases yet' }
@@ -132,6 +132,7 @@ export function yieldReadiness(y: YieldReadinessInput): { status: ReadinessStatu
   switch (y.selectedStatus) {
     case 'failed': return { status: 'red', reason: 'The selected case’s last run failed' }
     case 'stale': return { status: 'amber', reason: 'The selected case is stale — re-run it' }
+    case 'pricing_changed': return { status: 'amber', reason: 'Pricing changed for the selected case — re-run its financials' }
     case 'running': return { status: 'amber', reason: 'The selected case is running' }
     case 'done': return { status: 'green', reason: 'The selected case’s run is current' }
     default: return { status: 'amber', reason: 'The selected case has not been run' }

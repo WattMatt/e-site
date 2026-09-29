@@ -9,10 +9,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings, solarOrgSettingDefaults } from '@esite/shared'
 import { SOLAR_ENGINE_DEFAULTS } from '@esite/shared/solar-engine'
 import {
-  buildFinanceInput, caseStatus, defaultFinanceConfig, parseCaseConfig, parseFinanceConfig, VAT_RATE,
+  buildFinanceInput, defaultFinanceConfig, parseCaseConfig, parseFinanceConfig, VAT_RATE,
   type CaseFinanceConfig, type CaseRunOutputs,
 } from '@esite/shared/solar-cases'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
+import { resolveCaseStatus } from './pricing-state'
 import { runsByCase } from './page-data'
 import { FIN_RUN_REASONS, finInputsHash } from './financials'
 
@@ -51,6 +52,8 @@ export interface FinancialsPageData {
   caseLoadSheddingEnabled: boolean
   runReasons: string[]; tariffReason: string | null
   energyStale: boolean; financialsStale: boolean
+  /** Only the study pricing moved since the selected case's financials (energy still current): re-run financials. */
+  pricingChanged: boolean
   results: FinancialResultsView | null
   vatRate: number
   /** What Financials prices from the study (I-1): the Tariff tab escalation path and the Load tab growth. Null without a resolved tariff. */
@@ -99,7 +102,7 @@ export function resultsView(row: Row): FinancialResultsView {
 export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, projectId: string, caseIdParam: string | undefined): Promise<FinancialsPageData> {
   const empty: FinancialsPageData = {
     hasStudy: false, cases: [], caseId: null, caseName: '', caseFromLayout: false, config: defaultFinanceConfig(solarOrgSettingDefaults()), configUpdatedAt: null, isDefault: true,
-    runSize: null, caseLoadSheddingEnabled: false, runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: VAT_RATE, studyPricing: null,
+    runSize: null, caseLoadSheddingEnabled: false, runReasons: [], tariffReason: null, energyStale: false, pricingChanged: false, financialsStale: false, results: null, vatRate: VAT_RATE, studyPricing: null,
   }
   const shared = await loadStudyInputs(svc, projectId)
   if (!shared) return empty
@@ -145,15 +148,17 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
   if (isDefault && lastOk) runReasons.push(FIN_RUN_REASONS.noFinancials)
 
   const c = await contextForCase(svc, shared, row)
-  const last = latest.get(caseId)
-  const energyStale = caseStatus(last ? { status: last.status, inputsHash: last.inputs_hash, startedAt: last.started_at } : null,
-    lastOkMeta ? { inputsHash: lastOkMeta.inputs_hash } : null, c.ok ? c.ctx.currentHash : null, Date.now()).status === 'stale'
+  const caseState = (await resolveCaseStatus(svc, shared, caseId, latest.get(caseId), lastOkMeta ?? undefined, c)).status
+  // The energy is out of date: a full re-run. Only the pricing moved: Run financials is the fix.
+  const energyStale = caseState === 'stale'
+  const pricingChanged = caseState === 'pricing_changed'
 
   const { data: resRows } = await user.schema('solar').from('case_run_financials').select('case_id, case_run_id, created_at, engine_version, tariff_ref, fin_inputs_hash, results')
     .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1)
   const res = Array.isArray(resRows) ? (resRows[0] as Row | undefined) : undefined
   // Stale when priced on an older run, or on a finance input / tariff that differs from the saved one now.
-  const financialsStale = Boolean(res) && (res!.case_run_id !== lastOk?.id || (currentFinHash !== null && res!.fin_inputs_hash !== currentFinHash))
+  // The pricing banner already says this when only the pricing moved, so the two never repeat each other.
+  const financialsStale = !pricingChanged && Boolean(res) && (res!.case_run_id !== lastOk?.id || (currentFinHash !== null && res!.fin_inputs_hash !== currentFinHash))
   const caseCfg = parseCaseConfig(row.config)
 
   return {
@@ -162,7 +167,7 @@ export async function loadFinancialsPageData(user: AnyClient, svc: AnyClient, pr
     runSize: kpis ? { dcKwp: kpis.dcKwp, acKw: kpis.acKw, batteryKwh: kpis.batteryKwh ?? null } : null,
     caseLoadSheddingEnabled: caseCfg.ok ? caseCfg.config.loadShedding.enabled : false,
     runReasons, tariffReason: shared.tariff.ok ? null : shared.tariff.reason,
-    energyStale, financialsStale,
+    energyStale, pricingChanged, financialsStale,
     results: res ? resultsView(res) : null,
     vatRate: VAT_RATE,
     studyPricing: shared.tariff.ok ? studyPricingView(shared.tariff.pricing) : null,

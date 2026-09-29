@@ -4,6 +4,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { loadYieldPageData } from '@/lib/solar/cases/page-data'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { StaleBanner } from '../../_components/StaleBanner'
+import { PricingChangedBanner } from '../../_components/PricingChangedBanner'
 import { CaseList } from './CaseList'
 import { CaseEditor } from './CaseEditor'
 import { RunResults } from './RunResults'
@@ -28,6 +29,7 @@ export default async function SolarYieldPage({ params, searchParams }: { params:
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {selected?.status === 'stale' && <StaleBanner projectId={id} caseId={selected.id} caseName={selected.name} canRun={level !== 'view'} />}
+      {selected?.status === 'pricing_changed' && <PricingChangedBanner projectId={id} caseId={selected.id} caseName={selected.name} canRunFinancials={level === 'edit_financials'} />}
       <CaseList projectId={id} level={level} cases={data.cases} studyUpdatedAt={data.studyUpdatedAt} openCaseId={data.editor?.caseId ?? null} layouts={data.layouts} />
       {data.compare && <CompareView columns={data.compare} showMoney={level === 'edit_financials'} />}
       {data.editor && (

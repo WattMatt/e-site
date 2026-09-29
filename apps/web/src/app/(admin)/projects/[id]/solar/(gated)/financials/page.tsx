@@ -4,6 +4,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { loadFinancialsPageData } from '@/lib/solar/cases/financials-page-data'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { StaleBanner } from '../../_components/StaleBanner'
+import { PricingChangedBanner } from '../../_components/PricingChangedBanner'
 import { FinancialsEditor } from './FinancialsEditor'
 import { FinancialResults } from './FinancialResults'
 
@@ -27,6 +28,7 @@ export default async function SolarFinancialsPage({ params, searchParams }: { pa
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {data.energyStale && <StaleBanner projectId={id} caseId={data.caseId} caseName={data.caseName} canRun />}
+      {data.pricingChanged && <PricingChangedBanner projectId={id} caseId={data.caseId} caseName={data.caseName} canRunFinancials />}
       {data.financialsStale && <div role="status">These financials were computed on older inputs — press Run financials to update them.</div>}
       {/* Keyed on the case and its saved version: switching case or a refresh after Save remounts the draft. */}
       <FinancialsEditor key={`${data.caseId}:${data.configUpdatedAt ?? 'default'}`} projectId={id} data={data} />

@@ -9,11 +9,12 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings, type SolarAccessLevel, type SolarReadinessExtra, type FinancialsReadinessInput } from '@esite/shared'
 import {
-  caseStatus, capexTotals, caseSizeFromLayout, parseCaseConfig, parseFinanceConfig, resetLossesToDefaults,
+  capexTotals, caseSizeFromLayout, parseCaseConfig, parseFinanceConfig, resetLossesToDefaults,
   type CaseConfig, type CaseLosses, type CaseRunOutputs, type CaseStatus, type RunKpis,
 } from '@esite/shared/solar-cases'
 import { loadOperationsReadiness } from '@/lib/solar/operations/data'
 import { contextForCase, loadStudyInputs, type CaseRow } from './run-context'
+import { resolveCaseStatus } from './pricing-state'
 import { loadLayoutList } from '@/lib/solar/layout-loader'
 import { loadLayoutDesign } from './layout-design'
 
@@ -59,10 +60,14 @@ export interface YieldPageData {
 
 const emptyEquipment = (): EquipmentOptions => ({ modules: [], inverters: [], batteries: [] })
 
-/** Latest run and latest SUCCEEDED run per case (rows ordered newest first). */
+/**
+ * Latest run and latest SUCCEEDED run per case (rows ordered newest first). `energy_hash` is the run's
+ * own energy input hash (outputs.provenance.inputsHash) — what separates Pricing changed from Stale.
+ */
 export async function runsByCase(user: AnyClient, projectId: string) {
   const { data } = await user.schema('solar').from('case_runs')
-    .select('id, case_id, status, inputs_hash, started_at, finished_at, run_by').eq('project_id', projectId).order('started_at', { ascending: false })
+    .select('id, case_id, status, inputs_hash, started_at, finished_at, run_by, energy_hash:outputs->provenance->>inputsHash')
+    .eq('project_id', projectId).order('started_at', { ascending: false })
   const latest = new Map<string, Row>(), ok = new Map<string, Row>()
   for (const r of (data ?? []) as Row[]) {
     if (!latest.has(r.case_id)) latest.set(r.case_id, r)
@@ -113,11 +118,6 @@ function loadSummary(series: ArrayLike<number>): { annualKwh: number; peakKw: nu
   return { annualKwh, peakKw }
 }
 
-function statusOf(latest: Row | undefined, lastOk: Row | undefined, currentHash: string | null) {
-  return caseStatus(
-    latest ? { status: latest.status, inputsHash: latest.inputs_hash, startedAt: latest.started_at } : null,
-    lastOk ? { inputsHash: lastOk.inputs_hash } : null, currentHash, Date.now())
-}
 
 export async function loadYieldPageData(user: AnyClient, svc: AnyClient, projectId: string, level: SolarAccessLevel, q: { caseId?: string; compare?: string }): Promise<YieldPageData> {
   const shared = await loadStudyInputs(svc, projectId)
@@ -140,7 +140,7 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
   for (const r of rows) {
     const c = ctxs.get(r.id)!
     const lastOk = ok.get(r.id)
-    const st = statusOf(latest.get(r.id), lastOk, c.ok ? c.ctx.currentHash : null)
+    const st = await resolveCaseStatus(svc, shared, r.id, latest.get(r.id), lastOk, c)
     const cfg = parseCaseConfig(r.config)
     const out = lastOk ? await outputsFor(lastOk.id) : null
     const m = moneyOf(money.get(r.id), lastOk?.id)
@@ -232,7 +232,12 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
   return { hasStudy: true, studyUpdatedAt: shared.study.updated_at, selectedCaseId: shared.study.selected_case_id, cases, editor, compare, equipment, layouts }
 }
 
-export interface ReadinessState extends SolarReadinessExtra { stale: { caseId: string; caseName: string } | null }
+export interface ReadinessState extends SolarReadinessExtra {
+  /** The selected case's ENERGY is out of date: a full re-run. */
+  stale: { caseId: string; caseName: string } | null
+  /** Only the study pricing moved since the selected case's financials: a financials-only re-run. */
+  pricingChanged?: { caseId: string; caseName: string } | null
+}
 
 /** Tab readiness inputs + the Stale banner decision (current hash vs the latest succeeded run's inputs_hash). */
 export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, projectId: string, level: SolarAccessLevel): Promise<ReadinessState> {
@@ -246,7 +251,7 @@ export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, p
   if (sel) {
     const { latest, ok } = await runsByCase(user, projectId)
     const c = await contextForCase(svc, shared, sel)
-    selectedStatus = statusOf(latest.get(sel.id), ok.get(sel.id), c.ok ? c.ctx.currentHash : null).status
+    selectedStatus = (await resolveCaseStatus(svc, shared, sel.id, latest.get(sel.id), ok.get(sel.id), c)).status
   }
   let financials: FinancialsReadinessInput | null = null
   if (sel && level === 'edit_financials') {
@@ -286,6 +291,7 @@ export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, p
     operations,
     layoutManual: sel?.pv_source === 'manual',
     stale: sel && selectedStatus === 'stale' ? { caseId: sel.id, caseName: sel.name } : null,
+    pricingChanged: sel && selectedStatus === 'pricing_changed' ? { caseId: sel.id, caseName: sel.name } : null,
   }
 }
 

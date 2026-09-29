@@ -13,7 +13,7 @@ const fin = defaultFinanceConfig(solarOrgSettingDefaults())
 const data = (over: Partial<FinancialsPageData> = {}): FinancialsPageData => ({
   hasStudy: true, cases: [{ id: 'c1', name: 'Base', hasRun: true }, { id: 'c2', name: 'Big', hasRun: false }], caseId: 'c1', caseName: 'Base', caseFromLayout: false,
   config: fin, configUpdatedAt: 'F1', isDefault: false, runSize: { dcKwp: 100, acKw: 80, batteryKwh: null }, caseLoadSheddingEnabled: false,
-  runReasons: [], tariffReason: null, energyStale: false, financialsStale: false, results: null, vatRate: 0.15, studyPricing: null, ...over,
+  runReasons: [], tariffReason: null, energyStale: false, pricingChanged: false, financialsStale: false, results: null, vatRate: 0.15, studyPricing: null, ...over,
 })
 beforeEach(() => vi.clearAllMocks())
 

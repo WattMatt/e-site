@@ -224,3 +224,10 @@ describe('Operations readiness (§2.3)', () => {
       .toEqual({ status: 'green', reason: 'Commissioned 2026-02-15; 2 months of generation data' })
   })
 })
+
+describe('yieldReadiness — pricing changed (energy current)', () => {
+  it('is amber and names the financials re-run, not a case re-run', () => {
+    expect(yieldReadiness({ caseCount: 1, selectedCaseId: 'c1', selectedStatus: 'pricing_changed' }))
+      .toEqual({ status: 'amber', reason: 'Pricing changed for the selected case — re-run its financials' })
+  })
+})

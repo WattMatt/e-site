@@ -13,7 +13,7 @@ import { useArmedConfirm } from '../../_components/useArmedConfirm'
 import { mwh, num, rand, sastDateTime } from '@/components/solar/format'
 import { NewCaseDialog } from './NewCaseDialog'
 
-const STATUS_VARIANT = { not_run: 'ghost', running: 'info', done: 'success', failed: 'danger', stale: 'warning' } as const
+const STATUS_VARIANT = { not_run: 'ghost', running: 'info', done: 'success', failed: 'danger', stale: 'warning', pricing_changed: 'warning' } as const
 type ActionOutcome = { error?: string; fieldErrors?: Record<string, string> }
 
 function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open }: { c: CaseCardView; projectId: string; canWrite: boolean; studyUpdatedAt: string | null; ticked: boolean; onTick: () => void; open: boolean }) {
