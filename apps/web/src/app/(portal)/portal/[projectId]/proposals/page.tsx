@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { PROPOSAL_STATUS_LABELS, zar, type EffectiveProposalStatus } from '@esite/shared/solar-reports'
+import { PROPOSAL_STATUS_LABELS, zarCents, type EffectiveProposalStatus } from '@esite/shared/solar-reports'
 import { requirePortalAccess } from '@/lib/portal/data'
 import { loadPortalProposals } from '@/lib/solar/proposals/client'
 import { PortalCard, EmptyState } from '@/components/portal/PortalBits'
@@ -18,7 +18,7 @@ export default async function PortalProposalsPage({ params }: { params: Promise<
     <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: 8 }}>
       {rows.map((r) => {
         const state = String(r.state) as EffectiveProposalStatus
-        const offer = typeof r.offerExclVatZar === 'number' ? `${zar(r.offerExclVatZar)} excl. VAT` : null
+        const offer = typeof r.offerExclVatZar === 'number' ? `${zarCents(r.offerExclVatZar)} excl. VAT` : null
         return (
           <li key={String(r.proposalId)} style={{ border: '1px solid var(--c-border)', borderRadius: 6, padding: 12 }}>
             <Link href={`/portal/${projectId}/proposals/${String(r.proposalId)}`}>{String(r.title ?? 'Solar proposal')}</Link>

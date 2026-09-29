@@ -20,7 +20,7 @@ describe('portal Proposals list (§9.4, D-18)', () => {
     render(await PortalProposalsPage({ params: Promise.resolve({ projectId: 'p1' }) }))
     expect(h.list).toHaveBeenCalledWith('p1', 'cv1')
     expect(screen.getByRole('link', { name: 'Rooftop PV for Acme' }).getAttribute('href')).toBe('/portal/p1/proposals/pr1')
-    expect(screen.getByText('v2 · Viewed · R 1 150 000 excl. VAT · valid until 2026-10-29')).toBeTruthy()
+    expect(screen.getByText('v2 · Viewed · R 1 150 000.00 excl. VAT · valid until 2026-10-29')).toBeTruthy()
   })
   it('empty state', async () => {
     h.list.mockResolvedValue([])

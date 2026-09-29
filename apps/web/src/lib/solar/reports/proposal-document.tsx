@@ -40,7 +40,7 @@ function Bullets({ title, items, accent }: { title: string; items: string[]; acc
   return (
     <View>
       <Text style={[s.h2, { color: accent }]} minPresenceAhead={40}>{pdfText(title)}</Text>
-      {items.map((it, i) => <Text key={i} style={s.bullet}>{`• ${pdfText(it)}`}</Text>)}
+      {items.map((it, i) => <Text key={i} style={s.bullet}>{pdfText(`• ${it}`)}</Text>)}
     </View>
   )
 }
@@ -62,7 +62,7 @@ export function ProposalDocument({ snapshot, branding, preview }: { snapshot: Pr
           <Text style={s.p}>{pdfText(`Prepared for ${snapshot.client.name} · ${snapshot.project.name}${snapshot.project.address ? `, ${snapshot.project.address}` : ''}`)}</Text>
           <Text style={s.p}>{pdfText(`Version ${snapshot.proposal.version} · issued ${isoDate(snapshot.proposal.issuedAt)} · valid until ${isoDate(snapshot.proposal.validUntil)}`)}</Text>
 
-          <Text style={[s.h2, { color: a }]}>Key figures</Text>
+          <Text style={[s.h2, { color: a }]}>{pdfText('Key figures')}</Text>
           {keyFigures(snapshot).map((f) => (
             <View key={f.label} style={s.kv} wrap={false}>
               <Text style={s.k}>{pdfText(f.label)}</Text>
@@ -76,7 +76,7 @@ export function ProposalDocument({ snapshot, branding, preview }: { snapshot: Pr
           <Bullets title="Included" items={x.inclusions} accent={a} />
           <Bullets title="Excluded" items={x.exclusions} accent={a} />
 
-          <Text style={[s.h2, { color: a }]} minPresenceAhead={80}>Finance options</Text>
+          <Text style={[s.h2, { color: a }]} minPresenceAhead={80}>{pdfText('Finance options')}</Text>
           <View style={[s.row, { borderBottomColor: '#999999' }]}>
             {t.columns.map((c, i) => <Text key={i} style={s.cellHead}>{pdfText(c)}</Text>)}
           </View>
