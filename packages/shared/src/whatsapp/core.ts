@@ -99,3 +99,78 @@ export function decodePayload(s: string | null | undefined): Payload | null {
   }
   return null
 }
+
+export function isWithin(sinceIso: string | null | undefined, now: Date, ms: number): boolean {
+  if (!sinceIso) return false
+  const t = Date.parse(sinceIso)
+  return Number.isFinite(t) && now.getTime() - t <= ms
+}
+
+export type Target =
+  | { kind: 'item'; itemId: string; via: 'button' | 'context' | 'pending_done' | 'active' }
+  | { kind: 'pick' }
+
+export interface TargetInput {
+  payloadItemId: string | null
+  contextItemId: string | null
+  pendingDoneItemId: string | null
+  pendingDoneAt: string | null
+  /** What the pending Mark done is waiting for: a close-out photo (snag) or an answer (RFI). */
+  pendingDoneWants: 'photo' | 'answer' | null
+  activeItemId: string | null
+  activeItemAt: string | null
+  isImage: boolean
+  now: Date
+}
+
+/** Strictest rule first. Never guesses: with nothing current, the user picks. */
+export function resolveTarget(i: TargetInput): Target {
+  if (i.payloadItemId) return { kind: 'item', itemId: i.payloadItemId, via: 'button' }
+  if (i.contextItemId) return { kind: 'item', itemId: i.contextItemId, via: 'context' }
+  const wantsThis = i.pendingDoneWants === 'photo' ? i.isImage : i.pendingDoneWants === 'answer' ? !i.isImage : false
+  if (wantsThis && i.pendingDoneItemId && isWithin(i.pendingDoneAt, i.now, PENDING_DONE_TTL_MS)) {
+    return { kind: 'item', itemId: i.pendingDoneItemId, via: 'pending_done' }
+  }
+  if (i.activeItemId && isWithin(i.activeItemAt, i.now, ACTIVE_ITEM_TTL_MS)) {
+    return { kind: 'item', itemId: i.activeItemId, via: 'active' }
+  }
+  return { kind: 'pick' }
+}
+
+function minutesOf(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + (m || 0)
+}
+
+function sastClock(now: Date): Date {
+  return new Date(now.getTime() + SAST_OFFSET_MINUTES * 60_000)
+}
+
+/** yyyy-mm-dd in Africa/Johannesburg (fixed UTC+2, no DST). */
+export function sastDate(now: Date): string {
+  return sastClock(now).toISOString().slice(0, 10)
+}
+
+/** Earliest instant >= now outside [quietStart, quietEnd) SAST. Handles overnight windows. */
+export function nextSendTime(now: Date, quietStart: string, quietEnd: string): Date {
+  const s = minutesOf(quietStart)
+  const e = minutesOf(quietEnd)
+  if (s === e) return now
+  const c = sastClock(now)
+  const m = c.getUTCHours() * 60 + c.getUTCMinutes()
+  const quiet = s > e ? m >= s || m < e : m >= s && m < e
+  if (!quiet) return now
+  const midnight = Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate())
+  const addDay = s > e && m >= s ? 1 : 0
+  return new Date(midnight + addDay * 86_400_000 + e * 60_000 - SAST_OFFSET_MINUTES * 60_000)
+}
+
+export type DoneRoute = 'spine' | 'snag' | 'rfi' | 'link_out'
+
+/** Where "Mark done" must act. Mirrors take status FROM their source (#193 map_source_status). */
+export function doneRouteFor(itemType: string, origin: string): DoneRoute {
+  if (origin !== 'mirror') return 'spine'
+  if (itemType === 'snag') return 'snag'
+  if (itemType === 'rfi') return 'rfi'
+  return 'link_out'
+}
