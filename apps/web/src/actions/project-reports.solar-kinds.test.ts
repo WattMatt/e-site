@@ -54,6 +54,15 @@ describe('Solar report kinds follow the Solar level (00216 mirrors this)', () =>
       error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.',
     })
   })
+  it('deleting a Solar report needs OWNER_ADMIN, not just an org write role (spec §9.2, review I4)', async () => {
+    h.level.mockResolvedValue('edit_financials')
+    h.requireRole.mockImplementation((async (_s: unknown, _o: unknown, roles: readonly string[]) =>
+      roles.includes('project_manager') ? { ok: true } : { ok: false, error: 'Your role (project_manager) is not allowed' }) as never)
+    await expect(deleteProjectReportAction(P, 'r2')).resolves.toEqual({ error: 'Your role (project_manager) is not allowed' })
+    await expect(deleteProjectReportAction(P, 'r1')).resolves.toEqual({ error: 'Your role (project_manager) is not allowed' })
+    h.requireRole.mockImplementation(async () => ({ ok: true }))
+    await expect(deleteProjectReportAction(P, 'r2')).resolves.toEqual({ ok: true })
+  })
   it('deleting a Solar report needs Solar Edit', async () => {
     h.level.mockResolvedValue('view')
     await expect(deleteProjectReportAction(P, 'r2')).resolves.toEqual({ error: 'You do not have Solar edit access on this project.' })

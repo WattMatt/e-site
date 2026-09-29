@@ -2,7 +2,7 @@
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES } from '@esite/shared'
+import { ORG_WRITE_ROLES, OWNER_ADMIN } from '@esite/shared'
 import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
 import { getSolarAccessLevel } from '@/lib/solar/access'
 import { solarLevelAllows } from '@esite/shared'
@@ -215,7 +215,7 @@ export async function getProjectReportUrlAction(
   return { url: signed.signedUrl as string }
 }
 
-/** Delete a saved report (row + best-effort storage object). Gate: ORG_WRITE_ROLES. */
+/** Delete a saved report (row + best-effort storage object). Gate: ORG_WRITE_ROLES; a Solar kind needs OWNER_ADMIN + Solar Edit (spec §9.2). */
 export async function deleteProjectReportAction(
   projectId: string,
   reportId: string,
@@ -243,8 +243,10 @@ export async function deleteProjectReportAction(
   if (report.kind === 'solar_proposal') {
     return { error: 'An issued proposal’s PDF is kept as evidence and cannot be deleted — withdraw the proposal instead.' }
   }
-  // A Solar kind is removed on the Solar EDIT level, not just an org write role.
+  // A Solar kind is removed by OWNER_ADMIN only (spec §9.2) and on the Solar EDIT level.
   if (solarLevelForKind(report.kind)) {
+    const admin = await requireRole(supabase, orgId, OWNER_ADMIN)
+    if (!admin.ok) return { error: admin.error }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
     if (!solarLevelAllows(level, 'edit')) return { error: 'You do not have Solar edit access on this project.' }
