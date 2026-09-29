@@ -10,7 +10,7 @@
  * crash a render.
  *
  * Components are rounded to 3 decimals so the default accent #E69500
- * converts to exactly rgb(0.902, 0.584, 0) — the Watson Mattheus amber
+ * converts to exactly rgb(0.902, 0.584, 0) — the E-Site amber
  * constant the renderers hard-coded before the accent was wired through.
  * Existing output is therefore byte-identical when no custom accent is set.
  */

@@ -23,7 +23,7 @@ export const LEGAL_ENTITY = {
   },
   // POPIA Information Officer and general contact
   infoOfficer:      'Arno Mattheus',
-  infoOfficerEmail: 'arno@watsonmattheus.com',
+  infoOfficerEmail: 'support@e-site.live',
   contactEmail:     'support@e-site.live',
 } as const
 

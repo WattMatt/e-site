@@ -328,7 +328,7 @@ export class DropboxProvider implements CloudStorageProvider {
   //   their home is a personal subfolder of the team root and the two
   //   namespace IDs differ. Checking .tag === "team" misses every regular
   //   member, which is the entire user base. Confirmed via debug-route
-  //   data 2026-05-13 (Watson Mattheus team, root=2606589667, home=51521165,
+  //   data 2026-05-13 (org team, root=2606589667, home=51521165,
   //   .tag="user", account_type=business, team object present).
   //
   // For personal Dropbox accounts (no team), the two IDs are equal and the

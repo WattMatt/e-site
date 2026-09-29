@@ -18,7 +18,7 @@ export function onboardingD14(vars: {
         <p style="margin:0 0 12px">If E-Site is working well — a short line is enough. It means a lot.</p>
       `,
       ctaLabel: 'Reply to this email',
-      ctaHref: `mailto:arno@watsonmattheus.com?subject=E-Site%20feedback`,
+      ctaHref: `mailto:support@e-site.live?subject=E-Site%20feedback`,
       siteUrl: vars.siteUrl,
       unsubscribeUrl: vars.unsubscribeUrl,
     }),

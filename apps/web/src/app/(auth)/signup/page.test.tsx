@@ -51,7 +51,7 @@ const USER = { id: '018f2d31-bbe8-4cc1-bbdd-63af0187081e' }
 
 async function fillAndSubmit() {
   const user = userEvent.setup()
-  await user.type(screen.getByPlaceholderText('Arno Watson'), 'Tanya Engelbrecht')
+  await user.type(screen.getByPlaceholderText('Thandi Nkosi'), 'Tanya Engelbrecht')
   await user.type(screen.getByPlaceholderText('you@company.co.za'), 'tanya@orionpm.co.za')
   const pw = document.querySelectorAll('input[type="password"]')
   await user.type(pw[0] as HTMLElement, 'Correct9Horse')
