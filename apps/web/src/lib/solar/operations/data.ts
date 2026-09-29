@@ -243,7 +243,8 @@ export async function loadOperationsReadiness(user: AnyClient, projectId: string
   const { data: inst } = await user.schema('solar').from('installations').select('id, commissioning_date').eq('study_id', String((study as Row).id)).maybeSingle()
   if (!inst) return null
   const i = inst as Row
-  let months = 0
+  // A failed read counts as no months (the dots are advisory; the tab itself surfaces the error).
+  let months: number
   try {
     months = monthsWithData(await loadMeterMonths(user, String(i.id), 'generation')).length
   } catch {

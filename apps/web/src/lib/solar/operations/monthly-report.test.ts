@@ -50,7 +50,7 @@ describe('generateMonthlyReport', () => {
     const { svc, args } = setup()
     const r = await generateMonthlyReport(args)
     expect(r).toMatchObject({ ok: true, reportId: 'rep-new', version: 1 })
-    const up = svc.bucket.upload.mock.calls[0] as unknown as [string, Uint8Array, unknown]
+    const up = (svc.bucket.upload as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, Uint8Array, unknown]
     // Under solar-reports/ so 00216's service-only storage + row policies cover the file (deviation from the plan's solar-monthly/).
     expect(up[0]).toMatch(/^o1\/p1\/solar-reports\/solar_monthly-2026-03-v1-[0-9a-f]{12}\.pdf$/)
     const rep = callsTo(svc.calls, 'projects.reports', 'insert')[0]!.payload as Record<string, unknown>
