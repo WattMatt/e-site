@@ -58,6 +58,18 @@ describe('ProposalsPanel (§9.3)', () => {
     fireEvent.click(confirm)
     await waitFor(() => expect(h.link).toHaveBeenCalledWith({ projectId: 'p1', proposalId: 'i0' }))
   })
+  it('a successful New link clears the previous refusal, as every other control does (review round 2, M2)', async () => {
+    h.link.mockResolvedValueOnce({ error: 'Too many requests — try again in a minute.' })
+      .mockResolvedValueOnce({ ok: true, link: 'https://www.e-site.live/proposal/NEW' })
+    render(<ProposalsPanel {...base} proposals={[item({ id: 'i0', status: 'issued', effectiveStatus: 'issued', controls: controls({ canRotate: true }) })]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'New link for v1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm new link for v1' }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Too many requests — try again in a minute.'))
+    fireEvent.click(screen.getByRole('button', { name: 'New link for v1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm new link for v1' }))
+    await waitFor(() => expect(h.link).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
   it('Preview PDF is disabled with the reason when the selected case is not usable (review M5)', () => {
     const reason = 'The selected case is stale — re-run it first.'
     render(<ProposalsPanel {...base} selected={{ ok: false, stale: true, reason }} proposals={[item({ controls: controls({ canEdit: true, canIssue: true }) })]} />)
@@ -98,7 +110,7 @@ describe('ProposalsPanel (§9.3)', () => {
   it('issued: status chip, Withdraw two-step, New link, Revise', async () => {
     h.withdraw.mockResolvedValue({ ok: true })
     h.revise.mockResolvedValue({ ok: true, proposalId: 'd2', version: 2 })
-    render(<ProposalsPanel {...base} proposals={[item({ id: 'i1', status: 'viewed', effectiveStatus: 'viewed', expiresAt: '2026-10-29T08:00:00Z', issuedAt: '2026-09-29T08:00:00Z', offerExclVat: 'R 1 150 000', controls: controls({ canWithdraw: true, canRotate: true, canRevise: true }) })]} />)
+    render(<ProposalsPanel {...base} proposals={[item({ id: 'i1', status: 'viewed', effectiveStatus: 'viewed', expiresAt: '2026-10-29T08:00:00Z', issuedAt: '2026-09-29T08:00:00Z', offerExclVat: 'R 1 150 000.00', controls: controls({ canWithdraw: true, canRotate: true, canRevise: true }) })]} />)
     expect(screen.getByText('Viewed')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw v1' }))
     expect(h.withdraw).not.toHaveBeenCalled()

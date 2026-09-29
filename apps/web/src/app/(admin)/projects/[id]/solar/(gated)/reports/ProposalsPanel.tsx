@@ -82,7 +82,7 @@ function Row({ p, props }: { p: ProposalListItem; props: Props }) {
           : <Button type="button" size="sm" variant="secondary" aria-label={`Withdraw v${p.version}`} onClick={wd.arm}>Withdraw</Button>)}
         {c.canRotate && (rot.armed
           ? <Button type="button" size="sm" variant="danger" aria-label={`Confirm new link for v${p.version}`} disabled={busy}
-              onClick={async () => { rot.disarm(); setBusy(true); const r = await newSolarProposalLinkAction({ projectId: props.projectId, proposalId: p.id }); setBusy(false); if ('error' in r) setError(r.error); else setLink({ link: r.link, note: null }) }}>Confirm new link — the old link stops working</Button>
+              onClick={async () => { rot.disarm(); setBusy(true); setError(null); const r = await newSolarProposalLinkAction({ projectId: props.projectId, proposalId: p.id }); setBusy(false); if ('error' in r) setError(r.error); else setLink({ link: r.link, note: null }) }}>Confirm new link — the old link stops working</Button>
           : <Button type="button" size="sm" variant="secondary" aria-label={`New link for v${p.version}`} disabled={busy} onClick={rot.arm}>New link</Button>)}
         {c.canRevise && <Button type="button" size="sm" variant="secondary" aria-label={`Revise v${p.version}`} disabled={busy} onClick={() => void run(() => reviseSolarProposalAction({ projectId: props.projectId, proposalId: p.id }))}>Revise</Button>}
       </div>
