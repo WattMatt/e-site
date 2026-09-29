@@ -1,5 +1,5 @@
 import { normShop } from '@esite/shared/solar-load'
-import type { ReviewModel } from '@/lib/solar/meter-import/review'
+import type { IdentityPanel, ReviewModel } from '@/lib/solar/meter-import/review'
 import type { ParseOptionsInput } from '@/lib/solar/load/import-client'
 import type { MeterKind, NodeOption } from '@/lib/solar/load/view-types'
 
@@ -15,7 +15,8 @@ export interface Choices {
   siteLabel: string
   shopNo: string
   nodeId: string
-  resolution: 'none' | 'link' | 'override'
+  /** 'skip' is a UI choice only (the footer's Skip commits it); it never reaches a series commit body. */
+  resolution: 'none' | 'link' | 'override' | 'skip'
   reason: string
   include: Record<string, boolean>
   primary: string
@@ -35,10 +36,27 @@ export function guessKind(label: string | null | undefined): MeterKind {
   return 'tenant'
 }
 
+/** An exact data duplicate: the same readings already imported, or in another file of this upload. */
+export function sameBodyConflict(identity: IdentityPanel | null | undefined) {
+  return identity?.blocking ? identity.conflicts.find((c) => c.kind === 'same_body') : undefined
+}
+
+/**
+ * Choices for an identity panel that just arrived (first render, or a 409 from the server). An exact
+ * duplicate defaults to Skip with the reason filled in: it is usually the portal serving another
+ * meter's data, and both other ways out (link = merge into that meter, override = a second meter with
+ * the same readings) are wrong in that case.
+ */
+export function choicesForIdentity(c: Choices, identity: IdentityPanel | null | undefined, editMeterId: string | null): Choices {
+  const dup = editMeterId ? undefined : sameBodyConflict(identity)
+  if (!dup) return c
+  return { ...c, resolution: 'skip', skipReason: c.skipReason || `Duplicate data: ${dup.message}`.slice(0, 480) }
+}
+
 export function initialChoices(r: ReviewModel, nodes: NodeOption[], editMeterId: string | null): Choices {
   const shop = normShop(r.hints.shopNo)
   const label = r.hints.label ?? r.fileName.replace(/\.[^.]+$/, '')
-  return {
+  return choicesForIdentity({
     dateOrder: '', tsConvention: '', units: {}, areaM2: r.hints.areaM2 == null ? '' : String(r.hints.areaM2),
     meterMode: editMeterId ? 'existing' : 'new', existingMeterId: editMeterId ?? '',
     label, kind: guessKind(label), siteLabel: r.hints.site ?? '', shopNo: r.hints.shopNo ?? '',
@@ -48,7 +66,7 @@ export function initialChoices(r: ReviewModel, nodes: NodeOption[], editMeterId:
     primary: r.channels.find((c) => c.isPrimaryDefault)?.column ?? '',
     skipReason: r.blockingErrors.length > 0 ? `Cannot import: ${r.report.errors.map((e) => e.message).join('; ')}`.slice(0, 480) : '',
     registerSite: r.hints.site ?? '',
-  }
+  }, r.identity, editMeterId)
 }
 
 /** The options the user changed that the preview has not applied yet. */
@@ -73,6 +91,7 @@ export function acceptBlockers(r: ReviewModel, c: Choices, optionsDirty: boolean
   if (!c.primary || !c.include[c.primary]) out.push('Choose an included primary channel.')
   if (r.identity?.blocking) {
     if (c.resolution === 'none') out.push('Resolve the identity conflict.')
+    if (c.resolution === 'skip') out.push('You chose to skip this file — press Skip this file.')
     if (c.resolution === 'override' && c.reason.trim().length < 5) out.push('Give a reason of at least 5 characters for the override.')
     if (c.resolution === 'link' && !(c.meterMode === 'existing' && c.existingMeterId)) out.push('Choose the existing meter to link to.')
   }
@@ -94,7 +113,7 @@ export function buildCommitBody(r: ReviewModel, c: Choices, applied: ParseOption
     meter: c.meterMode === 'existing'
       ? { existingMeterId: c.existingMeterId }
       : { new: { label: c.label.trim(), kind: c.kind, siteLabel: c.siteLabel.trim() || null, shopNo: c.shopNo.trim() || null, areaM2: hasArea ? area : null, areaSource, nodeId: c.nodeId || null } },
-    identity: c.resolution === 'override' ? { resolution: 'override', reason: c.reason.trim() } : { resolution: c.resolution },
+    identity: c.resolution === 'override' ? { resolution: 'override', reason: c.reason.trim() } : { resolution: c.resolution === 'skip' ? 'none' : c.resolution },
     channels: r.channels.map((ch) => ({ sourceColumn: ch.column, include: Boolean(c.include[ch.column]), isPrimary: ch.column === c.primary })),
     options: applied,
   }

@@ -1,5 +1,5 @@
 /** In-memory MeterImportRepo for unit tests of review/commit/routes. Not imported by runtime code. */
-import type { ChannelRow, MeterFileRow, MeterImportRepo, MeterRow, NewMeter, RegisterHint } from './repo'
+import { withMeter, type BasisMeter, type ChannelRow, type MeterFileRow, type MeterImportRepo, type MeterRow, type NewMeter, type RegisterHint } from './repo'
 
 export interface FakeState {
   orgByProject: Record<string, string>
@@ -16,6 +16,9 @@ export interface FakeState {
   reports: Array<{ id: string; accepted: boolean; row: unknown }>
   studyLinks: Array<{ studyId: string; meterId: string }>
   audits: Array<{ projectId: string; verb: string; objectRef: Record<string, unknown> }>
+  /** Tenant DB node ids per project (structure.nodes kind 'tenant_db'). */
+  tenantNodes: Record<string, string[]>
+  basis: Array<{ studyId: string; nodeId: string; source: string; meters: BasisMeter[]; updated_at: string }>
   /** Test hook: make countReadings lie, to prove the read-back check. */
   countOffset: number
 }
@@ -23,7 +26,7 @@ export interface FakeState {
 export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImportRepo; state: FakeState } {
   const state: FakeState = {
     orgByProject: {}, studyByProject: {}, raw: {}, files: [], filePatches: [], meters: [], channels: [],
-    readings: new Map(), writeCalls: [], hashes: [], register: [], reports: [], studyLinks: [], audits: [], countOffset: 0,
+    readings: new Map(), writeCalls: [], hashes: [], register: [], reports: [], studyLinks: [], audits: [], tenantNodes: {}, basis: [], countOffset: 0,
     ...seed,
   }
   let seq = 0
@@ -119,6 +122,15 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
     },
     async linkStudyMeter(studyId, meterId) {
       if (!state.studyLinks.some((l) => l.studyId === studyId && l.meterId === meterId)) state.studyLinks.push({ studyId, meterId })
+    },
+    async tenantNodeInProject(p, nodeId) { return (state.tenantNodes[p] ?? []).includes(nodeId) },
+    async assignMeterToTenant(studyId, nodeId, meterId) {
+      const row = state.basis.find((b) => b.studyId === studyId && b.nodeId === nodeId)
+      if (!row) { state.basis.push({ studyId, nodeId, source: 'metered', meters: withMeter([], meterId), updated_at: id('v') }); return 'assigned' }
+      if (row.source !== 'metered') return 'needs_review'
+      if (row.meters.some((m) => m.meter_id === meterId)) return 'already'
+      Object.assign(row, { meters: withMeter(row.meters, meterId), updated_at: id('v') })
+      return 'assigned'
     },
     async insertRegisterRows(rows) {
       state.register.push(...rows)

@@ -15,7 +15,7 @@ const meter: MeterView = {
   supplyPointConfirmed: false, updatedAt: 'M0', primaryChannelId: 'c1', intervalMin: 30, periodStart: null, periodEnd: null,
   completeness: 0.99, peakKw: 400, annualKwh: 1_000_000, fileIds: ['f1'], otherStudyLinks: 0, status: 'imported',
 }
-const base = { projectId: 'p1', nodes: [], canEdit: true, isGrantor: true, bulkRecon: [], onClose: vi.fn(), onEditMapping: vi.fn() }
+const base = { projectId: 'p1', canEdit: true, isGrantor: true, bulkRecon: [], onClose: vi.fn(), onEditMapping: vi.fn() }
 beforeEach(() => {
   vi.clearAllMocks()
   h.update.mockResolvedValue({ ok: true, updatedAt: 'M1' })
@@ -30,6 +30,13 @@ describe('MeterDrawer', () => {
     await userEvent.click(screen.getByLabelText(/This meter is the point of supply/))
     await userEvent.click(screen.getByRole('button', { name: 'Save meter' }))
     expect(h.update).toHaveBeenCalledWith({ projectId: 'p1', meterId: 'm1', patch: { supplyPointConfirmed: true }, expectedUpdatedAt: 'M0' })
+  })
+  it('the tenant is shown from the load basis with the way to change it — no second write path (LS-02)', async () => {
+    render(<MeterDrawer {...base} meter={{ ...meter, kind: 'tenant', nodeId: 'n1', tenantLabel: '12 · Pep' }} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'Details' }))
+    expect(screen.queryByLabelText(/Link to tenant/)).toBeNull()
+    expect(screen.getByText(/Tenant: 12 · Pep/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Change it on the Tenants tab' }).getAttribute('href')).toContain('tenants')
   })
   it('remove is two-step; a grantor may also delete from the library', async () => {
     render(<MeterDrawer meter={meter} {...base} />)

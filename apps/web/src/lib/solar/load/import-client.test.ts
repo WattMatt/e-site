@@ -25,4 +25,17 @@ describe('import client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(409, { error: 'identity_conflict' }))
     expect(await commitReview('p', { mode: 'skip', fileId: 'f', reason: 'bad' })).toEqual({ ok: false, message: 'Resolve the identity conflict first: link to the existing meter, skip, or override with a reason.' })
   })
+  it('commit: a 409 identity conflict hands the server identity back to the dialog (LS-01)', async () => {
+    const identity = { sourceSerials: [], filenameSerial: null, conflicts: [{ kind: 'same_body', meterId: 'm7', message: 'Same data as Shop 7.' }], blocking: true }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(409, { error: 'identity_conflict', identity }))
+    expect(await commitReview('p', { mode: 'series' })).toEqual({ ok: false, message: 'Resolve the identity conflict first: link to the existing meter, skip, or override with a reason.', identity })
+  })
+  it('parse: two files in one upload with the same data — the later one carries a blocking same_body conflict (LS-01)', async () => {
+    const r = (fileId: string, bodySha256: string | null) => ({ fileId, fileName: `${fileId}.csv`, outcome: 'series', bodySha256, identity: { sourceSerials: [], filenameSerial: null, conflicts: [], blocking: false } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(200, { results: [{ fileId: 'f1', reviews: [r('f1', 'H')] }, { fileId: 'f2', reviews: [r('f2', 'H')] }, { fileId: 'f3', reviews: [r('f3', 'K')] }] }))
+    const { reviews } = await parseFiles('p', ['f1', 'f2', 'f3'])
+    expect(reviews[0].identity?.blocking).toBe(false)
+    expect(reviews[1].identity).toMatchObject({ blocking: true, conflicts: [{ kind: 'same_body', message: 'Same data as f1.csv in this upload.' }] })
+    expect(reviews[2].identity?.blocking).toBe(false)
+  })
 })

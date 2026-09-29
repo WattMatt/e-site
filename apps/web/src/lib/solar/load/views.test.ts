@@ -49,6 +49,27 @@ describe('load views', () => {
     expect(v.register.find((r) => r.id === 'r2')?.fileImported).toBe(false)
     expect(v.cloudMapped).toBe(true)
   })
+  it('meters view: the tenant shown is the one the load uses (tenant_load_basis), not meters.node_id alone (LS-02)', async () => {
+    const t = { ...tables, 'solar.tenant_load_basis': [] as Array<Record<string, unknown>> }
+    const v = await loadMetersView(fakeSupabase({ tables: t }).client as never, P, false)
+    // node_id says n1 but no basis row carries m1: the load treats n1 as unassigned, so must the table.
+    expect(v.meters[0].tenantLabel).toBe('12 · Pep (not assigned — Tenants → Auto-match)')
+  })
+  it('meters view: a meter in an excluded tenant says so, and a decided tenant is not re-proposed (LS-02)', async () => {
+    const t = { ...tables, 'solar.tenant_load_basis': [{ ...tables['solar.tenant_load_basis'][0], source: 'excluded' }] }
+    const v = await loadMetersView(fakeSupabase({ tables: t }).client as never, P, false)
+    expect(v.meters[0].tenantLabel).toBe('12 · Pep (excluded)')
+    const moved = { ...tables, 'solar.tenant_load_basis': [{ ...tables['solar.tenant_load_basis'][0], meters: [] }] }
+    const tv = await loadTenantsView(fakeSupabase({ tables: moved }).client as never, P)
+    expect(tv.proposals.some((p) => p.source === 'linked')).toBe(false)
+    const mv = await loadMetersView(fakeSupabase({ tables: moved }).client as never, P, false)
+    expect(mv.meters[0].tenantLabel).toBeNull()
+  })
+  it('tenants view: a tenant chosen on the meter but never assigned is proposed, pre-ticked (LS-02)', async () => {
+    const t = { ...tables, 'solar.tenant_load_basis': [] as Array<Record<string, unknown>> }
+    const v = await loadTenantsView(fakeSupabase({ tables: t }).client as never, P)
+    expect(v.proposals).toEqual([expect.objectContaining({ meterId: 'm1', nodeId: 'n1', source: 'linked', preTicked: true })])
+  })
   it('tenants view: basis, last-build summary, vacant flag, and never pre-ticks an LLM register match', async () => {
     const v = await loadTenantsView(client(), P)
     expect(v.tenants.find((t) => t.nodeId === 'n1')?.summary).toMatchObject({ annualKwh: 8760 })

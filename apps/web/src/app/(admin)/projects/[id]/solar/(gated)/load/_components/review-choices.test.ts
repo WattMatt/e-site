@@ -13,11 +13,19 @@ describe('review choices', () => {
   })
   it('an identity conflict blocks until linked or overridden with a reason', () => {
     const r = review({ identity: { sourceSerials: ['S'], filenameSerial: null, conflicts: [{ kind: 'same_body', message: 'Same data as X.', meterId: 'mX' }], blocking: true } })
-    const c = initialChoices(r, nodes, null)
+    const c = { ...initialChoices(r, nodes, null), resolution: 'none' as const }
     expect(acceptBlockers(r, c, false)).toContain('Resolve the identity conflict.')
     expect(acceptBlockers(r, { ...c, resolution: 'override', reason: 'ok' }, false)).toContain('Give a reason of at least 5 characters for the override.')
     expect(acceptBlockers(r, { ...c, resolution: 'override', reason: 'Different tenant, same CT' }, false)).toEqual([])
     expect(acceptBlockers(r, { ...c, resolution: 'link', meterMode: 'existing', existingMeterId: 'mX' }, false)).toEqual([])
+  })
+  it('an exact duplicate (same_body) defaults to Skip with the reason filled in (LS-07)', () => {
+    const r = review({ identity: { sourceSerials: [], filenameSerial: null, conflicts: [{ kind: 'same_body', message: 'Same data as X.', meterId: 'mX' }], blocking: true } })
+    const c = initialChoices(r, nodes, null)
+    expect(c).toMatchObject({ resolution: 'skip', skipReason: 'Duplicate data: Same data as X.' })
+    expect(acceptBlockers(r, c, false)).toContain('You chose to skip this file — press Skip this file.')
+    const serial = review({ identity: { sourceSerials: ['S'], filenameSerial: null, conflicts: [{ kind: 'same_serial', message: 'Serial S is already meter X.', meterId: 'mX' }], blocking: true } })
+    expect(initialChoices(serial, nodes, null).resolution).toBe('none')
   })
   it('unresolved choices and unapplied options block Accept', () => {
     const r = review({ canAccept: false, choicesNeeded: ['unknown_unit'] })

@@ -293,3 +293,73 @@ describe('commitMeterFile: a failed re-commit never leaves an accepted file with
     expect(state.files[0].status).toBe('parsed')
   })
 })
+
+describe('commitMeterFile: a tenant chosen at import is the tenant the load uses (LS-02)', () => {
+  const NODE = '3b0f7c1e-2a4d-4c8e-9f10-1a2b3c4d5e6f'
+  const withNode = (kind = 'tenant') => body({ meter: { new: { label: 'TENANT-1', kind, nodeId: NODE } } })
+
+  it('assigns the new meter to the tenant in tenant_load_basis (metered, weight 1)', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    const out = await commitMeterFile(repo, ctx, withNode())
+    const meterId = state.meters[0].id
+    expect(state.basis).toEqual([expect.objectContaining({ studyId: 's1', nodeId: NODE, source: 'metered', meters: [{ meter_id: meterId, weight: 1 }] })])
+    expect(out).toMatchObject({ tenantAssignment: 'assigned' })
+  })
+
+  it('appends to a tenant that already has metered meters, keeping theirs', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    state.basis = [{ studyId: 's1', nodeId: NODE, source: 'metered', meters: [{ meter_id: 'mOld', weight: 0.5 }], updated_at: 'v1' }]
+    await commitMeterFile(repo, ctx, withNode())
+    expect(state.basis).toEqual([expect.objectContaining({ source: 'metered', meters: [{ meter_id: 'mOld', weight: 0.5 }, { meter_id: state.meters[0].id, weight: 1 }] })])
+  })
+
+  it('never overturns a deliberate synthesised or excluded tenant', async () => {
+    for (const source of ['synthesised', 'excluded']) {
+      const { repo, state, ctx } = setup(A_TEXT)
+      state.tenantNodes = { p1: [NODE] }
+      state.basis = [{ studyId: 's1', nodeId: NODE, source, meters: [{ meter_id: 'mOld', weight: 1 }], updated_at: 'v1' }]
+      const out = await commitMeterFile(repo, ctx, withNode())
+      expect(state.basis).toEqual([expect.objectContaining({ source, meters: [{ meter_id: 'mOld', weight: 1 }], updated_at: 'v1' })])
+      expect(out).toMatchObject({ tenantAssignment: 'needs_review' })
+    }
+  })
+
+  it('a retry after a partial failure still assigns the tenant', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    state.countOffset = -1
+    await expect(commitMeterFile(repo, ctx, withNode())).rejects.toMatchObject({ status: 500 })
+    expect(state.basis).toEqual([])
+    state.countOffset = 0
+    const out = await commitMeterFile(repo, ctx, withNode())
+    expect(out).toMatchObject({ reusedMeter: true, tenantAssignment: 'assigned' })
+    expect(state.basis).toEqual([expect.objectContaining({ nodeId: NODE, meters: [{ meter_id: state.meters[0].id, weight: 1 }] })])
+  })
+
+  it('a meter kind that never carries a tenant load (bulk) is not assigned', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    const out = await commitMeterFile(repo, ctx, withNode('bulk'))
+    expect(state.basis).toEqual([])
+    expect(out).toMatchObject({ tenantAssignment: null })
+  })
+
+  it('refuses a tenant that is not in this project before writing anything', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    await expect(commitMeterFile(repo, ctx, withNode())).rejects.toMatchObject({ status: 422, body: { error: 'tenant_not_in_project' } })
+    expect(state.meters).toEqual([])
+    expect(state.basis).toEqual([])
+  })
+
+  it('with no study row yet, the meter imports and nothing is assigned', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.tenantNodes = { p1: [NODE] }
+    state.studyByProject = {}
+    const out = await commitMeterFile(repo, ctx, withNode())
+    expect(state.meters).toHaveLength(1)
+    expect(state.basis).toEqual([])
+    expect(out).toMatchObject({ tenantAssignment: null })
+  })
+})

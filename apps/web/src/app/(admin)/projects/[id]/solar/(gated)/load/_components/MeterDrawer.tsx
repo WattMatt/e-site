@@ -1,14 +1,16 @@
 'use client'
 /** Meter detail drawer (spec §4.3): Chart · Heatmap · Details (kind, tenant, area, point of supply, edit mapping, remove) · normalised CSV. */
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import type { BulkReconciliation } from '@esite/shared/solar-load'
+import { NOT_TENANT_KINDS, type BulkReconciliation } from '@esite/shared/solar-load'
 import { removeStudyMeterAction, updateStudyMeterAction, type MeterPatch } from '@/actions/solar-load.actions'
 import { useArmedConfirm } from '@/app/(admin)/projects/[id]/solar/_components/useArmedConfirm'
 import { HeatmapCanvas } from '@/components/charts/HeatmapCanvas'
 import type { ReviewModel } from '@/lib/solar/meter-import/review'
 import { parseFiles } from '@/lib/solar/load/import-client'
-import { METER_KIND_OPTIONS, type MeterKind, type MeterView, type NodeOption } from '@/lib/solar/load/view-types'
+import { METER_KIND_OPTIONS, type MeterKind, type MeterView } from '@/lib/solar/load/view-types'
+import { loadHref } from '@/lib/solar/load/subtabs'
 import { MeterSeriesChart } from './MeterSeriesChart'
 
 type Tab = 'chart' | 'heatmap' | 'details'
@@ -33,8 +35,8 @@ function Heatmap({ projectId, meterId }: { projectId: string; meterId: string })
   return <HeatmapCanvas title="Day × time-of-day heatmap (last 12 months)" rows={data.dates} cells={data.cells} unit={data.unit} />
 }
 
-export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkRecon, onClose, onEditMapping, onRemoved }: {
-  projectId: string; meter: MeterView; nodes: NodeOption[]; canEdit: boolean; isGrantor: boolean; bulkRecon: BulkReconciliation[]
+export function MeterDrawer({ projectId, meter, canEdit, isGrantor, bulkRecon, onClose, onEditMapping, onRemoved }: {
+  projectId: string; meter: MeterView; canEdit: boolean; isGrantor: boolean; bulkRecon: BulkReconciliation[]
   onClose: () => void; onEditMapping: (reviews: ReviewModel[], meterId: string) => void
   /** After a removal: the note to show on the list (e.g. "kept in the library because…"), or null. */
   onRemoved?: (note: string | null) => void
@@ -43,7 +45,6 @@ export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkR
   const [tab, setTab] = useState<Tab>('chart')
   const [label, setLabel] = useState(meter.label)
   const [kind, setKind] = useState<MeterKind>(meter.kind)
-  const [nodeId, setNodeId] = useState(meter.nodeId ?? '')
   const [area, setArea] = useState(meter.areaM2 == null ? '' : String(meter.areaM2))
   const [supply, setSupply] = useState(meter.supplyPointConfirmed)
   const [version, setVersion] = useState(meter.updatedAt)
@@ -57,7 +58,6 @@ export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkR
     const patch: MeterPatch = {}
     if (label !== meter.label) patch.label = label
     if (kind !== meter.kind) patch.kind = kind
-    if (nodeId !== (meter.nodeId ?? '')) patch.nodeId = nodeId || null
     const a = area.trim() === '' ? null : Number(area)
     if (a !== null && !(Number.isFinite(a) && a > 0)) { setMsg({ ok: false, text: 'Enter the area as a positive number of m², or leave it blank.' }); return }
     if (a !== meter.areaM2) patch.areaM2 = a
@@ -95,9 +95,8 @@ export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkR
               <label>Kind <select value={kind} onChange={(e) => { setKind(e.target.value as MeterKind); if (e.target.value !== 'bulk') setSupply(false) }}>
                 {METER_KIND_OPTIONS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
               </select></label>
-              <label>Link to tenant <select value={nodeId} onChange={(e) => setNodeId(e.target.value)}>
-                <option value="">None</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}
-              </select></label>
+              {/* The tenant a meter feeds lives in the tenant's load basis; it is changed on the Tenants tab only. */}
+              {!NOT_TENANT_KINDS.has(kind) && <p style={{ margin: 0 }}>Tenant: {meter.tenantLabel ?? '—'} · <Link href={loadHref(projectId, 'tenants')}>Change it on the Tenants tab</Link></p>}
               <label>Area (m²) <input inputMode="decimal" value={area} onChange={(e) => setArea(e.target.value)} /></label>
             </>
           ) : (
