@@ -1,6 +1,6 @@
 -- scripts/db/assert-whatsapp-enqueue.sql
 -- Outbox enqueue on ball moves, the due sweep, and the claim/receive helpers. Run:
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00207_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-enqueue.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00222_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-enqueue.sql
 SELECT set_config('x.c', '018f2d31-bbe8-4cc1-bbdd-63af0187081e', true);
 SELECT set_config('x.kw', (SELECT pm.project_id::text FROM projects.project_members pm
                             WHERE pm.user_id = current_setting('x.c')::uuid AND pm.is_active

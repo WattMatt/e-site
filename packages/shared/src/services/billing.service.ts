@@ -56,14 +56,20 @@ export const PLANS = {
 
 export type PlanTier = keyof typeof PLANS
 
-// FEATURE_PRICES — single source of truth for paid add-on unlocks. Lives
-// alongside PLANS but operates orthogonally: an unlock is a one-time charge
-// that grants access to a discrete module, independent of subscription tier.
+// FEATURE_PRICES — single source of truth for paid add-ons. Lives alongside
+// PLANS but operates orthogonally to the subscription tier.
 //
-// model: 'org'  — one unlock per organisation (billing.org_feature_unlocks, migration 00097)
-// model: 'seat' — one unlock per user within an org (billing.org_feature_seats, migration 00125)
+// model: 'org'              — one-time unlock per organisation (billing.org_feature_unlocks, migration 00097)
+// model: 'seat'             — one-time unlock per user within an org (billing.org_feature_seats, migration 00125)
+// model: 'org_subscription' — RECURRING org-wide plan (billing.org_addon_subscriptions, migration 00208).
+//                             Bought only through its own route (/api/paystack/solar-subscribe) against
+//                             the Paystack plan named by `planCodeEnv`. NEVER through the one-time
+//                             /api/paystack/feature-unlock route, which rejects these keys: a one-time
+//                             R1,999 charge there would grant nothing (no webhook branch writes an
+//                             org_feature_unlocks row for a subscription key) while taking the money.
 //
-// Webhook flow lives in /api/paystack/webhook under metadata.type === 'feature_unlock'.
+// Webhook flow lives in /api/paystack/webhook under metadata.type ===
+// 'feature_unlock' | 'feature_seat' | 'org_addon_subscription'.
 export const FEATURE_PRICES = {
   inspections: {
     key: 'inspections',
@@ -86,9 +92,35 @@ export const FEATURE_PRICES = {
     description: 'Standby-generator cost-recovery: tenant apportionment + branded report. Per-user seat.',
     model: 'seat' as const,
   },
+  solar: {
+    key: 'solar',
+    label: 'Solar module',
+    amountKobo: 199900, // R1,999 per year excl. VAT (decision D-01)
+    description: 'Solar design, simulation and client proposals on every project of your organisation. Annual subscription.',
+    model: 'org_subscription' as const,
+    interval: 'annual' as const,
+    planCodeEnv: 'PAYSTACK_PLAN_SOLAR_ANNUAL',
+  },
 } as const
 
 export type FeatureKey = keyof typeof FEATURE_PRICES
+
+/** Keys sold as a recurring subscription rather than a one-time unlock. */
+export type SubscriptionFeatureKey = {
+  [K in FeatureKey]: (typeof FEATURE_PRICES)[K]['model'] extends 'org_subscription' ? K : never
+}[FeatureKey]
+
+/** Keys sold as a one-time charge — the only keys /api/paystack/feature-unlock may accept. */
+export type OneTimeFeatureKey = Exclude<FeatureKey, SubscriptionFeatureKey>
+
+export function isSubscriptionFeature(key: string): key is SubscriptionFeatureKey {
+  if (!Object.prototype.hasOwnProperty.call(FEATURE_PRICES, key)) return false
+  return FEATURE_PRICES[key as FeatureKey].model === 'org_subscription'
+}
+
+export const ONE_TIME_FEATURE_KEYS: readonly OneTimeFeatureKey[] = (
+  Object.keys(FEATURE_PRICES) as FeatureKey[]
+).filter((k): k is OneTimeFeatureKey => !isSubscriptionFeature(k))
 
 /**
  * Resolve the Paystack plan code for a (tier, period) pair from env vars at

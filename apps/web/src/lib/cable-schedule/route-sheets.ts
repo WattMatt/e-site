@@ -29,6 +29,7 @@
 import { PDFDocument, rgb, type PDFFont } from 'pdf-lib'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { winAnsiSafe } from './winansi'
+import { reportPathBelongsTo } from '@/lib/reports/report-path'
 
 export interface RouteSheetRef {
   reportId: string
@@ -60,6 +61,8 @@ interface ReportRow {
   size_bytes: number | null
   source_id: string
   summary: Record<string, unknown> | null
+  /** Read so the path can be checked against the row's own folder (00207); absent in pure-test rows. */
+  organisation_id?: string
 }
 
 /** `${floorPlanId}#${pageIndex}` — the identity of one sheet. */
@@ -113,7 +116,7 @@ export async function listRouteSheetsForRevision(
     db
       .schema('projects')
       .from('reports')
-      .select('id, title, version, generated_at, storage_path, size_bytes, source_id, summary')
+      .select('id, title, version, generated_at, storage_path, size_bytes, source_id, summary, organisation_id')
       .eq('project_id', projectId)
       .eq('kind', 'cable_route_sheet')
       .eq('status', 'issued')
@@ -134,7 +137,12 @@ export async function listRouteSheetsForRevision(
     const prev = touched.get(key)
     if (!prev || new Date(route.updated_at).getTime() > new Date(prev).getTime()) touched.set(key, route.updated_at)
   }
-  return refsFromReportRows(((reports ?? []) as ReportRow[]), touched)
+  // Sheets are later DOWNLOADED with the service client and copied into an export pack, so a row whose
+  // path is not canonical and inside its own <org>/<project>/ folder is never listed (00207 refuses
+  // writing one; this also covers a row that predates it).
+  const owned = ((reports ?? []) as ReportRow[]).filter((r) =>
+    reportPathBelongsTo(r.storage_path, r.organisation_id, projectId))
+  return refsFromReportRows(owned, touched)
 }
 
 export interface RouteSheetLoadResult {

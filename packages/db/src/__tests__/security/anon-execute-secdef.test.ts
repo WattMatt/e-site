@@ -60,8 +60,13 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../../apps/edge-functions/supab
 const EXPOSED_SCHEMAS = [
   'public', 'projects', 'inspections', 'field', 'tenants', 'suppliers',
   'billing', 'marketplace', 'cable_schedule', 'structure', 'gcr',
-  // 00207: added to db_schema by the WhatsApp runbook §3 PATCH.
+  // 00222 (WhatsApp): added to db_schema by the WhatsApp runbook §3 PATCH.
   'whatsapp',
+  // 'solar' is created by 00208 and added to db_schema by the PATCH that
+  // accompanies its apply (the 00126 new-schema checklist), so it is exposed.
+  'solar',
+  // 'tariffs' (00210): same checklist, same PATCH, so exposed.
+  'tariffs',
 ] as const
 
 /** Migration head in production when PRODUCTION_ANON_EXECUTABLE_BEFORE_00186 was captured. */

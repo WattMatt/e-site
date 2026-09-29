@@ -45,3 +45,14 @@ export function zoomAbout(current: Transform, factor: number, anchor: { x: numbe
     offset: { x: anchor.x - (anchor.x - o.x) * ratio, y: anchor.y - (anchor.y - o.y) * ratio },
   }
 }
+
+/** The keys that fit the sheet unless a canvas needs one of them for a tool. */
+export const DEFAULT_FIT_KEYS: readonly string[] = ['f', 'F', '0']
+
+/** What a key does to the viewport, or null. Pure so the rule is testable without a DOM. */
+export function viewportKeyAction(key: string, fitKeys: readonly string[]): 'fit' | 'in' | 'out' | null {
+  if (fitKeys.includes(key)) return 'fit'
+  if (key === '+' || key === '=') return 'in'
+  if (key === '-' || key === '_') return 'out'
+  return null
+}

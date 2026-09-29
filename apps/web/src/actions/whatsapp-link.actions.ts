@@ -5,7 +5,7 @@
  * POPIA consent are one step: we send a 6-digit code over WhatsApp, the user
  * types it back here. Only a hash of the code is stored (bound to the link id).
  * Writes use the service client after the caller is identified, because
- * `authenticated` has no write grant on whatsapp.* (migration 00207).
+ * `authenticated` has no write grant on whatsapp.* (migration 00222).
  */
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'

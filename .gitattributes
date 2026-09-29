@@ -1,0 +1,2 @@
+# Solar meter fixtures: CRLF vs LF and exact bytes are under test (sha256, line-ending detection).
+packages/shared/src/meter-data/__fixtures__/** -text

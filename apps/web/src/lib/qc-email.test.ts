@@ -36,6 +36,7 @@ import { notifyQcIssued } from './qc-email'
 const PROJECT_ID = '11111111-1111-1111-1111-111111111111'
 const REPORT_ID = '22222222-2222-2222-2222-222222222222'
 const ACTOR_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+const ORG_ID = '33333333-3333-3333-3333-333333333333'
 const SIGNED_URL = 'https://signed.example/qc-report-v2.pdf?token=abc'
 
 const ARGS = { reportId: REPORT_ID, projectId: PROJECT_ID, actorId: ACTOR_ID }
@@ -48,12 +49,12 @@ const ARGS = { reportId: REPORT_ID, projectId: PROJECT_ID, actorId: ACTOR_ID }
  */
 function mockService(opts: {
   reportRow?: object | null
-  pdfRow?: { storage_path: string } | null
+  pdfRow?: { storage_path: string; organisation_id?: string } | null
   signError?: boolean
 } = {}) {
   const {
     reportRow = { id: REPORT_ID, report_no: 7, title: 'Week 12 QC walk' },
-    pdfRow = { storage_path: `org/${PROJECT_ID}/qc-report-${REPORT_ID}-v2.pdf` },
+    pdfRow = { storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v2.pdf`, organisation_id: ORG_ID },
     signError = false,
   } = opts
 
@@ -217,5 +218,19 @@ describe('notifyQcIssued — never throws (best-effort contract)', () => {
   it('resolves when notifyEntityEvent rejects', async () => {
     notifyEntityEventMock.mockRejectedValue(new Error('dispatch exploded'))
     await expect(notifyQcIssued(ARGS)).resolves.toBeUndefined()
+  })
+})
+
+describe('notifyQcIssued — the signed PDF path (00207)', () => {
+  it('never signs a saved path outside the row’s own org/project folder', async () => {
+    const service = mockService({
+      pdfRow: { storage_path: `${ORG_ID}/44444444-4444-4444-4444-444444444444/valuation-x-v1.pdf`, organisation_id: ORG_ID },
+    })
+    createServiceClientMock.mockReturnValue(service.client)
+
+    await notifyQcIssued(ARGS)
+
+    expect(service.createSignedUrl).not.toHaveBeenCalled()
+    expect(renderQcIssuedEmailMock).toHaveBeenCalledWith(expect.objectContaining({ pdfUrl: null }))
   })
 })

@@ -113,6 +113,17 @@ const config: NextConfig = {
               priority: 20,
               reuseExistingChunk: true,
             },
+            // three + react-three-fiber — async only: the Solar layout 3D preview
+            // loads them through next/dynamic when opened. Without this group the
+            // catch-all `vendors` (chunks: 'all') would fold them into the chunk
+            // every page downloads.
+            three: {
+              name: 'three',
+              test: /[\\/]node_modules[\\/](three|@react-three)[\\/]/,
+              chunks: 'async' as const,
+              priority: 35,
+              reuseExistingChunk: true,
+            },
             // Remaining third-party code
             vendors: {
               name: 'vendors',

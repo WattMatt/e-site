@@ -43,7 +43,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const membership = primaryMembership as { organisation_id: string; role: OrgRole } | null
   const primaryOrgId = membership?.organisation_id
   const primaryRole = membership?.role ?? null
-  const [inspectionsUnlocked, jbccUnlocked, mvUnlocked, orgsResult] = await Promise.all([
+  const [inspectionsUnlocked, jbccUnlocked, mvUnlocked, orgsResult, , tariffAdminRes] = await Promise.all([
     primaryOrgId ? hasFeature(primaryOrgId, 'inspections', supabase) : Promise.resolve(false),
     primaryOrgId ? hasFeature(primaryOrgId, 'jbcc', supabase) : Promise.resolve(false),
     // MV is a per-USER subscription (lib/mv-access), not an org feature unlock.
@@ -52,7 +52,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     // Presence: one upsert + one indexed lookup, run alongside the four reads
     // this layout already awaits, so it adds no wall-clock time. Never throws.
     touchPresence('web'),
+    // Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves.
+    // Cast: the generated Database types predate 00210 (same as the Solar pages' AnyClient casts).
+    (supabase as unknown as { rpc: (fn: string) => PromiseLike<{ data: unknown; error: unknown }> }).rpc('is_platform_tariff_admin'),
   ])
+  const tariffAdmin = !tariffAdminRes.error && tariffAdminRes.data === true
   const orgMemberships = orgsResult.ok ? orgsResult.memberships : []
   // Dark-launch switch: surface the Medium Voltage tab only for entitled users,
   // or for everyone once the Paystack annual plan is configured (so strangers
@@ -64,7 +68,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} tariffAdmin={tariffAdmin} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <OrgSwitcher memberships={orgMemberships} />

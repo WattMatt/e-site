@@ -29,13 +29,13 @@ git fetch origin && git ls-tree --name-only origin/main apps/edge-functions/supa
 gh pr list --state open --json number,files --jq '.[] | "\(.number) \(.files[].path)"' | grep supabase/migrations
 ```
 
-If anything holds `00207` or higher, rename the file to the next free number:
+**Done 2026-09-29: renumbered `00207` → `00222`** (and the project channel `00208` → `00223`) after #218 and the solar stack took `00207`–`00221`. If anything takes `00222` or higher before this merges, rename again:
 
 ```bash
-git mv apps/edge-functions/supabase/migrations/00207_whatsapp_reply_to_act.sql apps/edge-functions/supabase/migrations/<N>_whatsapp_reply_to_act.sql
+git mv apps/edge-functions/supabase/migrations/00222_whatsapp_reply_to_act.sql apps/edge-functions/supabase/migrations/<N>_whatsapp_reply_to_act.sql
 ```
 
-Then update every `00207` in the file header comments and in `scripts/db/assert-whatsapp-*.sql`'s run lines. Re-run all three dry-runs against the renamed file:
+Then update every `00222` in the file header comments and in `scripts/db/assert-whatsapp-*.sql`'s run lines. Re-run all three dry-runs against the renamed file:
 
 ```bash
 for f in schema actor enqueue; do scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/<N>_whatsapp_reply_to_act.sql scripts/db/assert-whatsapp-$f.sql; done

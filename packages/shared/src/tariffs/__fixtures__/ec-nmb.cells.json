@@ -1,0 +1,21 @@
+{
+  "source": {
+    "file": "2025/Eastern-Cape-Province.xlsx",
+    "sha256": "63d4604ae2d86e949f38b8eb674e85053065512d5a93d7555f3589e2b3b54d34",
+    "sheet": "NELSON MANDELLA BAY METRO",
+    "rows": "1,43-48"
+  },
+  "cells": {
+    "A1": "NELSON MANDELA BAY METRO  - 13.04%",
+    "B1": "NELSON MANDELA BAY METRO  - 13.04%",
+    "A43": "Small Business 230 Volt",
+    "B43": "Small Business 230 Volt",
+    "A44": "Small Business Prepaid Tariff (Prepayment Tariff T32 & 37)",
+    "A46": "Basic Charge (R/month)",
+    "B46": 334.12,
+    "A47": "Energy Charge (c/kWh)",
+    "B47": 334.12,
+    "A48": "Wheeling Charge",
+    "B48": 112.31
+  }
+}

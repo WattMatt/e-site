@@ -40,3 +40,21 @@ describe('zoomAbout', () => {
     expect(zoomAbout(atMax, 2, { x: 0, y: 0 })).toBe(atMax)
   })
 })
+
+import { viewportKeyAction, DEFAULT_FIT_KEYS } from './viewport-math'
+
+describe('viewportKeyAction', () => {
+  it('defaults: F, f and 0 fit; + = zoom in; - _ zoom out', () => {
+    expect(DEFAULT_FIT_KEYS).toEqual(['f', 'F', '0'])
+    expect(viewportKeyAction('f', DEFAULT_FIT_KEYS)).toBe('fit')
+    expect(viewportKeyAction('0', DEFAULT_FIT_KEYS)).toBe('fit')
+    expect(viewportKeyAction('=', DEFAULT_FIT_KEYS)).toBe('in')
+    expect(viewportKeyAction('_', DEFAULT_FIT_KEYS)).toBe('out')
+    expect(viewportKeyAction('x', DEFAULT_FIT_KEYS)).toBeNull()
+  })
+  it('a canvas that needs F for a tool keeps only 0 for fit', () => {
+    expect(viewportKeyAction('f', ['0'])).toBeNull()
+    expect(viewportKeyAction('F', ['0'])).toBeNull()
+    expect(viewportKeyAction('0', ['0'])).toBe('fit')
+  })
+})

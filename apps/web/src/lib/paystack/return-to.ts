@@ -57,10 +57,10 @@ function isSafePath(value: unknown): value is string {
  * so a JBCC buyer who cancelled was sent to the Inspections paywall — a page
  * about a module they were not buying.
  *
- * JBCC and generator cost-recovery are project-scoped (`/projects/[id]/…`), so
- * there is no org-level landing page for them; the calling paywall knows the
- * project and should pass an explicit `return_to`. These are the fallbacks for
- * when it does not.
+ * JBCC, generator cost-recovery and Solar are project-scoped (`/projects/[id]/…`),
+ * so there is no org-level landing page for them; the calling route knows the
+ * project and should pass an explicit `return_to` (Solar: solarReturnTo).
+ * These are the fallbacks for when it does not.
  */
 export function returnToForFeature(featureKey: FeatureKey | string): string {
   switch (featureKey) {
@@ -68,7 +68,31 @@ export function returnToForFeature(featureKey: FeatureKey | string): string {
       return '/inspections'
     case 'jbcc':
     case 'generator_cost_recovery':
+    case 'solar':
     default:
       return DEFAULT_RETURN_TO
   }
+}
+
+/**
+ * The project's Solar locked page (Phase 1C). It sits OUTSIDE the gated Solar
+ * route group, so it renders for an org that does not (yet) hold Solar. This
+ * is where a Solar checkout that is cancelled returns. The id is URI-encoded
+ * and the result validated, so even a hostile id cannot leave the origin (the
+ * subscribe route also requires a uuid).
+ */
+export function solarLockedPath(projectId: string): string {
+  return safeReturnTo(`/projects/${encodeURIComponent(projectId)}/solar/locked`)
+}
+
+/**
+ * Where a Solar subscriber returns after Paystack: the locked page of the
+ * project they pressed Subscribe on, flagged `payment=received`. The org is
+ * bought org-wide (D-01), but the payer started on one project and must see
+ * it unlock there. The webhook may land a second or two after the payer does,
+ * so the locked page — not the gated Solar page, which would bounce them back
+ * to the paywall — shows "activating Solar…" and polls (spec §1.2).
+ */
+export function solarReturnTo(projectId: string): string {
+  return safeReturnTo(`${solarLockedPath(projectId)}?payment=received`)
 }
