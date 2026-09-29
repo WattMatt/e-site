@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { requireRolePage } from '@/lib/auth/require-role'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { SolarSettingsForm } from './SolarSettingsForm'
+import { ProposalTemplatesForm } from './ProposalTemplatesForm'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Solar defaults' }
@@ -15,10 +16,9 @@ type AnyClient = SupabaseClient<any, any, any>
 
 const LATER = [
   { title: 'Load densities', body: 'W/m² per tenant category and archetype mapping — with the load modelling tab.' },
-  { title: 'Branding for Solar reports', body: 'Solar-specific disclaimer and terms — with feasibility reports and proposals.' },
 ]
 
-/** /settings/solar (spec §11) — org owners/admins. Rate card + finance/opex/loss defaults live; equipment on its own page; two sections later. */
+/** /settings/solar (spec §11) — org owners/admins. Rate card + finance/opex/loss defaults live; equipment on its own page; proposal templates live; load densities later. */
 export default async function SolarSettingsPage() {
   const ctx = await requireRolePage(OWNER_ADMIN)
   const supabase = (await createClient()) as unknown as AnyClient
@@ -26,6 +26,10 @@ export default async function SolarSettingsPage() {
     .schema('solar').from('org_settings').select('settings, updated_at')
     .eq('organisation_id', ctx.organisationId).maybeSingle()
   const row = data as { settings?: unknown; updated_at?: string } | null
+  // Read through the caller's session (00216 SELECT policy); an unsubscribed org just sees the defaults.
+  const { data: tpl } = await supabase.schema('solar').from('proposal_templates')
+    .select('terms_text, disclaimer_text, validity_days, updated_at').eq('organisation_id', ctx.organisationId).maybeSingle()
+  const t = tpl as { terms_text?: string; disclaimer_text?: string; validity_days?: number; updated_at?: string } | null
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
@@ -45,6 +49,12 @@ export default async function SolarSettingsPage() {
         Modules, inverters and batteries (add, edit, retire, import from CSV).
       </p>
       <SolarSettingsForm initial={solarSettingsToForm(readSolarOrgSettings(row?.settings ?? null))} updatedAt={row?.updated_at ?? null} />
+      <div style={{ marginTop: 16 }}>
+        <ProposalTemplatesForm
+          initial={{ termsText: t?.terms_text ?? '', disclaimerText: t?.disclaimer_text ?? '', validityDays: t?.validity_days ?? 30 }}
+          updatedAt={t?.updated_at ?? null}
+        />
+      </div>
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
         {LATER.map((s) => (
           <Card key={s.title}>
