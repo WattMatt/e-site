@@ -3,7 +3,8 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { loadSolarActivity } from '@/lib/solar/activity'
 import { loadHeadlineKpis, loadSolarReadinessExtra, runsByCase } from '@/lib/solar/cases/page-data'
-import { computeSolarReadiness, toSiteReadinessInput } from '@esite/shared'
+import { computeSolarReadiness, toSiteReadinessInput, withTariffReadiness } from '@esite/shared'
+import { loadTariffReadinessInput } from '@/lib/solar/tariff/readiness-input'
 import { ReadinessChecklist } from '../../_components/ReadinessChecklist'
 import { StudyHeader } from '../../_components/StudyHeader'
 import { OverviewKpis } from '../../_components/OverviewKpis'
@@ -24,7 +25,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   const svc = createServiceClient() as unknown as AnyClient
   const [{ data: project }, { data: study }, { data: isGrantor }, activity, extra, { data: caseRows }, runs] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, address, city, province').eq('id', id).maybeSingle(),
-    supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva, selected_case_id, updated_at').eq('project_id', id).maybeSingle(),
+    supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva, tariff_id, export_rule, selected_case_id, updated_at').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
     loadSolarActivity(id, supabase),
     loadSolarReadinessExtra(supabase, svc, id, level),
@@ -43,7 +44,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <StudyHeader projectName={p.name ?? ''} address={address} supplyAuthority={licensee} />
-      <ReadinessChecklist projectId={id} steps={computeSolarReadiness(toSiteReadinessInput(study), level, extra)} />
+      <ReadinessChecklist projectId={id} steps={withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level, extra), await loadTariffReadinessInput(supabase, study as Record<string, unknown> | null))} />
       <OverviewKpis projectId={id} level={level} kpis={kpis} selectable={selectable} selectedCaseId={selectedCaseId}
         studyUpdatedAt={studyRow?.updated_at ?? null} stale={extra.stale !== null} />
       <ActivityList projectId={id} items={activity} isGrantor={isGrantor === true} />
