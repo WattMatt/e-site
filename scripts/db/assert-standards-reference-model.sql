@@ -54,8 +54,9 @@ BEGIN
     INSERT INTO _r VALUES ('extracted_without_standard_REFUSED', true);
   END;
 
-  INSERT INTO cable_schedule.sans_tables (code, title, standard, columns, provenance, standard_id, clause, visibility_org_id)
-  VALUES ('ZZ_PROBE_T', 'probe', 'SANS 10142-1:2021', '[]'::jsonb, 'extracted', v_std, 'Table 6.13', c_wm_org)
+  -- topic + conditions: required of extracted tables since 00226 (this file needs 00226 applied).
+  INSERT INTO cable_schedule.sans_tables (code, title, standard, columns, provenance, standard_id, clause, visibility_org_id, topic, conditions)
+  VALUES ('ZZ_PROBE_T', 'probe', 'SANS 10142-1:2021', '[]'::jsonb, 'extracted', v_std, 'Table 6.13', c_wm_org, 'derating', '[]'::jsonb)
   RETURNING id INTO v_tbl;
 
   -- ── A row of an extracted table cannot exist without a citation ──────────
@@ -92,8 +93,8 @@ BEGIN
   END;
 
   -- ── Promoting a table with uncited rows to 'extracted' is refused ────────
-  INSERT INTO cable_schedule.sans_tables (code, title, standard, columns, standard_id, clause)
-  VALUES ('ZZ_PROBE_LEGACY', 'probe', 'probe', '[]'::jsonb, v_std, 'Table 9.9') RETURNING id INTO v_legacy;
+  INSERT INTO cable_schedule.sans_tables (code, title, standard, columns, standard_id, clause, topic, conditions)
+  VALUES ('ZZ_PROBE_LEGACY', 'probe', 'probe', '[]'::jsonb, v_std, 'Table 9.9', 'derating', '[]'::jsonb) RETURNING id INTO v_legacy;
   INSERT INTO cable_schedule.sans_rows (table_id, sort_key, row_data) VALUES (v_legacy, 1, '{"a":1}');
   BEGIN
     UPDATE cable_schedule.sans_tables SET provenance = 'extracted' WHERE id = v_legacy;

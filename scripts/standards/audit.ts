@@ -17,7 +17,7 @@ import { outsideRepo } from './outside-repo.ts'
 import { crosscheck, LEGACY_CROSSCHECKS, type CrosscheckResult } from '../../packages/shared/src/standards/crosscheck.ts'
 import { pageOffset, parseCell, printedPage, splitPdfText } from '../../packages/shared/src/standards/pdf-text.ts'
 import { findTablePage } from '../../packages/shared/src/standards/extract-table.ts'
-import type { Dataset, DatasetTable } from '../../packages/shared/src/standards/dataset.ts'
+import { tableCode, type Dataset, type DatasetTable } from '../../packages/shared/src/standards/dataset.ts'
 import { readLegacyTables, type LiveTable } from './live-tables.ts'
 
 const arg = (n: string): string | undefined => {
@@ -54,9 +54,9 @@ async function main(): Promise<void> {
   const live = await readLegacyTables()
   const byCode = new Map(live.map((t) => [t.code, t]))
   const sans2021 = (clause: string): DatasetTable | undefined =>
-    ds.tables.find((t) => t.document.year === 2021 && t.clause === `Table ${clause}`)
+    ds.tables.find((t) => t.code === tableCode('SANS 10142-1', 2021, clause))
   const sans2017 = (clause: string): DatasetTable | undefined =>
-    ds.tables.find((t) => t.document.year === 2017 && t.clause === `Table ${clause}`)
+    ds.tables.find((t) => t.code === tableCode('SANS 10142-1', 2017, clause))
 
   const results: Array<CrosscheckResult & { cite: string; editionsAgree: boolean }> = []
   for (const m of LEGACY_CROSSCHECKS) {

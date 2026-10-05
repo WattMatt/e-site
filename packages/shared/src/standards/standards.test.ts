@@ -38,6 +38,7 @@ const DOC = [
 const SPEC: TableSpec = {
   clause: '9.1',
   title: 'Correction factors for something',
+  topic: 'derating',
   keyColumn: { key: 'ambient_c', label: 'Ambient', unit: '°C', header: 1 },
   valueColumns: [
     { key: 'type_a', label: 'Type A', unit: null, header: 2 },
@@ -72,6 +73,7 @@ describe('pdf-text', () => {
     expect(parseCell('1,22')).toBe(1.22)
     expect(parseCell('0,5')).toBe(0.5)
     expect(parseCell('400')).toBe(400)
+    expect(parseCell('1 138')).toBe(1138)
     expect(parseCell('–')).toBeNull()
     expect(parseCell('6.2.10')).toBeUndefined()
     expect(parseCell('K·m/W')).toBeUndefined()
@@ -80,7 +82,7 @@ describe('pdf-text', () => {
 
 describe('extractTable', () => {
   it('places values by column, fills a spanned band, cites every row', () => {
-    const rows = extractTable(splitPdfText(DOC), SPEC)
+    const { rows } = extractTable(splitPdfText(DOC), SPEC)
     expect(rows.map((r) => r.row_data)).toEqual([
       { ambient_c: 10, type_a: 1.4, type_b: 1.0 },
       { ambient_c: 20, type_a: 1.2, type_b: 1.0 },
@@ -108,13 +110,13 @@ describe('extractTable', () => {
   })
 
   it('refuses a stray number when no spanned band is declared', () => {
-    const { spanned: _s, ...noSpan } = SPEC
+    const { spanned: _s, ...noSpan } = SPEC; void _s
     expect(() => extractTable(splitPdfText(DOC), { ...noSpan, valueColumns: noSpan.valueColumns.map((c) => ({ ...c, sparse: true })) }))
       .toThrow(/without a row key/)
   })
 
   it('refuses a blank required cell', () => {
-    const { spanned: _s, ...noSpan } = SPEC
+    const { spanned: _s, ...noSpan } = SPEC; void _s
     const text = DOC.replace('                                                  1,0\n', '')
     expect(() => extractTable(splitPdfText(text), noSpan)).toThrow(/row 10 has no value in type_b/)
   })

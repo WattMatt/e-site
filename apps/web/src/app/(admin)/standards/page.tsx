@@ -18,7 +18,7 @@ export default async function StandardsPage() {
       .select('id, code, edition, year, title, publisher, kind, status, superseded_by, in_library, notes')
       .order('code').order('year', { ascending: false }),
     db.from('sans_tables')
-      .select('id, code, title, standard, section_number, clause, provenance, verification, standard_id, columns, notes, source_ref, category, description, cable_construction'),
+      .select('id, code, title, standard, section_number, clause, provenance, verification, standard_id, columns, notes, source_ref, category, description, cable_construction, topic, conditions'),
   ])
 
   // PostgREST caps a response at 1 000 rows; page through so no table is ever
@@ -59,8 +59,8 @@ export default async function StandardsPage() {
         <div>
           <h1 className="page-title">Standards</h1>
           <p className="page-subtitle">
-            {tables.length} reference table{tables.length === 1 ? '' : 's'} · {standards.length} source documents ·
-            values for internal engineering use; clause text and PDFs are not reproduced
+            Engineering reference tables with the clause, edition and page each value comes from.
+            For internal engineering use; clause text and the standards themselves are not reproduced.
           </p>
         </div>
       </div>
