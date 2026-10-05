@@ -58,6 +58,7 @@ membership.
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/tenant-schedule` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/load-profile` (E8; **not** Solar-gated) | W | W | W | R | R | R | — |
 | `/projects/[id]/floor-plans` | W | W | W | W | R | — | R |
 | `/projects/[id]/handover` | W | W | W | R | R | — | R |
 | `/projects/[id]/inspections` | W² | W² | W² | R² | W² | — | R² |
@@ -804,6 +805,18 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 > **`client_viewer` may be an ASSIGNEE from Q1 but may not write, and may not browse.** In a shopping-centre fit-out the landlord is frequently the ball-in-court, so an item must be able to point at them. Their writes are blocked by `work_items_update_gate` and by the fact that no registered type admits `client_viewer` in `write_roles` — **`00161_client_viewer_readonly_write_block.sql` does NOT cover `work_items`**, it loops over a hard-coded list of thirteen tables (`00161:61-75`), so this is one layer, not two. Their **reads** are narrowed too: `work_items_select` excludes `client_viewer` from the project-access arm, because `public.user_has_project_access()` is TRUE for any `project_members` row regardless of role (`00106` clause (a)) — the identical predicate PR #162 closed on saved reports. They see only items they are assigned, gatekeep or watch, which is what §04 §(d) describes. The Q3 Watcher tier replaces the write block.
 >
 > **`work_item_events` has no write policy at all**, and `INSERT`/`UPDATE`/`DELETE` are revoked from `authenticated`. It is written solely by a `SECURITY DEFINER` append trigger, so the assignment and status history cannot be forged by the person it incriminates.
+
+### Load profile (`load-profile.actions.ts`, `GET /api/projects/[id]/load-profile/export`)
+
+| Action / endpoint | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `parseLoadProfileFileAction` · `commitLoadProfileFileAction` | W | W | W | — | — | — | — |
+| `addSyntheticSourceAction` · `updateLoadProfileSourceAction` · `deleteLoadProfileSourceAction` | W | W | W | — | — | — | — |
+| `saveLoadProfileSettingsAction` (reference year, PF, NMD, tariff) | W | W | W | — | — | — | — |
+| `listPublishedLicenseesAction` · `listPublishedTariffsAction` (tariff pickers) | R | R | R | — | — | — | — |
+| `GET /api/projects/[id]/load-profile/export?format=xlsx\|pdf` | R | R | R | R | R | R | — |
+
+> **Added 2026-10-05 (E8, migration `00230`).** A project-level tool for every plan (owner decision E8-D1), deliberately NOT behind the Solar subscription. Read = `SNAG_FIELD_ROLES` (every effective project role except `client_viewer`); write = `ORG_WRITE_ROLES`. Every action and the export route gate on `requireEffectiveRole` and then write/read through the caller's session, so `00230`'s policies are the second gate: one PERMISSIVE policy per verb carrying the whole role condition (no RESTRICTIVE `FOR ALL`, the `00205`/`00206` trap), parents bound by trigger, impersonation-tested by `scripts/db/assert-load-profile-rls.sql` (24 rows, two mutations red). Raw uploads go straight to the private `load-profile-files` bucket at `{project_id}/{sha256}.{ext}`; the server downloads with the caller's session, checks the bytes hash to the path, and re-parses — the browser's parse is never trusted. **Tariffs** are read through the caller's session: the library's own RLS is the gate (ADR-007, PR #239 opens the published library to every signed-in org; until it is applied only Solar orgs and tariff admins read it, and the tab says the tariff is not available). `lib/load-profile/tariff-source.ts` additionally narrows every query to `tariff_year.state = 'published'`. The tariff pickers are offered to the write roles only — readers see the chosen tariff's bill, not the catalogue.
 
 ### WhatsApp (`whatsapp-link.actions.ts`, `whatsapp-invite.actions.ts`, `whatsapp-admin.actions.ts`)
 
