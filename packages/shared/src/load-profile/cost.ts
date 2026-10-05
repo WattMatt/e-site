@@ -11,6 +11,23 @@ import type { MonthlyBill, NotModelled } from '../tariffs/bill-engine'
 import { aggregateHourly, sumTouKwh, type TouCalendar } from '../tariffs/tou'
 import type { Tariff, TouKwh } from '../tariffs/types'
 
+/**
+ * A tariff whose every charge applies in all seasons, all TOU periods and all day types (and no
+ * peak-window demand) bills the same under ANY calendar — so it can be costed while its supplier has
+ * no TOU calendar loaded. Anything seasonal or time-of-use cannot, and is refused upstream.
+ */
+export function isCalendarIndependent(tariff: Tariff): boolean {
+  return tariff.charges.every((c) => c.season === 'all' && c.tou === 'all' && c.dayType === 'all' && c.demandBasis !== 'peak_window_md')
+}
+
+/** For calendar-independent tariffs only: every hour off-peak, no high season. */
+export const NEUTRAL_CALENDAR: TouCalendar = {
+  highSeasonMonths: [],
+  windows: (['high', 'low'] as const).flatMap((season) => (['weekday', 'saturday', 'sunday'] as const).map((dayType) => ({ season, dayType, startMinute: 0, endMinute: 1440, period: 'off_peak' as const }))),
+  holidayTreatedAs: null,
+  source: 'assumed_eskom',
+}
+
 export interface CostedMonth { month: number; tou: TouKwh; kwh: number; mdKva: number | null; bill: MonthlyBill }
 export interface ProfileCost {
   months: CostedMonth[]

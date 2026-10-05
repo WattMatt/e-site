@@ -9,6 +9,8 @@ import { dayTypeOf, monthOf, referenceYearDates, SAST_OFFSET_MS } from '../servi
 import { monthlyMaxDemand, type MonthlyMd } from '../services/solar/load/max-demand'
 import { siteProfileCharts, type DayBand, type SiteProfileKpis } from '../services/solar/load/profile-stats'
 
+export type { SiteProfileKpis }
+
 /** The NMD headroom and rounding rule, printed beside the suggestion. */
 export const NMD_RULE = { headroom: 0.1, roundToKva: 5, text: 'Highest monthly maximum demand + 10 %, rounded up to the next 5 kVA' } as const
 /** Southern-hemisphere high-demand season (Eskom: June–August). */

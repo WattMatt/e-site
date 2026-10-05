@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { makeCharge, makeTariff } from '../tariffs/types'
 import type { TouCalendar, TouWindow } from '../tariffs/tou'
 import { analyseProfile } from './analyse'
-import { costProfile, mdByCalendarMonth } from './cost'
+import { costProfile, isCalendarIndependent, mdByCalendarMonth, NEUTRAL_CALENDAR } from './cost'
 import { measuredReferenceSeries } from './measured'
 import { handCheckedReadings } from './__fixtures__/hand-checked'
+import { GOLDEN_CITY_POWER_INDUSTRIAL_LV } from '../tariffs/__fixtures__/golden-bills'
+import { tariffBillCalculator } from '../services/solar/finance/tariff-bill-calculator'
 
 /** Weekday 07–10 peak, 10–18 standard, else off-peak; weekends off-peak; holidays as Sunday. Both seasons. */
 const w = (season: 'high' | 'low', dayType: 'weekday' | 'saturday' | 'sunday', s: number, e: number, period: TouWindow['period']): TouWindow => ({ season, dayType, startMinute: s * 60, endMinute: e * 60, period })
@@ -45,5 +47,37 @@ describe('costProfile — hand-checked January 2025', () => {
   it('annual kWh equals the profile', () => {
     expect(c.annual.kwh).toBeCloseTo(a.kpis.annualKwh, 6)
     expect(c.annual.tou.peak + c.annual.tou.standard + c.annual.tou.off_peak).toBeCloseTo(a.kpis.annualKwh, 6)
+  })
+})
+
+describe('costProfile — parity with the Solar tariff tab for the same tariff', () => {
+  it('every month equals tariffBillCalculator (City Power Industrial LV TOU: energy, demand, reactive, fixed)', () => {
+    const series = measuredReferenceSeries(handCheckedReadings(), 30, 2025).series
+    const mine = costProfile({ tariff: GOLDEN_CITY_POWER_INDUSTRIAL_LV, calendar, series, referenceYear: 2025, powerFactor: 0.95, nmdKva: 175 })
+    const solar = tariffBillCalculator(GOLDEN_CITY_POWER_INDUSTRIAL_LV, { calendar, referenceYear: 2025, powerFactor: 0.95, demandForMonth: () => ({ nmdKva: 175 }) })
+      .monthlyBills({ importKwh: series, exportKwh: new Float64Array(8760) })
+    expect(mine.months.map((m) => m.bill.totalExclVat)).toEqual(solar.map((b) => b.totalZar))
+    expect(mine.annual.totalExclVat).toBeGreaterThan(0)
+  })
+})
+
+describe('calendar-independent tariffs', () => {
+  const flatTariff = makeTariff({ name: 'Business flat', structure: 'flat', charges: [
+    makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 250 }),
+    makeCharge({ component: 'demand', unit: 'R_per_kVA_month', amountExclVat: 100, demandBasis: 'actual_md' }),
+    makeCharge({ component: 'service', unit: 'R_per_month', amountExclVat: 500 }),
+  ] })
+  it('recognises a tariff with no seasonal, TOU or day-type charge; refuses the TOU one', () => {
+    expect(isCalendarIndependent(flatTariff)).toBe(true)
+    expect(isCalendarIndependent(tariff)).toBe(false)
+    expect(isCalendarIndependent(makeTariff({ name: 's', structure: 'flat', charges: [makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 1, season: 'high' })] }))).toBe(false)
+  })
+  it('bills the same under the neutral calendar as under a real one', () => {
+    const series = measuredReferenceSeries(handCheckedReadings(), 30, 2025).series
+    const a = costProfile({ tariff: flatTariff, calendar: NEUTRAL_CALENDAR, series, referenceYear: 2025, powerFactor: 0.95, nmdKva: 175 })
+    const b = costProfile({ tariff: flatTariff, calendar, series, referenceYear: 2025, powerFactor: 0.95, nmdKva: 175 })
+    expect(a.months.map((m) => m.bill.totalExclVat)).toEqual(b.months.map((m) => m.bill.totalExclVat))
+    // January by hand: 31 440 kWh × R2.50 + 175 kVA × R100 + R500 = 78 600 + 17 500 + 500.
+    expect(a.months[0].bill.totalExclVat).toBeCloseTo(96_600, 6)
   })
 })
