@@ -182,6 +182,65 @@ describe('project_members.is_active revokes access at the database', () => {
     expect(/search_path\s+(?:TO|=)\s+'?public'?/i.test(h), `${jwt!.file}: custom_jwt_claims search_path is not pinned`).toBe(true)
   })
 
+  describe('inspection write helpers carry their own joins and must honour the flag too (00227)', () => {
+    // None of these calls user_has_project_access for its membership test, so
+    // 00204 did not reach them. user_can_write_responses gates every answer,
+    // photo and file write; user_can_verify is validate-inspection's PM+ arm;
+    // is_inspection_verifier is the verifier arm of responses and signatures.
+    const write = finalFunctionDefinition('inspections.user_can_write_responses')
+    const verify = finalFunctionDefinition('inspections.user_can_verify')
+    const verifier = finalFunctionDefinition('inspections.is_inspection_verifier')
+
+    it('all three definitions resolve in the migrations', () => {
+      expect(write, 'inspections.user_can_write_responses is never defined').not.toBeNull()
+      expect(verify, 'inspections.user_can_verify is never defined').not.toBeNull()
+      expect(verifier, 'inspections.is_inspection_verifier is never defined').not.toBeNull()
+    })
+
+    it('user_can_write_responses requires pm.is_active and uo.is_active', () => {
+      expect(
+        REQUIRES_PM_ACTIVE.test(write!.body),
+        `${write!.file}: user_can_write_responses joins project_members without pm.is_active — ` +
+          'a soft-deactivated member can still save inspection answers and photos',
+      ).toBe(true)
+      expect(INVERTS_PM_ACTIVE.test(write!.body)).toBe(false)
+      expect(/\buo\.is_active\b/i.test(write!.body), `${write!.file}: lost uo.is_active (00153)`).toBe(true)
+    })
+
+    it('user_can_write_responses refuses a project-scoped client viewer, treating a NULL role as one', () => {
+      // The ORG role alone misses project_members.role = 'client_viewer'. The
+      // COALESCE default must be 'client_viewer': a '' default reads "no
+      // effective role" as "not a client viewer" and widens access (00204).
+      expect(
+        /COALESCE\s*\(\s*public\.user_effective_project_role\s*\((?:[^()]|\([^()]*\))*\)\s*,\s*'client_viewer'\s*\)\s*<>\s*'client_viewer'/i.test(
+          write!.body,
+        ),
+        `${write!.file}: user_can_write_responses does not refuse a project-scoped client viewer (or defaults a NULL role open)`,
+      ).toBe(true)
+      expect(/\buo\.role\s*<>\s*'client_viewer'/i.test(write!.body), `${write!.file}: lost the org client_viewer refusal`).toBe(true)
+    })
+
+    it('user_can_verify requires pm.is_active and uo.is_active', () => {
+      expect(REQUIRES_PM_ACTIVE.test(verify!.body), `${verify!.file}: user_can_verify lacks pm.is_active`).toBe(true)
+      expect(INVERTS_PM_ACTIVE.test(verify!.body)).toBe(false)
+      expect(/\buo\.is_active\b/i.test(verify!.body), `${verify!.file}: user_can_verify lacks uo.is_active`).toBe(true)
+    })
+
+    it('is_inspection_verifier requires current project access, not just verifier_id', () => {
+      expect(
+        /\bpublic\.user_has_project_access\s*\(/i.test(verifier!.body),
+        `${verifier!.file}: is_inspection_verifier trusts verifier_id alone — a deactivated verifier keeps verifier writes`,
+      ).toBe(true)
+    })
+
+    it('all three keep SECURITY DEFINER and a pinned search_path', () => {
+      for (const d of [write!, verify!, verifier!]) {
+        expect(/\bSECURITY\s+DEFINER\b/i.test(d.header), `${d.file}: not SECURITY DEFINER`).toBe(true)
+        expect(/search_path\s+(?:TO|=)\s+'?public'?/i.test(d.header), `${d.file}: search_path is not pinned`).toBe(true)
+      }
+    })
+  })
+
   it('user_has_project_access keeps SECURITY DEFINER, STABLE and row_security off', () => {
     // The helper reads project_members and user_organisations from inside
     // policies ON those tables; without these attributes it either recurses
