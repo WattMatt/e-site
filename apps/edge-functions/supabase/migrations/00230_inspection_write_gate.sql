@@ -1,4 +1,4 @@
--- 00231_inspection_write_gate.sql
+-- 00230_inspection_write_gate.sql
 --
 -- Writes to an inspection now follow the project membership, not only the org membership.
 --
