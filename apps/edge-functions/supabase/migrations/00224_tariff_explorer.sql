@@ -352,7 +352,7 @@ NOTIFY pgrst, 'reload schema';
 
 -- @verify:begin
 -- function: public.caller_can_read_tariff_library()
--- anon_execute_absent: public.caller_can_read_tariff_library()
+-- grant_absent: anon EXECUTE ON public.caller_can_read_tariff_library()
 -- table: tariffs.holiday_treatment
 -- grant_absent: anon SELECT ON tariffs.holiday_treatment
 -- policy: licensee_select ON tariffs.licensee PERMISSIVE
