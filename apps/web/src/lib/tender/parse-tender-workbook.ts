@@ -41,8 +41,30 @@ function coerce(value: ExcelJS.CellValue | undefined): Cell {
 }
 
 /**
- * Worksheet → 0-indexed rows of scalars. `codeText[r][c]` keeps the cell's
- * DISPLAYED text so an item code typed as the number 1.10 is not read as 1.1.
+ * The text a person sees in the cell. ExcelJS's `cell.text` ignores the number
+ * format, so a code typed as the number 1.1 with format 0.00 (shown "1.10")
+ * would read as "1.1" and collide with the real 1.1. Apply the format's fixed
+ * decimal places ourselves.
+ */
+function displayText(cell: ExcelJS.Cell): string {
+  const v = cell.value
+  if (typeof v === 'number') {
+    const m = /0\.(0+)/.exec(cell.numFmt ?? '')
+    return m ? v.toFixed(m[1].length) : String(v)
+  }
+  try {
+    return (cell.text ?? '').trim()
+  } catch {
+    // ExcelJS throws on some exotic formula cells; fall back to no display text.
+    return ''
+  }
+}
+
+/**
+ * Worksheet → 0-indexed rows of scalars plus each cell's displayed text. Only
+ * the top-left cell of a merged range carries a value: ExcelJS repeats the
+ * master's value in every slave cell, which would turn a description merged
+ * across UNIT into a unit, or count a vertically merged amount twice.
  */
 function readSheet(ws: ExcelJS.Worksheet): { rows: Aoa; text: string[][] } {
   const rows: Aoa = []
@@ -55,15 +77,9 @@ function readSheet(ws: ExcelJS.Worksheet): { rows: Aoa; text: string[][] } {
     const width = Math.max(row.cellCount, row.actualCellCount)
     for (let c = 1; c <= width; c++) {
       const cell = row.getCell(c)
-      vals.push(coerce(cell.value))
-      let t: string
-      try {
-        t = (cell.text ?? '').trim()
-      } catch {
-        // ExcelJS throws on some exotic formula cells; fall back to no display text.
-        t = ''
-      }
-      txt.push(t)
+      const slave = cell.isMerged && cell.master !== cell
+      vals.push(slave ? null : coerce(cell.value))
+      txt.push(slave ? '' : displayText(cell))
     }
     rows.push(vals)
     text.push(txt)
@@ -98,7 +114,7 @@ export function columnLetter(index: number): string {
 function headerField(raw: Cell): keyof ColumnMap | null {
   const h = str(raw).toUpperCase().replace(/\.$/, '')
   if (h === '') return null
-  if (h === 'DESCRIPTION') return 'description'
+  if (h.includes('DESCRIPTION')) return 'description'
   if (h.startsWith('ITEM')) return 'item'
   if (h.startsWith('UNIT')) return 'unit'
   if (h === 'QTY' || h.startsWith('QTY') || h.startsWith('QUANTITY')) return 'qty'
@@ -111,7 +127,7 @@ function headerField(raw: Cell): keyof ColumnMap | null {
 
 function findHeader(rows: Aoa): { index: number; columns: ColumnMap } | null {
   for (let i = 0; i < rows.length; i++) {
-    if (!rows[i].some((c) => str(c).toUpperCase() === 'DESCRIPTION')) continue
+    if (!rows[i].some((c) => { const h = str(c).toUpperCase(); return h.includes('DESCRIPTION') && h.length <= 40 })) continue
     const columns: ColumnMap = {}
     rows[i].forEach((c, col) => {
       const f = headerField(c)
@@ -134,13 +150,27 @@ export function isDescendant(parent: string, child: string): boolean {
 }
 
 const TOTAL_RE = /\bTOTAL\b|CARRIED\s+(FORWARD|TO)/i
+const BROUGHT_FORWARD_RE = /\bBROUGHT\s+FORWARD\b|\bB\/F\b/i
 
-function isTotalRow(texts: string[]): boolean {
-  return texts.some((t) => TOTAL_RE.test(t) && (/^(SUB[\s-]?)?TOTAL\b/i.test(t) || /CARRIED|SUMMARY|BILL|FORWARD/i.test(t)))
+function isTotalText(t: string): boolean {
+  return TOTAL_RE.test(t) && (/^(SUB[\s-]?)?TOTAL\b/i.test(t) || /CARRIED|SUMMARY|BILL|FORWARD/i.test(t))
+}
+
+/**
+ * A total row carries no unit or quantity, and its "code" cell is either empty
+ * or itself the total text. A coded item whose DESCRIPTION happens to start with
+ * "Total" ("Total station survey") is an item, not a total.
+ */
+function isTotalRow(code: string, description: string, unit: string | null, quantity: number | null): boolean {
+  if (unit != null || quantity != null) return false
+  if (code !== '') return isTotalText(code)
+  return isTotalText(description)
 }
 
 const FIXED_UNIT_RE = /^(P\.?C\.?|P\.?S\.?)$/i
-const FIXED_TEXT_RE = /\bPROVISIONAL\b|\bPRIME\s+COST\b|\bP\.?C\.?\s+SUM\b|\bPC\b|\bCONTINGENC/i
+// Deliberately narrow: "Provisional quantities" are remeasurable items and "PC"
+// also means a computer socket, so neither alone makes a sum fixed.
+const FIXED_TEXT_RE = /\bPROVISIONAL\s+SUMS?\b|\bPRIME\s+COST\b|\bP\.?C\.?\s+SUMS?\b|\bCONTINGENC/i
 
 function guessRateCellType(
   qtyRaw: Cell,
@@ -152,7 +182,7 @@ function guessRateCellType(
   if (str(qtyRaw).toUpperCase() === 'RATE ONLY') return 'rate_only'
   if (unit && FIXED_UNIT_RE.test(unit)) return 'fixed'
   if (FIXED_TEXT_RE.test(description)) return 'fixed'
-  if (headingTexts.some((h) => /\bPROVISIONAL\b|\bCONTINGENC/i.test(h))) return 'fixed'
+  if (headingTexts.some((h) => FIXED_TEXT_RE.test(h))) return 'fixed'
   if (unit && quantity == null) return 'rate_only'
   return 'priced'
 }
@@ -198,7 +228,7 @@ function parseBillSheet(
   const allCodes: string[] = []
   for (let r = header.index + 1; r < rows.length; r++) {
     const c = codeOf(r)
-    if (c && !isTotalRow([c])) allCodes.push(c)
+    if (c && !isTotalText(c)) allCodes.push(c)
   }
   const hasChildren = (code: string) => allCodes.some((c) => isDescendant(code, c))
   const billCode = billCodeFromName(name) ?? billCodeFromCodes(allCodes) ?? name
@@ -209,6 +239,10 @@ function parseBillSheet(
   const out: ParsedTenderRow[] = []
   const stack: { code: string; text: string }[] = []
   let statedTotal: number | null = null
+  // After the bill's "… TO SUMMARY" total, rows that repeat earlier codes are a
+  // recap block and must not be counted again.
+  let billClosed = false
+  const seenCodes = new Set<string>()
 
   for (let r = header.index + 1; r < rows.length; r++) {
     const row = rows[r]
@@ -254,11 +288,23 @@ function parseBillSheet(
       amountColumn: null,
     })
     const texts = [code, description].filter(Boolean)
-    if (isTotalRow(texts)) {
+    if (isTotalRow(code, description, unit, quantity)) {
       const lastNumeric = [...row].reverse().map(toNumber).find((n) => n != null) ?? null
       const stated = amount ?? lastNumeric
       if (stated != null) statedTotal = stated
+      if (/SUMMARY/i.test(texts.join(' '))) billClosed = true
       out.push(base('total', null, texts.join(' '), null, null, stated))
+      continue
+    }
+
+    if (code === '' && unit == null && quantity == null && BROUGHT_FORWARD_RE.test(description)) {
+      out.push(base('note', null, description, null, null, null))
+      continue
+    }
+
+    if (billClosed && (code === '' || seenCodes.has(code))) {
+      // Recap block after the bill total: kept as text, never counted.
+      if (description !== '' || code !== '') out.push(base('note', code || null, description, null, null, null))
       continue
     }
 
@@ -267,9 +313,14 @@ function parseBillSheet(
         unclassified.push({ sheet: name, rowNumber, code, description, amount, reason: 'priced row without an item code' })
         continue
       }
+      if (unit != null || quantity != null) {
+        unclassified.push({ sheet: name, rowNumber, code, description, amount, reason: 'row has a unit or quantity but no item code' })
+        continue
+      }
       if (description !== '') out.push(base('note', null, description, null, null, null))
       continue
     }
+    seenCodes.add(code)
 
     // Maintain the heading stack for this code.
     while (stack.length && !isDescendant(stack[stack.length - 1].code, code)) stack.pop()
@@ -390,11 +441,19 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
 
   const sheets: ParsedSheet[] = []
   const skippedSheets: string[] = []
+  const skippedPricedSheets: string[] = []
   const unclassified: UnclassifiedRow[] = []
   const summaries: { name: string; rows: Aoa; text: string[][] }[] = []
+  const hasNumbers = (rows: Aoa) => rows.some((r) => r.some((c) => typeof c === 'number'))
 
   for (const ws of wb.worksheets) {
     const { rows, text } = readSheet(ws)
+    if (ws.state && ws.state !== 'visible') {
+      // Hidden workings must never become rows a tenderer sees.
+      skippedSheets.push(ws.name)
+      if (hasNumbers(rows)) skippedPricedSheets.push(ws.name)
+      continue
+    }
     if (/SUMMARY/i.test(ws.name)) {
       summaries.push({ name: ws.name, rows, text })
       continue
@@ -402,6 +461,7 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
     const header = findHeader(rows)
     if (!header || header.columns.description === undefined) {
       skippedSheets.push(ws.name)
+      if (hasNumbers(rows)) skippedPricedSheets.push(ws.name)
       continue
     }
     sheets.push(parseBillSheet(ws.name, rows, text, header, unclassified))
@@ -411,5 +471,5 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
   for (const s of summaries) if (s !== main) skippedSheets.push(s.name)
   const summary = main ? parseSummary(main.name, main.rows, main.text) : null
 
-  return { sheets, summary, skippedSheets, unclassified }
+  return { sheets, summary, skippedSheets, skippedPricedSheets, unclassified }
 }

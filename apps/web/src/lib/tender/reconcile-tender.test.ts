@@ -69,3 +69,15 @@ describe('reconcileTender — structural failures', () => {
     expect(reconcileTender(p).matched).toBe(false)
   })
 })
+
+describe('reconcileTender — skipped sheets', () => {
+  it('fails when a skipped sheet holds numbers, and warns about every skipped sheet', async () => {
+    const p = await parseTenderWorkbook(await buildMvlWorkbook())
+    p.skippedSheets = ['Cover', 'Odd layout']
+    p.skippedPricedSheets = ['Odd layout']
+    const r = reconcileTender(p)
+    expect(r.matched).toBe(false)
+    expect(r.warnings.filter((w) => w.includes('Odd layout'))).toHaveLength(1)
+    expect(r.warnings.some((w) => w.includes('Cover'))).toBe(true)
+  })
+})

@@ -168,3 +168,137 @@ describe('parseTenderWorkbook — nothing is dropped silently', () => {
     expect(p.sheets).toEqual([])
   })
 })
+
+// ─── Review findings (2026-10-05) ───────────────────────────────────────────
+
+async function sheetBook(build: (wb: import('exceljs').Workbook) => void): Promise<Buffer> {
+  const ExcelJS = (await import('exceljs')).default
+  const wb = new ExcelJS.Workbook()
+  build(wb)
+  return Buffer.from(await wb.xlsx.writeBuffer())
+}
+
+describe('parseTenderWorkbook — real-world quirks', () => {
+  it('keeps the trailing zero of a code typed as a number with a 0.00 format', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow([1.1, 'First', 'No', 1, null, null]).getCell(1).numFmt = '0.00'
+      ws.addRow([1.1, 'Tenth', 'No', 1, null, null]).getCell(1).numFmt = '0.0'
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows.map((r) => r.code)).toEqual(['1.10', '1.1'])
+  })
+
+  it('accepts a DESCRIPTION OF WORK header', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION OF WORK', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows[0]).toMatchObject({ code: '1.1', kind: 'item' })
+  })
+
+  it('skips hidden sheets and reports any skipped sheet that holds numbers', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+      const hid = wb.addWorksheet('Workings')
+      hid.state = 'hidden'
+      hid.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY'])
+      hid.addRow(['9.9', 'Secret', 'No', 3])
+      wb.addWorksheet('Odd layout').addRow(['Cable', 'm', 120, 55.5])
+      wb.addWorksheet('Cover').addRow(['Sunbird Central'])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets.map((s) => s.name)).toEqual(['Bill No 1'])
+    expect(p.skippedSheets).toEqual(['Workings', 'Odd layout', 'Cover'])
+    expect(p.skippedPricedSheets).toEqual(['Workings', 'Odd layout'])
+  })
+
+  it('reports an uncoded row that has a unit or quantity (it would need a price)', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow([null, 'a) 16mm conduit', 'm', 120, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.unclassified).toEqual([expect.objectContaining({ rowNumber: 2, description: 'a) 16mm conduit' })])
+  })
+
+  it('does not mistake a coded item whose description starts with Total for a total row', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Total station survey of the bill area', 'day', 2, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows[0]).toMatchObject({ kind: 'item', code: '1.1' })
+  })
+
+  it('treats page carried/brought-forward rows as carry rows, not prices', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'A', 'No', 1, 100, 100])
+      ws.addRow([null, 'CARRIED FORWARD', null, null, null, 100])
+      ws.addRow([null, 'BROUGHT FORWARD', null, null, null, 100])
+      ws.addRow(['1.2', 'B', 'No', 1, 50, 50])
+      ws.addRow(['TOTAL CARRIED TO SUMMARY', null, null, null, null, 150])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.unclassified).toEqual([])
+    expect(p.sheets[0].statedTotal).toBe(150)
+    expect(p.sheets[0].rows.filter((r) => r.kind === 'item').map((r) => r.code)).toEqual(['1.1', '1.2'])
+  })
+
+  it('ignores a recap block that repeats codes after the bill total', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 2')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['2.1', 'Section one'])
+      ws.addRow(['2.1.1', 'A', 'No', 1, 100, 100])
+      ws.addRow(['2.2', 'Section two'])
+      ws.addRow(['2.2.1', 'B', 'No', 1, 50, 50])
+      ws.addRow(['TOTAL FOR BILL NO 2 - CARRIED TO SUMMARY', null, null, null, null, 150])
+      ws.addRow([null, 'BILL SUMMARY'])
+      ws.addRow(['2.1', 'Section one', null, null, null, 100])
+      ws.addRow(['2.2', 'Section two', null, null, null, 50])
+    })
+    const p = await parseTenderWorkbook(buf)
+    const items = p.sheets[0].rows.filter((r) => r.kind === 'item')
+    expect(items.map((r) => r.code)).toEqual(['2.1.1', '2.2.1'])
+    expect(p.sheets[0].statedTotal).toBe(150)
+  })
+
+  it('is conservative about fixed sums', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 3')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['3.1', 'PC socket outlet, double', 'No', 12, null, null])
+      ws.addRow(['3.2', 'Provisional quantity: trenching in rock', 'm', 30, null, null])
+      ws.addRow(['3.3', 'Provisional quantities'])
+      ws.addRow(['3.3.1', 'Extra conduit', 'm', 50, null, null])
+      ws.addRow(['3.4', 'Provisional sums'])
+      ws.addRow(['3.4.1', 'Eskom connection fee', 'Sum', 1, null, 250000])
+      ws.addRow(['3.5', 'Prime cost sum for luminaires', 'Sum', 1, null, 80000])
+    })
+    const p = await parseTenderWorkbook(buf)
+    const t = Object.fromEntries(p.sheets[0].rows.filter((r) => r.kind === 'item').map((r) => [r.code, r.rateCellType]))
+    expect(t).toEqual({ '3.1': 'priced', '3.2': 'priced', '3.3.1': 'priced', '3.4.1': 'fixed', '3.5': 'fixed' })
+  })
+
+  it('reads only the top-left cell of a merged range', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Notes about the installation spanning columns'])
+      ws.mergeCells('B2:D2')
+      ws.addRow(['1.1.1', 'Thing', 'No', 1, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows[0]).toMatchObject({ code: '1.1', kind: 'heading', unit: null })
+  })
+})

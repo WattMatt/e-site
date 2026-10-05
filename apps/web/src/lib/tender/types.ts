@@ -97,8 +97,10 @@ export interface UnclassifiedRow {
 export interface ParsedTenderWorkbook {
   sheets: ParsedSheet[]
   summary: ParsedSummary | null
-  /** Sheets that had no recognisable header row and are not a summary. */
+  /** Sheets that had no recognisable header row, are hidden, or are a second summary. */
   skippedSheets: string[]
+  /** Skipped sheets that hold numbers: possibly a bill the parser could not read. Fails reconciliation. */
+  skippedPricedSheets: string[]
   unclassified: UnclassifiedRow[]
 }
 

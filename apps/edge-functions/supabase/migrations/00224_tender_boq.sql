@@ -165,6 +165,57 @@ CREATE TRIGGER tender_estimate_lines_locked BEFORE INSERT OR UPDATE OR DELETE ON
 CREATE TRIGGER tender_requirements_locked BEFORE INSERT OR UPDATE OR DELETE ON projects.tender_requirements
   FOR EACH ROW EXECUTE FUNCTION projects.tender_children_locked();
 
+-- Status only moves forward, and once a tender leaves draft the facts its
+-- bidders priced against are frozen: its project, the imported workbooks and
+-- the stored reconciliation. Without this an owner/admin/PM could PATCH an
+-- issued tender back to draft over PostgREST, edit the BOQ and re-issue it.
+-- The closing time may only be extended (slice C's sealed-bid rule keys on it).
+CREATE FUNCTION projects.tenders_status_guard() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
+       (OLD.status = 'draft'  AND NEW.status IN ('issued','cancelled'))
+    OR (OLD.status = 'issued' AND NEW.status IN ('closed','cancelled'))
+    OR (OLD.status = 'closed' AND NEW.status IN ('adjudicated','cancelled'))
+  ) THEN
+    RAISE EXCEPTION 'a tender cannot move from % to %', OLD.status, NEW.status USING ERRCODE = '55000';
+  END IF;
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    RAISE EXCEPTION 'a tender cannot move to another project' USING ERRCODE = '55000';
+  END IF;
+  IF OLD.status = 'draft' AND NEW.status = 'issued' THEN
+    IF NEW.closing_at <= now() THEN
+      RAISE EXCEPTION 'the closing time must be in the future when a tender is issued' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.imported_at IS NULL THEN
+      RAISE EXCEPTION 'import the BOQ before issuing the tender' USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  IF OLD.status <> 'draft' THEN
+    IF NEW.closing_at IS DISTINCT FROM OLD.closing_at
+       AND (NEW.closing_at IS NULL OR NEW.closing_at < OLD.closing_at) THEN
+      RAISE EXCEPTION 'an issued tender''s closing time can only be extended' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.source_path IS DISTINCT FROM OLD.source_path
+       OR NEW.source_filename IS DISTINCT FROM OLD.source_filename
+       OR NEW.estimate_path IS DISTINCT FROM OLD.estimate_path
+       OR NEW.estimate_filename IS DISTINCT FROM OLD.estimate_filename
+       OR NEW.reconciliation IS DISTINCT FROM OLD.reconciliation
+       OR NEW.structure_diff IS DISTINCT FROM OLD.structure_diff
+       OR NEW.imported_at IS DISTINCT FROM OLD.imported_at
+       OR NEW.stated_subtotal IS DISTINCT FROM OLD.stated_subtotal
+       OR NEW.stated_vat IS DISTINCT FROM OLD.stated_vat
+       OR NEW.stated_total IS DISTINCT FROM OLD.stated_total
+       OR NEW.package IS DISTINCT FROM OLD.package
+       OR NEW.revision IS DISTINCT FROM OLD.revision THEN
+      RAISE EXCEPTION 'the import of an issued tender is frozen' USING ERRCODE = '55000';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER tenders_status_guard BEFORE UPDATE ON projects.tenders
+  FOR EACH ROW EXECUTE FUNCTION projects.tenders_status_guard();
+
 CREATE TRIGGER tenders_set_updated_at BEFORE UPDATE ON projects.tenders
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER tender_boq_items_set_updated_at BEFORE UPDATE ON projects.tender_boq_items
@@ -187,6 +238,67 @@ REVOKE ALL ON FUNCTION projects.user_can_manage_tender(uuid) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION projects.user_can_manage_tender(uuid) FROM anon;
 GRANT EXECUTE ON FUNCTION projects.user_can_manage_tender(uuid) TO authenticated, service_role;
 
+-- Atomic import: replace a draft's BOQ and estimate and stamp the tender in ONE
+-- transaction, holding the tender row lock so two imports cannot interleave.
+-- SECURITY INVOKER: every statement runs under the caller's row security, so
+-- this grants nothing the per-table policies do not already grant.
+CREATE FUNCTION projects.tender_replace_boq(p_tender_id uuid, p_meta jsonb, p_rows jsonb, p_estimate jsonb)
+RETURNS integer
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  v_status text;
+  v_items  integer;
+BEGIN
+  SELECT t.status INTO v_status FROM projects.tenders t WHERE t.id = p_tender_id FOR UPDATE;
+  IF v_status IS NULL THEN
+    RAISE EXCEPTION 'tender not found' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_status <> 'draft' THEN
+    RAISE EXCEPTION 'only a draft tender can be re-imported' USING ERRCODE = '55000';
+  END IF;
+
+  DELETE FROM projects.tender_boq_items WHERE tender_id = p_tender_id;
+
+  INSERT INTO projects.tender_boq_items
+    (tender_id, sort_order, sheet_name, row_number, kind, bill_code, code, description, unit,
+     quantity, heading_path, rate_cell_type, fixed_amount, stated_amount, rate_column, amount_column)
+  SELECT p_tender_id, r.sort_order, r.sheet_name, r.row_number, r.kind, r.bill_code, r.code,
+         coalesce(r.description, ''), r.unit, r.quantity, coalesce(r.heading_path, '{}'),
+         r.rate_cell_type, r.fixed_amount, r.stated_amount, r.rate_column, r.amount_column
+    FROM jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) AS r(
+         sort_order int, sheet_name text, row_number int, kind text, bill_code text, code text,
+         description text, unit text, quantity numeric, heading_path text[], rate_cell_type text,
+         fixed_amount numeric, stated_amount numeric, rate_column text, amount_column text);
+
+  INSERT INTO projects.tender_estimate_lines (item_id, tender_id, rate, amount)
+  SELECT i.id, p_tender_id, e.rate, e.amount
+    FROM jsonb_to_recordset(coalesce(p_estimate, '[]'::jsonb)) AS e(sheet_name text, row_number int, rate numeric, amount numeric)
+    JOIN projects.tender_boq_items i
+      ON i.tender_id = p_tender_id AND i.sheet_name = e.sheet_name AND i.row_number = e.row_number AND i.kind = 'item';
+
+  SELECT count(*) INTO v_items FROM projects.tender_boq_items WHERE tender_id = p_tender_id AND kind = 'item';
+
+  UPDATE projects.tenders SET
+    source_filename   = p_meta->>'source_filename',
+    source_path       = p_meta->>'source_path',
+    estimate_filename = p_meta->>'estimate_filename',
+    estimate_path     = p_meta->>'estimate_path',
+    stated_subtotal   = (p_meta->>'stated_subtotal')::numeric,
+    stated_vat        = (p_meta->>'stated_vat')::numeric,
+    stated_total      = (p_meta->>'stated_total')::numeric,
+    reconciliation    = p_meta->'reconciliation',
+    structure_diff    = p_meta->'structure_diff',
+    imported_at       = now()
+  WHERE id = p_tender_id;
+
+  RETURN v_items;
+END $$;
+REVOKE ALL ON FUNCTION projects.tender_replace_boq(uuid, jsonb, jsonb, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.tender_replace_boq(uuid, jsonb, jsonb, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION projects.tender_replace_boq(uuid, jsonb, jsonb, jsonb) TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION projects.tenders_status_guard() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.tenders_status_guard() FROM anon, authenticated;
 REVOKE ALL ON FUNCTION projects.tenders_bind_parents() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION projects.tenders_bind_parents() FROM anon, authenticated;
 REVOKE ALL ON FUNCTION projects.tender_children_locked() FROM PUBLIC;
@@ -288,4 +400,12 @@ NOTIFY pgrst, 'reload schema';
 -- sql: (SELECT bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_class WHERE oid IN ('projects.tenders'::regclass, 'projects.tender_boq_items'::regclass, 'projects.tender_estimate_lines'::regclass, 'projects.tender_requirements'::regclass))
 -- sql: (SELECT NOT public FROM storage.buckets WHERE id = 'tender-files')
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%tender-files%')
+-- function: projects.tenders_status_guard()
+-- function: projects.tender_replace_boq(uuid, jsonb, jsonb, jsonb)
+-- trigger: tenders_status_guard ON projects.tenders
+-- grant_absent: anon EXECUTE ON projects.tender_replace_boq(uuid, jsonb, jsonb, jsonb)
+-- sql: (SELECT count(*) = 4 FROM pg_policies WHERE schemaname = 'projects' AND tablename IN ('tenders','tender_boq_items','tender_estimate_lines','tender_requirements') AND cmd = 'SELECT')
+-- sql: (SELECT qual LIKE '%project_manager%' AND qual NOT LIKE '%user_has_project_access%' FROM pg_policies WHERE schemaname = 'projects' AND policyname = 'tenders_select')
+-- sql: (SELECT bool_and(qual LIKE '%user_can_manage_tender%') FROM pg_policies WHERE schemaname = 'projects' AND tablename IN ('tender_boq_items','tender_estimate_lines','tender_requirements') AND cmd = 'SELECT')
+-- sql: (SELECT bool_and(permissive = 'PERMISSIVE') FROM pg_policies WHERE schemaname = 'projects' AND tablename LIKE 'tender%')
 -- @verify:end

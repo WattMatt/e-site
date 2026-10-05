@@ -56,7 +56,7 @@ export default async function TendersPage({ params }: { params: Promise<{ id: st
                       {matched === null && <Badge variant="ghost">not imported</Badge>}
                       {matched === true && <Badge variant="success">reconciled to the cent</Badge>}
                       {matched === false && <Badge variant="danger">does not reconcile</Badge>}
-                      {t.stated_subtotal != null && <span>Subtotal {formatRand(t.stated_subtotal)}</span>}
+                      {t.reconciliation?.estimate?.subtotal && <span>Internal estimate {formatRand(t.reconciliation.estimate.subtotal.computed)}</span>}
                       {t.closing_at && <span>Closes {new Date(t.closing_at).toLocaleString('en-ZA')}</span>}
                     </div>
                   </li>

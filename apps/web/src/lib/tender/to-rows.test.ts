@@ -13,6 +13,14 @@ describe('toItemRows', () => {
     expect(new Set(rows.map((r) => `${r.sheet_name}!${r.row_number}`)).size).toBe(rows.length)
   })
 
+  it('leaves a fixed row without an amount NULL, never R0', async () => {
+    const p = await parseTenderWorkbook(await buildMvlWorkbook({ unpriced: true }))
+    // 2.1.7.1 is a PC row; the non-null path is covered by C2.1 (R50 000) below.
+    const row = p.sheets[1].rows.find((r) => r.code === '2.1.7.1')!
+    row.amount = null
+    expect(toItemRows(p).find((r) => r.code === '2.1.7.1')!.fixed_amount).toBeNull()
+  })
+
   it('maps item, fixed, total and heading rows onto the table columns', async () => {
     const p = await parseTenderWorkbook(await buildWmWorkbook())
     const rows = toItemRows(p)
@@ -31,17 +39,19 @@ describe('toEstimateLines', () => {
   it('pairs every priced estimate row with its tender row by sheet + code', async () => {
     const tender = await parseTenderWorkbook(await buildWmWorkbook())
     const estimate = await parseTenderWorkbook(await buildWmWorkbook({ priced: true }))
-    const rows = toItemRows(tender).map((r, i) => ({ ...r, id: `id-${i}` }))
+    const rows = toItemRows(tender)
     const { lines, unmatched } = toEstimateLines(rows, estimate)
     expect(unmatched).toEqual([])
     const c12 = rows.find((r) => r.code === 'C1.2')!
-    expect(lines.find((l) => l.item_id === c12.id)).toEqual({ item_id: c12.id, rate: 412.5, amount: 49500 })
+    expect(lines.find((l) => l.row_number === c12.row_number && l.sheet_name === c12.sheet_name)).toEqual({
+      sheet_name: 'C - Reticulation', row_number: c12.row_number, rate: 412.5, amount: 49500,
+    })
   })
 
   it('reports estimate rows the tender does not have', async () => {
     const tender = await parseTenderWorkbook(await buildWmWorkbook())
     const estimate = await parseTenderWorkbook(await buildWmWorkbook({ priced: true, addC14: true }))
-    const rows = toItemRows(tender).map((r, i) => ({ ...r, id: `id-${i}` }))
+    const rows = toItemRows(tender)
     expect(toEstimateLines(rows, estimate).unmatched.map((u) => u.code)).toEqual(['C1.4'])
   })
 })

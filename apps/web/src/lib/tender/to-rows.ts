@@ -37,7 +37,9 @@ export function toItemRows(parsed: ParsedTenderWorkbook): TenderItemRow[] {
         quantity: round(r.quantity, 4),
         heading_path: r.headingPath,
         rate_cell_type: r.kind === 'item' ? r.rateCellType : null,
-        fixed_amount: r.kind === 'item' && r.rateCellType === 'fixed' ? round(r.amount ?? 0, 2) : null,
+        // A fixed row with no amount in the workbook stays NULL (never a silent R0):
+        // the review grid asks WM to enter it before the tender can be issued.
+        fixed_amount: r.kind === 'item' && r.rateCellType === 'fixed' ? round(r.amount, 2) : null,
         stated_amount: r.kind === 'total' ? round(r.amount, 2) : null,
         rate_column: r.kind === 'item' ? r.rateColumn : null,
         amount_column: r.kind === 'item' ? r.amountColumn : null,
@@ -47,43 +49,51 @@ export function toItemRows(parsed: ParsedTenderWorkbook): TenderItemRow[] {
   return out
 }
 
-const key = (sheet: string, code: string | null, description: string, n: number) =>
-  `${sheet}\u0000${code ?? `desc:${description.toUpperCase()}`}\u0000${n}`
+/** Estimate line keyed by the tender row's cell address (paired again in SQL). */
+export interface EstimateLineRow {
+  sheet_name: string
+  row_number: number
+  rate: number | null
+  amount: number | null
+}
 
 /**
- * Pair the PRE-PRICED INTERNAL workbook's item rows with the stored tender rows
- * (sheet + code, with an occurrence counter), returning estimate lines and any
- * estimate row the tender does not contain.
+ * Pair the PRE-PRICED INTERNAL workbook's item rows with the tender's item rows
+ * (sheet + code, with an occurrence counter so a repeated code is not collapsed)
+ * and emit each estimate figure against the TENDER row's sheet and row number.
+ * Estimate rows the tender does not contain are returned, not dropped.
  */
 export function toEstimateLines(
-  tenderRows: (TenderItemRow & { id: string })[],
+  tenderRows: TenderItemRow[],
   estimate: ParsedTenderWorkbook,
-): { lines: { item_id: string; rate: number | null; amount: number | null }[]; unmatched: DiffRowRef[] } {
-  const byKey = new Map<string, string>()
+): { lines: EstimateLineRow[]; unmatched: DiffRowRef[] } {
+  const keyOf = (sheet: string, code: string | null, description: string, n: number) =>
+    `${sheet}\u0000${code ?? `desc:${description.toUpperCase()}`}\u0000${n}`
+  const byKey = new Map<string, TenderItemRow>()
   const seen = new Map<string, number>()
   for (const r of tenderRows) {
     if (r.kind !== 'item') continue
-    const base = `${r.sheet_name}\u0000${r.code ?? r.description.toUpperCase()}`
+    const base = keyOf(r.sheet_name, r.code, r.description, 0)
     const n = (seen.get(base) ?? 0) + 1
     seen.set(base, n)
-    byKey.set(key(r.sheet_name, r.code, r.description, n), r.id)
+    byKey.set(keyOf(r.sheet_name, r.code, r.description, n), r)
   }
-  const lines: { item_id: string; rate: number | null; amount: number | null }[] = []
+  const lines: EstimateLineRow[] = []
   const unmatched: DiffRowRef[] = []
   const seenE = new Map<string, number>()
   for (const s of estimate.sheets) {
     for (const r of s.rows) {
       if (r.kind !== 'item') continue
-      const base = `${r.sheet}\u0000${r.code ?? r.description.toUpperCase()}`
+      const base = keyOf(r.sheet, r.code, r.description, 0)
       const n = (seenE.get(base) ?? 0) + 1
       seenE.set(base, n)
-      const id = byKey.get(key(r.sheet, r.code, r.description, n))
-      if (!id) {
+      const t = byKey.get(keyOf(r.sheet, r.code, r.description, n))
+      if (!t) {
         unmatched.push({ sheet: r.sheet, code: r.code, description: r.description })
         continue
       }
       if (r.rate == null && r.amount == null) continue
-      lines.push({ item_id: id, rate: round(r.rate, 4), amount: round(r.amount, 2) })
+      lines.push({ sheet_name: t.sheet_name, row_number: t.row_number, rate: round(r.rate, 4), amount: round(r.amount, 2) })
     }
   }
   return { lines, unmatched }

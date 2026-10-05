@@ -104,6 +104,16 @@ BEGIN
   UPDATE projects.tender_boq_items SET rate_cell_type = 'not_priced' WHERE id = v_item;
   GET DIAGNOSTICS v_seen = ROW_COUNT;
   INSERT INTO _r VALUES ('admin_edits_draft_item', v_seen = 1);
+  -- Atomic import into the admin's own new draft.
+  v_seen := projects.tender_replace_boq(v_tender2,
+    '{"source_filename":"R9.xlsx","source_path":"x/y/z/source.xlsx","reconciliation":{"ok":true}}'::jsonb,
+    '[{"sort_order":0,"sheet_name":"Bill No 1","row_number":5,"kind":"item","bill_code":"1","code":"1.1","description":"A","unit":"No","quantity":2,"rate_cell_type":"priced","rate_column":"E","amount_column":"F"},
+      {"sort_order":1,"sheet_name":"Bill No 1","row_number":6,"kind":"note","bill_code":"1","description":"n"}]'::jsonb,
+    '[{"sheet_name":"Bill No 1","row_number":5,"rate":10,"amount":20}]'::jsonb);
+  INSERT INTO _r VALUES ('admin_rpc_imports_draft', v_seen = 1
+    AND (SELECT count(*) FROM projects.tender_boq_items WHERE tender_id = v_tender2) = 2
+    AND (SELECT count(*) FROM projects.tender_estimate_lines WHERE tender_id = v_tender2) = 1
+    AND (SELECT imported_at IS NOT NULL FROM projects.tenders WHERE id = v_tender2));
   RESET ROLE;
 
   -- ═══ 2. PROJECT MANAGER (project-promoted) — reads and writes ══════════
@@ -147,6 +157,12 @@ BEGIN
   UPDATE projects.tender_boq_items SET description = 'tampered' WHERE id = v_item;
   GET DIAGNOSTICS v_seen = ROW_COUNT;
   INSERT INTO _r VALUES ('contractor_update_affects_nothing', v_seen = 0);
+  BEGIN
+    PERFORM projects.tender_replace_boq(v_tender, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb);
+    INSERT INTO _r VALUES ('contractor_rpc_REFUSED', false);
+  EXCEPTION WHEN no_data_found OR insufficient_privilege THEN
+    INSERT INTO _r VALUES ('contractor_rpc_REFUSED', true);
+  END;
   DELETE FROM projects.tenders WHERE id = v_tender;
   GET DIAGNOSTICS v_seen = ROW_COUNT;
   INSERT INTO _r VALUES ('contractor_delete_affects_nothing', v_seen = 0);
@@ -189,7 +205,47 @@ BEGIN
   EXCEPTION WHEN check_violation THEN
     INSERT INTO _r VALUES ('issue_without_closing_REFUSED', true);
   END;
+  BEGIN
+    UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('issue_before_import_REFUSED', false);
+  EXCEPTION WHEN check_violation THEN
+    INSERT INTO _r VALUES ('issue_before_import_REFUSED', true);
+  END;
+  UPDATE projects.tenders SET imported_at = now() WHERE id = v_tender;
   UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_tender;
+  BEGIN
+    UPDATE projects.tenders SET status = 'draft' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('issued_back_to_draft_REFUSED', false);
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    INSERT INTO _r VALUES ('issued_back_to_draft_REFUSED', true);
+  END;
+  BEGIN
+    UPDATE projects.tenders SET reconciliation = '{"forged":true}'::jsonb WHERE id = v_tender;
+    INSERT INTO _r VALUES ('issued_reconciliation_frozen', false);
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    INSERT INTO _r VALUES ('issued_reconciliation_frozen', true);
+  END;
+  BEGIN
+    UPDATE projects.tenders SET project_id = v_cli_project WHERE id = v_tender;
+    INSERT INTO _r VALUES ('tender_project_immutable', false);
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    INSERT INTO _r VALUES ('tender_project_immutable', true);
+  END;
+  BEGIN
+    UPDATE projects.tenders SET closing_at = closing_at - interval '1 day' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('closing_cannot_shorten', false);
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    INSERT INTO _r VALUES ('closing_cannot_shorten', true);
+  END;
+  UPDATE projects.tenders SET closing_at = closing_at + interval '1 day' WHERE id = v_tender;
+  GET DIAGNOSTICS v_seen = ROW_COUNT;
+  INSERT INTO _r VALUES ('closing_can_extend', v_seen = 1);
+  BEGIN
+    PERFORM projects.tender_replace_boq(v_tender, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb);
+    INSERT INTO _r VALUES ('rpc_on_issued_REFUSED', false);
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    INSERT INTO _r VALUES ('rpc_on_issued_REFUSED', true);
+  END;
   BEGIN
     UPDATE projects.tender_boq_items SET quantity = 2 WHERE id = v_item;
     INSERT INTO _r VALUES ('issued_item_update_REFUSED', false);
@@ -283,5 +339,14 @@ SELECT * FROM (VALUES
   ('admin can delete a draft tender',                                 (SELECT v FROM _r WHERE k='admin_deletes_draft')),
   ('cascade delete of an issued tender is not blocked by the lock',   (SELECT v FROM _r WHERE k='cascade_delete_of_issued_tender_works')),
   ('estimate line cannot point at another tender''s item',            (SELECT v FROM _r WHERE k='cross_tender_estimate_REFUSED')),
-  ('a heading cannot carry a rate-cell type',                         (SELECT v FROM _r WHERE k='heading_with_cell_type_REFUSED'))
+  ('a heading cannot carry a rate-cell type',                         (SELECT v FROM _r WHERE k='heading_with_cell_type_REFUSED')),
+  ('admin imports a draft atomically through tender_replace_boq',     (SELECT v FROM _r WHERE k='admin_rpc_imports_draft')),
+  ('contractor cannot run tender_replace_boq',                        (SELECT v FROM _r WHERE k='contractor_rpc_REFUSED')),
+  ('a tender cannot be issued before its BOQ is imported',            (SELECT v FROM _r WHERE k='issue_before_import_REFUSED')),
+  ('issued tender cannot go back to draft',                           (SELECT v FROM _r WHERE k='issued_back_to_draft_REFUSED')),
+  ('issued tender: stored reconciliation is frozen',                  (SELECT v FROM _r WHERE k='issued_reconciliation_frozen')),
+  ('a tender cannot move to another project',                         (SELECT v FROM _r WHERE k='tender_project_immutable')),
+  ('issued tender: closing time cannot be shortened',                 (SELECT v FROM _r WHERE k='closing_cannot_shorten')),
+  ('issued tender: closing time can be extended',                     (SELECT v FROM _r WHERE k='closing_can_extend')),
+  ('tender_replace_boq refuses an issued tender',                     (SELECT v FROM _r WHERE k='rpc_on_issued_REFUSED'))
 ) AS t("check", ok);

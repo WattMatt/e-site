@@ -28,7 +28,7 @@ const PREFIX = `${ORG}/${PROJECT}/${TENDER}/`
 
 /** A fake client that records every write and answers reads from `tables`. */
 function fakeClient(opts: { status?: string; files?: Record<string, Uint8Array> } = {}) {
-  const writes: { table: string; op: string; payload?: unknown }[] = []
+  const writes: { table: string; op: string; payload?: unknown; filters?: Record<string, unknown> }[] = []
   const storageCalls: string[] = []
   let nextId = 0
   const tables: Record<string, unknown> = {
@@ -38,6 +38,7 @@ function fakeClient(opts: { status?: string; files?: Record<string, Uint8Array> 
   const builder = (table: string) => {
     let op = 'select'
     let payload: unknown
+    let entry: { filters?: Record<string, unknown> } | null = null
     const q: Record<string, unknown> = {}
     const result = () => {
       if (op === 'insert' && Array.isArray(payload)) {
@@ -47,12 +48,18 @@ function fakeClient(opts: { status?: string; files?: Record<string, Uint8Array> 
       if (op === 'update' || op === 'delete') return { data: [{ id: 'x' }], error: null }
       return { data: tables[table] ?? null, error: null }
     }
-    for (const m of ['select', 'eq', 'order', 'range']) q[m] = () => q
+    for (const m of ['select', 'order', 'range']) q[m] = () => q
+    q.eq = (col: string, val: unknown) => {
+      if (entry) entry.filters = { ...(entry.filters ?? {}), [col]: val }
+      return q
+    }
     for (const m of ['insert', 'update', 'delete']) {
       q[m] = (p?: unknown) => {
         op = m
         payload = p
-        writes.push({ table, op: m, payload: p })
+        const w = { table, op: m, payload: p, filters: {} as Record<string, unknown> }
+        writes.push(w)
+        entry = w
         return q
       }
     }
@@ -62,7 +69,13 @@ function fakeClient(opts: { status?: string; files?: Record<string, Uint8Array> 
     return q
   }
   const client = {
-    schema: () => ({ from: builder }),
+    schema: () => ({
+      from: builder,
+      rpc: (name: string, args: unknown) => {
+        writes.push({ table: name, op: 'rpc', payload: args })
+        return Promise.resolve({ data: 1, error: null })
+      },
+    }),
     from: builder,
     storage: {
       from: () => ({
@@ -166,11 +179,16 @@ describe('importTenderAction', () => {
       estimateFilename: 'SUNBIRD CENTRAL.R9 - PRE-PRICED INTERNAL.xlsx',
     })
     expect(r).toEqual({ data: { items: 6, matched: true } })
-    const ops = fake.writes.map((w) => `${w.op}:${w.table}`)
-    expect(ops).toEqual(['delete:tender_boq_items', 'insert:tender_boq_items', 'insert:tender_estimate_lines', 'update:tenders'])
-    const upd = fake.writes.find((w) => w.op === 'update')!.payload as Record<string, unknown>
-    expect(upd.source_filename).toBe('SUNBIRD CENTRAL.R9.xlsx')
-    expect((upd.structure_diff as { identical: boolean }).identical).toBe(true)
+    // Everything goes through ONE atomic call; nothing is written piecemeal.
+    expect(fake.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['rpc:tender_replace_boq'])
+    const args = fake.writes[0].payload as { p_tender_id: string; p_meta: Record<string, unknown>; p_rows: unknown[]; p_estimate: unknown[] }
+    expect(args.p_tender_id).toBe(TENDER)
+    expect(args.p_meta.source_filename).toBe('SUNBIRD CENTRAL.R9.xlsx')
+    expect((args.p_meta.structure_diff as { identical: boolean }).identical).toBe(true)
+    expect(args.p_rows.length).toBeGreaterThan(6)
+    expect(args.p_estimate.length).toBeGreaterThan(0)
+    // The issued copy states no subtotal; the estimate's totals must NOT leak onto the tender row.
+    expect(args.p_meta.stated_subtotal).toBeNull()
   })
 })
 
@@ -187,8 +205,22 @@ describe('setRateCellTypeAction', () => {
     expect(fake.writes).toEqual([])
   })
 
-  it('clears the fixed amount when a row stops being fixed', async () => {
+  it('clears the fixed amount when a row stops being fixed, scoped to this tender’s items', async () => {
     await setRateCellTypeAction(TENDER, 'item-1', 'priced')
-    expect(fake.writes).toEqual([{ table: 'tender_boq_items', op: 'update', payload: { rate_cell_type: 'priced', fixed_amount: null } }])
+    expect(fake.writes).toEqual([
+      {
+        table: 'tender_boq_items',
+        op: 'update',
+        payload: { rate_cell_type: 'priced', fixed_amount: null },
+        filters: { id: 'item-1', tender_id: TENDER, kind: 'item' },
+      },
+    ])
+  })
+
+  it('needs an amount to make a row fixed, and rounds it to cents', async () => {
+    expect(await setRateCellTypeAction(TENDER, 'item-1', 'fixed')).toEqual({ error: 'Enter the fixed amount (in rand) for this item' })
+    expect(fake.writes).toEqual([])
+    await setRateCellTypeAction(TENDER, 'item-1', 'fixed', 1234.567)
+    expect(fake.writes[0].payload).toEqual({ rate_cell_type: 'fixed', fixed_amount: 1234.57 })
   })
 })

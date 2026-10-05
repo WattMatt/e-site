@@ -29,7 +29,6 @@ import { RATE_CELL_TYPES, type RateCellType, type TenderBoqDiff, type TenderReco
 type AnyClient = any
 
 const BUCKET = 'tender-files'
-const INSERT_CHUNK = 500
 
 export interface TenderRecord {
   id: string
@@ -154,7 +153,7 @@ export async function getTenderUploadUrlAction(
   kind: 'source' | 'estimate',
   fileName: string,
 ): Promise<Result<{ path: string; token: string }>> {
-  if (!/\.xlsx?$|\.xlsm$/i.test(fileName)) return { error: 'Upload an Excel workbook (.xlsx or .xlsm)' }
+  if (!/\.(xlsx|xlsm)$/i.test(fileName)) return { error: 'Upload an Excel workbook (.xlsx or .xlsm)' }
   const g = await gateTender(tenderId)
   if (!g.ok) return { error: g.error }
   if (g.tender.status !== 'draft') return { error: 'Only a draft tender can be re-imported' }
@@ -213,61 +212,55 @@ export async function importTenderAction(tenderId: string, input: ImportTenderIn
   const recSource = reconcileTender(source)
   const recEstimate = estimate ? reconcileTender(estimate) : null
   const diff = estimate ? diffTenderBoqs(source, estimate) : null
+  const pairing = estimate ? toEstimateLines(rows, estimate) : { lines: [], unmatched: [] }
 
-  const sb = g.supabase.schema('projects')
-  const del = await sb.from('tender_boq_items').delete().eq('tender_id', tenderId)
-  if (del.error) return { error: del.error.message }
-
-  const inserted: (TenderItemRow & { id: string })[] = []
-  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    const chunk = rows.slice(i, i + INSERT_CHUNK).map((r) => ({ ...r, tender_id: tenderId }))
-    const { data, error } = await sb.from('tender_boq_items').insert(chunk).select('id, sort_order')
-    if (error) return { error: `Saving BOQ rows failed: ${error.message}` }
-    const bySort = new Map((data as { id: string; sort_order: number }[]).map((d) => [d.sort_order, d.id]))
-    for (const r of rows.slice(i, i + INSERT_CHUNK)) inserted.push({ ...r, id: bySort.get(r.sort_order)! })
+  // Only the ISSUED workbook's own summary goes onto the tender's stated
+  // figures. WM's internal estimate totals live solely inside the stored
+  // reconciliation, which no tenderer path can read.
+  const stated = source.summary
+  const meta = {
+    source_filename: input.sourceFilename,
+    source_path: input.sourcePath,
+    estimate_filename: estimate ? (input.estimateFilename ?? null) : null,
+    estimate_path: estimate ? (input.estimatePath ?? null) : null,
+    stated_subtotal: stated?.subtotalExVat ?? null,
+    stated_vat: stated?.vat ?? null,
+    stated_total: stated?.totalInclVat ?? null,
+    reconciliation: { source: recSource, estimate: recEstimate },
+    structure_diff: diff ? { ...diff, unmatchedEstimateRows: pairing.unmatched.length } : null,
   }
 
-  let unmatchedEstimateRows = 0
-  if (estimate) {
-    const { lines, unmatched } = toEstimateLines(inserted, estimate)
-    unmatchedEstimateRows = unmatched.length
-    for (let i = 0; i < lines.length; i += INSERT_CHUNK) {
-      const chunk = lines.slice(i, i + INSERT_CHUNK).map((l) => ({ ...l, tender_id: tenderId }))
-      const { error } = await sb.from('tender_estimate_lines').insert(chunk)
-      if (error) return { error: `Saving the estimate failed: ${error.message}` }
-    }
-  }
-
-  const stated = (estimate ?? source).summary
-  const { error: upErr } = await sb
-    .from('tenders')
-    .update({
-      source_filename: input.sourceFilename,
-      source_path: input.sourcePath,
-      estimate_filename: estimate ? (input.estimateFilename ?? null) : null,
-      estimate_path: estimate ? (input.estimatePath ?? null) : null,
-      stated_subtotal: stated?.subtotalExVat ?? null,
-      stated_vat: stated?.vat ?? null,
-      stated_total: stated?.totalInclVat ?? null,
-      reconciliation: { source: recSource, estimate: recEstimate },
-      structure_diff: diff ? { ...diff, unmatchedEstimateRows } : null,
-      imported_at: new Date().toISOString(),
-    })
-    .eq('id', tenderId)
-  if (upErr) return { error: upErr.message }
+  // One transaction, under the caller's row security, holding the tender lock.
+  const { error: rpcError } = await g.supabase.schema('projects').rpc('tender_replace_boq', {
+    p_tender_id: tenderId,
+    p_meta: meta,
+    p_rows: rows,
+    p_estimate: pairing.lines,
+  })
+  if (rpcError) return { error: `Saving the BOQ failed; nothing was changed. ${rpcError.message}` }
 
   bust(g.tender.project_id, tenderId)
   const matched = recSource.matched && (recEstimate?.matched ?? true) && (diff?.identical ?? true)
   return { data: { items: rows.filter((r) => r.kind === 'item').length, matched } }
 }
 
-export async function setRateCellTypeAction(tenderId: string, itemId: string, type: RateCellType): Promise<Result<true>> {
+export async function setRateCellTypeAction(
+  tenderId: string,
+  itemId: string,
+  type: RateCellType,
+  fixedAmount?: number | null,
+): Promise<Result<true>> {
   if (!RATE_CELL_TYPES.includes(type)) return { error: 'Unknown rate type' }
+  if (type === 'fixed' && (fixedAmount == null || !Number.isFinite(fixedAmount) || fixedAmount < 0)) {
+    return { error: 'Enter the fixed amount (in rand) for this item' }
+  }
   const g = await gateTender(tenderId)
   if (!g.ok) return { error: g.error }
   if (g.tender.status !== 'draft') return { error: 'The BOQ of an issued tender cannot change' }
-  const patch: Record<string, unknown> = { rate_cell_type: type }
-  if (type !== 'fixed') patch.fixed_amount = null
+  const patch: Record<string, unknown> = {
+    rate_cell_type: type,
+    fixed_amount: type === 'fixed' ? Math.round((fixedAmount as number) * 100) / 100 : null,
+  }
   const { data, error } = await g.supabase
     .schema('projects')
     .from('tender_boq_items')

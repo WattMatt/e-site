@@ -41,7 +41,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           <Badge variant={tenderStatusVariant(tender.status)}>{tender.status}</Badge>
           {tender.source_filename && <span>BOQ: {tender.source_filename}</span>}
           {tender.estimate_filename && <span>Estimate: {tender.estimate_filename}</span>}
-          {tender.stated_subtotal != null && <span>Subtotal {formatRand(tender.stated_subtotal)}</span>}
+          {tender.stated_subtotal != null && <span>Tender subtotal {formatRand(tender.stated_subtotal)}</span>}
+          {tender.reconciliation?.estimate?.subtotal && (
+            <span>Internal estimate {formatRand(tender.reconciliation.estimate.subtotal.computed)}</span>
+          )}
           {tender.stated_total != null && <span>Incl. VAT {formatRand(tender.stated_total)}</span>}
           {isDraft && <DeleteTenderButton tenderId={tender.id} projectId={id} />}
         </div>

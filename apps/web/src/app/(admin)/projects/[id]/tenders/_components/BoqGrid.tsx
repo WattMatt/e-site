@@ -19,22 +19,44 @@ export function BoqGrid({
   const sheets = useMemo(() => Array.from(new Set(items.map((i) => i.sheet_name))), [items])
   const [sheet, setSheet] = useState(sheets[0])
   const [types, setTypes] = useState<Record<string, RateCellType>>({})
+  const [fixed, setFixed] = useState<Record<string, number | null>>({})
+  const [askAmount, setAskAmount] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [pending, start] = useTransition()
   const hasEstimate = Object.keys(estimate).length > 0
   const rows = items.filter((i) => i.sheet_name === sheet)
 
-  function change(item: TenderItem, type: RateCellType) {
-    const before = types[item.id] ?? item.rate_cell_type
+  const fixedOf = (i: TenderItem) => (i.id in fixed ? fixed[i.id] : i.fixed_amount)
+  const typeOf = (i: TenderItem) => types[i.id] ?? i.rate_cell_type
+  const missingFixed = items.filter((i) => i.kind === 'item' && typeOf(i) === 'fixed' && fixedOf(i) == null)
+
+  function save(item: TenderItem, type: RateCellType, amount?: number) {
+    const before = typeOf(item)
     setTypes((t) => ({ ...t, [item.id]: type }))
     setError(null)
     start(async () => {
-      const r = await setRateCellTypeAction(tenderId, item.id, type)
+      const r = await setRateCellTypeAction(tenderId, item.id, type, amount ?? null)
       if ('error' in r) {
         setTypes((t) => ({ ...t, [item.id]: before as RateCellType }))
         setError(r.error)
+        return
       }
+      setFixed((f) => ({ ...f, [item.id]: type === 'fixed' ? Math.round((amount as number) * 100) / 100 : null }))
+      setAskAmount((a) => {
+        const next = { ...a }
+        delete next[item.id]
+        return next
+      })
     })
+  }
+
+  function change(item: TenderItem, type: RateCellType) {
+    if (type === 'fixed') {
+      // A fixed sum needs its amount; ask before saving.
+      setAskAmount((a) => ({ ...a, [item.id]: fixedOf(item) != null ? String(fixedOf(item)) : '' }))
+      return
+    }
+    save(item, type)
   }
 
   return (
@@ -53,6 +75,12 @@ export function BoqGrid({
         ))}
       </div>
       {error && <p role="alert" style={{ color: 'var(--c-red)', fontSize: 13, margin: 0 }}>{error}</p>}
+      {missingFixed.length > 0 && (
+        <p role="status" style={{ color: 'var(--c-amber)', fontSize: 13, margin: 0 }}>
+          {missingFixed.length} fixed item(s) have no amount yet ({missingFixed.slice(0, 5).map((i) => `${i.sheet_name} ${i.code ?? i.row_number}`).join(', ')}
+          {missingFixed.length > 5 ? ', …' : ''}). Set each amount before the tender is issued.
+        </p>
+      )}
       <div style={{ overflowX: 'auto' }}>
         <table className="data-table" style={{ width: '100%', fontSize: 13 }}>
           <thead>
@@ -65,7 +93,8 @@ export function BoqGrid({
           <tbody>
             {rows.map((r) => {
               const est = estimate[r.id]
-              const type = types[r.id] ?? r.rate_cell_type
+              const type = typeOf(r)
+              const asking = r.id in askAmount
               const muted = r.kind === 'note' ? { color: 'var(--c-text-muted)', fontStyle: 'italic' as const } : undefined
               const bold = r.kind === 'heading' || r.kind === 'total' ? { fontWeight: 600 } : undefined
               return (
@@ -87,7 +116,33 @@ export function BoqGrid({
                       </select>
                     )}
                     {r.kind === 'item' && !editable && RATE_CELL_TYPE_LABELS[type ?? 'priced']}
-                    {r.kind === 'item' && type === 'fixed' && r.fixed_amount != null && <div>{formatRand(r.fixed_amount)}</div>}
+                    {r.kind === 'item' && asking && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                        <input
+                          aria-label={`Fixed amount for ${r.code ?? r.description}`}
+                          inputMode="decimal"
+                          value={askAmount[r.id]}
+                          onChange={(e) => setAskAmount((a) => ({ ...a, [r.id]: e.target.value }))}
+                          placeholder="Amount (R)"
+                          style={{ width: 110 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={pending}
+                          onClick={() => {
+                            const n = Number(askAmount[r.id].replace(/[\s,]/g, ''))
+                            if (!Number.isFinite(n) || n < 0 || askAmount[r.id].trim() === '') return setError('Enter the fixed amount in rand')
+                            save(r, 'fixed', n)
+                          }}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    )}
+                    {r.kind === 'item' && type === 'fixed' && !asking && (
+                      <div>{fixedOf(r) != null ? formatRand(fixedOf(r)) : <span style={{ color: 'var(--c-amber)' }}>amount needed</span>}</div>
+                    )}
                     {r.kind === 'total' && r.stated_amount != null && formatRand(r.stated_amount)}
                   </td>
                   {hasEstimate && (

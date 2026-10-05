@@ -90,12 +90,20 @@ export function reconcileTender(parsed: ParsedTenderWorkbook): TenderReconciliat
     warnings.push('No summary sheet found; only per-sheet totals were reconciled.')
   }
 
+  for (const name of parsed.skippedSheets) {
+    warnings.push(
+      parsed.skippedPricedSheets.includes(name)
+        ? `Sheet "${name}" was not read (no DESCRIPTION header, hidden, or a second summary) but holds numbers; check it is not a bill.`
+        : `Sheet "${name}" was not read (no BOQ header).`,
+    )
+  }
   for (const u of parsed.unclassified) {
     warnings.push(`Unclassified priced row ${u.sheet}!${u.rowNumber} "${u.description}" = ${u.amount} (${u.reason}).`)
   }
 
   const matched =
     parsed.unclassified.length === 0 &&
+    parsed.skippedPricedSheets.length === 0 &&
     sheets.every((c) => c.matched) &&
     summaryLines.every((c) => c.matched) &&
     (subtotal?.matched ?? true)
