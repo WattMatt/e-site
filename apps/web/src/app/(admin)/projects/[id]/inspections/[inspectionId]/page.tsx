@@ -100,16 +100,13 @@ export default async function CapturePage({ params }: Props) {
   const assigneeName = nameFrom(inspection.assigned_to_id)
   const verifierName = nameFrom(inspection.verifier_id)
 
-  // Resolve the user's org-level role for showing danger-zone controls.
-  const { data: orgRole } = await supabase
-    .from('user_organisations')
-    .select('role')
-    .eq('user_id', user?.id ?? '')
-    .eq('organisation_id', inspection.organisation_id)
-    .eq('is_active', true)
-    .single()
-  const userOrgRole = (orgRole as { role: string } | null)?.role ?? null
-  const canEdit = ['owner', 'admin', 'project_manager'].includes(userOrgRole ?? '')
+  // The user's EFFECTIVE role on this project (a member promoted to project_manager counts), which
+  // is what the transition guard (00235) applies to reassigning and abandoning.
+  const { data: effectiveRole } = user
+    ? await supabase.rpc('user_effective_project_role', { p_project_id: projectId, p_user_id: user.id })
+    : { data: null }
+  const userRole = (effectiveRole as string | null) ?? null
+  const canEdit = ['owner', 'admin', 'project_manager'].includes(userRole ?? '')
   const members = canEdit ? await listProjectMembersAction(projectId) : []
 
   const responses = (responsesRaw ?? []) as InspectionResponse[]
@@ -206,7 +203,7 @@ export default async function CapturePage({ params }: Props) {
         inspectionId={inspectionId}
         projectId={projectId}
         status={inspection.status}
-        role={userOrgRole}
+        role={userRole}
       />
     </div>
   )

@@ -12,7 +12,7 @@ interface Props {
   inspectionId: string
   projectId: string
   status: string
-  /** Org-level role resolved by the parent server component. */
+  /** Effective project role resolved by the parent server component (owner stays owner). */
   role: string | null
 }
 

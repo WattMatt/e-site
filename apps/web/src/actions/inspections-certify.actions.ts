@@ -7,9 +7,12 @@
  * `inspections` schema is not in the generated DB types — supabase client
  * cast to `any` per Phase-4 convention.
  *
- * Verifier separation: COC + factory_test templates require the verifier
- * to NOT have contributed responses (read from `response_history`). The
- * inspection_only deliverable type may waive this (template-level flag).
+ * The rules live in the database (migration 00235): the transition guard on
+ * inspections.inspections decides who may make each move, and
+ * inspections.certification_blockers() holds the certification rules
+ * (assigned verifier, separate verifier, signature qualifications, CoC
+ * number). These actions ask the same function first only to show its
+ * sentence; a direct PostgREST PATCH meets the same guard.
  */
 
 import { revalidatePath } from 'next/cache'
@@ -17,6 +20,7 @@ import { createClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
 import { requireFeature } from '@/lib/features'
 import { generateAndFileInspectionReport } from '@/lib/reports/file-inspection-report'
+import { evaluateInspection, type Response as InspectionResponse, type Template } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +79,34 @@ async function getProjectManagerIds(
     .map((r) => r.user_id)
 }
 
+/**
+ * The overall result the engine computes from what was saved: answers, photos and signatures,
+ * the same inputs the capture form evaluates.
+ */
+async function computeOverallResult(
+  supabase: AnyClient,
+  inspectionId: string,
+  template: Template,
+): Promise<'pass' | 'fail' | 'conditional_pass'> {
+  const db = supabase.schema('inspections')
+  const [responses, photos, signatures] = await Promise.all([
+    db.from('responses')
+      .select('section_id, field_id, value_bool, value_number, value_text, value_array, value_json, pass_state, fail_reason')
+      .eq('inspection_id', inspectionId),
+    db.from('photos').select('section_id, field_id').eq('inspection_id', inspectionId),
+    db.from('signatures').select('section_id, field_id').eq('inspection_id', inspectionId),
+  ])
+  const failed = responses.error ?? photos.error ?? signatures.error
+  if (failed) throw failed
+  return evaluateInspection(template, (responses.data ?? []) as InspectionResponse[], {
+    photos: (photos.data ?? []) as { section_id: string; field_id: string }[],
+    signatures: ((signatures.data ?? []) as { section_id: string | null; field_id: string | null }[]).map((s) => ({
+      section_id: s.section_id ?? undefined,
+      field_id: s.field_id ?? undefined,
+    })),
+  }).overallResult
+}
+
 export interface CertifyInspectionInput {
   inspectionId: string
   projectId: string
@@ -96,12 +128,6 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     .eq('id', input.inspectionId)
     .single()
   if (!insp) throw new Error('Inspection not found')
-  if (insp.status !== 'awaiting_verification') {
-    throw new Error('Inspection is not awaiting verification')
-  }
-  if (insp.verifier_id !== user.id) {
-    throw new Error('Only the assigned verifier can certify this inspection')
-  }
   await requireFeature(insp.organisation_id, 'inspections', supabase)
 
   const { data: template } = await supabase
@@ -110,130 +136,39 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     .select('deliverable_type, schema_json')
     .eq('id', insp.template_id)
     .single()
-
   const deliverable = template?.deliverable_type as string | undefined
-  const requiresSeparate =
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (template?.schema_json as any)?.requires_separate_verifier ??
-    (deliverable === 'coc' || deliverable === 'factory_test')
 
-  if (requiresSeparate) {
-    const { data: contributors } = await supabase
-      .schema('inspections')
-      .from('response_history')
-      .select('responded_by')
-      .eq('inspection_id', input.inspectionId)
-    const distinct = new Set(
-      ((contributors ?? []) as Array<{ responded_by: string }>).map((c) => c.responded_by),
+  // The result is the engine's, from the saved answers, never the verifier's choice. A FAIL (a
+  // required check failed or is missing) is not certified: the verifier sends it back instead.
+  const overallResult = await computeOverallResult(supabase, input.inspectionId, template?.schema_json as Template)
+  if (overallResult === 'fail') {
+    throw new Error(
+      'This inspection fails: a required check failed or is unanswered. Send it back for re-inspection instead of certifying.',
     )
-    if (distinct.has(user.id)) {
-      throw new Error(
-        'Verifier cannot also be a contributor on this template type. Reassign the verifier to someone who has not filled in responses.',
-      )
-    }
   }
 
-  // Signature required_qualifications gate. If any signature field on the
-  // template declares required_qualifications, at least one captured signature
-  // must satisfy the qualification heuristically.
-  //
-  // v1 heuristic (no formal signatories registry):
-  //   - 'registered_person' satisfied by any signature with a non-empty
-  //     registration_number (proxy: only RPs/MIEs carry a registration_number).
-  //   - other qualifications satisfied by substring match against signatory_title
-  //     (case-insensitive, underscores → spaces). e.g. required_qualifications
-  //     = ['pr_eng'] matches a signatory_title like "Senior Pr Eng".
-  //
-  // Production v2 would consult a signatories table with verified credentials.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const schemaJson = template?.schema_json as any
-  const sigRequirements: { section_id: string; field_id: string; required_quals: string[]; label: string }[] = []
-  for (const section of (schemaJson?.sections ?? []) as Array<{
-    section_id: string
-    fields?: Array<Record<string, unknown>>
-    subsections?: Array<{ fields: Array<Record<string, unknown>> }>
-  }>) {
-    const allFields = [
-      ...((section.fields ?? []) as Array<Record<string, unknown>>),
-      ...((section.subsections ?? []).flatMap((ss) => ss.fields ?? []) as Array<Record<string, unknown>>),
-    ]
-    for (const f of allFields) {
-      const quals = (f.required_qualifications as string[] | undefined) ?? []
-      if (f.type === 'signature' && quals.length > 0) {
-        sigRequirements.push({
-          section_id: section.section_id,
-          field_id: String(f.field_id),
-          required_quals: quals,
-          label: String(f.label ?? f.field_id),
-        })
-      }
-    }
-  }
+  // Who may certify, separate verifier, signature qualifications and the CoC number are one
+  // database rule (00235), which the transition guard also enforces. Asked first so the verifier
+  // sees the sentence rather than a constraint error.
+  const cocNumber = deliverable === 'coc' ? input.cocNumber?.trim() ?? '' : null
+  const { data: blocker, error: blockErr } = await supabase
+    .schema('inspections')
+    .rpc('certification_blockers', { _inspection_id: input.inspectionId, _coc_number: cocNumber })
+  if (blockErr) throw blockErr
+  if (blocker) throw new Error(blocker as string)
 
-  if (sigRequirements.length > 0) {
-    const { data: sigs } = await supabase
-      .schema('inspections')
-      .from('signatures')
-      .select('signatory_title, registration_number')
-      .eq('inspection_id', input.inspectionId)
-    const sigList = (sigs ?? []) as Array<{ signatory_title: string | null; registration_number: string | null }>
-
-    for (const req of sigRequirements) {
-      const matched = sigList.some((s) => {
-        const title = (s.signatory_title ?? '').toLowerCase()
-        // 'registered_person' qualified by presence of a registration_number
-        if (req.required_quals.includes('registered_person') && s.registration_number && s.registration_number.trim().length > 0) {
-          return true
-        }
-        // Title heuristic — match underscore-form against space-form
-        return req.required_quals.some((q) => title.includes(q.replace(/_/g, ' ')))
-      })
-      if (!matched) {
-        throw new Error(
-          `Signature requirement not met for "${req.label}" — needs one of: ${req.required_quals.join(', ')}. None of the captured signatures satisfy this (check signatory title or registration number).`,
-        )
-      }
-    }
-  }
-
-  let cocNumber: string
-  if (deliverable === 'coc') {
-    if (!input.cocNumber || !input.cocNumber.trim()) {
-      throw new Error('COC number is required (enter the number from your ECB pad)')
-    }
-    const candidate = input.cocNumber.trim()
-    const { data: dup } = await supabase
-      .schema('inspections')
-      .from('inspections')
-      .select('id')
-      .eq('organisation_id', insp.organisation_id)
-      .eq('coc_number', candidate)
-      .neq('id', input.inspectionId)
-      .maybeSingle()
-    if (dup) {
-      throw new Error(
-        `COC number ${candidate} is already used by another inspection in this organisation`,
-      )
-    }
-    cocNumber = candidate
-  } else {
-    const { data: allocated, error: rpcErr } = await supabase.rpc('allocate_coc_number', {
-      _inspection_id: input.inspectionId,
-    })
-    if (rpcErr) throw rpcErr
-    cocNumber = allocated as string
-  }
-
-  const { error: updErr } = await supabase
+  // certified_at and the INS/FAT number are stamped by the guard; anything sent for them is ignored.
+  const { data: certified, error: updErr } = await supabase
     .schema('inspections')
     .from('inspections')
-    .update({
-      status: 'certified',
-      certified_at: new Date().toISOString(),
-      coc_number: cocNumber,
-    })
+    .update({ status: 'certified', overall_result: overallResult, coc_number: cocNumber })
     .eq('id', input.inspectionId)
+    .eq('status', 'awaiting_verification')
+    .select('coc_number')
+    .maybeSingle()
   if (updErr) throw updErr
+  if (!certified) throw new Error('Nothing was certified: the inspection may have moved on. Reload and try again.')
+  const issuedNumber = (certified as { coc_number: string }).coc_number
 
   // Best-effort branded report → projects.reports + handover auto-file (Node
   // renderer; no glyph bug). The cert is a committed DB fact — a render/file
@@ -279,7 +214,7 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
       await dispatchNotification({
         userIds: recipients,
         title: 'Inspection certified',
-        body: `COC ${cocNumber} has been issued`,
+        body: `COC ${issuedNumber} has been issued`,
         route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
         type: 'inspection_certified',
         entityType: 'inspection',
@@ -292,7 +227,7 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
 
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
   revalidatePath(`/projects/${input.projectId}/inspections`)
-  return cocNumber
+  return issuedNumber
 }
 
 // ─── sendBackForReinspectionAction ─────────────────────────────────────
