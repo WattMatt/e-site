@@ -6,7 +6,7 @@
  * reply onto response rows, files photos against numbered items, checks completeness with
  * the shared engine and submits. It decides nothing about ACCESS: every write goes through
  * a whatsapp.wa_inspection_* function that acts as the person under the inspections RLS and
- * also requires the org flag (migration 00225). The store is a port so this file is testable
+ * also requires the org flag (migration 00227). The store is a port so this file is testable
  * without a database; ./store.ts is the Supabase implementation.
  */
 import {

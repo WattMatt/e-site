@@ -1,4 +1,4 @@
--- 00225_whatsapp_inspection_forms.sql
+-- 00227_whatsapp_inspection_forms.sql
 --
 -- Inspection forms over WhatsApp (prompt E4, spec docs/superpowers/specs/2026-10-05-whatsapp-inspection-flows-design.md).
 --
