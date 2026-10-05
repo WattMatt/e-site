@@ -98,7 +98,7 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
       return id
     },
     async findYear(licenseeId, financialYear) {
-      // Up to two rows since 00232 (a live year and the draft correcting it); never a replaced one.
+      // Up to two rows since 00236 (a live year and the draft correcting it); never a replaced one.
       const r = check(await t().from('tariff_year').select('id,state,replaces_year_id').eq('licensee_id', licenseeId)
         .eq('financial_year', financialYear).neq('state', 'replaced'), 'year lookup')
       const rows = (r.data as Row[] | null) ?? []

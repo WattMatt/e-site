@@ -1,10 +1,12 @@
 -- ---------------------------------------------------------------------------
--- Migration 00232: a published tariff year can be corrected.
+-- Migration 00236: a published tariff year can be corrected.
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time. Immediately before applying, re-check
 -- THREE places: the ledger max(version), origin/main's migration filenames and
--- every OPEN PR's migration filenames (00233 and 00234 were claimed when this
--- was written). If 00232 is taken, renumber this file and its @verify block.
+-- every OPEN PR's migration filenames. Written as 00232; renumbered to 00236
+-- after another session applied 00232 (standards_topics_conditions) while
+-- #255 was open, and 00233-00235 were claimed by open PRs. If 00236 is taken,
+-- renumber this file and the references to it.
 --
 -- WHY. 00210 says "corrections are a new version through review", but its
 -- UNIQUE (licensee_id, financial_year) refused a second row for the year, and
