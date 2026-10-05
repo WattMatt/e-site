@@ -12,6 +12,7 @@ import { parseWebhook } from '../_shared/whatsapp/parse.ts'
 import { createMetaClient } from '../_shared/whatsapp/meta-client.ts'
 import { applyStatuses, createProcessorStore, storeInbound } from '../_shared/whatsapp/store.ts'
 import { processPending } from '../_shared/whatsapp/processor.ts'
+import { createFormsClient } from '../_shared/whatsapp/forms-client.ts'
 
 const env = (k: string) => Deno.env.get(k) ?? ''
 
@@ -49,6 +50,7 @@ export const handler = async (req: Request): Promise<Response> => {
     meta: createMetaClient({ token: env('WHATSAPP_TOKEN'), phoneNumberId: env('WHATSAPP_PHONE_NUMBER_ID') }),
     now: () => new Date(),
     appUrl: env('APP_URL') || 'https://www.e-site.live',
+    forms: createFormsClient({ appUrl: env('APP_URL') || 'https://www.e-site.live', secret: env('WHATSAPP_INTERNAL_SECRET') }),
   }
   const work = processPending(deps, 20, 0).catch((e) => console.error('whatsapp-webhook: processing failed', e))
   const rt = (globalThis as unknown as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime

@@ -38,10 +38,5 @@ export function photoItems(t: Template): PhotoItem[] {
   return out
 }
 
-/** "10", "item 10", "#10", "no. 10" → 10. Anything ambiguous → null. Max 999. */
-export function parseItemRef(text: string): number | null {
-  const m = text.trim().match(/^(?:item\s*|no\.?\s*|#\s*)?(\d{1,3})\.?$/i)
-  if (!m) return null
-  const n = Number(m[1])
-  return n >= 1 ? n : null
-}
+/** Item numbers are parsed by the import-free core so the edge function reads them identically. */
+export { parseItemRef } from '../whatsapp/core'

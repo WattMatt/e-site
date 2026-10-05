@@ -293,7 +293,7 @@ function selfAuthenticatingRoutes(): string[] {
         const src = fs.readFileSync(full, 'utf8')
         const bearer = /headers\.get\(\s*['"][Aa]uthorization['"]/.test(src)
         const signature =
-          /x-paystack-signature|svix-signature|createHmac|new Webhook\(/i.test(src)
+          /x-paystack-signature|svix-signature|createHmac|new Webhook\(|verifyInternal\(/i.test(src)
         if (bearer || signature) {
           out.push('/' + path.relative(APP_DIR, path.dirname(full)).split(path.sep).join('/'))
         }
@@ -384,6 +384,7 @@ describe('middleware — self-authenticating route contract (app/api)', () => {
     expect(routes).toEqual(
       expect.arrayContaining([
         '/api/notifications/dispatch',
+        '/api/internal/whatsapp/forms',
         '/api/paystack/webhook',
         '/api/webhooks/resend',
       ]),

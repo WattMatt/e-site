@@ -9,6 +9,7 @@ import {
 import type { InboundMessage } from './parse.ts'
 import type { InboundRow, LinkRow, ProcessResult, ProcessorDeps } from './processor.ts'
 import { humanDate } from './templates.ts'
+import { formsMenuRow, hasOpenInspections } from './forms.ts'
 
 export interface PendingPost {
   post_id: string
@@ -86,6 +87,7 @@ export async function sendMenu(deps: ProcessorDeps, link: LinkRow, prefix?: stri
     { id: encodePayload({ kind: 'menu', row: 'mine' }), title: 'My open items' },
     { id: encodePayload({ kind: 'menu', row: 'project' }), title: 'Project open items' },
     ...(current.role !== 'client_viewer' ? [{ id: encodePayload({ kind: 'menu', row: 'post' }), title: CHANNEL.postToProject(current.name) }] : []),
+    ...((await hasOpenInspections(deps, link, current.id)) ? [formsMenuRow()] : []),
     { id: encodePayload({ kind: 'menu', row: 'switch' }), title: 'Switch project' },
   ]
   await deps.meta.sendList(link.phone_e164, (prefix ? `${prefix}\n\n` : '') + CHANNEL.menuBody(current.name), CHANNEL.menuButton, rows)

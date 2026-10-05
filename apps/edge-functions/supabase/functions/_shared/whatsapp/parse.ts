@@ -9,6 +9,10 @@ export interface InboundMessage {
   payload: string | null
   imageId: string | null
   imageMime: string | null
+  /** A completed WhatsApp Flow: interactive.nfm_reply.response_json, verbatim. */
+  flowResponseJson?: string | null
+  /** Meta's original message object. Stored as whatsapp.inbound.meta_raw; never routed on. */
+  metaRaw?: unknown
 }
 
 export interface StatusUpdate {
@@ -33,6 +37,9 @@ export function toInboundMessage(m: Any): InboundMessage | null {
     contextId: m.context?.id ?? null, text, payload,
     imageId: m.type === 'image' ? (m.image?.id ?? null) : null,
     imageMime: m.type === 'image' ? (m.image?.mime_type ?? null) : null,
+    flowResponseJson: m.type === 'interactive' && m.interactive?.type === 'nfm_reply' && typeof m.interactive?.nfm_reply?.response_json === 'string'
+      ? m.interactive.nfm_reply.response_json : null,
+    metaRaw: m,
   }
 }
 

@@ -28,6 +28,7 @@
 -- table: whatsapp.form_links
 -- column: whatsapp.inbound.meta_raw
 -- column: whatsapp.phone_links.current_form_session_id
+-- column: whatsapp.phone_links.current_form_session_at
 -- column: whatsapp.outbox.form_session_id
 -- column: inspections.responses.via
 -- column: inspections.photos.via
@@ -113,7 +114,8 @@ CREATE TABLE whatsapp.form_links (
 );
 
 ALTER TABLE whatsapp.phone_links
-  ADD COLUMN current_form_session_id uuid REFERENCES whatsapp.form_sessions(id) ON DELETE SET NULL;
+  ADD COLUMN current_form_session_id uuid REFERENCES whatsapp.form_sessions(id) ON DELETE SET NULL,
+  ADD COLUMN current_form_session_at timestamptz;
 
 -- ── 3. Keep Meta's original message JSON (append-only like the rest of the row) ─
 ALTER TABLE whatsapp.inbound ADD COLUMN meta_raw jsonb;

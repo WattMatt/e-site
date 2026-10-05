@@ -109,3 +109,73 @@ describe('drainOutbox', () => {
     expect(store.recordPolicyError).toHaveBeenCalledWith('132015 template paused')
   })
 })
+
+describe('drainOutbox: inspection forms (E4)', () => {
+  const S = '66666666-6666-4666-8666-666666666666'
+  const summary = { label: 'MINIATURE SUBSTATION 1', templateName: 'Miniature Substation Inspection Report',
+    projectName: '(643) KINGSWALK', submitterName: 'Johan B', verifierName: 'Arno' }
+  let pdf: Uint8Array | null
+  let check: string
+
+  beforeEach(() => {
+    pdf = new Uint8Array([37, 80, 68, 70])
+    check = 'ok'
+    Object.assign(store, {
+      formReceiveCheck: vi.fn(async () => check),
+      formSummary: vi.fn(async () => summary),
+      outboundPdf: vi.fn(async () => pdf),
+    })
+    Object.assign(meta, {
+      uploadMedia: vi.fn(async () => 'MEDIA1'),
+      sendDocument: vi.fn(async () => 'wamid.DOC'),
+      sendText: vi.fn(async () => 'wamid.TXT'),
+    })
+  })
+
+  it('confirmation: sends the PDF as a document with the summary as caption, even at night', async () => {
+    rows = [orow({ trigger: 'form_confirm', work_item_id: null, payload: {}, form_session_id: S })]
+    const s = await run(NIGHT)
+    expect(s.sent).toBe(1)
+    expect(meta.uploadMedia).toHaveBeenCalledWith(pdf, 'application/pdf', expect.stringMatching(/\.pdf$/))
+    expect(meta.sendDocument).toHaveBeenCalledWith('+27821234567', 'MEDIA1', expect.stringMatching(/MINIATURE SUBSTATION 1.*\.pdf$/),
+      expect.stringContaining('Submitted'))
+    expect(store.marks[0][1]).toMatchObject({ status: 'sent', meta_message_id: 'wamid.DOC' })
+  })
+  it('confirmation without a PDF goes as text', async () => {
+    pdf = null
+    rows = [orow({ trigger: 'form_confirm', work_item_id: null, form_session_id: S })]
+    await run()
+    expect(meta.sendDocument).not.toHaveBeenCalled()
+    expect(meta.sendText).toHaveBeenCalledWith('+27821234567', expect.stringContaining('Submitted'))
+  })
+  it('confirmation outside the 24-hour window is dropped, and the number is NOT marked undeliverable', async () => {
+    rows = [orow({ trigger: 'form_confirm', work_item_id: null, form_session_id: S })]
+    ;(meta.sendDocument as ReturnType<typeof vi.fn>).mockRejectedValue(new MetaError(131047, 'Re-engagement message', 'recipient'))
+    const s = await run()
+    expect(s.suppressed).toBe(1)
+    expect(store.marks[0][1]).toMatchObject({ status: 'suppressed', error_text: 'window_closed' })
+    expect(store.markLinkUndeliverable).not.toHaveBeenCalled()
+  })
+  it('summary: the approved template with who, what, which form and where', async () => {
+    rows = [orow({ trigger: 'form_submitted', work_item_id: null, form_session_id: S })]
+    await run()
+    expect(meta.sendTemplate).toHaveBeenCalledWith('+27821234567', 'esite_form_submitted',
+      ['Johan B', 'MINIATURE SUBSTATION 1', 'Miniature Substation Inspection Report', '(643) KINGSWALK'], [])
+  })
+  it('summary respects quiet hours', async () => {
+    rows = [orow({ trigger: 'form_submitted', work_item_id: null, form_session_id: S })]
+    const s = await run(NIGHT)
+    expect(s.held).toBe(1)
+    expect(meta.sendTemplate).not.toHaveBeenCalled()
+  })
+  it('re-checks at send time: flag off, project off or access gone suppresses with the reason', async () => {
+    for (const reason of ['flag_off', 'project_off', 'no_access']) {
+      check = reason
+      store.marks.length = 0
+      rows = [orow({ trigger: 'form_submitted', work_item_id: null, form_session_id: S })]
+      await run()
+      expect(store.marks[0][1]).toMatchObject({ status: 'suppressed', error_text: reason })
+    }
+    expect(meta.sendTemplate).not.toHaveBeenCalled()
+  })
+})

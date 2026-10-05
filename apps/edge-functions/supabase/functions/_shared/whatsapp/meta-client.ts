@@ -31,8 +31,22 @@ export interface MetaClient {
   sendTemplate(to: string, name: string, body: string[], buttons: TemplateButton[]): Promise<string>
   sendText(to: string, body: string, replyTo?: string): Promise<string>
   sendButtons(to: string, body: string, buttons: Array<{ id: string; title: string }>, replyTo?: string): Promise<string>
-  sendList(to: string, body: string, buttonLabel: string, rows: Array<{ id: string; title: string; description?: string }>): Promise<string>
+  sendList(to: string, body: string, buttonLabel: string, rows: Array<{ id: string; title: string; description?: string }>,
+           sectionTitle?: string): Promise<string>
   fetchMedia(mediaId: string): Promise<{ bytes: Uint8Array; mime: string }>
+  /** An endpoint-less Flow (navigate): opens at `firstScreen`; the reply comes back as nfm_reply with our token. */
+  sendFlow(to: string, f: FlowSend): Promise<string>
+  uploadMedia(bytes: Uint8Array, mime: string, filename: string): Promise<string>
+  sendDocument(to: string, mediaId: string, filename: string, caption?: string): Promise<string>
+}
+
+export interface FlowSend {
+  flowId: string
+  token: string
+  cta: string
+  body: string
+  mode: 'draft' | 'published'
+  firstScreen: string
 }
 
 export function createMetaClient(cfg: {
@@ -89,14 +103,45 @@ export function createMetaClient(cfg: {
           action: { buttons: buttons.slice(0, 3).map((b) => ({ type: 'reply', reply: { id: b.id.slice(0, 256), title: b.title.slice(0, 20) } })) } },
       })
     },
-    sendList(to, body, buttonLabel, rows) {
+    sendList(to, body, buttonLabel, rows, sectionTitle = 'Open items') {
       return post({
         to: digits(to), type: 'interactive',
         interactive: { type: 'list', body: { text: body.slice(0, 1024) },
-          action: { button: buttonLabel.slice(0, 20), sections: [{ title: 'Open items',
+          action: { button: buttonLabel.slice(0, 20), sections: [{ title: sectionTitle.slice(0, 24),
             rows: rows.slice(0, 10).map((r) => ({ id: r.id.slice(0, 200), title: r.title.slice(0, 24),
               ...(r.description ? { description: r.description.slice(0, 72) } : {}) })) }] } },
       })
+    },
+    sendFlow(to, fl) {
+      return post({
+        to: digits(to), type: 'interactive',
+        interactive: {
+          type: 'flow', body: { text: fl.body.slice(0, 1024) },
+          action: { name: 'flow', parameters: {
+            flow_message_version: '3', flow_id: fl.flowId, flow_token: fl.token, flow_cta: fl.cta.slice(0, 30),
+            flow_action: 'navigate', flow_action_payload: { screen: fl.firstScreen },
+            ...(fl.mode === 'draft' ? { mode: 'draft' } : {}),
+          } },
+        },
+      })
+    },
+    async uploadMedia(bytes, mime, filename) {
+      const form = new FormData()
+      form.set('messaging_product', 'whatsapp')
+      form.set('type', mime)
+      form.set('file', new Blob([new Uint8Array(bytes)], { type: mime }), filename)
+      const res = await f(`${GRAPH}/${cfg.phoneNumberId}/media`, { method: 'POST', headers: auth, body: form })
+      // deno-lint-ignore no-explicit-any
+      const json: any = await res.json().catch(() => ({}))
+      if (!res.ok || typeof json?.id !== 'string') {
+        const code = Number(json?.error?.code ?? 0)
+        throw new MetaError(code, String(json?.error?.message ?? `media upload HTTP ${res.status}`), classifyMetaError(code, res.status))
+      }
+      return json.id
+    },
+    sendDocument(to, mediaId, filename, caption) {
+      return post({ to: digits(to), type: 'document',
+        document: { id: mediaId, filename: filename.slice(0, 240), ...(caption ? { caption: caption.slice(0, 1024) } : {}) } })
     },
     async fetchMedia(mediaId) {
       const meta = await f(`${GRAPH}/${mediaId}`, { headers: auth })

@@ -29,6 +29,7 @@ import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
 import { dispatchNotification } from '@/lib/notifications'
+import { afterWebSubmitOfWhatsAppForm } from '@/lib/whatsapp-forms/after-submit'
 import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -551,6 +552,11 @@ export async function submitInspectionAction(
       entityId: inspectionId,
     })
   }
+
+  // Opened on WhatsApp (E4)? Then the person's chat gets the confirmation with the PDF and the
+  // site's linked members get the summary. Never throws.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) await afterWebSubmitOfWhatsAppForm(inspectionId, user.id)
 
   revalidatePath(`/projects/${projectId}/inspections/${inspectionId}`)
   revalidatePath(`/projects/${projectId}/inspections`)
