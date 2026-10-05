@@ -49,6 +49,8 @@ describe('Sidebar — site capture is project-scoped', () => {
     render(<Sidebar role="owner" />)
     expect(screen.getByRole('link', { name: 'Capture' }).getAttribute('aria-current')).toBe('page')
   })
+})
+
 describe('Sidebar — Tariffs link (E7)', () => {
   it('every org role sees the public tariff explorer, admin or not', () => {
     for (const role of ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier'] as const) {
