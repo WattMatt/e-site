@@ -73,6 +73,15 @@ describe('other phone patterns', () => {
     expect(phoneCss).toMatch(/\.stack-on-phone\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important;/)
   })
 
+  it('stack-below-lg (tablet-width stacking) is defined for every width up to 1024 px', () => {
+    expect(files.some((f) => /className="[^"]*\bstack-below-lg\b/.test(readFileSync(f, 'utf8')))).toBe(true)
+    expect(css).toMatch(/@media screen and \(max-width: 1023\.98px\)\s*\{\s*\.stack-below-lg\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important;/)
+  })
+
+  it('caps native selects at their column width on phones', () => {
+    expect(phoneCss).toMatch(/select\s*\{\s*max-width:\s*100%;/)
+  })
+
   it('keeps form fields at 16 px on phones so iOS does not zoom on focus', () => {
     expect(phoneCss).toMatch(/textarea\s*\{\s*font-size:\s*16px !important;/)
   })

@@ -191,7 +191,7 @@ export default function CaptureForm({
         : 'warning'
 
   return (
-    <div className="stack-on-phone"
+    <div className="stack-on-phone stack-below-lg"
       style={{
         display: 'grid',
         gridTemplateColumns: '220px 1fr 300px',

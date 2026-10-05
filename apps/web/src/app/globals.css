@@ -1671,6 +1671,8 @@ body {
   textarea { font-size: 16px !important; }
   input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=hidden]),
   select { min-height: 44px; }
+  /* A native select sizes itself to its longest option; never wider than its column. */
+  select { max-width: 100%; }
   .btn-primary-amber, .filter-tab, .link-button { min-height: 44px; }
   .minimal-legal-nav a { display: inline-flex; align-items: center; min-height: 44px; }
   .portal-header-brand { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
@@ -1685,6 +1687,12 @@ body {
     background: var(--c-base);
     border-top: 1px solid var(--c-border);
   }
+}
+
+/* Layouts that need a desktop's width (e.g. the inspection capture form's
+   three fixed columns, ~900 px) stack on tablets beside the sidebar too. */
+@media screen and (max-width: 1023.98px) {
+  .stack-below-lg { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
 /* A small control (e.g. the 20 px photo-delete ×) keeps its quiet look but
