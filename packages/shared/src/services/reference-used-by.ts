@@ -21,10 +21,10 @@ const OPEN_PROJECT = '/projects'
 export function referenceUsedBy(code: string): UsedBy[] {
   const out: UsedBy[] = []
   if ((RATING_TABLE_CODES as readonly string[]).includes(code)) {
-    out.push({ calculator: CABLE_SCHEDULE, use: 'Auto-fills Ω/km and the base current rating for a cable size', href: OPEN_PROJECT })
+    out.push({ calculator: CABLE_SCHEDULE, use: 'fills in the impedance and base current rating when you pick a cable size', href: OPEN_PROJECT })
   }
   if ((DERATING_TABLE_CODES as readonly string[]).includes(code)) {
-    out.push({ calculator: CABLE_SCHEDULE, use: 'Derating factor applied to the base rating', href: OPEN_PROJECT })
+    out.push({ calculator: CABLE_SCHEDULE, use: 'multiplies the base rating by this derating factor', href: OPEN_PROJECT })
   }
   const cites = LEGACY_CROSSCHECKS.filter(
     (m) => (DERATING_TABLE_CODES as readonly string[]).includes(m.legacyCode)
@@ -33,7 +33,7 @@ export function referenceUsedBy(code: string): UsedBy[] {
   if (cites.length > 0) {
     out.push({
       calculator: CABLE_SCHEDULE,
-      use: `Cites the derating factors read from ${[...new Set(cites.map((m) => m.legacyCode))].join(', ')}`,
+      use: 'shows this table and page as the source of its derating factors (the values are identical)',
       href: OPEN_PROJECT,
     })
   }

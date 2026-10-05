@@ -10,7 +10,8 @@ export const metadata: Metadata = { title: 'Standards' }
  * table the signed-in user may read (row security hides SANS-extracted tables
  * outside the WM org — owner decision D2), each value with its citation.
  */
-export default async function StandardsPage() {
+export default async function StandardsPage({ searchParams }: { searchParams: Promise<{ t?: string }> }) {
+  const { t: initialCode } = await searchParams
   const supabase = await createClient()
   const db = (supabase as any).schema('cable_schedule')
   const [stdRes, tblRes] = await Promise.all([
@@ -18,7 +19,7 @@ export default async function StandardsPage() {
       .select('id, code, edition, year, title, publisher, kind, status, superseded_by, in_library, notes')
       .order('code').order('year', { ascending: false }),
     db.from('sans_tables')
-      .select('id, code, title, standard, section_number, clause, provenance, verification, standard_id, columns, notes, source_ref, category, description, cable_construction'),
+      .select('*'), // '*' so the page still renders in the window before a new column's migration applies
   ])
 
   // PostgREST caps a response at 1 000 rows; page through so no table is ever
@@ -38,6 +39,9 @@ export default async function StandardsPage() {
     allRows.push(...data)
     if (data.length < PAGE) break
   }
+
+  if (stdRes?.error) throw new Error(`Could not load the standards registry: ${stdRes.error.message}`)
+  if (tblRes?.error) throw new Error(`Could not load the reference tables: ${tblRes.error.message}`)
 
   const rowsByTable = new Map<string, BrowserTable['rows']>()
   for (const r of allRows) {
@@ -59,12 +63,12 @@ export default async function StandardsPage() {
         <div>
           <h1 className="page-title">Standards</h1>
           <p className="page-subtitle">
-            {tables.length} reference table{tables.length === 1 ? '' : 's'} · {standards.length} source documents ·
-            values for internal engineering use; clause text and PDFs are not reproduced
+            Engineering reference tables with the clause, edition and page each value comes from.
+            For internal engineering use; clause text and the standards themselves are not reproduced.
           </p>
         </div>
       </div>
-      <StandardsBrowser standards={standards} tables={tables} />
+      <StandardsBrowser standards={standards} tables={tables} initialCode={initialCode ?? null} />
     </div>
   )
 }

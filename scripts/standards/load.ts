@@ -15,8 +15,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { columnCoverage, crosscheck, LEGACY_CROSSCHECKS, type ColumnCoverage } from '../../packages/shared/src/standards/crosscheck.ts'
-import { LOADED_CLAUSES } from '../../packages/shared/src/standards/specs.ts'
-import type { Dataset, DatasetTable } from '../../packages/shared/src/standards/dataset.ts'
+import { tableCode, type Dataset, type DatasetTable } from '../../packages/shared/src/standards/dataset.ts'
 import { readLegacyTables, readOnlyQuery } from './live-tables.ts'
 
 const WM_ORG = 'dddddddd-0000-0000-0000-000000000001'
@@ -61,7 +60,10 @@ const j = (v: unknown): string => {
 function tableSql(t: DatasetTable, visibilityOrg: string, source: { file: string; sha256: string }): string {
   // Legacy tables are TABLE_*; an extracted code must never collide with one.
   if (/^TABLE_/i.test(t.code)) throw new Error(`refusing to load ${t.code}: that is a legacy table code`)
-  const columns = [t.keyColumn, ...t.valueColumns].map((c) => ({ key: c.key, label: c.label, unit: c.unit, type: 'number' }))
+  const columns = [t.keyColumn, ...t.valueColumns].map((c) => ({
+    key: c.key, label: c.label, unit: c.unit, type: c.type === 'text' || (c === t.keyColumn && (t.keyColumn.kind === 'band' || t.keyColumn.kind === 'text' || t.keyColumn.header === 0)) ? 'string' : 'number',
+    ...(c.group ? { group: c.group } : {}),
+  }))
   const standardLabel = `${t.document.code}:${t.document.year}`
   const sourceRef = `${standardLabel} Ed ${t.document.edition}, ${t.clause} — extracted by scripts/standards/extract.ts from ${source.file} (sha256 ${source.sha256.slice(0, 12)})`
   const std = `(SELECT id FROM cable_schedule.ref_standards WHERE code = ${q(t.document.code)} AND edition = ${q(t.document.edition)})`
@@ -69,15 +71,15 @@ function tableSql(t: DatasetTable, visibilityOrg: string, source: { file: string
   return `
 -- ${t.code}
 INSERT INTO cable_schedule.sans_tables
-  (code, title, standard, section_number, columns, notes, source_ref, category, standard_id, clause, provenance, visibility_org_id)
+  (code, title, standard, section_number, columns, notes, source_ref, category, standard_id, clause, provenance, visibility_org_id, topic, conditions)
 VALUES (${q(t.code)}, ${q(t.title)}, ${q(standardLabel)}, ${q(t.clause.replace(/^Table /, ''))}, ${j(columns)},
         ${t.remark ? q(t.remark) : 'NULL'}, ${q(sourceRef)}, ${CATEGORY[t.clause] ? q(CATEGORY[t.clause]) : 'NULL'},
-        ${std}, ${q(t.clause)}, 'extracted', ${q(visibilityOrg)})
+        ${std}, ${q(t.clause)}, 'extracted', ${q(visibilityOrg)}, ${q(t.topic)}, ${j(t.conditions)})
 ON CONFLICT (code) DO UPDATE SET
   title = EXCLUDED.title, standard = EXCLUDED.standard, section_number = EXCLUDED.section_number,
   columns = EXCLUDED.columns, notes = EXCLUDED.notes, source_ref = EXCLUDED.source_ref,
   category = EXCLUDED.category, standard_id = EXCLUDED.standard_id, clause = EXCLUDED.clause,
-  visibility_org_id = EXCLUDED.visibility_org_id
+  visibility_org_id = EXCLUDED.visibility_org_id, topic = EXCLUDED.topic, conditions = EXCLUDED.conditions
   WHERE cable_schedule.sans_tables.provenance = 'extracted';
 DELETE FROM cable_schedule.sans_rows
  WHERE table_id = (SELECT id FROM cable_schedule.sans_tables WHERE code = ${q(t.code)} AND provenance = 'extracted');
@@ -95,7 +97,7 @@ async function main(): Promise<void> {
   const apply = process.argv.includes('--apply')
   const today = new Date().toISOString().slice(0, 10)
 
-  const toLoad = ds.tables.filter((t) => (LOADED_CLAUSES as readonly string[]).includes(t.clause.replace(/^Table /, '')))
+  const toLoad = ds.tables
   const statements: string[] = []
   for (const t of toLoad) {
     const doc = ds.documents.find((d) => d.code === t.document.code && d.year === t.document.year)!
@@ -114,7 +116,7 @@ async function main(): Promise<void> {
       const against: Array<Record<string, unknown>> = []
       const coverage: Record<string, ColumnCoverage> = {}
       for (const m of mappings) {
-        const st = ds.tables.find((t) => t.document.year === 2021 && t.clause === `Table ${m.sansClause}`)!
+        const st = ds.tables.find((t) => t.code === tableCode('SANS 10142-1', 2021, m.sansClause))!
         const r = crosscheck(m, lt.rows.map((x) => x.row), st.rows.map((x) => x.row_data))
         // A mapping that compared nothing proves nothing — a wrong key scale or
         // column name would otherwise read as "verified".
