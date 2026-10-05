@@ -34,6 +34,8 @@
 -- column: inspections.photos.via
 -- column: inspections.inspections.submitted_via
 -- function: whatsapp.forms_enabled(uuid)
+-- function: whatsapp.inbound_immutable()
+-- function: whatsapp._inspection_gate(uuid)
 -- function: whatsapp.wa_inspection_gate(uuid,uuid)
 -- function: whatsapp.wa_my_inspections(uuid,uuid)
 -- function: whatsapp.wa_inspection_save(uuid,uuid,jsonb,uuid)
@@ -51,6 +53,7 @@
 -- sql: (SELECT pg_get_constraintdef(c.oid) LIKE '%form_submitted%' FROM pg_constraint c WHERE c.conrelid = 'whatsapp.outbox'::regclass AND c.conname = 'outbox_trigger_check')
 -- sql: (SELECT column_default = 'false' FROM information_schema.columns WHERE table_schema = 'whatsapp' AND table_name = 'org_settings' AND column_name = 'forms_enabled')
 -- sql: (SELECT EXISTS (SELECT 1 FROM storage.buckets b WHERE b.id = 'whatsapp-media' AND b.public = false))
+-- sql: (SELECT pg_get_functiondef('whatsapp.inbound_immutable()'::regprocedure) LIKE '%meta_raw%')
 -- sql: (SELECT EXISTS (SELECT 1 FROM whatsapp.templates t WHERE t.name = 'esite_form_submitted' AND t.category = 'UTILITY'))
 -- behaviour: refusal and positive paths proven by scripts/db/assert-whatsapp-inspections.sql
 -- @verify:end
