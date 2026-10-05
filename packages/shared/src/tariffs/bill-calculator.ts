@@ -10,7 +10,7 @@
  * priced correctly.
  */
 import { costPeriod, type CostOptions, type MonthlyBill } from './bill-engine'
-import { aggregateHourly, monthlyDemand, type TouCalendar } from './tou'
+import { aggregateHourly, monthlyDemand, type HolidayDays, type TouCalendar } from './tou'
 import type { MonthUsage, Tariff } from './types'
 
 export interface HourlyGridFlows {
@@ -53,7 +53,7 @@ export interface HourlyCostOptions extends CostOptions {
   calendar: TouCalendar
   /** Reference year for day types (the 8760 year drops 29 Feb). */
   year: number
-  holidays?: ReadonlySet<string>
+  holidays?: HolidayDays
   /** Explicit per-month inputs (NMD, amps, kVArh...); a value given here wins over the one derived from the series. */
   demandForMonth?: (month: number) => Partial<MonthDemandInputs>
   /** kVA = kW / powerFactor for demand derived from the import series. Default 1 (no reactive data). */
@@ -101,7 +101,7 @@ export const DEFAULT_REFERENCE_YEAR = 2025
 export function createBillCalculator(
   tariff: Tariff,
   calendar: TouCalendar,
-  holidays?: ReadonlySet<string>,
+  holidays?: HolidayDays,
   opts: Omit<HourlyCostOptions, 'calendar' | 'holidays' | 'year'> & { year?: number } = {},
 ): TariffBillCalculator {
   return {

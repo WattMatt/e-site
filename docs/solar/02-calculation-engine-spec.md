@@ -251,6 +251,11 @@ battery discharge from PV) / ΣP_ac; solar fraction = (direct + discharge) / Σl
 ## 5. Bill engine (per billing month, per point of delivery)
 
 Given a tariff (charges with canonical units), its TOU calendar and public holidays:
+
+The calendar is the Tariff tab's (`loadStudyCalendar`): the supply authority's calendar valid on the pricing
+date, else Eskom's hours flagged `assumed_eskom`; the run records which (`tariffRef.touHours`). A public
+holiday bills as the tariff family's dated treatment for that date where `tariffs.holiday_treatment` holds
+one (exact date only), else as the calendar's `holiday_rule`, else as the day of the week it falls on.
 1. **Energy:** `Σ_h kWh_h × rate(season(month), tou(day_type, hour))` plus every per-kWh adder by TOU
    (legacy, **network demand charged in c/kWh** — e.g. Eskom Homeflex — ancillary, subsidy/affordability,
    electrification, surcharges). A per-kWh network-demand adder is never confused with an R/kVA demand charge.
