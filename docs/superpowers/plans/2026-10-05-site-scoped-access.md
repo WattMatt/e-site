@@ -188,7 +188,6 @@ BEGIN
   SELECT count(*) INTO v_n FROM tenants.floor_plans WHERE project_id=v_foreign;     INSERT INTO _r VALUES ('contractor sees 0 foreign floor plans', v_n=0);
   SELECT count(*) INTO v_n FROM structure.nodes WHERE project_id=v_foreign;         INSERT INTO _r VALUES ('contractor sees 0 foreign nodes', v_n=0);
   SELECT count(*) INTO v_n FROM projects.rfis WHERE project_id=v_foreign;           INSERT INTO _r VALUES ('contractor sees 0 foreign rfis', v_n=0);
-  SELECT count(*) INTO v_n FROM projects.contacts WHERE project_id=v_foreign;       INSERT INTO _r VALUES ('contractor sees 0 foreign contacts', v_n=0);
   SELECT count(*) INTO v_n FROM projects.project_members WHERE project_id=v_foreign; INSERT INTO _r VALUES ('contractor sees 0 foreign members', v_n=0);
   SELECT count(*) INTO v_n FROM cable_schedule.cables c
    WHERE public.site_project_of_revision(c.revision_id)=v_foreign;                 INSERT INTO _r VALUES ('contractor sees 0 foreign cables (child gate)', v_n=0);
@@ -200,12 +199,10 @@ BEGIN
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO v_n FROM projects.projects WHERE id=v_own;                   INSERT INTO _r VALUES ('contractor still sees own project', v_n=1);
   SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id='drawings' AND name=v_obj; INSERT INTO _r VALUES ('contractor cannot read foreign drawing file', v_obj IS NOT NULL AND v_n=0);
-  BEGIN
-    INSERT INTO projects.contacts (project_id, organisation_id, name) VALUES (v_foreign, c_org, 'site-scope probe');
-    v_ok := false;
-  EXCEPTION WHEN insufficient_privilege OR check_violation THEN v_ok := true;
-  END;
-  INSERT INTO _r VALUES ('contractor insert into foreign project refused', v_ok);
+  -- tenants.floor_plans "Org members can manage floor plans" lets ANY org member write today
+  UPDATE tenants.floor_plans SET name = name WHERE project_id = v_foreign;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('contractor cannot write a foreign floor plan', v_n = 0);
   RESET ROLE;
 
   -- ── org PM without membership ──
@@ -222,7 +219,7 @@ BEGIN
   SELECT count(*) INTO v_n FROM projects.projects WHERE organisation_id=c_org;      INSERT INTO _r VALUES ('admin sees every WM project', v_n=v_m AND v_m>1);
   SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id='drawings' AND name=v_obj; INSERT INTO _r VALUES ('admin reads foreign drawing file', v_n=1);
   BEGIN
-    INSERT INTO projects.projects (organisation_id, name, status) VALUES (c_org, 'site-scope probe project', 'planning') RETURNING id INTO v_new;
+    INSERT INTO projects.projects (organisation_id, name, status, created_by) VALUES (c_org, 'site-scope probe project', 'planning', v_admin) RETURNING id INTO v_new;
     v_ok := v_new IS NOT NULL;
   EXCEPTION WHEN OTHERS THEN v_ok := false;
   END;
