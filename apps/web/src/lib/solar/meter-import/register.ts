@@ -12,7 +12,8 @@ export type RegisterOutcome =
   | { status: 409; body: { error: 'duplicate_in_other_project'; fileId: string; meters: FileMeter[] } }
 
 export async function registerStoredRawFile(repo: MeterImportRepo, a: {
-  projectId: string; orgId: string; storagePath: string; originalName: string; bytes: Uint8Array; sha: string
+  /** null: an org meter-archive file. */
+  projectId: string | null; orgId: string; storagePath: string; originalName: string; bytes: Uint8Array; sha: string
 }): Promise<RegisterOutcome> {
   const existing = await repo.fileBySha(a.orgId, a.sha)
   if (existing && existing.project_id !== a.projectId) {

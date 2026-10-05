@@ -20,7 +20,8 @@ export type AreaSource = 'register_exact' | 'register_llm' | 'filename' | 'manua
 export interface MeterFileRow {
   id: string
   organisation_id: string
-  project_id: string
+  /** NULL: an org meter-archive file, not attached to any project. */
+  project_id: string | null
   sha256: string
   size_bytes: number
   storage_path: string
@@ -98,7 +99,7 @@ export interface MeterImportRepo {
   studyId(projectId: string): Promise<string | null>
   downloadRaw(storagePath: string): Promise<Uint8Array | null>
   fileBySha(orgId: string, sha256: string): Promise<MeterFileRow | null>
-  insertFile(row: { project_id: string; organisation_id: string; sha256: string; size_bytes: number; storage_path: string; original_name: string }): Promise<MeterFileRow>
+  insertFile(row: { project_id: string | null; organisation_id: string; sha256: string; size_bytes: number; storage_path: string; original_name: string }): Promise<MeterFileRow>
   getFile(fileId: string): Promise<MeterFileRow | null>
   updateFile(fileId: string, patch: Record<string, unknown>): Promise<void>
   seriesByBodyHash(orgId: string, bodyHash: string): Promise<Array<{ meterId: string; fileId: string; label: string; siteLabel: string | null }>>
@@ -188,7 +189,7 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
     },
     async metersForFile(fileId) {
       type Row = { meter_id: string; meters: { label: string; site_label: string | null } | null }
-      const byChannel = await solar().from('meter_channels').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
+      const byChannel = await solar().from('meter_channels').select('meter_id, meters!meter_channels_meter_id_fkey(label, site_label)').eq('file_id', fileId) // two FKs link these tables (meters.existing_pv_channel_id): name the one meant
       if (byChannel.error) throw new Error(`meters for file (channels): ${byChannel.error.message}`)
       const byHash = await solar().from('meter_series_hashes').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
       if (byHash.error) throw new Error(`meters for file (hashes): ${byHash.error.message}`)

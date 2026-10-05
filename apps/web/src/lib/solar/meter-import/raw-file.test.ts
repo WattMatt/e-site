@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { createFakeRepo } from './fake-repo'
-import { loadVerifiedRaw } from './raw-file'
+import { expectedRawPath, loadVerifiedRaw } from './raw-file'
 import type { MeterFileRow } from './repo'
 
 const ORG = '0f8fad5b-d9cb-469f-a165-70867728950e'
@@ -67,5 +67,16 @@ describe('loadVerifiedRaw', () => {
     const { repo } = createFakeRepo({})
     const big = { ...repo, downloadRaw: async () => { throw new Error('meter file is larger than 50 MB') } }
     expect(await loadVerifiedRaw(big, file(), ORG)).toEqual({ ok: false, status: 413, body: { error: 'file_too_large' } })
+  })
+})
+
+describe('archive files (no project)', () => {
+  const ORG = '11111111-1111-1111-1111-111111111111'
+  const SHA = 'a'.repeat(64)
+  it('expect <org>/archive/<sha>.<ext> when the file has no project', () => {
+    expect(expectedRawPath(ORG, { project_id: null, sha256: SHA, storage_path: `${ORG}/archive/${SHA}.csv` })).toBe(`${ORG}/archive/${SHA}.csv`)
+  })
+  it('a project file keeps <org>/<project>/<sha>.<ext>', () => {
+    expect(expectedRawPath(ORG, { project_id: 'p1', sha256: SHA, storage_path: `${ORG}/p1/${SHA}.csv` })).toBe(`${ORG}/p1/${SHA}.csv`)
   })
 })
