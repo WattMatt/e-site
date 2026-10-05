@@ -8,6 +8,9 @@ import { ORG_WRITE_ROLES, SNAG_FIELD_ROLES, type OrgRole } from '@esite/shared'
 export const LOAD_PROFILE_READ_ROLES: readonly OrgRole[] = SNAG_FIELD_ROLES
 export const LOAD_PROFILE_WRITE_ROLES: readonly OrgRole[] = ORG_WRITE_ROLES
 
+/** The workspace Load profiles page (the org's Solar meter library by site): internal roles only. */
+export const ARCHIVE_READ_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor', 'inspector']
+
 export const LOAD_PROFILE_BUCKET = 'load-profile-files'
 export const LOAD_PROFILE_UPLOAD_RE = /\.(csv|txt|xlsx)$/i
 export const LOAD_PROFILE_MAX_BYTES = 50 * 1024 * 1024

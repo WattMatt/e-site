@@ -8,11 +8,11 @@ import { useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
-  addSyntheticSourceAction, commitLoadProfileFileAction, deleteLoadProfileSourceAction, parseLoadProfileFileAction, updateLoadProfileSourceAction,
+  addLibraryMetersAction, addSyntheticSourceAction, commitLoadProfileFileAction, listLibraryMetersAction, type LibraryMeterOption, deleteLoadProfileSourceAction, parseLoadProfileFileAction, updateLoadProfileSourceAction,
 } from '@/actions/load-profile.actions'
 import { LOAD_PROFILE_BUCKET, LOAD_PROFILE_MAX_BYTES, LOAD_PROFILE_UPLOAD_RE, loadProfileFilePath } from '@/lib/load-profile/access'
 import type { ParsedPart } from '@/lib/load-profile/pipeline'
-import type { LoadProfileView, SourceView } from '@/lib/load-profile/view-types'
+import type { LoadProfileView, LoadRole, SourceView } from '@/lib/load-profile/view-types'
 import { formatNumber } from '@/components/charts/scale'
 import type { ArchetypeOption } from './LoadProfileClient'
 
@@ -28,9 +28,14 @@ function contentTypeOf(name: string): string {
 }
 
 interface PendingFile { path: string; fileName: string; parts: ParsedPart[] }
-type Pick = { checked: boolean; label: string; withKva: boolean }
+type Pick = { checked: boolean; label: string; withKva: boolean; role: LoadRole }
 
-const KIND_LABEL: Record<SourceView['kind'], string> = { meter: 'Meter', tenant_schedule: 'Tenant schedule', admd: 'ADMD block' }
+const ROLE_LABEL: Record<LoadRole, string> = {
+  bulk: 'Bulk supply', tenant: 'Tenant', addition: 'Addition (new load)', check: 'Check meter (not added)', submain: 'Sub-supply / DB (not added)', solar: 'Solar (not added)', generator: 'Generator (not added)',
+}
+const ROLES = Object.keys(ROLE_LABEL) as LoadRole[]
+
+const KIND_LABEL: Record<SourceView['kind'], string> = { meter: 'Meter file', tenant_schedule: 'Tenant schedule', admd: 'ADMD block', library_meter: 'Solar library meter' }
 
 function QualityLine({ s }: { s: SourceView }) {
   if (s.kind !== 'meter') return <span>{s.detail}</span>
@@ -55,7 +60,22 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
   const [lines, setLines] = useState<string[]>([])
   const [pending, setPending] = useState<PendingFile[]>([])
   const [picks, setPicks] = useState<Record<string, Pick>>({})
-  const [form, setForm] = useState<'none' | 'tenant' | 'admd'>('none')
+  const [form, setForm] = useState<'none' | 'tenant' | 'admd' | 'library'>('none')
+  const [library, setLibrary] = useState<LibraryMeterOption[] | null>(null)
+  const [libraryQ, setLibraryQ] = useState('')
+  const [libraryPick, setLibraryPick] = useState<Set<string>>(new Set())
+
+  async function openLibrary(q = '') {
+    setForm('library')
+    setError(null)
+    try {
+      const r = await listLibraryMetersAction(view.projectId, q)
+      if ('error' in r) setError(r.error)
+      else { setLibrary(r.meters); setLibraryPick(new Set(r.meters.filter((m) => m.inThisProject).map((m) => m.id))) }
+    } catch {
+      setError('The library could not be listed. Try again.')
+    }
+  }
   const [commonArea, setCommonArea] = useState('10')
   const [admd, setAdmd] = useState({ label: 'Residential units', units: '50', admdKva: '2', archetype: 'anchor_24h' })
   const [error, setError] = useState<string | null>(null)
@@ -85,7 +105,7 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
       for (const part of parsed.parts) {
         if (part.plan.status !== 'ok') continue
         for (const c of part.plan.candidates) if (c.role === 'kw' && c.eligible) {
-          nextPicks[key(pf, part.sheet, c.column)] = { checked: c.defaultSelected, label: `${f.name.replace(/\.[^.]+$/, '')}${part.sheet ? ` · ${part.sheet}` : ''}${c.defaultSelected ? '' : ` · ${c.column}`}`, withKva: Boolean(c.kvaColumn) }
+          nextPicks[key(pf, part.sheet, c.column)] = { checked: c.defaultSelected, label: `${f.name.replace(/\.[^.]+$/, '')}${part.sheet ? ` · ${part.sheet}` : ''}${c.defaultSelected ? '' : ` · ${c.column}`}`, withKva: Boolean(c.kvaColumn), role: part.plan.suggestedRole }
         }
       }
       ready.push(pf)
@@ -112,7 +132,7 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
         if (part.plan.status !== 'ok') continue
         const selections = part.plan.candidates
           .filter((c) => picks[key(f, part.sheet, c.column)]?.checked)
-          .map((c) => ({ column: c.column, label: picks[key(f, part.sheet, c.column)].label, withKva: picks[key(f, part.sheet, c.column)].withKva }))
+          .map((c) => ({ column: c.column, label: picks[key(f, part.sheet, c.column)].label, withKva: picks[key(f, part.sheet, c.column)].withKva, role: picks[key(f, part.sheet, c.column)].role }))
         if (selections.length === 0) continue
         const r = await commitLoadProfileFileAction(view.projectId, { path: f.path, fileName: f.fileName, sheet: part.sheet, selections })
         out.push('error' in r ? `${f.fileName}: ${r.error}` : `${f.fileName}: ${r.imported} imported${r.replaced ? `, ${r.replaced} replaced` : ''}${r.warnings.length ? ` — ${r.warnings.join(' ')}` : ''}`)
@@ -150,7 +170,7 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
         <p style={{ fontSize: 13, color: 'var(--c-text-mid)', margin: '0 0 8px' }}>No meter data or estimate yet.</p>
       ) : (
         <table className="table" style={{ width: '100%', fontSize: 13 }}>
-          <thead><tr><th>Include</th><th>Source</th><th>Kind</th><th style={{ textAlign: 'right' }}>kWh / year</th><th style={{ textAlign: 'right' }}>Peak kW</th><th>Detail</th>{view.canEdit && <th />}</tr></thead>
+          <thead><tr><th>Include</th><th>Source</th><th>Kind</th><th>Role</th><th style={{ textAlign: 'right' }}>kWh / year</th><th style={{ textAlign: 'right' }}>Peak kW</th><th>Detail</th>{view.canEdit && <th />}</tr></thead>
           <tbody>
             {view.sources.map((s) => (
               <tr key={s.id} style={{ opacity: s.included ? 1 : 0.55 }}>
@@ -160,6 +180,14 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
                 </td>
                 <td>{s.label}{s.fileName && <div style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{s.fileName}</div>}</td>
                 <td>{KIND_LABEL[s.kind]}</td>
+                <td>
+                  {view.canEdit ? (
+                    <select aria-label={`Role of ${s.label}`} value={s.role} disabled={busy} onChange={(e) => void run(updateLoadProfileSourceAction(view.projectId, s.id, { role: e.target.value as LoadRole }))}>
+                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                    </select>
+                  ) : ROLE_LABEL[s.role]}
+                  {s.included && s.status === 'ok' && !s.counted && <div style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>not added</div>}
+                </td>
                 <td style={{ textAlign: 'right' }}>{s.annualKwh == null ? '—' : formatNumber(s.annualKwh)}</td>
                 <td style={{ textAlign: 'right' }}>{s.peakKw == null ? '—' : formatNumber(s.peakKw, 1)}</td>
                 <td style={{ fontSize: 12 }}>{s.status === 'error' ? <span style={{ color: 'var(--c-red)' }}>{s.error}</span> : <QualityLine s={s} />}</td>
@@ -172,6 +200,7 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
         </table>
       )}
 
+      {view.compositionNote && <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '6px 0 0' }}>{view.compositionNote}</p>}
       {view.canEdit && (
         <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
           <div
@@ -211,6 +240,9 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
                             {p && (
                               <>
                                 <input aria-label={`Label for ${c.column}`} value={p.label} onChange={(e) => setPicks({ ...picks, [k]: { ...p, label: e.target.value } })} style={{ flex: 1, fontSize: 12 }} />
+                                <select aria-label={`Role for ${c.column}`} value={p.role} onChange={(e) => setPicks({ ...picks, [k]: { ...p, role: e.target.value as LoadRole } })} style={{ fontSize: 12 }}>
+                                  {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                                </select>
                                 {c.kvaColumn && (
                                   <label><input type="checkbox" checked={p.withKva} onChange={(e) => setPicks({ ...picks, [k]: { ...p, withKva: e.target.checked } })} /> MD from {c.kvaColumn}</label>
                                 )}
@@ -232,9 +264,34 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
           )}
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn" disabled={busy} onClick={() => void openLibrary()}>Add meters from the Solar library</button>
             <button className="btn" disabled={busy} onClick={() => setForm(form === 'tenant' ? 'none' : 'tenant')}>Estimate from tenant schedule</button>
             <button className="btn" disabled={busy} onClick={() => setForm(form === 'admd' ? 'none' : 'admd')}>Add an ADMD block</button>
           </div>
+
+          {form === 'library' && (
+            <div style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
+              <p style={{ margin: '0 0 6px' }}>Meters loaded into your organisation&apos;s Solar meter library. Meters imported for this project are ticked; search to add others. Each meter&apos;s role comes from its type and can be changed afterwards.</p>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <input aria-label="Search the library" placeholder="Search by meter or site" value={libraryQ} onChange={(e) => setLibraryQ(e.target.value)} style={{ flex: 1 }} />
+                <button className="btn btn-sm" disabled={busy} onClick={() => void openLibrary(libraryQ)}>Search</button>
+              </div>
+              {library === null ? <p>Loading…</p> : library.length === 0 ? <p>No library meters for this project. Search for a site, or upload meter files above.</p> : (
+                <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--c-border)', borderRadius: 6 }}>
+                  {library.map((m) => (
+                    <label key={m.id} style={{ display: 'flex', gap: 8, padding: '3px 6px', fontSize: 12 }}>
+                      <input type="checkbox" checked={libraryPick.has(m.id)} onChange={(e) => { const n = new Set(libraryPick); if (e.target.checked) n.add(m.id); else n.delete(m.id); setLibraryPick(n) }} />
+                      <span style={{ minWidth: 160 }}>{m.siteLabel ?? '—'}</span><span style={{ flex: 1 }}>{m.label}{m.shopNo ? ` · shop ${m.shopNo}` : ''}</span><span>{m.kind}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button className="btn btn-primary" disabled={busy || libraryPick.size === 0} onClick={() => void run(addLibraryMetersAction(view.projectId, [...libraryPick]).then((r) => ('error' in r ? r : { ok: true as const })))}>Add {libraryPick.size} meter{libraryPick.size === 1 ? '' : 's'}</button>
+                <button className="btn" disabled={busy} onClick={() => setForm('none')}>Cancel</button>
+              </div>
+            </div>
+          )}
 
           {form === 'tenant' && (
             <div style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: 10, fontSize: 13 }}>

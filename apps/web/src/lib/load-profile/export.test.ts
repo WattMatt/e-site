@@ -17,7 +17,7 @@ const meter: SourceRow = {
   id: 'm', kind: 'meter', label: 'Bulk meter', included: true, file_name: 'bulk.csv', format: 'C', source_column: 'P1 (kWh)', kva_column: null,
   interval_min: 60, first_ts_end: new Date(Date.UTC(2025, 0, 1) - 7_200_000 + 3_600_000).toISOString(),
   values: Array(8760).fill(10), quality: Array(8760).fill(0), kva_values: null,
-  conversion: 'kWh per 60 min × 1 → average kW', quality_report: null, params: null,
+  conversion: 'kWh per 60 min × 1 → average kW', quality_report: null, params: null, role: 'tenant', solar_meter_id: null,
 }
 const flat: TouCalendar = {
   highSeasonMonths: [6, 7, 8], holidayTreatedAs: 'sunday', source: 'published',

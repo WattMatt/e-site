@@ -27,7 +27,7 @@ const DATA: Array<{ format: string; id: string; load: () => { bytes: Uint8Array;
   { format: 'C (PnP energy profile)', id: 'c-energy', load: () => fixture('c-energy'), kw: 'P1 (kWh)', kva: 'S (kVAh)', conversion: /kWh per 30 min × 2 → average kW/ },
 ]
 
-describe.each(DATA)('format $format imports', ({ load, kw, kva, conversion }) => {
+describe.each(DATA)('format $format imports', ({ id, load, kw, kva, conversion }) => {
   it('plans, stores, builds a profile and a measured MD', async () => {
     const o = await parseMeterFile(load())
     const plan = planImport(o)
@@ -37,6 +37,8 @@ describe.each(DATA)('format $format imports', ({ load, kw, kva, conversion }) =>
     expect(pick.column).toBe(kw)
     expect(pick.kvaColumn).toBe(kva)
     expect(pick.conversion).toMatch(conversion)
+    // 'BULK METER' → bulk; a bare 'Meter 31599070' label is a meter of unknown place → submain (never added); a shop → tenant.
+    expect(plan.suggestedRole).toBe(({ 'a-bulk': 'bulk', 'b-halfhourly': 'submain', 'b2-parkdene': 'submain', 'c-energy': 'tenant' } as Record<string, string>)[id])
 
     const series = o as SeriesOutcome
     const ch = series.channels.find((c) => c.spec.sourceColumn === kw)!

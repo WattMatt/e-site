@@ -10,6 +10,7 @@ import type { MeterParseOutcome, ParseOptions } from '../meter-data/parse-meter-
 import type { IssueCode, NormalisedChannel, SourceUnit } from '../meter-data/types'
 import { FORMAT_LABELS } from '../meter-data/types'
 import { LOAD_PROFILE_INTERVALS } from './channel'
+import { meterKindFromLabel, roleOfKind, type LoadRole } from './roles'
 
 export type ChannelRole = 'kw' | 'kva' | 'other'
 export interface ImportCandidate {
@@ -28,7 +29,7 @@ export interface ImportCandidate {
   stats: { usable: number; mean: number | null; max: number | null }
 }
 export type ImportPlan =
-  | { status: 'ok'; format: string; formatLabel: string; candidates: ImportCandidate[]; warnings: string[] }
+  | { status: 'ok'; format: string; formatLabel: string; candidates: ImportCandidate[]; warnings: string[]; suggestedRole: LoadRole }
   | { status: 'needs_options'; format: string; formatLabel: string; needs: IssueCode[]; message: string }
   | { status: 'rejected'; format: string; formatLabel: string; message: string }
 
@@ -106,7 +107,8 @@ export function planImport(outcome: MeterParseOutcome): ImportPlan {
     return { status: 'rejected', format, formatLabel, message: `Nothing to import as load: ${why}.` }
   }
   pick.defaultSelected = true
-  return { status: 'ok', format, formatLabel, candidates, warnings: outcome.report.warnings.map((w) => w.message) }
+  const suggestedRole = roleOfKind(meterKindFromLabel(outcome.filename.label, outcome.sourceSerials.length))
+  return { status: 'ok', format, formatLabel, candidates, warnings: outcome.report.warnings.map((w) => w.message), suggestedRole }
 }
 
 export type { ParseOptions }

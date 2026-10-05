@@ -4,7 +4,9 @@
  */
 import type { ImportQuality, NmdBasis, SiteProfileKpis } from '@esite/shared/load-profile'
 
-export type SourceKind = 'meter' | 'tenant_schedule' | 'admd'
+export type SourceKind = 'meter' | 'tenant_schedule' | 'admd' | 'library_meter'
+export type { LoadRole } from '@esite/shared/load-profile'
+import type { LoadRole } from '@esite/shared/load-profile'
 
 export interface SourceView {
   id: string
@@ -29,6 +31,9 @@ export interface SourceView {
   /** this source's own contribution over the reference year */
   annualKwh: number | null
   peakKw: number | null
+  role: LoadRole
+  /** true when this source is part of the profile's sum (its role and the bulk rule allow it) */
+  counted: boolean
 }
 
 export interface MdMonthView { month: string; kva: number; kw: number | null; at: string | null; source: string }
@@ -89,4 +94,6 @@ export interface LoadProfileView {
   tenants: { count: number; withArea: number; totalAreaM2: number }
   analysis: AnalysisView | null
   cost: CostView | null
+  /** Which sources make up the profile and why (bulk vs tenants, what is shown but not added). */
+  compositionNote: string | null
 }

@@ -42,7 +42,7 @@ describe('buildMeterRows', () => {
   it('builds a contiguous stored channel with kW converted and the kVA channel on the same grid', async () => {
     const name = 'SITE TZ, , 01A TENANT-95, .csv'
     const f = await stored(name)
-    const r = await buildMeterRows({ download: f.download, projectId: P, path: f.path, fileName: name, sheet: null, selections: [{ column: 'P1 (kWh)', label: 'Shop 01A', withKva: true }] })
+    const r = await buildMeterRows({ download: f.download, projectId: P, path: f.path, fileName: name, sheet: null, selections: [{ column: 'P1 (kWh)', label: 'Shop 01A', withKva: true, role: 'tenant' as const }] })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const row = r.rows[0]
@@ -57,7 +57,7 @@ describe('buildMeterRows', () => {
   it('refuses a channel that is not active-power import, naming why', async () => {
     const name = 'SITE TZ, , 01A TENANT-95, .csv'
     const f = await stored(name)
-    const r = await buildMeterRows({ download: f.download, projectId: P, path: f.path, fileName: name, sheet: null, selections: [{ column: 'P2 (kWh)', label: '', withKva: false }] })
+    const r = await buildMeterRows({ download: f.download, projectId: P, path: f.path, fileName: name, sheet: null, selections: [{ column: 'P2 (kWh)', label: '', withKva: false, role: 'tenant' as const }] })
     expect(r).toEqual({ ok: false, error: '"P2 (kWh)" cannot be imported as load: Export channel: not load.' })
   })
 })
