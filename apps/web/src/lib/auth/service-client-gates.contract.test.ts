@@ -70,6 +70,7 @@ const DECLARED: Record<string, string> = {
   'app/api/projects/[id]/generator-cost-recovery/reports/route.ts': 'gatherGeneratorReportData -> requireEffectiveRole',
   'app/api/projects/[id]/tenant-schedule/reports/route.ts': 'gatherTenantScheduleReportData -> projectService.getById (session, site_scope)',
   'lib/recipients.ts': 'caller-gated; filters recipients by project access',
+  'lib/solar/meter-archive/apply.ts': 'library of the scripts/solar-meter-archive.ts CLI; no end-user path',
 }
 
 function strip(src: string) {
