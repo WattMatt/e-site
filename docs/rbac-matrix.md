@@ -363,6 +363,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/webhooks/resend` | n/a — public webhook, Svix/standardwebhooks HMAC-SHA256 over the raw body; writes only as service_role; bypassed in `middleware.ts` by exact path |
 | `POST /api/paystack/webhook` | n/a — public webhook, HMAC-SHA512 over the raw body; was never listed here and was 307'd to `/login` until `SIGNED_WEBHOOK_PATHS` |
 | `POST /api/internal/whatsapp/forms` | n/a — called only by the `whatsapp-webhook` / `whatsapp-worker` edge functions; HMAC-SHA256 over the raw body with `WHATSAPP_INTERNAL_SECRET` (`t=<unix>,v1=<hex>`, 5-minute skew; no secret = every call `401`); in `SIGNED_WEBHOOK_PATHS`. Every inspection read or write it makes is judged per call by `whatsapp.wa_inspection_*` acting as the person (see *Inspection forms over WhatsApp* below) |
+| `/auth/wa-link/[token]` (page + server action) | n/a — a signed WhatsApp link (E4). Public path (`PUBLIC_PATHS`); GET only renders a Continue button. The POST consumes a 32-byte single-use token (stored as SHA-256 in `whatsapp.form_links`, 15 minutes), re-checks the person's effective project role (refused when none or `client_viewer`), mints a session for that person (`generateLink` + `verifyOtp` server-side) and redirects only to `/projects/<uuid>/inspections/<uuid>`. Logged as an `auth_events` login with method `whatsapp_link`; the MFA gate still applies |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
@@ -811,6 +812,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `requestWhatsAppCodeAction` / `confirmWhatsAppCodeAction` / `removeWhatsAppLinkAction` / `setWhatsAppQuietHoursAction` (own number only) | W | W | W | W | W | W | W |
 | `inviteWhatsAppExternalAction` / `resendWhatsAppOptInAction` (per project, `requireEffectiveRole(ORG_WRITE_ROLES)`) | W | W | W | — | — | — | — |
 | `setWhatsAppSendingAction` / `setWhatsAppAlertEmailAction` | W | W | — | — | — | — | — |
+| `setWhatsAppFormsEnabledAction` (E4; the caller's OWN organisation only, `whatsapp.org_settings`) | W | W | — | — | — | — | — |
 
 > ⁽ʷᵃ⁾ The item page and `/wa/[itemId]` read through the caller's RLS (`work_items_select`): a `client_viewer` sees only items they are assigned, gatekeep or watch; anything else is a 404 / redirect to `/dashboard`, indistinguishable from a missing item.
 >

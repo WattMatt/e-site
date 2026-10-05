@@ -25,6 +25,8 @@ const PUBLIC_PATHS = [
   '/signup',
   '/reset-password',
   '/auth/callback',
+  // Signed WhatsApp links (E4): GET shows a Continue button, the POST consumes the token.
+  '/auth/wa-link/',
   '/share',
   '/account-deleted',
   '/inspection',
