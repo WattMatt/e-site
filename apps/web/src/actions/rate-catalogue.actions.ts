@@ -6,7 +6,7 @@
  *
  * Gate: the caller's org role must be in COST_VIEW_ROLES (owner / admin /
  * project_manager). Every rate_* read and write goes through the caller's own
- * cookie client, so 00225's RLS is the real boundary and this gate only gives
+ * cookie client, so 00227's RLS is the real boundary and this gate only gives
  * a clear message. The project BOQ (projects.boq_*) is read and re-rated with
  * the service client BEHIND a project gate, the same shape as boq.actions.ts.
  *
@@ -57,7 +57,7 @@ async function queueLines(db: AnyClient, orgId: string, groupKey: string): Promi
 /**
  * Assign every queued line of a group to a catalogue item. The unit check
  * runs here (unit normalisation lives in @esite/shared); the write is ONE
- * transaction in public.rate_library_confirm_lines (00225): it refuses
+ * transaction in public.rate_library_confirm_lines (00227): it refuses
  * wholesale if any line left the queue meanwhile, and never adds a second
  * observation for a rate that document already contributes to the item.
  */

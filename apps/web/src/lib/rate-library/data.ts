@@ -3,7 +3,7 @@
 /**
  * Rate library data layer (E6). Every function takes the Supabase client to
  * use, so the CALLER decides whose permissions apply:
- *   - pages and actions pass the user's cookie client → RLS (00225) decides,
+ *   - pages and actions pass the user's cookie client → RLS (00227) decides,
  *     and a contractor or client viewer reads nothing;
  *   - the backfill script passes the service client.
  * The rate_* tables are not in the generated Database types yet, so the
@@ -276,7 +276,7 @@ export async function loadKnownItems(client: AnyClient, organisationId: string):
 
 /**
  * Write one priced document into the library, atomically: the whole document
- * goes through public.rate_library_ingest (00225) in ONE transaction, with the
+ * goes through public.rate_library_ingest (00227) in ONE transaction, with the
  * caller's RLS. Idempotent per (organisation, kind, source_ref): a second run
  * returns alreadyImported and writes nothing. A failure leaves nothing behind.
  */

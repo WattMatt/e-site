@@ -1,6 +1,6 @@
--- BEHAVIOURAL assertions for 00225_rate_library, run as real roles.
+-- BEHAVIOURAL assertions for 00227_rate_library, run as real roles.
 --   Red:   scripts/db/dry-run-migration.sh <noop.sql> scripts/db/assert-rate-library-roles.sql
---   Green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00225_rate_library.sql scripts/db/assert-rate-library-roles.sql
+--   Green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00227_rate_library.sql scripts/db/assert-rate-library-roles.sql
 -- Fixtures are minted inside the transaction and rolled back. Seeding happens as
 -- postgres BEFORE any impersonation (request.jwt.claims outlives RESET ROLE).
 -- REFUSAL PATTERN: a "…_REFUSED" check passes only on the SQLSTATE the design

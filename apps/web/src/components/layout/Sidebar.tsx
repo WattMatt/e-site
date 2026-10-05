@@ -73,7 +73,7 @@ export const GLOBAL_NAV = [
   { href: '/tariffs',     label: 'Tariffs',     Icon: Receipt },
   { href: '/inspections/templates', label: 'Inspection Templates', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
-  // Contractor rates are commercially confidential: owner/admin/PM only (00225 RLS + requireRolePage).
+  // Contractor rates are commercially confidential: owner/admin/PM only (rate_* RLS + requireRolePage).
   { href: '/rates',       label: 'Rate library', Icon: Calculator },
 ] as const
 
