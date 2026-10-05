@@ -5,6 +5,7 @@ import { getOrgContext } from '@/lib/auth-org'
 import { OWNER_ADMIN, formatDate } from '@esite/shared'
 import { AddUserForm } from './AddUserForm'
 import { UserRowActions } from './UserRowActions'
+import { MemberSites, type MemberSite } from './MemberSites'
 
 export const dynamic = 'force-dynamic'
 
@@ -66,6 +67,21 @@ export default async function UsersPage() {
       .maybeSingle(),
     service.auth.admin.listUsers({ page: 1, perPage: 1000 }),
   ])
+
+  // Site memberships in this org (site-scoped access: everyone but owner/admin
+  // sees only these). Page is owner/admin-gated above.
+  const { data: siteRows } = await (service as any)
+    .schema('projects')
+    .from('project_members')
+    .select('user_id, role, project_id, projects(name)')
+    .eq('organisation_id', ctx.organisationId)
+    .eq('is_active', true)
+  const sitesByUser = new Map<string, MemberSite[]>()
+  for (const r of (siteRows ?? []) as Array<{ user_id: string; role: string; project_id: string; projects: { name: string } | null }>) {
+    const list = sitesByUser.get(r.user_id) ?? []
+    list.push({ projectId: r.project_id, name: r.projects?.name ?? 'Untitled project', role: r.role })
+    sitesByUser.set(r.user_id, list)
+  }
 
   const members = (membersRaw ?? []) as unknown as MemberRow[]
   const activeCount = members.filter((m) => m.is_active).length
@@ -135,6 +151,7 @@ export default async function UsersPage() {
                   <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {m.profile?.email ?? '—'}
                   </p>
+                  <MemberSites orgRole={m.role} sites={sitesByUser.get(m.user_id) ?? []} />
                 </div>
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
                 {!m.is_active && <span className="badge badge-muted">inactive</span>}

@@ -435,5 +435,5 @@ NOTIFY pgrst, 'reload schema';
 -- sql: (SELECT count(*) = 4 FROM pg_policies WHERE schemaname = 'projects' AND tablename IN ('tenders','tender_boq_items','tender_estimate_lines','tender_requirements') AND cmd = 'SELECT')
 -- sql: (SELECT qual LIKE '%project_manager%' AND qual NOT LIKE '%user_has_project_access%' FROM pg_policies WHERE schemaname = 'projects' AND policyname = 'tenders_select')
 -- sql: (SELECT bool_and(qual LIKE '%user_can_manage_tender%') FROM pg_policies WHERE schemaname = 'projects' AND tablename IN ('tender_boq_items','tender_estimate_lines','tender_requirements') AND cmd = 'SELECT')
--- sql: (SELECT bool_and(permissive = 'PERMISSIVE') FROM pg_policies WHERE schemaname = 'projects' AND tablename LIKE 'tender%')
+-- sql: (SELECT bool_and(permissive = 'PERMISSIVE') FROM pg_policies WHERE schemaname = 'projects' AND tablename LIKE 'tender%' AND policyname <> 'site_scope')
 -- @verify:end

@@ -195,7 +195,10 @@ SELECT * FROM (VALUES
      current_setting('x.r_delete') LIKE 'BLOCKED%'),
   ('ground truth: the fixture has NO effective role on MAMAILA (probe is not vacuous)',
      public.user_effective_project_role(current_setting('x.mamaila')::uuid) IS NULL),
-  ('ground truth: the fixture can still READ MAMAILA diary entries (SELECT untouched)',
+  -- Site-scoped access (2026-10) removed the org-wide read this row used to
+  -- rely on; the non-member now cannot read MAMAILA at all. The write
+  -- refusals above still stand on their own (they were proven red before 00203).
+  ('ground truth: the non-member fixture cannot READ MAMAILA diary entries (site scope)',
      (SELECT count(*) FROM projects.site_diary_entries
-       WHERE project_id = current_setting('x.mamaila')::uuid) > 0)
+       WHERE project_id = current_setting('x.mamaila')::uuid) = 0)
 ) AS t("check", ok);

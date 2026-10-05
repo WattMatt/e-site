@@ -62,9 +62,9 @@
 -- policy: floor_plan_markups_update_authz ON tenants.floor_plan_markups RESTRICTIVE
 -- policy: floor_plan_markups_delete_authz ON tenants.floor_plan_markups RESTRICTIVE
 -- sql: (SELECT count(*) = 0 FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polname IN ('floor_plan_markups_write', 'floor_plan_markups_write_authz'))
--- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polcmd IN ('r', '*'))
--- sql: (SELECT pg_get_expr(polqual, polrelid) LIKE '%client_viewer%' FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polcmd IN ('r', '*'))
--- sql: (SELECT count(*) = 0 FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polpermissive = false AND polcmd NOT IN ('a', 'w', 'd'))
+-- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polcmd IN ('r', '*') AND polname <> 'site_scope')
+-- sql: (SELECT pg_get_expr(polqual, polrelid) LIKE '%client_viewer%' FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polcmd IN ('r', '*') AND polname <> 'site_scope')
+-- sql: (SELECT count(*) = 0 FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass AND polpermissive = false AND polcmd NOT IN ('a', 'w', 'd') AND polname <> 'site_scope')
 -- @verify:end
 
 -- ── The FOR ALL pair, removed ────────────────────────────────────────────────
