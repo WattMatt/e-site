@@ -46,7 +46,10 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
     setOpen(false)
     if (mode) {
       setMode(undefined)
-      window.history.replaceState(null, '', `/projects/${projectId}/diary`)
+      // Drop only ?new=; any other query (e.g. ?n=) and the hash survive.
+      const url = new URL(window.location.href)
+      url.searchParams.delete('new')
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash)
     }
   }
   const formRef = useRef<HTMLFormElement>(null)

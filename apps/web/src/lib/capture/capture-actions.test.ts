@@ -97,6 +97,18 @@ describe('capture tiles mirror their targets’ gates (contract)', () => {
     expect(body.slice(0, 600)).toMatch(/requirePmOrAbove\(/)
   })
 
+  it('inspection: requirePmOrAbove admits exactly the roles orgRoleCanAssignInspection admits', () => {
+    const actions = src('src/actions/inspections.actions.ts')
+    const start = actions.indexOf('async function requirePmOrAbove')
+    const fn = actions.slice(start, actions.indexOf('\n}', start))
+    const listed = /\[([^\]]+)\]\.includes\(/.exec(fn)?.[1]
+    expect(listed).toBeDefined()
+    const roles = listed!.split(',').map((r) => r.trim().replace(/['"]/g, '')).sort()
+    const admitted = (['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'] as OrgRole[])
+      .filter(orgRoleCanAssignInspection).sort()
+    expect(roles).toEqual(admitted)
+  })
+
   it('diary: the diary page still mounts AddDiaryEntryForm and reads ?new=', () => {
     const page = src('src/app/(admin)/projects/[id]/diary/page.tsx')
     expect(page).toMatch(/<AddDiaryEntryForm[^>]*initialMode=\{captureMode\}/)

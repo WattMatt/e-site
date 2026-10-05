@@ -235,12 +235,13 @@ describe('AddDiaryEntryForm — arriving from Capture', () => {
 describe('AddDiaryEntryForm — Capture mode is one-shot', () => {
   it('after a save, drops ?new= from the URL and the next "+ Add Entry" opens the ordinary layout', async () => {
     createActionMock.mockResolvedValue({ entryId: 'e1' })
+    window.history.pushState(null, '', '/projects/p1/diary?new=photo&n=100#top')
     const replace = vi.spyOn(window.history, 'replaceState')
     render(<AddDiaryEntryForm {...props} initialMode="photo" />)
     typeProgress('Board MB1 installed.')
     await submitForm()
     await waitFor(() => expect(screen.getByText('+ Add Entry')).toBeTruthy())
-    expect(replace).toHaveBeenCalledWith(null, '', '/projects/p1/diary')
+    expect(replace).toHaveBeenCalledWith(null, '', '/projects/p1/diary?n=100#top')
     fireEvent.click(screen.getByText('+ Add Entry'))
     expect(screen.queryByText('📷 Take or add photos')).toBeNull()
     expect(screen.getByText('📷 Photo')).toBeTruthy()
