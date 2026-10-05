@@ -58,6 +58,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           )}
           {tender.stated_total != null && <span>Incl. VAT {formatRand(tender.stated_total)}</span>}
           {isDraft && <DeleteTenderButton tenderId={tender.id} projectId={id} />}
+          {tender.status !== 'draft' && tender.closing_at && new Date(tender.closing_at) <= new Date() && (
+            <a className="btn btn-sm" href={`/projects/${id}/tenders/${tender.id}/adjudication`}>Adjudicate bids</a>
+          )}
         </div>
       </div>
 
