@@ -39,16 +39,16 @@ const CORE_SPECS: Record<string, TableSpec> = {
     ],
     expectedKeys: range(10, 145, 5),
     spanned: { column: 'rubber_150c', from: 10, to: 85 },
-    remark: 'Rubber 150 °C: one factor printed for the whole 10–85 °C band.',
+    remark: 'Rubber 150 °C: the standard prints one factor for a band of ambient temperatures.',
   },
   '6.11': {
     clause: '6.11',
     title: 'Correction factors for soil temperature',
     topic: 'derating',
-    conditions: [COND.maxConductor70],
+    conditions: [COND.maxConductorTemp],
     keyColumn: { key: 'soil_temp_c', label: 'Soil temperature', unit: '°C', header: 1 },
     valueColumns: [
-      { key: 'buried_direct_or_pipes', label: 'Buried directly or in pipes (70 °C conductor)', unit: null, header: 2 },
+      { key: 'buried_direct_or_pipes', label: 'Buried directly or in pipes', unit: null, header: 2 },
     ],
     expectedKeys: range(10, 40, 5),
   },
@@ -98,7 +98,7 @@ const CORE_SPECS: Record<string, TableSpec> = {
     clause: '6.4(a)',
     title: 'Multicore PVC insulated armoured cables — current-carrying capacity, copper',
     topic: 'cable_ratings',
-    conditions: [COND.ambient30, COND.operating70],
+    conditions: [COND.ambientTemp, COND.operatingTemp],
     keyColumn: { key: 'size_mm2', label: 'Conductor cross-sectional area', unit: 'mm²', header: 1 },
     valueColumns: [
       { key: 'clipped_2core_a', label: 'Method 3 — two-core', unit: 'A', header: 2 },
@@ -112,7 +112,7 @@ const CORE_SPECS: Record<string, TableSpec> = {
     clause: '6.8',
     title: 'Multicore PVC insulated armoured cables buried directly in the ground — current-carrying capacity, copper',
     topic: 'cable_ratings',
-    conditions: [COND.soil25, COND.maxConductor70, COND.burialDepth, COND.soilResistivity],
+    conditions: [COND.soilTemp, COND.maxConductorTemp, COND.burialDepth, COND.soilResistivity],
     keyColumn: { key: 'size_mm2', label: 'Nominal conductor size', unit: 'mm²', header: 1 },
     valueColumns: [
       { key: 'buried_2core_a', label: 'Buried — two-core', unit: 'A', header: 2 },

@@ -119,3 +119,24 @@ describe('helpers', () => {
     expect(cellText(null, undefined)).toBe('–')
   })
 })
+
+describe('StandardsBrowser — review fixes', () => {
+  it('opens the table named in the URL on first render (deep link)', () => {
+    render(<StandardsBrowser standards={[NEW]} tables={[T_NEW]} initialCode="SANS_99999_1_2099_T9_1" />)
+    expect(screen.getByRole('button', { name: '← All tables' })).toBeTruthy()
+  })
+  it("shows an extracted table's remark", () => {
+    render(<StandardsBrowser standards={[NEW]} tables={[{ ...T_NEW, notes: 'A dash means no correction applies.' }]} initialCode="SANS_99999_1_2099_T9_1" />)
+    expect(screen.getByText('A dash means no correction applies.')).toBeTruthy()
+  })
+  it('files a table without a known topic under Other tables', () => {
+    render(<StandardsBrowser standards={[NEW]} tables={[{ ...T_NEW, topic: null }]} />)
+    expect(screen.getByRole('region', { name: 'Other tables' })).toBeTruthy()
+  })
+  it('an ungrouped column spans both header rows instead of sitting under an empty cell', () => {
+    const mixed: BrowserTable = { ...T_NEW, columns: [...cols, { key: 'c', label: 'Loose', unit: null }], rows: [{ data: { n: 2, a: 0.5, b: 0.6, c: 9 }, citation: null }] }
+    render(<StandardsBrowser standards={[NEW]} tables={[mixed]} initialCode="SANS_99999_1_2099_T9_1" />)
+    expect(screen.getByRole('columnheader', { name: 'Loose' }).getAttribute('rowspan')).toBe('2')
+    expect(screen.getAllByRole('columnheader').some((h) => h.textContent === '')).toBe(false)
+  })
+})

@@ -27,7 +27,7 @@ const GROUPING_ROWS: OrderedRow[] = [
   { key: 'ladder_multicore_3', label: 'Multicore touching on ladder supports, three ladders (method 6)', near: /Three racks or three\s*$/ },
 ]
 
-/** The temperature the concentric-cable ratings are given at ("Current rating at 30 °C"). */
+/** The temperature the concentric-cable ratings are given at, read from the column heading. */
 const RATING_AT: ConditionSpec = {
   key: 'ambient_c',
   label: 'Ambient temperature of the rating',

@@ -7,7 +7,7 @@
  */
 import type { ConditionSpec, TableSpec } from './extract-table'
 
-/** Instantaneous trip setting as a multiple of rated current ("Im = 10 × In"; 6.28(a) prints "lm … ln"). */
+/** Instantaneous trip setting as a multiple of rated current, read from the table heading (6.28(a) prints it with a lower-case l). */
 const TRIP_MULTIPLE: ConditionSpec = {
   key: 'trip_multiple_of_in',
   label: 'Instantaneous tripping current as a multiple of rated current',
@@ -15,7 +15,7 @@ const TRIP_MULTIPLE: ConditionSpec = {
   match: /[Il]m\s*=\s*([\d,]+)\s*×\s*[Il]n/,
 }
 
-/** Phase-to-earth-conductor size ratio the table is computed for ("(m = 1)" / "(m=2)"). */
+/** Phase-to-earth-conductor size ratio the table is computed for, read from the column heading. */
 const M_RATIO: ConditionSpec = {
   key: 'm_ratio',
   label: 'Ratio of phase to earth continuity conductor size (m)',

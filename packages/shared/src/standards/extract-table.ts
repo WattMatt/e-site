@@ -151,7 +151,7 @@ const DRIFT_FRACTION = 0.4
  * more spaces apart, so two things separated by ONE space are one cell: a
  * thousands group ("1 138") or a phrase of words ("Entertainment hall").
  */
-export function lineTokens(line: string): Token[] {
+export function lineTokens(line: string, mergeThousands = true): Token[] {
   const raw: Array<{ start: number; end: number; text: string }> = []
   const re = /\S+/g
   let m: RegExpExecArray | null
@@ -161,7 +161,7 @@ export function lineTokens(line: string): Token[] {
     const prev = merged[merged.length - 1]
     const isWord = (x: string): boolean => parseCell(x) === undefined && /[A-Za-z]/.test(x)
     if (prev && t.start - prev.end === 1 && (
-      (/^\d{1,3}(?: \d{3})*$/.test(prev.text) && /^\d{3}$/.test(t.text)) ||
+      (mergeThousands && /^\d{1,3}(?: \d{3})*$/.test(prev.text) && /^\d{3}$/.test(t.text)) ||
       // A phrase ("Entertainment hall") is one cell: words one space apart belong together.
       (isWord(prev.text) && isWord(t.text))
     )) {
@@ -248,18 +248,26 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
   const clauseLabel = `Table ${spec.clause}`
 
   const rows = new Map<string, ExtractedRow>()
-  const orderedLines: Array<{ cells: Map<string, { v: number | string | null; printed: string }>; page: PdfPage; context: string[] }> = []
+  const orderedLines: Array<{ cells: Map<string, { v: number | string | null; printed: string }>; page: PdfPage; li: number; context: string[] }> = []
   const keyless: Array<{ col: string; value: number | null; printed: string }> = []
   const conditions = new Map<string, ExtractedCondition>()
   const subRows = new Set<string>()
+  let lastKey: string | null = null
 
-  for (const { page, from } of segments) {
+  for (const [segIdx, { page, from }] of segments.entries()) {
     const pagePrinted = printedPage(page, offset)
 
     // Conditions are printed above the table or in its footnotes: search every line of the page from the heading on.
     for (const c of spec.conditions ?? []) {
       if (conditions.has(c.key)) continue
-      for (const l of page.lines.slice(from - 1)) {
+      // This table's area only: from its heading to the next table heading on the page
+      // (its footnotes sit in between), never a later table's identical label.
+      const own: string[] = []
+      for (const l of page.lines.slice(from)) {
+        if (/^\s*Table\s+[0-9A-Z]+\.\d/.test(l)) break
+        own.push(l)
+      }
+      for (const l of [page.lines[from - 1], ...own]) {
         const m = l.match(c.match)
         if (m && m[1]) {
           conditions.set(c.key, { key: c.key, label: c.label, unit: c.unit, value: normaliseText(m[1].trim()), page_pdf: page.pdfPage, page_printed: pagePrinted })
@@ -269,12 +277,13 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
     }
 
     const region = regionOf(page, from, spec)
+    lastKey = null // a wrapped line never continues a row from the previous page
     const allCols = [spec.keyColumn, ...spec.valueColumns].filter((c) => c.header > 0)
     const maxHeader = Math.max(...allCols.map((c) => c.header))
     let headerAt = -1
     let centres: number[] = []
     for (let i = 0; i < region.length; i++) {
-      const t = lineTokens(region[i])
+      const t = lineTokens(region[i], spec.anchor !== 'start')
       const isCentreRow = spec.centresRow
         ? spec.centresRow.test(region[i])
         : t.length === maxHeader && t.every((tok, k) => tok.text === String(k + 1))
@@ -303,7 +312,7 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
       const line = region[li]
       if (spec.subColumns && spec.subColumns.trigger.test(line)) {
         // From here on, values sit under the r / x / z sub-columns; the key keeps its main centre.
-        const subX = lineTokens(line).map((t) => t.x)
+        const subX = lineTokens(line, spec.anchor !== 'start').map((t) => t.x)
         const keep = new Set(spec.subColumns.keepMain ?? [])
         const kept = mainLayout.filter((s) => s.col === spec.keyColumn || (s.col && keep.has(s.col.key)))
         const subSlots = subX.map((x, i) => ({ x, col: spec.subColumns!.columns.find((c) => c.header === i + 1) ?? null }))
@@ -312,7 +321,10 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
         inSub = true
         continue
       }
-      const toks = lineTokens(line)
+      // A left-aligned grid can print two cells one space apart: no thousands merge there.
+      const toks = lineTokens(line, spec.anchor !== 'start')
+      // The page's own printed number on a line of its own (landscape pages, page feet).
+      if (toks.length === 1 && parseCell(toks[0].text) === pagePrinted) continue
       const cells = new Map<string, { v: number | string | null; printed: string }>()
       if (inSub && spec.subColumns?.byOrderWhenComplete) {
         // Exact count → printed order. The key and kept main columns are taken first, by position.
@@ -357,6 +369,10 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
         for (let k = 1; k < layout.length; k++) if (Math.abs(layout[k].x - pos) < Math.abs(layout[best].x - pos)) best = k
         const slot = layout[best]
         const drift = Math.abs(slot.x - pos)
+        // Any number far from every centre is refused — the key, a named column or an
+        // unnamed one alike — so nothing is dropped because its nearest column is unnamed.
+        // Text columns are the exception: a description is left-aligned and wide.
+        if (v !== undefined && drift > maxDrift && slot.col?.type !== 'text') { stray = tok; continue }
         if (slot.col === spec.keyColumn) { if (!ordered) keyTokens.push(tok.text); continue }
         if (!slot.col) continue
         if (slot.col.type === 'text') {
@@ -364,7 +380,6 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
           continue
         }
         if (v === undefined) continue
-        if (drift > maxDrift) { stray = tok; continue }
         if (cells.has(slot.col.key)) throw new Error(`${clauseLabel}: two values in column ${slot.col.key}: "${line.trim()}"`)
         cells.set(slot.col.key, { v, printed: tok.text })
       }
@@ -376,7 +391,7 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
         if (numericCells < (spec.minCells ?? 1)) continue
         if (stray) throw new Error(`${clauseLabel}: "${stray.text}" sits between columns: "${line.trim()}"`)
         // Labels sit above the values or wrap onto the lines just below them.
-        orderedLines.push({ cells, page, context: region.slice(Math.max(0, li - 4), li + 3) })
+        orderedLines.push({ cells, page, li: segIdx * 100000 + li, context: region.slice(Math.max(0, li - 4), li + 3) })
         continue
       }
 
@@ -392,6 +407,16 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
       } else if (keyTokens.length && numberCells > 0) {
         // A text key ("A1") needs a number on its line; header lines carry only words.
         key = keyTokens.join(' ').trim(); sortKey = rows.size + 1
+      }
+      if (key === null && lastKey && textTokens.size > 0 && numberCells === 0 && keyTokens.length === 0 && !stray) {
+        // A description that wraps: its next line carries only text-column words. Append them.
+        const prev = rows.get(lastKey)!
+        for (const [k, words] of textTokens) {
+          const more = words.join(' ')
+          prev.row_data[k] = `${prev.row_data[k] ?? ''} ${more}`.trim()
+          if (prev.citation.printed) prev.citation.printed[k] = `${prev.citation.printed[k] ?? ''} ${more}`.trim()
+        }
+        continue
       }
       if (key === null) {
         // A caption line ("°C  70 °C", "119 … Edition 2") carries words. A line of bare values
@@ -410,6 +435,7 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
       const row_data: Record<string, number | string | null> = { [spec.keyColumn.key]: keyKind === 'number' ? sortKey! : key }
       const printed: Record<string, string> = { [spec.keyColumn.key]: keyTokens.join(' ') }
       for (const [k, c] of cells) { row_data[k] = c.v; printed[k] = c.printed }
+      lastKey = key
       if (inSub) {
         subRows.add(key)
         // One dash printed across a whole r/x/z group means the group does not apply.
@@ -436,9 +462,16 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
     if (orderedLines.length !== defs.length) {
       throw new Error(`${clauseLabel}: ${orderedLines.length} value lines for ${defs.length} declared rows`)
     }
+    let lastLabelAt = -1
     defs.forEach((d, i) => {
       const ln = orderedLines[i]
-      if (!ln.context.some((l) => d.near.test(l))) throw new Error(`${clauseLabel}: row "${d.key}" — label not found near its values`)
+      // The label must be near ITS value line and below the previous row's label, so a
+      // missed line plus a stray one cannot shift every row by one and still pass.
+      const at = ln.context.findIndex((l) => d.near.test(l))
+      if (at < 0) throw new Error(`${clauseLabel}: row "${d.key}" — label not found near its values`)
+      const absAt = ln.li - Math.min(4, ln.li % 100000) + at
+      if (absAt <= lastLabelAt) throw new Error(`${clauseLabel}: row "${d.key}" — its label is not below the previous row's`)
+      lastLabelAt = absAt
       const row_data: Record<string, number | string | null> = { [spec.keyColumn.key]: d.label }
       const printed: Record<string, string> = {}
       for (const [k, c] of ln.cells) { row_data[k] = c.v; printed[k] = c.printed }

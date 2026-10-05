@@ -47,7 +47,7 @@ const alVoltDrop = (clause: string, title: string): TableSpec => ({
   clause,
   title,
   topic: 'volt_drop',
-  conditions: [COND.operating70],
+  conditions: [COND.operatingTemp],
   keyColumn: SIZE_KEY,
   valueColumns: [
     { key: 'dc_2core_mv', label: 'Two-core cable, d.c.', unit: 'mV/A/m', header: 2 },
@@ -64,7 +64,7 @@ export const CABLE_RATING_SPECS_2: Record<string, TableSpec> = {
     clause: '6.7(a)',
     title: 'Multicore PVC insulated armoured cables (SANS 1507) — current-carrying capacity, aluminium',
     topic: 'cable_ratings',
-    conditions: [COND.ambient30, COND.operating70],
+    conditions: [COND.ambientTemp, COND.operatingTemp],
     keyColumn: SIZE_KEY,
     valueColumns: [
       { key: 'clipped_2core_a', label: 'One two-core cable, single-phase a.c. or d.c.', unit: 'A', header: 2, group: M3 },
@@ -91,7 +91,7 @@ export const CABLE_RATING_SPECS_2: Record<string, TableSpec> = {
       { key: 'duct_3or4core_a', label: 'Three-core or four-core', unit: 'A', header: 5, group: DUCTS },
     ],
     expectedKeys: SIZES_25_TO_400,
-    remark: 'Aluminium page of Table 6.8. Soil 25 °C / max conductor 70 °C are printed on the copper page (6.8).',
+    remark: 'Aluminium page of Table 6.8. Its soil and maximum conductor temperatures are printed on the copper page (open Table 6.8, copper).',
   },
   '6.9(a)': {
     clause: '6.9(a)',
@@ -99,7 +99,7 @@ export const CABLE_RATING_SPECS_2: Record<string, TableSpec> = {
     pages: 'first',
     title: 'Rubber and silicone-rubber insulated flexible cables (SANS 1574-5) — current-carrying capacity, copper',
     topic: 'cable_ratings',
-    conditions: [COND.ambient30, COND.operating70],
+    conditions: [COND.ambientTemp, COND.operatingTemp],
     keyColumn: SIZE_KEY,
     valueColumns: [
       { key: 'dc_or_1ph_2core_a', label: 'D.C. or single-phase a.c., one two-core cable', unit: 'A', header: 2 },
@@ -116,7 +116,7 @@ export const CABLE_RATING_SPECS_2: Record<string, TableSpec> = {
     clause: 'D.1',
     title: 'Impedance of 600/1 000 V conductors (SANS 1507)',
     topic: 'volt_drop',
-    conditions: [COND.ambient30, COND.operating70],
+    conditions: [COND.ambientTemp, COND.operatingTemp],
     keyColumn: { key: 'size_mm2', label: 'Nominal cross-sectional area of conductor', unit: 'mm²', header: 1 },
     valueColumns: [
       { key: 'r_ac_cu_ohm_km', label: 'Copper', unit: 'Ω/km', header: 2, group: R_AC },
@@ -130,7 +130,7 @@ export const CABLE_RATING_SPECS_2: Record<string, TableSpec> = {
   },
 }
 
-/** Conductor temperature of 6.9(b), printed in its NOTE ("based on a conductor operating temperature of 85 °C"). */
+/** Conductor temperature of 6.9(b), printed in the NOTE under the table. */
 const VD_NOTE_TEMP: ConditionSpec = {
   key: 'conductor_operating_c',
   label: 'Conductor operating temperature (volt-drop basis)',
@@ -149,7 +149,7 @@ export const CABLE_RATING_SPECS_2_BLOCKED: Record<string, { spec: TableSpec; blo
       clause: '6.6(a)',
       title: 'Multicore PVC insulated cables, unarmoured (SANS 1507) — current-carrying capacity, aluminium',
       topic: 'cable_ratings',
-      conditions: [COND.ambient30, COND.operating70],
+      conditions: [COND.ambientTemp, COND.operatingTemp],
       keyColumn: SIZE_KEY,
       valueColumns: [
         { key: 'm1_2core_a', label: 'One two-core cable, single-phase a.c. or d.c.', unit: 'A', header: 2, group: M1 },

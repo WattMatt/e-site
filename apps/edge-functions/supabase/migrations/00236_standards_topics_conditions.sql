@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00226 — Standards reference: topics and printed conditions
+-- Migration 00236 — Standards reference: topics and printed conditions
 -- =============================================================================
 -- The /standards page becomes an engineering lookup grouped by topic, and every
 -- extracted table shows the conditions it is valid for (ambient and conductor
@@ -44,6 +44,8 @@ ALTER TABLE cable_schedule.sans_tables DROP CONSTRAINT IF EXISTS sans_tables_ext
 ALTER TABLE cable_schedule.sans_tables ADD CONSTRAINT sans_tables_extracted_has_topic_conditions
     CHECK (provenance <> 'extracted' OR coalesce(topic IS NOT NULL AND jsonb_typeof(conditions) = 'array', false));
 
+-- Malformed input (a non-array, or non-object elements) makes this return false or
+-- raise inside the CHECK — either way the write is refused, never accepted.
 CREATE OR REPLACE FUNCTION cable_schedule.reference_conditions_cited(c JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -76,5 +78,7 @@ NOTIFY pgrst, 'reload schema';
 -- constraint: sans_tables_extracted_has_topic_conditions ON cable_schedule.sans_tables
 -- constraint: sans_tables_conditions_cited ON cable_schedule.sans_tables
 -- function: cable_schedule.reference_conditions_cited(jsonb)
+-- sql: (SELECT count(*) = 0 FROM cable_schedule.sans_tables WHERE topic IS NULL)
+-- sql: (SELECT count(*) = 0 FROM cable_schedule.sans_tables WHERE provenance = 'extracted' AND NOT cable_schedule.reference_conditions_cited(conditions))
 -- behaviour: scripts/db/assert-standards-topics-conditions.sql, every row ok
 -- @verify:end

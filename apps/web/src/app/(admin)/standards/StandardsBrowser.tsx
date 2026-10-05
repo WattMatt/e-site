@@ -94,21 +94,25 @@ function sourceLabel(s: BrowserStandard | undefined, fallback: string): string {
   return s.kind === 'manufacturer' ? 'Aberdare Facts & Figures (manufacturer data)' : `${s.code}:${s.year ?? ''} · Edition ${s.edition}`
 }
 
-export function StandardsBrowser({ standards, tables }: { standards: BrowserStandard[]; tables: BrowserTable[] }) {
+export function StandardsBrowser({ standards, tables, initialCode = null }: { standards: BrowserStandard[]; tables: BrowserTable[]; initialCode?: string | null }) {
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(initialCode && tables.some((t) => t.code === initialCode) ? initialCode : null)
   const byStd = useMemo(() => new Map(standards.map((s) => [s.id, s])), [standards])
 
   useEffect(() => {
-    const read = (): void => {
+    const fromUrl = (): string | null => {
       try {
         const t = new URLSearchParams(window.location.search).get('t')
-        setSelected(t && tables.some((x) => x.code === t) ? t : null)
-      } catch { setSelected(null) }
+        return t && tables.some((x) => x.code === t) ? t : null
+      } catch { return null }
     }
-    read()
-    window.addEventListener('popstate', read)
-    return () => window.removeEventListener('popstate', read)
+    // On mount, adopt a table the URL names (the server already did for deep links); never clear one.
+    const initial = fromUrl()
+    if (initial) setSelected(initial)
+    // Back / forward: the URL is the source of truth.
+    const onPop = (): void => setSelected(fromUrl())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
   }, [tables])
 
   const open = (code: string | null): void => {
@@ -157,8 +161,8 @@ export function StandardsBrowser({ standards, tables }: { standards: BrowserStan
         aria-label="Search standards and tables"
       />
       {sorted.length === 0 && <div className="data-panel-empty">Nothing matches “{query}”.</div>}
-      {TOPICS.map((topic) => {
-        const ts = sorted.filter((t) => t.topic === topic.key)
+      {[...TOPICS, { key: null, label: 'Other tables', blurb: 'Tables not yet filed under a topic' }].map((topic) => {
+        const ts = sorted.filter((t) => (topic.key === null ? !TOPICS.some((x) => x.key === t.topic) : t.topic === topic.key))
         if (ts.length === 0) return null
         const groups: Array<[string, BrowserTable[]]> = [
           ['SANS — current edition', ts.filter((t) => rank(t) === 0)],
@@ -166,8 +170,8 @@ export function StandardsBrowser({ standards, tables }: { standards: BrowserStan
           ['Manufacturer data (Aberdare) used by the cable schedule', ts.filter((t) => rank(t) === 2)],
         ]
         return (
-          <section key={topic.key} className="std-topic" aria-labelledby={`topic-${topic.key}`}>
-            <h2 id={`topic-${topic.key}`} className="std-topic-title">{topic.label}</h2>
+          <section key={topic.key ?? 'other'} className="std-topic" aria-labelledby={`topic-${topic.key ?? 'other'}`}>
+            <h2 id={`topic-${topic.key ?? 'other'}`} className="std-topic-title">{topic.label}</h2>
             <p className="std-topic-blurb">{topic.blurb}</p>
             {groups.map(([label, list]) => list.length === 0 ? null : (
               <details key={label} className="std-subgroup" open={label.startsWith('SANS — current') || !!q}>
@@ -239,7 +243,7 @@ function TableView({
   for (const c of cols.slice(1)) {
     const g = c.group ?? ''
     const last = groupRuns[groupRuns.length - 1]
-    if (last && last.label === g) last.span++; else groupRuns.push({ label: g, span: 1 })
+    if (g && last && last.label === g) last.span++; else groupRuns.push({ label: g, span: 1 })
   }
   const spanned = table.rows.some((r) => r.citation?.spanned_columns?.length)
   // An extracted cell with nothing printed (e.g. r/x below 25 mm², where one total is printed per group).
@@ -288,21 +292,30 @@ function TableView({
           </ul>
         </div>
       )}
-      {table.provenance === 'transcribed' && table.notes && <p className="std-note">{table.notes}</p>}
+      {table.notes && <p className="std-note">{table.notes}</p>}
       {table.cable_construction && <p className="std-note">Construction: {table.cable_construction}</p>}
 
-      <div className="std-table-wrap" tabIndex={0} aria-label={`${table.title} values`}>
+      <div className="std-table-wrap" role="region" tabIndex={0} aria-label={`${table.title} values`}>
         <table className="std-table">
           <thead>
             {hasGroups && (
               <tr>
                 <th rowSpan={2} scope="col" className="std-sticky">{cols[0].label}{cols[0].unit ? <span className="std-unit"> {cols[0].unit}</span> : null}</th>
-                {groupRuns.map((g, i) => <th key={i} colSpan={g.span} scope="colgroup" className="std-group">{g.label}</th>)}
+                {(() => {
+                  let at = 1
+                  return groupRuns.map((g, i) => {
+                    const first = cols[at]; at += g.span
+                    // A column outside any group spans both header rows rather than sitting under an empty cell.
+                    return g.label
+                      ? <th key={i} colSpan={g.span} scope="colgroup" className="std-group">{g.label}</th>
+                      : <th key={i} rowSpan={2} scope="col" className={first.type === 'string' ? 'std-text' : undefined}>{first.label}{first.unit ? <span className="std-unit"> {first.unit}</span> : null}</th>
+                  })
+                })()}
               </tr>
             )}
             <tr>
               {!hasGroups && <th scope="col" className="std-sticky">{cols[0].label}{cols[0].unit ? <span className="std-unit"> {cols[0].unit}</span> : null}</th>}
-              {cols.slice(1).map((c) => (
+              {cols.slice(1).filter((c) => !hasGroups || !!c.group).map((c) => (
                 <th key={c.key} scope="col" className={c.type === 'string' ? 'std-text' : undefined}>{c.label}{c.unit ? <span className="std-unit"> {c.unit}</span> : null}</th>
               ))}
             </tr>
@@ -314,7 +327,7 @@ function TableView({
                 {cols.slice(1).map((c) => (
                   <td key={c.key} className={c.type === 'string' ? 'std-text' : undefined}>
                     {cellText(r.data[c.key], r.citation?.printed?.[c.key], c.decimals)}
-                    {r.citation?.spanned_columns?.includes(c.key) ? <sup aria-label="printed once for a band of rows">†</sup> : null}
+                    {r.citation?.spanned_columns?.includes(c.key) ? <sup title="Printed once for a band of rows">†<span className="sr-only"> printed once for a band of rows</span></sup> : null}
                   </td>
                 ))}
               </tr>
