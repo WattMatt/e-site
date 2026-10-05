@@ -77,7 +77,7 @@ describe('budgetCsv', () => {
       items: [{ code: 'CONDUIT-20-PVC-M', description: 'Conduit, PVC, 20 mm dia', unit: 'm', n: 3, rate: 9.6512, nominal: 9.5, earliest: '2025-01-10', latest: '2026-06-25' },
         { code: 'X', description: 'Has "quotes", and commas', unit: 'no', n: 1, rate: null, nominal: null, earliest: null, latest: null }],
     })
-    const lines = csv.replace(/^﻿/, '').trimEnd().split('\r\n')
+    const lines = csv.replace(/^\uFEFF/, '').trimEnd().split('\r\n')
     expect(csv.startsWith('﻿')).toBe(true)
     expect(lines[0]).toBe('Code,Description,Unit,Statistic,Rate (ZAR excl VAT),Nominal rate,Observations,Earliest,Latest,Escalated to (CPI month)')
     expect(lines[1]).toBe('CONDUIT-20-PVC-M,"Conduit, PVC, 20 mm dia",m,median,9.65,9.50,3,2025-01-10,2026-06-25,2026-08')
