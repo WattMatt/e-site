@@ -3,18 +3,10 @@ import { NextResponse } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { logAuthEvent } from '@esite/shared'
+import { isValidOtpType } from '@/lib/auth/otp-types'
 import { THEME_COOKIE, THEME_COOKIE_MAX_AGE } from '@/lib/theme/types'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@esite/db'
-
-const VALID_OTP_TYPES: ReadonlySet<EmailOtpType> = new Set([
-  'signup',
-  'invite',
-  'magiclink',
-  'recovery',
-  'email_change',
-  'email',
-])
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
@@ -59,25 +51,75 @@ export async function GET(request: Request) {
     console.error('auth/callback: exchangeCodeForSession failed', error)
   }
 
-  // OTP flow — Supabase Auth emails default to ?token_hash=...&type=recovery
-  // when the project isn't on PKCE. Same handler signature regardless.
-  if (tokenHash && otpTypeRaw && VALID_OTP_TYPES.has(otpTypeRaw as EmailOtpType)) {
-    const { error, data } = await supabase.auth.verifyOtp({
-      token_hash: tokenHash,
-      type:       otpTypeRaw as EmailOtpType,
-    })
-    if (!error) {
-      // verifyOtp counts as a login for password-reset / magic-link / signup;
-      // for 'email_change' the audit is already handled by changeEmailAction.
-      if (otpTypeRaw !== 'email_change') {
-        await auditLogin(data.user?.id ?? null, from ?? otpTypeRaw)
-      }
-      return await redirectWithTheme(supabase, data.user?.id ?? null, `${origin}${next}`)
-    }
-    console.error('auth/callback: verifyOtp failed', error)
+  // OTP flow — emailed links carry ?token_hash=...&type=recovery. The token
+  // is single-use, and mail scanners prefetch GET links: verifying here let a
+  // scanner burn the token (and the 6-digit code with it — same underlying
+  // token) before the invitee ever clicked. Hand off to the /auth/confirm
+  // interstitial instead; only its form POST (handler below) verifies.
+  // Scanners follow GETs but don't submit forms.
+  if (tokenHash && otpTypeRaw && isValidOtpType(otpTypeRaw)) {
+    const params = new URLSearchParams({ token_hash: tokenHash, type: otpTypeRaw, next })
+    const carriedEmail = searchParams.get('email')
+    if (from) params.set('from', from)
+    if (carriedEmail) params.set('email', carriedEmail)
+    return NextResponse.redirect(`${origin}/auth/confirm?${params.toString()}`)
   }
 
   return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`)
+}
+
+// The /auth/confirm interstitial posts the token back here. This is the ONLY
+// place an emailed token_hash is exchanged for a session.
+export async function POST(request: Request) {
+  const { origin } = new URL(request.url)
+  const form = await request.formData()
+  const field = (name: string) => {
+    const value = form.get(name)
+    return typeof value === 'string' && value !== '' ? value : null
+  }
+  const tokenHash = field('token_hash')
+  const otpTypeRaw = field('type')
+
+  if (!tokenHash || !otpTypeRaw || !isValidOtpType(otpTypeRaw)) {
+    return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`, 303)
+  }
+
+  // The form echoes `next` from the URL, so it is attacker-influencable —
+  // accept only same-site relative paths.
+  const rawNext = field('next')
+  const next = rawNext?.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard'
+  const email = field('email')
+
+  const supabase = await createClient()
+  const { error, data } = await supabase.auth.verifyOtp({
+    token_hash: tokenHash,
+    type:       otpTypeRaw,
+  })
+  if (!error) {
+    // verifyOtp counts as a login for password-reset / magic-link / signup;
+    // for 'email_change' the audit is already handled by changeEmailAction.
+    if (otpTypeRaw !== 'email_change') {
+      await auditLogin(data.user?.id ?? null, field('from') ?? otpTypeRaw)
+    }
+    // 303 so the browser follows the post-redirect with a GET.
+    return await redirectWithTheme(supabase, data.user?.id ?? null, `${origin}${next}`, 303)
+  }
+
+  console.error('auth/callback: verifyOtp failed', error)
+  // Same bounce contract as the GET error_code branch (PR #138 banners).
+  const errorCode = error.code ?? null
+  if (next.startsWith('/reset-password')) {
+    const params = new URLSearchParams({
+      step:   'code',
+      error:  errorCode ?? 'otp_expired',
+      reason: 'link-expired',
+    })
+    if (email) params.set('email', email)
+    return NextResponse.redirect(`${origin}/reset-password?${params.toString()}`, 303)
+  }
+  const params = new URLSearchParams({ error: errorCode ?? 'auth_callback_failed' })
+  if (email) params.set('email', email)
+  return NextResponse.redirect(`${origin}/login?${params.toString()}`, 303)
 }
 
 async function auditLogin(userId: string | null, from: string | null): Promise<void> {
@@ -100,8 +142,9 @@ async function redirectWithTheme(
   supabase: SupabaseClient<Database>,
   userId: string | null,
   url: string,
+  status = 307,
 ) {
-  const res = NextResponse.redirect(url)
+  const res = NextResponse.redirect(url, status)
   if (userId) {
     const { data } = await supabase.from('profiles')
       .select('theme_preference').eq('id', userId).single()
