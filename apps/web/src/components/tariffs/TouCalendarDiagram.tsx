@@ -1,7 +1,8 @@
 /** TOU calendar diagram (spec §5, §12): weekday/Saturday/Sunday x high/low season, 48 half-hours each. */
 import { TOU_LABELS, minutesLabel, windowGrid, type TouCalendar, type TouPeriod } from '@esite/shared'
 
-const COLOUR: Record<TouPeriod, string> = { peak: 'var(--c-red)', standard: 'var(--c-amber)', off_peak: 'var(--c-green)' }
+// One ordinal hue (globals.css --tou-*): peak most salient. Status red/amber/green is reserved for state.
+const COLOUR: Record<TouPeriod, string> = { peak: 'var(--tou-peak)', standard: 'var(--tou-standard)', off_peak: 'var(--tou-off-peak)' }
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const SEASON = { high: 'High season', low: 'Low season' } as const
 
@@ -20,7 +21,7 @@ export function TouCalendarDiagram({ calendar }: { calendar: TouCalendar }) {
                 <th style={{ textAlign: 'left', fontWeight: 400, paddingRight: 8, whiteSpace: 'nowrap' }}>{SEASON[row.season]} {row.dayType}</th>
                 {row.slots.map((p, k) => (
                   <td key={k} title={`${SEASON[row.season]} ${row.dayType} ${minutesLabel(k * 30)} ${TOU_LABELS[p]}`}
-                    style={{ width: 8, height: 16, background: COLOUR[p], opacity: 0.8, border: '1px solid var(--c-panel)' }} />
+                    style={{ width: 8, height: 16, background: COLOUR[p], border: '1px solid var(--c-panel)' }} />
                 ))}
               </tr>
             ))}

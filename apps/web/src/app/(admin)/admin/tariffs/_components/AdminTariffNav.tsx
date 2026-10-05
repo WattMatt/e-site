@@ -6,6 +6,7 @@ const ITEMS = [
   { href: '/admin/tariffs', label: 'Overview', exact: true },
   { href: '/admin/tariffs/licensees', label: 'Licensees', exact: false },
   { href: '/admin/tariffs/sources', label: 'Source documents', exact: false },
+  { href: '/admin/tariffs/cycle', label: 'Update cycle', exact: false },
   { href: '/admin/tariffs/years', label: 'Tariff years', exact: false },
   { href: '/admin/tariffs/calendars', label: 'TOU calendars', exact: false },
   { href: '/admin/tariffs/reports', label: 'Error reports', exact: false },

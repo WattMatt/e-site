@@ -110,6 +110,10 @@
   --f-display:       var(--font-display, 'Fraunces'), 'EB Garamond', Georgia, serif;
   --f-body-jbcc:     'Mona Sans Variable', 'Mona Sans', system-ui, sans-serif;
   --f-mono-display:  var(--font-mono-display, 'IBM Plex Mono'), ui-monospace, SFMono-Regular, monospace;
+  /* TOU periods: one ordinal hue, peak most salient (dataviz validator: PASS on light and dark) */
+  --tou-off-peak:    #5598e7;
+  --tou-standard:    #9ec5f4;
+  --tou-peak:        #cde2fb;
 }
 
 /* ============================================================
@@ -160,6 +164,9 @@
   --c-red-dim-rgb:   rgba(181,54,42,.10);
   --c-red-bright:    #C0392B;
   --c-text-muted:    #6B6456;
+  --tou-off-peak:    #86b6ef;
+  --tou-standard:    #2a78d6;
+  --tou-peak:        #104281;
 }
 
 @media (prefers-color-scheme: light) {
@@ -202,6 +209,9 @@
     --c-red-dim-rgb:   rgba(181,54,42,.10);
     --c-red-bright:    #C0392B;
     --c-text-muted:    #6B6456;
+    --tou-off-peak:    #86b6ef;
+    --tou-standard:    #2a78d6;
+    --tou-peak:        #104281;
   }
 }
 

@@ -1,0 +1,1792 @@
+[
+  {
+    "licensee_id": "4f5a5386-509a-4903-bfc1-690c06302699",
+    "licensee_name": "AMAHLATHI",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC124",
+    "mdb_name": "Amahlathi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "98052ce6-c649-4736-a9d0-702c36c405f8",
+    "licensee_name": "BLUE CRANE ROUTE",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC102",
+    "mdb_name": "Blue Crane Route",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "d34f161b-0faf-4983-8ca1-7dd1ad3b7be2",
+    "licensee_name": "BUFFALO CITY",
+    "kind": "metro",
+    "province": "EC",
+    "mdb_code": "BUF",
+    "mdb_name": "Buffalo City",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "a3a6d0fd-17e1-4ad6-a338-d1bd2f38a65b",
+    "licensee_name": "DR BEYERS NAUDE",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC101",
+    "mdb_name": "Dr Beyers Naude",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e0ab0973-6a73-4da4-8676-fe8b1fa6134e",
+    "licensee_name": "ELUNDINI",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC141",
+    "mdb_name": "Elundini",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e391b6ed-d986-449e-a4e1-506b43083584",
+    "licensee_name": "EMALAHLENI EC",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC136",
+    "mdb_name": "Emalahleni",
+    "match": "manual",
+    "note": "\"EMALAHLENI EC\" = Emalahleni LM in Eastern Cape (EC136, Lady Frere/Dordrecht); province suffix stripped. Distinct from Emalahleni MP312 (Witbank)."
+  },
+  {
+    "licensee_id": "179ade63-9dd8-4959-b108-31876979015a",
+    "licensee_name": "ENOCH MGIJIMA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC139",
+    "mdb_name": "Enoch Mgijima",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "76d68b06-51fe-4014-b005-a76f1c40a6f5",
+    "licensee_name": "GREAT KEI",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC123",
+    "mdb_name": "Great Kei",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "bb3770db-1cd2-403d-a135-08418a51acdd",
+    "licensee_name": "INXUBA YETHEMBA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC131",
+    "mdb_name": "Inxuba Yethemba",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b8bff666-eaad-4689-bc1f-91e792ad13a1",
+    "licensee_name": "KING SABATA DALINDYEBO",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC157",
+    "mdb_name": "King Sabata Dalindyebo",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c72ae57a-d339-4be5-bf9e-74a32bc2cae1",
+    "licensee_name": "KOU KAMMA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC109",
+    "mdb_name": "Kou-Kamma",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "670b762f-2ae5-4967-aeab-8db52531cdf0",
+    "licensee_name": "KOUGA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC108",
+    "mdb_name": "Kouga",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "04d0f47c-c7b6-46a1-b87b-6bc82768c979",
+    "licensee_name": "MAKANA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC104",
+    "mdb_name": "Makana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6fda3ecc-a077-4e98-ae1e-e1ccbf861ea7",
+    "licensee_name": "MATATIELA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC441",
+    "mdb_name": "Matatiele",
+    "match": "manual",
+    "note": "Spelling: registry \"MATATIELA\", MDB \"Matatiele\" (EC441)."
+  },
+  {
+    "licensee_id": "e434cb82-dfa6-46cb-bcbd-f7ea78296563",
+    "licensee_name": "MBIZANA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC443",
+    "mdb_name": "Winnie Madikizela-Mandela",
+    "match": "manual",
+    "note": "Mbizana LM was renamed Winnie Madikizela-Mandela LM (same code EC443); MDB 2021 carries the new name."
+  },
+  {
+    "licensee_id": "b0be7132-9fe9-42e5-865f-4cfd8537a2a7",
+    "licensee_name": "NDLAMBE",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC105",
+    "mdb_name": "Ndlambe",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "823948ae-c052-4b59-ae2c-65aad1960e9c",
+    "licensee_name": "NELSON MANDELA BAY METRO",
+    "kind": "metro",
+    "province": "EC",
+    "mdb_code": "NMA",
+    "mdb_name": "Nelson Mandela Bay",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "72e596aa-23ed-4a2a-8e03-107935b0190c",
+    "licensee_name": "RAYMOND MHLABA",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC129",
+    "mdb_name": "Raymond Mhlaba",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "f385de4e-d071-425b-8e23-ca8f920d1570",
+    "licensee_name": "SAKHISIZWE",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC138",
+    "mdb_name": "Sakhisizwe",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c8bbcccd-0864-4765-80b0-713994a9759d",
+    "licensee_name": "SENQUE",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC142",
+    "mdb_name": "Senqu",
+    "match": "alias",
+    "note": "Matched via registry alias \"SENQU\", same province."
+  },
+  {
+    "licensee_id": "6611dd4f-58ca-4ecc-adfc-0c912235debd",
+    "licensee_name": "SUNDAYS RIVER",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC106",
+    "mdb_name": "Sundays River Valley",
+    "match": "manual",
+    "note": "\"SUNDAYS RIVER\" = Sundays River Valley LM (EC106); only EC municipality with that name."
+  },
+  {
+    "licensee_id": "4446cc78-247b-4bc3-b9d1-446f23e3b1a0",
+    "licensee_name": "UMSOBOMVU",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "NC072",
+    "mdb_name": "Umsobomvu",
+    "match": "manual",
+    "note": "Registry says province EC, but Umsobomvu LM (Colesberg/Noupoort) is NC072 in the Northern Cape; no EC municipality of that name exists. Registry province looks wrong - check."
+  },
+  {
+    "licensee_id": "347bb1b2-101e-402d-8fb1-c7babfefcbc5",
+    "licensee_name": "WALTER SISULU",
+    "kind": "municipal",
+    "province": "EC",
+    "mdb_code": "EC145",
+    "mdb_name": "Walter Sisulu",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "69838a7c-cc9a-48ff-a842-82de8979b35a",
+    "licensee_name": "CENTLEC (MANGAUNG)",
+    "kind": "metro",
+    "province": "FS",
+    "mdb_code": "MAN",
+    "mdb_name": "Mangaung",
+    "match": "alias",
+    "note": "Matched via registry alias \"MANGAUNG\", same province. Centlec SOC is Mangaung Metro's electricity utility."
+  },
+  {
+    "licensee_id": "42187da0-0c75-42b9-bf09-382db28f3392",
+    "licensee_name": "CENTLEC - KOPANONG",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS162",
+    "mdb_name": "Kopanong",
+    "match": "manual",
+    "note": "Name \"CENTLEC - KOPANONG\" = Centlec (Mangaung's electricity utility) supplying the Kopanong LM area; mapped to Kopanong FS162. Not to be confused with CENTLEC (MANGAUNG) -> MAN."
+  },
+  {
+    "licensee_id": "042cbd0c-92b4-498f-8092-2580a6fecd46",
+    "licensee_name": "DAMPLAAS",
+    "kind": "private",
+    "province": "FS",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (private); no MDB polygon. Private distributor (FS). Supply area not determined - not checked."
+  },
+  {
+    "licensee_id": "717ff11d-54ab-420d-940a-0451ff92e204",
+    "licensee_name": "DIHLABENG",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS192",
+    "mdb_name": "Dihlabeng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "5d486eba-cfe1-43a1-977a-9ec43d672fb5",
+    "licensee_name": "LETSEMENG LM",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS161",
+    "mdb_name": "Letsemeng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "f8259947-528f-484b-b4a3-19693be8a56a",
+    "licensee_name": "MAFUBE",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS205",
+    "mdb_name": "Mafube",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "068d9ea2-c19c-458e-8555-143d5d7837f0",
+    "licensee_name": "MALUTI A PHOFUNG",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS194",
+    "mdb_name": "Maluti-a-Phofung",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "4b2d4393-04dc-41d4-b259-e07594ea9847",
+    "licensee_name": "MANTSOPA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS196",
+    "mdb_name": "Mantsopa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "11d7d0b2-fc59-4eba-b8ee-54de68ac591d",
+    "licensee_name": "MASILONYANA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS181",
+    "mdb_name": "Masilonyana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b357d80e-289a-4027-8063-ce14ce7ddf2d",
+    "licensee_name": "MATJHABENG",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS184",
+    "mdb_name": "Matjhabeng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "66c2709a-7730-4a56-80b2-174ea2ca1ea7",
+    "licensee_name": "METSIMAHOLO",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS204",
+    "mdb_name": "Metsimaholo",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "85da9056-f614-488a-99ec-b7c9d2226a5a",
+    "licensee_name": "MOHOKARE",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS163",
+    "mdb_name": "Mohokare",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "bd10862f-d349-4965-a596-66059d2addd7",
+    "licensee_name": "MOQHAKA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS201",
+    "mdb_name": "Moqhaka",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "d63a50cf-e86e-481c-85d2-4a353ea71523",
+    "licensee_name": "NALA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS185",
+    "mdb_name": "Nala",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8cfc815e-80f3-4419-862a-64e9a3f12f8a",
+    "licensee_name": "NGWATHE",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS203",
+    "mdb_name": "Ngwathe",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "285b76ba-fe17-423c-a263-c55e65c222d3",
+    "licensee_name": "NKETOANA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS193",
+    "mdb_name": "Nketoana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8e919d63-27f2-40d4-96fa-b59f90fce481",
+    "licensee_name": "PHUMELELA",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS195",
+    "mdb_name": "Phumelela",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8e0acc44-03ac-4c75-87a0-4a283d56f6ca",
+    "licensee_name": "SASOLBURG",
+    "kind": "industrial_private",
+    "province": "FS",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (industrial_private); no MDB polygon. Sasol's Sasolburg industrial complex; lies inside Metsimaholo LM (FS204). Not checked against a boundary."
+  },
+  {
+    "licensee_id": "23ff0015-7383-4996-aa38-267a56376354",
+    "licensee_name": "SETSOTO",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS191",
+    "mdb_name": "Setsoto",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "4bb682d5-633c-44f5-85bc-ef7c1273b182",
+    "licensee_name": "TOKOLOGO",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS182",
+    "mdb_name": "Tokologo",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c1010685-b9a2-49b5-a1f1-83db65647a80",
+    "licensee_name": "TSWELOPELE",
+    "kind": "municipal",
+    "province": "FS",
+    "mdb_code": "FS183",
+    "mdb_name": "Tswelopele",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "69072bf3-1744-4833-ab1e-e593a70cbc33",
+    "licensee_name": "AECI",
+    "kind": "private",
+    "province": "GP",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (private); no MDB polygon. AECI (explosives/chemicals) - presumably its Modderfontein site (Johannesburg/Ekurhuleni area). Not verified."
+  },
+  {
+    "licensee_id": "9d3c8e89-3196-4ec1-8d8f-6527cf9760ad",
+    "licensee_name": "CITY OF EKURHULENI",
+    "kind": "metro",
+    "province": "GP",
+    "mdb_code": "EKU",
+    "mdb_name": "Ekurhuleni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c3ce8e59-404a-47b8-a6a7-3c47c519d77b",
+    "licensee_name": "CITY OF TSHWANE",
+    "kind": "metro",
+    "province": "GP",
+    "mdb_code": "TSH",
+    "mdb_name": "City of Tshwane",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "5558d88f-6b99-4d91-847d-63fc16b47d63",
+    "licensee_name": "CITY POWER",
+    "kind": "metro",
+    "province": "GP",
+    "mdb_code": "JHB",
+    "mdb_name": "City of Johannesburg",
+    "match": "alias",
+    "note": "Matched via registry alias \"CITY OF JOHANNESBURG\", same province. City Power Johannesburg SOC is the City of Johannesburg's electricity utility."
+  },
+  {
+    "licensee_id": "9db491bc-2af1-4965-8e8f-4b68277d3075",
+    "licensee_name": "EMFULENI",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT421",
+    "mdb_name": "Emfuleni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "cfd4e801-e32b-4634-8285-42c77686901b",
+    "licensee_name": "LESEDI",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT423",
+    "mdb_name": "Lesedi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "40b83cbd-0419-4d58-b988-e52af3be4f92",
+    "licensee_name": "MERAFONG",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT484",
+    "mdb_name": "Merafong City",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "2e8793a1-06af-4c4a-b59c-b889d4ff13f6",
+    "licensee_name": "MIDVAAL",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT422",
+    "mdb_name": "Midvaal",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6796d610-f6cd-4c36-9313-b36262b046c0",
+    "licensee_name": "MOGALE CITY",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT481",
+    "mdb_name": "Mogale City",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "0ad5714c-77c4-4aaa-a710-6e8163759506",
+    "licensee_name": "RANDWEST",
+    "kind": "municipal",
+    "province": "GP",
+    "mdb_code": "GT485",
+    "mdb_name": "Rand West City",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "a1034e57-1c79-4d45-87bf-1b3ab5d1f6af",
+    "licensee_name": "WESTRAND PRIVATE DISTRIBUTORS",
+    "kind": "private",
+    "province": "GP",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (private); no MDB polygon. Private distributors on the West Rand (presumably within Mogale City/Merafong/Rand West). Not verified."
+  },
+  {
+    "licensee_id": "c57b8860-448c-4709-801a-90a7176408e8",
+    "licensee_name": "ABAQULUSI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN263",
+    "mdb_name": "Abaqulusi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "44320c25-94e0-4527-ae5d-69641f37cfb4",
+    "licensee_name": "ALFRED DUMA",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN238",
+    "mdb_name": "Alfred Duma",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b6de93bd-2c93-472d-ad18-8d4609395bb6",
+    "licensee_name": "CITY OF UMHLATHUZE",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN282",
+    "mdb_name": "uMhlathuze",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "3c83ace0-52c6-4f81-a5b3-8afdb24e8255",
+    "licensee_name": "EDUMBE",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN261",
+    "mdb_name": "eDumbe",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "1f0b369f-182e-4f10-9e85-5334dfe4c2c1",
+    "licensee_name": "EMADLANGENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN253",
+    "mdb_name": "Emadlangeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "62deb34f-e979-429e-bd01-ed9e6fb55da9",
+    "licensee_name": "ENDUMENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN241",
+    "mdb_name": "Endumeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "3a8ea740-cba2-499b-a725-e1e12603238f",
+    "licensee_name": "ETHEKWINI",
+    "kind": "metro",
+    "province": "KZN",
+    "mdb_code": "ETH",
+    "mdb_name": "eThekwini",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "3187950d-a318-4596-ac75-491b43dad4d2",
+    "licensee_name": "GREATER KOKSTAD",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN433",
+    "mdb_name": "Greater Kokstad",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "224b38b9-d98c-4c9d-b01c-3608e4f1d709",
+    "licensee_name": "INKOSI LANGALIBALELE",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN237",
+    "mdb_name": "Inkosi Langalibalele",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6e7013cd-21c8-444a-9e76-78c937b053dc",
+    "licensee_name": "ITHALA EZAKHENI",
+    "kind": "development_agency",
+    "province": "KZN",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (development_agency); no MDB polygon. Ithala (KZN development finance) industrial estate at Ezakheni, near Ladysmith - inside Alfred Duma LM (KZN238)."
+  },
+  {
+    "licensee_id": "f237184d-3c52-4dce-99b7-09ed082693b9",
+    "licensee_name": "ITHALA ISITHEBE",
+    "kind": "development_agency",
+    "province": "KZN",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (development_agency); no MDB polygon. Ithala industrial estate at Isithebe - inside Mandeni LM (KZN291)."
+  },
+  {
+    "licensee_id": "04d3c603-76fd-45b4-b8fe-de4b49c5956e",
+    "licensee_name": "ITHALA MADEDENI",
+    "kind": "development_agency",
+    "province": "KZN",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (development_agency); no MDB polygon. Ithala industrial estate at Madadeni - inside Newcastle LM (KZN252)."
+  },
+  {
+    "licensee_id": "200372c5-9cfc-4ef1-9e12-db45f733953f",
+    "licensee_name": "KWADUKUZA",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN292",
+    "mdb_name": "KwaDukuza",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "272a2d27-8d66-41ba-94cb-56fa0faf13f9",
+    "licensee_name": "MANDENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN291",
+    "mdb_name": "Mandeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "72d7a73e-92d6-404c-af85-c3059a00b7ab",
+    "licensee_name": "MPOFANA",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN223",
+    "mdb_name": "Mpofana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "da9fc0d9-d3f2-464d-b2f4-c9e724fd8144",
+    "licensee_name": "MSUNDUZI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN225",
+    "mdb_name": "The Msunduzi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "7915efcd-4cfe-4db6-8aad-c39afa15221c",
+    "licensee_name": "MTHONJANENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN285",
+    "mdb_name": "Mthonjaneni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e7c6f485-8986-42d5-ab2a-391e0c24606d",
+    "licensee_name": "NEWCASTLE",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN252",
+    "mdb_name": "Newcastle",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "21c21e2a-fbc1-4a1e-be75-9994ac707083",
+    "licensee_name": "NKANDLA",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN286",
+    "mdb_name": "Nkandla",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "06e293e5-0f68-4edb-a166-b9bba7af2a4b",
+    "licensee_name": "NQUTHU",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN242",
+    "mdb_name": "Nqutu",
+    "match": "manual",
+    "note": "Spelling: registry \"NQUTHU\", MDB \"Nqutu\" (KZN242)."
+  },
+  {
+    "licensee_id": "9ac9ed96-7b80-46be-b490-27ae936831cb",
+    "licensee_name": "RAY NKONYENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN216",
+    "mdb_name": "Ray Nkonyeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "337e15d1-d43b-494a-9d16-da826c1a2ac2",
+    "licensee_name": "ULUNDI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN266",
+    "mdb_name": "Ulundi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "9bbb7d22-df9a-4cdc-8b32-2e9febcfdc93",
+    "licensee_name": "UMKHANYAKUDE",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Umkhanyakude is a DISTRICT municipality (DC27, category C), not a local municipality; there is no local polygon to map it to. Its distribution area within DC27 is not determined here."
+  },
+  {
+    "licensee_id": "27c3e7a9-9b25-480c-a92d-d94795fd6eb5",
+    "licensee_name": "UMLALAZI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN284",
+    "mdb_name": "uMlalazi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6572ab8b-b294-4338-ae0d-cfee84bc32f3",
+    "licensee_name": "UMNGENI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN222",
+    "mdb_name": "uMngeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "18c5b37d-4bb9-4d6b-b893-9d0acfe540ac",
+    "licensee_name": "UMUZIWABANTU",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN214",
+    "mdb_name": "uMuziwabantu",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "f70db79b-492d-4524-a37e-d0a1eb3dc2fb",
+    "licensee_name": "UMVOTI",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN245",
+    "mdb_name": "Umvoti",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "02a97e70-e329-4450-bc2e-0321e0094536",
+    "licensee_name": "UPHONGOLO",
+    "kind": "municipal",
+    "province": "KZN",
+    "mdb_code": "KZN262",
+    "mdb_name": "uPhongolo",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ce3c92df-62a1-48fd-83bc-d8e4a53324f8",
+    "licensee_name": "BA-PHALABORWA",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM334",
+    "mdb_name": "Ba-Phalaborwa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "cf83209a-e514-4ce5-9e63-9faa0f3984ef",
+    "licensee_name": "BELA-BELA",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM366",
+    "mdb_name": "Bela-Bela",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ac26c8f6-ee0c-411c-bb8c-dbe2c1fd1cd8",
+    "licensee_name": "BLOUBERG",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM351",
+    "mdb_name": "Blouberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b398bf7a-9a3c-4115-a1b6-8f4f306da53c",
+    "licensee_name": "ELIAS MOTSOALEDI",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM472",
+    "mdb_name": "Elias Motsoaledi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "79faecc1-38c1-4cc2-ac91-56d70b2e7238",
+    "licensee_name": "EPHRAIM MOGALE",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM471",
+    "mdb_name": "Ephraim Mogale",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8232987b-7d27-470e-aec4-65edb13641cd",
+    "licensee_name": "GREATER LETABA",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM332",
+    "mdb_name": "Greater Letaba",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6ff67ca0-216a-48be-9130-b4bef9042219",
+    "licensee_name": "GREATER TZANEEN",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM333",
+    "mdb_name": "Greater Tzaneen",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "5ab4456d-065d-4de1-b1dc-6f39bd693786",
+    "licensee_name": "LEPHALALE",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM362",
+    "mdb_name": "Lephalale",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c911d090-bb08-4a6a-8e4b-c8c6e0183016",
+    "licensee_name": "MAKHADO",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM344",
+    "mdb_name": "Makhado",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "fdeefa1f-f34e-43a1-bdbd-c754e4395cbc",
+    "licensee_name": "MODIMOLLE-MOOKGOPHOONG",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM368",
+    "mdb_name": "Modimolle-Mookgophong",
+    "match": "manual",
+    "note": "Spelling: registry \"MOOKGOPHOONG\", MDB \"Mookgophong\"; registry alias also cites \"LIM 368\", matching MDB code LIM368."
+  },
+  {
+    "licensee_id": "ad298a06-b5cd-4283-bcac-ce0d3230e0b0",
+    "licensee_name": "MOGALAKWENA",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM367",
+    "mdb_name": "Mogalakwena",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "1f19396d-0da5-4d35-99fa-d7c801d07e8a",
+    "licensee_name": "MOLEMOLE",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM353",
+    "mdb_name": "Molemole",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "dda1eb81-6dda-4649-ac20-ceb4df7ccca3",
+    "licensee_name": "MUSINA",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM341",
+    "mdb_name": "Musina",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "9c4606bf-16de-437b-a289-8cb1bbeebd86",
+    "licensee_name": "POLOKWANE",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM354",
+    "mdb_name": "Polokwane",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "784611f0-9ee7-49e0-b412-718391a7f874",
+    "licensee_name": "THABAZIMBI",
+    "kind": "municipal",
+    "province": "LP",
+    "mdb_code": "LIM361",
+    "mdb_name": "Thabazimbi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "894625cf-d19f-4d2b-af37-594d9a9acfec",
+    "licensee_name": "CHIEF ALBERT LUTHULI",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP301",
+    "mdb_name": "Chief Albert Luthuli",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "accad833-a0d5-4ae6-b896-c399991c3244",
+    "licensee_name": "CITY OF MBOMBELA",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP326",
+    "mdb_name": "City of Mbombela",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "cea75dc1-7ae8-452d-bdf2-b12927f289eb",
+    "licensee_name": "DIPALESENG",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP306",
+    "mdb_name": "Dipaleseng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "424fd50c-944b-4789-bc7b-7c82294f15eb",
+    "licensee_name": "DR PIXLEY KA SEME",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP304",
+    "mdb_name": "Dr Pixley Ka Isaka Seme",
+    "match": "manual",
+    "note": "Short form: \"DR PIXLEY KA SEME\" = Dr Pixley Ka Isaka Seme LM (MP304)."
+  },
+  {
+    "licensee_id": "da8d15a4-49bc-4a0b-8c16-89f37973c1dd",
+    "licensee_name": "EMAKHAZENI",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP314",
+    "mdb_name": "Emakhazeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "bd1659a4-346e-4c65-bbd5-cb22481673fa",
+    "licensee_name": "EMALAHLENI",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP312",
+    "mdb_name": "Emalahleni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province. Mpumalanga Emalahleni (Witbank); EC Emalahleni is EC136."
+  },
+  {
+    "licensee_id": "10e64db7-3a83-4371-8854-8341f0613367",
+    "licensee_name": "GOVAN MBEKI",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP307",
+    "mdb_name": "Govan Mbeki",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8e13c0bf-900d-4dcc-bc27-7578eaee461d",
+    "licensee_name": "LEKWA",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP305",
+    "mdb_name": "Lekwa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e8f2a014-7351-4355-bc2f-fc5c8312c087",
+    "licensee_name": "MEGA",
+    "kind": "development_agency",
+    "province": "MP",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (development_agency); no MDB polygon. Mpumalanga Economic Growth Agency. Supply area not determined - not checked."
+  },
+  {
+    "licensee_id": "31b6ca9b-af44-42a5-b034-011b80308637",
+    "licensee_name": "MKHONDO",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP303",
+    "mdb_name": "Mkhondo",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "23d0a9c7-2ee2-4fca-81f6-8fde7d8a7d56",
+    "licensee_name": "MSUKALIGWA",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP302",
+    "mdb_name": "Msukaligwa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "53b8170c-a12e-4483-9834-b972ddc6570e",
+    "licensee_name": "NKOMAZI",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP324",
+    "mdb_name": "Nkomazi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8dfab498-85a5-4120-ba61-7bb0b00284a7",
+    "licensee_name": "SASOL SYNFUELS",
+    "kind": "industrial_private",
+    "province": "MP",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (industrial_private); no MDB polygon. Sasol Synfuels complex at Secunda - inside Govan Mbeki LM (MP307)."
+  },
+  {
+    "licensee_id": "10fba053-0e0e-4270-83ca-c0fa3fefaff1",
+    "licensee_name": "STEVE TSHWETE",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP313",
+    "mdb_name": "Steve Tshwete",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e84a0d07-ed24-46db-87d9-f87a3d513139",
+    "licensee_name": "THABA CHWEU",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP321",
+    "mdb_name": "Thaba Chweu",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "cf0a922d-a962-4f97-8620-9a3fa75d528a",
+    "licensee_name": "VICTOR KHANYE",
+    "kind": "municipal",
+    "province": "MP",
+    "mdb_code": "MP311",
+    "mdb_name": "Victor Khanye",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "452e9fb5-6a20-4b24-b038-fb7899e3e705",
+    "licensee_name": "DAVID KRUIPIER",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC087",
+    "mdb_name": "Dawid Kruiper",
+    "match": "manual",
+    "note": "Spelling: \"DAVID KRUIPIER\" = Dawid Kruiper LM (NC087, Upington; 2016 merger of //Khara Hais + Mier)."
+  },
+  {
+    "licensee_id": "4e1c7b7e-52e3-4210-acf1-8330e76ad61d",
+    "licensee_name": "DIKGATLONG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC092",
+    "mdb_name": "Dikgatlong",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "98d51bc2-314a-4759-89ba-88bad92000fd",
+    "licensee_name": "EMTHANJENI",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC073",
+    "mdb_name": "Emthanjeni",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "932d410d-e152-4bea-b6c2-345e25f591ef",
+    "licensee_name": "GA-SEGONYANA",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC452",
+    "mdb_name": "Ga-Segonyana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "fb263e8a-eec7-4244-a13e-12be8f6d0525",
+    "licensee_name": "GAMAGARA",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC453",
+    "mdb_name": "Gamagara",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "23ee6247-ba88-439a-9066-3735d0794705",
+    "licensee_name": "HANTAM",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC065",
+    "mdb_name": "Hantam",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "023b5d53-2149-4c4f-907f-e84d2e261946",
+    "licensee_name": "JOE MOROLONG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC451",
+    "mdb_name": "Joe Morolong",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "8cefe0a2-ef4e-434d-834e-b069711515ba",
+    "licensee_name": "KAI !GARIB",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC082",
+    "mdb_name": "Kai !Garib",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "304215cc-76cd-41c4-9ae0-b8358bd1c1bb",
+    "licensee_name": "KAMIESBERG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC064",
+    "mdb_name": "Kamiesberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "939d14c7-a36d-4406-98f6-b7abf289c315",
+    "licensee_name": "KAREEBERG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC074",
+    "mdb_name": "Kareeberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b79d425e-e537-4f52-acae-aefa2e3ab466",
+    "licensee_name": "KAROOHOOGLAND",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC066",
+    "mdb_name": "Karoo Hoogland",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "1bfd841c-e653-46cc-a3eb-5b32c97cb0ea",
+    "licensee_name": "KGATELOPELE",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC086",
+    "mdb_name": "Kgatelopele",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ea010591-ac05-4dfb-891a-f597a55f3144",
+    "licensee_name": "KHAIMA",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC067",
+    "mdb_name": "Khâi-Ma",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "f30dc123-b79f-4419-b787-c861cc9659c9",
+    "licensee_name": "MAGARENG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC093",
+    "mdb_name": "Magareng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "69e50736-27be-4943-a64b-a8d0cd60cceb",
+    "licensee_name": "NANAKHOI",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC062",
+    "mdb_name": "Nama Khoi",
+    "match": "alias",
+    "note": "Matched via registry alias \"NAMAKHOI\", same province."
+  },
+  {
+    "licensee_id": "4afead26-c84a-4a97-884e-25bcb4f6a02d",
+    "licensee_name": "PHOKWANE",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC094",
+    "mdb_name": "Phokwane",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c8f53198-4821-4a32-b0db-01b381d8d001",
+    "licensee_name": "RENOSTERBERG",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC075",
+    "mdb_name": "Renosterberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "455d5d30-6a87-4388-a634-365c7ec15853",
+    "licensee_name": "RICHTERSVELD",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC061",
+    "mdb_name": "Richtersveld",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6b2f911a-b61f-494c-854f-3cc551610213",
+    "licensee_name": "SIYANCUMA",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC078",
+    "mdb_name": "Siyancuma",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b051ee57-4570-47ed-b27c-b2c43c4a9d40",
+    "licensee_name": "SIYATHEMBA",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC077",
+    "mdb_name": "Siyathemba",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "73a68d4e-c8f5-4161-a033-ef534a919601",
+    "licensee_name": "SOL PLAAITJE",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC091",
+    "mdb_name": "Sol Plaatje",
+    "match": "alias",
+    "note": "Matched via registry alias \"SOL PLAATJE\", same province."
+  },
+  {
+    "licensee_id": "37ac28b6-6d25-41cd-8dd6-a6bf68220347",
+    "licensee_name": "THEMBELIHLE",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC076",
+    "mdb_name": "Thembelihle",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "f1d061b4-8fe4-4117-8505-ef1293a4bc5c",
+    "licensee_name": "TSANTSABANE",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC085",
+    "mdb_name": "Tsantsabane",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "20cd68ad-6d22-477b-9c62-d9b1c5dc3cdd",
+    "licensee_name": "UBUNTU",
+    "kind": "municipal",
+    "province": "NC",
+    "mdb_code": "NC071",
+    "mdb_name": "Ubuntu",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "209a75ae-d46f-4215-afed-11a752364410",
+    "licensee_name": "CITY OF MATLOSANA",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW403",
+    "mdb_name": "City of Matlosana",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "6dfc44c2-b590-4d04-a4b6-32e0f41e7b25",
+    "licensee_name": "DITSOBOTLA",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW384",
+    "mdb_name": "Ditsobotla",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "4864d240-0772-4537-b3bf-5728d0edb27f",
+    "licensee_name": "GREATER TAUNG",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW394",
+    "mdb_name": "Greater Taung",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "fbf14463-71f6-4938-9177-4b8e9857763f",
+    "licensee_name": "JB MARKS",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW405",
+    "mdb_name": "JB Marks",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "0338f884-6204-48d6-969d-7a84229ca06d",
+    "licensee_name": "KGETLENG RIVER",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW374",
+    "mdb_name": "Kgetlengrivier",
+    "match": "alias",
+    "note": "Matched via registry alias \"KGETLENG RIVIER\", same province."
+  },
+  {
+    "licensee_id": "c1cb4f2f-caf7-4404-8f29-1685701876dc",
+    "licensee_name": "LEKWA-TEEMANE",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW396",
+    "mdb_name": "Lekwa-Teemane",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ab1aa573-c09c-4626-ad70-7edccf549de8",
+    "licensee_name": "MADIBENG",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW372",
+    "mdb_name": "Local Municipality of Madibeng",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "96b09c0c-bd50-4b24-bce3-a5f336a47ee0",
+    "licensee_name": "MAMUSA",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW393",
+    "mdb_name": "Mamusa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c041e459-9208-44be-93bd-98cfe340ed58",
+    "licensee_name": "MAQUASIE HILLS",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW404",
+    "mdb_name": "Maquassi Hills",
+    "match": "manual",
+    "note": "Spelling: \"MAQUASIE HILLS\" = Maquassi Hills LM (NW404)."
+  },
+  {
+    "licensee_id": "ec92e3e4-a977-472e-b2df-6cc14fbd3ffa",
+    "licensee_name": "NALEDI",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW392",
+    "mdb_name": "Naledi",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province. NW Naledi (Vryburg); the former FS Naledi (FS164) was merged into Mangaung in 2016."
+  },
+  {
+    "licensee_id": "43dba330-4902-44c1-bb98-ac6fd60c478a",
+    "licensee_name": "RAMOTSHERE MOILOA",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW385",
+    "mdb_name": "Ramotshere Moiloa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "a44c4be5-4824-4c7a-8ed3-f5a24ae06c58",
+    "licensee_name": "RUSTENBURG",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW373",
+    "mdb_name": "Rustenburg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ae24f43c-f481-40c8-a76b-e3d0f80cdb35",
+    "licensee_name": "TSWAING",
+    "kind": "municipal",
+    "province": "NW",
+    "mdb_code": "NW382",
+    "mdb_name": "Tswaing",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "9686d400-f1a7-4681-9ec6-7c91f69691cd",
+    "licensee_name": "BEAUFORT WEST",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC053",
+    "mdb_name": "Beaufort West",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "100a5ca3-bc9c-4862-803c-dec99c81c3b8",
+    "licensee_name": "BERGRIVIER",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC013",
+    "mdb_name": "Bergrivier",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "9a7cb71c-bd08-4599-95d3-be3f9429d165",
+    "licensee_name": "BITOU",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC047",
+    "mdb_name": "Bitou",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ccb9ba89-8528-4c8a-815e-e000cf7ff006",
+    "licensee_name": "BREEDE VALLEY",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC025",
+    "mdb_name": "Breede Valley",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c0c6a69a-a63f-4e62-b3d3-33a8cfe5f73d",
+    "licensee_name": "CAPE AGULHA",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC033",
+    "mdb_name": "Cape Agulhas",
+    "match": "alias",
+    "note": "Matched via registry alias \"CAPE AGULHAS\", same province."
+  },
+  {
+    "licensee_id": "9c100b79-29ad-4e7a-8ee2-e73a01040102",
+    "licensee_name": "CEDERBERG",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC012",
+    "mdb_name": "Cederberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "c54a9fd3-d857-4669-b78b-359ce6e02b86",
+    "licensee_name": "CITY OF CAPE TOWN",
+    "kind": "metro",
+    "province": "WC",
+    "mdb_code": "CPT",
+    "mdb_name": "City of Cape Town",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "a506888d-82b3-44aa-91f2-65b8d50b5bb4",
+    "licensee_name": "DRAKENSTEIN",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC023",
+    "mdb_name": "Drakenstein",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "86b30c8d-0060-4866-b3f6-3bc17b5b30d7",
+    "licensee_name": "GEORGE",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC044",
+    "mdb_name": "George",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "27698735-a0ef-4689-87c2-8312d36a81e3",
+    "licensee_name": "HESSEQUA",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC042",
+    "mdb_name": "Hessequa",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "d4c10c72-19a6-4e21-8981-707b19c900ab",
+    "licensee_name": "KANNALAND",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC041",
+    "mdb_name": "Kannaland",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "d5111a86-eab0-4060-9d12-a9c31e4e19e7",
+    "licensee_name": "KNYSNA",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC048",
+    "mdb_name": "Knysna",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "0da315c9-4d1a-4ae5-908c-eb2a06a350ac",
+    "licensee_name": "LAINGSBURG",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC051",
+    "mdb_name": "Laingsburg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ab521fbb-f444-441a-abdd-0b5ab84329f7",
+    "licensee_name": "LANGEBERG",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC026",
+    "mdb_name": "Langeberg",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b9f0b1ce-6b43-4eba-8e79-2f85c61a590d",
+    "licensee_name": "MATZIKAMA",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC011",
+    "mdb_name": "Matzikama",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "e98f38aa-61c5-4b2f-b94c-cdee57a4f9a2",
+    "licensee_name": "MOSSEL BAY",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC043",
+    "mdb_name": "Mossel Bay",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "ed94c693-2af3-41d8-ba37-1141d58e9e4b",
+    "licensee_name": "OUDTSHOORN",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC045",
+    "mdb_name": "Oudtshoorn",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "01f3ca6f-5135-406d-8a8c-627bc27842a7",
+    "licensee_name": "OVERSTAND",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC032",
+    "mdb_name": "Overstrand",
+    "match": "alias",
+    "note": "Matched via registry alias \"OVERSTRAND\", same province."
+  },
+  {
+    "licensee_id": "51e829cc-187c-42c1-a76c-ddc434166ce5",
+    "licensee_name": "PRINCE ALBERT",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC052",
+    "mdb_name": "Prince Albert",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "aaca16aa-2179-49be-9237-f3628a370fb5",
+    "licensee_name": "SALDANHA BAY",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC014",
+    "mdb_name": "Saldanha Bay",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "9be8c181-3038-4532-915c-52afc6400522",
+    "licensee_name": "STELLENBOSCH",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC024",
+    "mdb_name": "Stellenbosch",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b26bc5b3-4579-4cdb-aacf-72f6af7ae0d5",
+    "licensee_name": "SWARTLAND",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC015",
+    "mdb_name": "Swartland",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "375e06f7-dd29-4b4e-b338-b30d016293bf",
+    "licensee_name": "SWELLENDAM",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC034",
+    "mdb_name": "Swellendam",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "0ca0af87-f071-4fa2-9b43-252a5a04ecb2",
+    "licensee_name": "THEEWATERSKLOOF",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC031",
+    "mdb_name": "Theewaterskloof",
+    "match": "exact",
+    "note": "Name equal after case/punctuation/generic-word normalisation, same province."
+  },
+  {
+    "licensee_id": "b9783a09-a899-4678-908b-bb2c35be5792",
+    "licensee_name": "VLEESBAAI DIENSTE",
+    "kind": "private",
+    "province": "WC",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (private); no MDB polygon. Private distributor for Vleesbaai (coastal settlement west of Mossel Bay) - inside Mossel Bay LM (WC043)."
+  },
+  {
+    "licensee_id": "b84e7323-c7ff-4af8-8958-fa64730b7dfa",
+    "licensee_name": "WITZENBURG",
+    "kind": "municipal",
+    "province": "WC",
+    "mdb_code": "WC022",
+    "mdb_name": "Witzenberg",
+    "match": "manual",
+    "note": "Spelling: registry \"WITZENBURG\", MDB \"Witzenberg\" (WC022, Ceres)."
+  },
+  {
+    "licensee_id": "2255aace-9932-46ac-a5de-5e08b2c74170",
+    "licensee_name": "Eskom",
+    "kind": "eskom",
+    "province": "national",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (eskom); no MDB polygon. National utility. Supplies directly wherever no municipal/private licensee distributes (see unlicensed-municipalities.json), and also inside many licensed municipalities (e.g. townships/rural areas)."
+  },
+  {
+    "licensee_id": "57cc3268-82f0-4802-9165-ad7fad93e9e0",
+    "licensee_name": "Eskom (Local Authority tariffs)",
+    "kind": "eskom",
+    "province": "national",
+    "mdb_code": null,
+    "mdb_name": null,
+    "match": "none",
+    "note": "Not a municipality (eskom); no MDB polygon. Eskom tariff book for supply TO local authorities (bulk), not a geographic supply area."
+  }
+]

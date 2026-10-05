@@ -1,0 +1,12 @@
+{
+  "dataset": "MDB Local Municipalities 2021 (Municipal Demarcation Board)",
+  "hub_item": "https://spatialhub-mdb-sa.opendata.arcgis.com/ (ArcGIS item 27bbdd5b041b4ba6b5707dfed5aa3923)",
+  "service": "https://services7.arcgis.com/oeoyTUJC8HEeYsRB/arcgis/rest/services/LocalMunicipalities2018_Final/FeatureServer/0",
+  "query": "query?where=1=1&outFields=*&outSR=4326&f=geojson (paged 5 x 50)",
+  "retrieved": "2026-10-05",
+  "feature_date_attribute": "2019-06-25 (all 213 features)",
+  "access_information": "Municipal Demarcation Board, 2018, Pretoria, Republic of South Africa",
+  "licence": "MDB releases the municipal and ward boundary data in the public domain, i.e. for public use with only limited restrictions to ensure that the data is not misused. The user of municipal and ward boundary data shall not sell the data to third parties or appropriate it for commercial use. The user of municipal and boundary data may use it in research, publications, value-added products such as applications, but the user must recognise and acknowledge the MDB as the producer and custodian of these data. The user of municipal and boundary data shall not change the original dataset and pass it on to third parties as the product of the MDB. If there is any fault with the data from MDB, the user is expected to bring it to the attention of MDB - as it is prescribed in the Spatial Data Infrastructure Act 54 of 2003 - so that the quality and integrity of the data can be improved.",
+  "processing": "Fields reduced to code (CAT_B), name (MUNICNAME), province (PROVINCE; LIM->LP, GT->GP), category (CATEGORY). mapshaper 0.7.76 -simplify 5% keep-shapes (topology-preserving), coordinates rounded to 4 dp; NMA and EC106 re-validated with shapely make_valid after rounding created a ring self-touch. Derived and simplified - NOT the MDB original.",
+  "attribution": "Boundaries: Municipal Demarcation Board (2021 local municipal boundaries), simplified."
+}
