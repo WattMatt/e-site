@@ -43,6 +43,21 @@ for a in "$@"; do
   [[ -f "$a" ]] || { echo "ERROR: no such assertions file: $a" >&2; exit 1; }
 done
 
+# A file with its own transaction control ENDS the wrapping transaction below, so
+# everything before it is committed to PRODUCTION and the "dry" run is real.
+# This happened on 2026-10-05: a draft 00224 carried BEGIN;/COMMIT; in the old
+# 00122 style and was persisted, then dropped by hand. Refuse such files.
+# PL/pgSQL blocks use BEGIN without a semicolon and END; inside $$, so they pass.
+TXN_RE='^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START[[:space:]]+TRANSACTION)[[:space:]]*(WORK|TRANSACTION)?[[:space:]]*;'
+for f in "$MIG" "$@"; do
+  if grep -qEi "$TXN_RE" "$f"; then
+    echo "ERROR: $f contains top-level transaction control:" >&2
+    grep -nEi "$TXN_RE" "$f" | sed 's/^/       /' >&2
+    echo "       It would commit this dry run to production. Remove it; db push wraps migrations." >&2
+    exit 2
+  fi
+done
+
 TMP="$(mktemp "${TMPDIR:-/tmp}/dryrun.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
