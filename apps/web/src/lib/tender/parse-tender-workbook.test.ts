@@ -215,7 +215,9 @@ describe('parseTenderWorkbook — real-world quirks', () => {
     const p = await parseTenderWorkbook(buf)
     expect(p.sheets.map((s) => s.name)).toEqual(['Bill No 1'])
     expect(p.skippedSheets).toEqual(['Workings', 'Odd layout', 'Cover'])
-    expect(p.skippedPricedSheets).toEqual(['Workings', 'Odd layout'])
+    // Hidden workings are expected in an internal estimate: skipped and named, not a failure.
+    expect(p.hiddenSheets).toEqual(['Workings'])
+    expect(p.skippedPricedSheets).toEqual(['Odd layout'])
   })
 
   it('reports an uncoded row that has a unit or quantity (it would need a price)', async () => {
@@ -300,5 +302,59 @@ describe('parseTenderWorkbook — real-world quirks', () => {
     })
     const p = await parseTenderWorkbook(buf)
     expect(p.sheets[0].rows[0]).toMatchObject({ code: '1.1', kind: 'heading', unit: null })
+  })
+})
+
+describe('parseTenderWorkbook — second review', () => {
+  it('does not take a title row containing DESCRIPTION as the header', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['PROJECT DESCRIPTION', 'Sunbird Central'])
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].headerRowNumber).toBe(2)
+    expect(p.sheets[0].rows[0]).toMatchObject({ code: '1.1', kind: 'item', unit: 'No' })
+  })
+
+  it('reports a second summary sheet that is laid out like a bill and holds numbers', async () => {
+    const buf = await sheetBook((wb) => {
+      const ms = wb.addWorksheet('MAIN SUMMARY')
+      ms.addRow(['ITEM', 'DESCRIPTION', 'AMOUNT'])
+      ms.addRow(['1', 'Bill 1', 10])
+      const b = wb.addWorksheet('Bill 3 - Summary & Daywork')
+      b.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      b.addRow(['3.1', 'Labourer', 'hr', 10, 50, 500])
+      const sub = wb.addWorksheet('MALL SUMMARY')
+      sub.addRow(['ITEM', 'DESCRIPTION', 'AMOUNT'])
+      sub.addRow(['1', 'Section', 10])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.skippedPricedSheets).toEqual(['Bill 3 - Summary & Daywork'])
+    expect(p.skippedSheets).toContain('MALL SUMMARY')
+  })
+
+  it('counts priced recap rows after the bill total so they can be checked', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 2')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['2.1', 'A', 'No', 1, 100, 100])
+      ws.addRow(['TOTAL CARRIED TO SUMMARY', null, null, null, null, 100])
+      ws.addRow([null, 'Something priced after the total', null, null, null, 75])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].recapPricedRows).toEqual([{ rowNumber: 4, description: 'Something priced after the total', amount: 75 }])
+  })
+
+  it('reads lowercase pc as pieces, uppercase PC as a prime cost', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Cable ties', 'pc', 200, null, null])
+      ws.addRow(['1.2', 'Allowance for drilling', 'PC', 1, null, 15000])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows.map((r) => r.rateCellType)).toEqual(['priced', 'fixed'])
   })
 })

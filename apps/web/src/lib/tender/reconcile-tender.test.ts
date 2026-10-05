@@ -81,3 +81,16 @@ describe('reconcileTender — skipped sheets', () => {
     expect(r.warnings.some((w) => w.includes('Cover'))).toBe(true)
   })
 })
+
+describe('reconcileTender — hidden and recap', () => {
+  it('names hidden sheets and recap rows in warnings without failing', async () => {
+    const p = await parseTenderWorkbook(await buildMvlWorkbook())
+    p.skippedSheets = ['Workings']
+    p.hiddenSheets = ['Workings']
+    p.sheets[0].recapPricedRows = [{ rowNumber: 40, description: 'Recap', amount: 1 }]
+    const r = reconcileTender(p)
+    expect(r.matched).toBe(true)
+    expect(r.warnings.some((w) => w.includes('Workings') && w.includes('hidden'))).toBe(true)
+    expect(r.warnings.some((w) => w.includes('row 40'))).toBe(true)
+  })
+})

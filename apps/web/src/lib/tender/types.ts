@@ -67,6 +67,8 @@ export interface ParsedSheet {
   rows: ParsedTenderRow[]
   /** The sheet's own "TOTAL … CARRIED FORWARD" figure, if present. */
   statedTotal: number | null
+  /** Priced rows found after the bill's total (a recap block): listed, never counted. */
+  recapPricedRows: { rowNumber: number; description: string; amount: number }[]
 }
 
 export interface SummaryLine {
@@ -101,6 +103,8 @@ export interface ParsedTenderWorkbook {
   skippedSheets: string[]
   /** Skipped sheets that hold numbers: possibly a bill the parser could not read. Fails reconciliation. */
   skippedPricedSheets: string[]
+  /** Hidden or very hidden sheets (skipped; named in warnings). */
+  hiddenSheets: string[]
   unclassified: UnclassifiedRow[]
 }
 

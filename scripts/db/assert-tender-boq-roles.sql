@@ -106,7 +106,7 @@ BEGIN
   INSERT INTO _r VALUES ('admin_edits_draft_item', v_seen = 1);
   -- Atomic import into the admin's own new draft.
   v_seen := projects.tender_replace_boq(v_tender2,
-    '{"source_filename":"R9.xlsx","source_path":"x/y/z/source.xlsx","reconciliation":{"ok":true}}'::jsonb,
+    jsonb_build_object('source_filename','R9.xlsx','source_path', v_org || '/' || v_project || '/' || v_tender2 || '/source.xlsx','reconciliation','{"ok":true}'::jsonb),
     '[{"sort_order":0,"sheet_name":"Bill No 1","row_number":5,"kind":"item","bill_code":"1","code":"1.1","description":"A","unit":"No","quantity":2,"rate_cell_type":"priced","rate_column":"E","amount_column":"F"},
       {"sort_order":1,"sheet_name":"Bill No 1","row_number":6,"kind":"note","bill_code":"1","description":"n"}]'::jsonb,
     '[{"sheet_name":"Bill No 1","row_number":5,"rate":10,"amount":20}]'::jsonb);
@@ -211,7 +211,27 @@ BEGIN
   EXCEPTION WHEN check_violation THEN
     INSERT INTO _r VALUES ('issue_before_import_REFUSED', true);
   END;
+  BEGIN
+    UPDATE projects.tenders SET source_path = v_org || '/' || v_project || '/someone-elses-tender/source.xlsx' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('foreign_source_path_REFUSED', false);
+  EXCEPTION WHEN check_violation THEN
+    INSERT INTO _r VALUES ('foreign_source_path_REFUSED', true);
+  END;
+  BEGIN
+    UPDATE projects.tenders SET source_path = v_org || '/' || v_project || '/' || v_tender || '/../x/source.xlsx' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('dotdot_source_path_REFUSED', false);
+  EXCEPTION WHEN check_violation THEN
+    INSERT INTO _r VALUES ('dotdot_source_path_REFUSED', true);
+  END;
   UPDATE projects.tenders SET imported_at = now() WHERE id = v_tender;
+  UPDATE projects.tender_boq_items SET rate_cell_type = 'fixed', fixed_amount = NULL WHERE id = v_item;
+  BEGIN
+    UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_tender;
+    INSERT INTO _r VALUES ('issue_with_unpriced_fixed_REFUSED', false);
+  EXCEPTION WHEN check_violation THEN
+    INSERT INTO _r VALUES ('issue_with_unpriced_fixed_REFUSED', true);
+  END;
+  UPDATE projects.tender_boq_items SET fixed_amount = 1500 WHERE id = v_item;
   UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_tender;
   BEGIN
     UPDATE projects.tenders SET status = 'draft' WHERE id = v_tender;
@@ -240,12 +260,18 @@ BEGIN
   UPDATE projects.tenders SET closing_at = closing_at + interval '1 day' WHERE id = v_tender;
   GET DIAGNOSTICS v_seen = ROW_COUNT;
   INSERT INTO _r VALUES ('closing_can_extend', v_seen = 1);
+  -- As the admin (the action always calls as the signed-in user): the gate
+  -- passes, the status check refuses.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
   BEGIN
     PERFORM projects.tender_replace_boq(v_tender, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb);
     INSERT INTO _r VALUES ('rpc_on_issued_REFUSED', false);
   EXCEPTION WHEN object_not_in_prerequisite_state THEN
     INSERT INTO _r VALUES ('rpc_on_issued_REFUSED', true);
   END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
   BEGIN
     UPDATE projects.tender_boq_items SET quantity = 2 WHERE id = v_item;
     INSERT INTO _r VALUES ('issued_item_update_REFUSED', false);
@@ -348,5 +374,8 @@ SELECT * FROM (VALUES
   ('a tender cannot move to another project',                         (SELECT v FROM _r WHERE k='tender_project_immutable')),
   ('issued tender: closing time cannot be shortened',                 (SELECT v FROM _r WHERE k='closing_cannot_shorten')),
   ('issued tender: closing time can be extended',                     (SELECT v FROM _r WHERE k='closing_can_extend')),
-  ('tender_replace_boq refuses an issued tender',                     (SELECT v FROM _r WHERE k='rpc_on_issued_REFUSED'))
+  ('tender_replace_boq refuses an issued tender',                     (SELECT v FROM _r WHERE k='rpc_on_issued_REFUSED')),
+  ('a workbook path in another tender''s folder is refused',          (SELECT v FROM _r WHERE k='foreign_source_path_REFUSED')),
+  ('a workbook path containing .. is refused',                         (SELECT v FROM _r WHERE k='dotdot_source_path_REFUSED')),
+  ('a tender with a fixed sum missing its amount cannot be issued',    (SELECT v FROM _r WHERE k='issue_with_unpriced_fixed_REFUSED'))
 ) AS t("check", ok);

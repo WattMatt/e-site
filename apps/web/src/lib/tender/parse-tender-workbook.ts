@@ -125,7 +125,13 @@ function headerField(raw: Cell): keyof ColumnMap | null {
   return null
 }
 
-function findHeader(rows: Aoa): { index: number; columns: ColumnMap } | null {
+/**
+ * The header row has a DESCRIPTION column AND at least `minOthers` of ITEM /
+ * UNIT / QTY. A title row such as "PROJECT DESCRIPTION" above the real header
+ * maps none of them, so scanning continues past it instead of silently turning
+ * the whole bill into notes.
+ */
+function findHeader(rows: Aoa, minOthers = 2): { index: number; columns: ColumnMap } | null {
   for (let i = 0; i < rows.length; i++) {
     if (!rows[i].some((c) => { const h = str(c).toUpperCase(); return h.includes('DESCRIPTION') && h.length <= 40 })) continue
     const columns: ColumnMap = {}
@@ -133,6 +139,8 @@ function findHeader(rows: Aoa): { index: number; columns: ColumnMap } | null {
       const f = headerField(c)
       if (f && columns[f] === undefined) columns[f] = col
     })
+    const others = [columns.item, columns.unit, columns.qty].filter((x) => x !== undefined).length
+    if (columns.description === undefined || others < minOthers) continue
     return { index: i, columns }
   }
   return null
@@ -167,7 +175,8 @@ function isTotalRow(code: string, description: string, unit: string | null, quan
   return isTotalText(description)
 }
 
-const FIXED_UNIT_RE = /^(P\.?C\.?|P\.?S\.?)$/i
+// Upper case only: a lowercase "pc" unit means pieces.
+const FIXED_UNIT_RE = /^(P\.?C\.?|P\.?S\.?)$/
 // Deliberately narrow: "Provisional quantities" are remeasurable items and "PC"
 // also means a computer socket, so neither alone makes a sum fixed.
 const FIXED_TEXT_RE = /\bPROVISIONAL\s+SUMS?\b|\bPRIME\s+COST\b|\bP\.?C\.?\s+SUMS?\b|\bCONTINGENC/i
@@ -243,6 +252,7 @@ function parseBillSheet(
   // recap block and must not be counted again.
   let billClosed = false
   const seenCodes = new Set<string>()
+  const recapPricedRows: { rowNumber: number; description: string; amount: number }[] = []
 
   for (let r = header.index + 1; r < rows.length; r++) {
     const row = rows[r]
@@ -303,7 +313,9 @@ function parseBillSheet(
     }
 
     if (billClosed && (code === '' || seenCodes.has(code))) {
-      // Recap block after the bill total: kept as text, never counted.
+      // Recap block after the bill total: kept as text, never counted, but any
+      // amount on it is listed so the review can see it rather than lose it.
+      if (amount != null && amount !== 0) recapPricedRows.push({ rowNumber, description: [code, description].filter(Boolean).join(' '), amount })
       if (description !== '' || code !== '') out.push(base('note', code || null, description, null, null, null))
       continue
     }
@@ -358,13 +370,13 @@ function parseBillSheet(
     if (children) stack.push({ code, text: description })
   }
 
-  return { name, billCode, headerRowNumber: header.index + 1, columns, rows: out, statedTotal }
+  return { name, billCode, headerRowNumber: header.index + 1, columns, rows: out, statedTotal, recapPricedRows }
 }
 
 // ─── Summary sheet ──────────────────────────────────────────────────────────
 
 function parseSummary(name: string, rows: Aoa, text: string[][]): ParsedSummary {
-  const header = findHeader(rows)
+  const header = findHeader(rows, 1)
   const start = header ? header.index + 1 : 0
   const itemCol = header?.columns.item ?? 0
   const descCol = header?.columns.description ?? 1
@@ -442,6 +454,7 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
   const sheets: ParsedSheet[] = []
   const skippedSheets: string[] = []
   const skippedPricedSheets: string[] = []
+  const hiddenSheets: string[] = []
   const unclassified: UnclassifiedRow[] = []
   const summaries: { name: string; rows: Aoa; text: string[][] }[] = []
   const hasNumbers = (rows: Aoa) => rows.some((r) => r.some((c) => typeof c === 'number'))
@@ -449,9 +462,10 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
   for (const ws of wb.worksheets) {
     const { rows, text } = readSheet(ws)
     if (ws.state && ws.state !== 'visible') {
-      // Hidden workings must never become rows a tenderer sees.
+      // Hidden workings must never become rows a tenderer sees. They are routine
+      // in an internal estimate, so they are named but do not fail reconciliation.
       skippedSheets.push(ws.name)
-      if (hasNumbers(rows)) skippedPricedSheets.push(ws.name)
+      hiddenSheets.push(ws.name)
       continue
     }
     if (/SUMMARY/i.test(ws.name)) {
@@ -468,8 +482,17 @@ export async function parseTenderWorkbook(buffer: Buffer | ArrayBuffer | Uint8Ar
   }
 
   const main = summaries.find((s) => /MAIN\s+SUMMARY/i.test(s.name)) ?? summaries[0] ?? null
-  for (const s of summaries) if (s !== main) skippedSheets.push(s.name)
+  for (const s of summaries) {
+    if (s === main) continue
+    skippedSheets.push(s.name)
+    // A second "summary" laid out like a bill (UNIT or QTY columns) that holds
+    // numbers may be a bill whose name happens to contain SUMMARY.
+    const h = findHeader(s.rows, 1)
+    if (h && (h.columns.unit !== undefined || h.columns.qty !== undefined) && hasNumbers(s.rows.slice(h.index + 1))) {
+      skippedPricedSheets.push(s.name)
+    }
+  }
   const summary = main ? parseSummary(main.name, main.rows, main.text) : null
 
-  return { sheets, summary, skippedSheets, skippedPricedSheets, unclassified }
+  return { sheets, summary, skippedSheets, skippedPricedSheets, hiddenSheets, unclassified }
 }

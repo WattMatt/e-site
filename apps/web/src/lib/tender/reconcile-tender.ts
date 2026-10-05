@@ -91,11 +91,15 @@ export function reconcileTender(parsed: ParsedTenderWorkbook): TenderReconciliat
   }
 
   for (const name of parsed.skippedSheets) {
-    warnings.push(
-      parsed.skippedPricedSheets.includes(name)
-        ? `Sheet "${name}" was not read (no DESCRIPTION header, hidden, or a second summary) but holds numbers; check it is not a bill.`
-        : `Sheet "${name}" was not read (no BOQ header).`,
-    )
+    if (parsed.hiddenSheets.includes(name)) warnings.push(`Sheet "${name}" is hidden and was not read.`)
+    else if (parsed.skippedPricedSheets.includes(name))
+      warnings.push(`Sheet "${name}" was not read (no BOQ header, or a second summary laid out like a bill) but holds numbers; check it is not a bill.`)
+    else warnings.push(`Sheet "${name}" was not read (no BOQ header).`)
+  }
+  for (const s of parsed.sheets) {
+    for (const r of s.recapPricedRows) {
+      warnings.push(`Sheet "${s.name}" row ${r.rowNumber} ("${r.description}" = ${r.amount}) comes after the bill total and was not counted.`)
+    }
   }
   for (const u of parsed.unclassified) {
     warnings.push(`Unclassified priced row ${u.sheet}!${u.rowNumber} "${u.description}" = ${u.amount} (${u.reason}).`)
