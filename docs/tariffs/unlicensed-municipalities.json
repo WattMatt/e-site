@@ -1,0 +1,237 @@
+[
+  {
+    "code": "EC121",
+    "name": "Mbhashe",
+    "province": "EC"
+  },
+  {
+    "code": "EC122",
+    "name": "Mnquma",
+    "province": "EC"
+  },
+  {
+    "code": "EC126",
+    "name": "Ngqushwa",
+    "province": "EC"
+  },
+  {
+    "code": "EC135",
+    "name": "Intsika Yethu",
+    "province": "EC"
+  },
+  {
+    "code": "EC137",
+    "name": "Dr AB Xuma",
+    "province": "EC"
+  },
+  {
+    "code": "EC153",
+    "name": "Ngquza Hill",
+    "province": "EC"
+  },
+  {
+    "code": "EC154",
+    "name": "Port St Johns",
+    "province": "EC"
+  },
+  {
+    "code": "EC155",
+    "name": "Nyandeni",
+    "province": "EC"
+  },
+  {
+    "code": "EC156",
+    "name": "Mhlontlo",
+    "province": "EC"
+  },
+  {
+    "code": "EC442",
+    "name": "Umzimvubu",
+    "province": "EC"
+  },
+  {
+    "code": "EC444",
+    "name": "Ntabankulu",
+    "province": "EC"
+  },
+  {
+    "code": "KZN212",
+    "name": "Umdoni",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN213",
+    "name": "Umzumbe",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN221",
+    "name": "uMshwathi",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN224",
+    "name": "Impendle",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN226",
+    "name": "Mkhambathini",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN227",
+    "name": "Richmond",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN235",
+    "name": "Okhahlamba",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN244",
+    "name": "Msinga",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN254",
+    "name": "Dannhauser",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN265",
+    "name": "Nongoma",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN271",
+    "name": "Umhlabuyalingana",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN272",
+    "name": "Jozini",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN275",
+    "name": "Mtubatuba",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN276",
+    "name": "Big Five Hlabisa",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN281",
+    "name": "Mfolozi",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN293",
+    "name": "Ndwedwe",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN294",
+    "name": "Maphumulo",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN434",
+    "name": "Ubuhlebezwe",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN435",
+    "name": "Umzimkhulu",
+    "province": "KZN"
+  },
+  {
+    "code": "KZN436",
+    "name": "Dr Nkosazana Dlamini Zuma",
+    "province": "KZN"
+  },
+  {
+    "code": "LIM331",
+    "name": "Greater Giyani",
+    "province": "LP"
+  },
+  {
+    "code": "LIM335",
+    "name": "Maruleng",
+    "province": "LP"
+  },
+  {
+    "code": "LIM343",
+    "name": "Thulamela",
+    "province": "LP"
+  },
+  {
+    "code": "LIM345",
+    "name": "Collins Chabane",
+    "province": "LP"
+  },
+  {
+    "code": "LIM355",
+    "name": "Lepelle-Nkumpi",
+    "province": "LP"
+  },
+  {
+    "code": "LIM473",
+    "name": "Makhuduthamaga",
+    "province": "LP"
+  },
+  {
+    "code": "LIM476",
+    "name": "Fetakgomo Tubatse",
+    "province": "LP"
+  },
+  {
+    "code": "MP315",
+    "name": "Thembisile",
+    "province": "MP"
+  },
+  {
+    "code": "MP316",
+    "name": "Dr JS Moroka",
+    "province": "MP"
+  },
+  {
+    "code": "MP325",
+    "name": "Bushbuckridge",
+    "province": "MP"
+  },
+  {
+    "code": "NC084",
+    "name": "!Kheis",
+    "province": "NC"
+  },
+  {
+    "code": "NW371",
+    "name": "Moretele",
+    "province": "NW"
+  },
+  {
+    "code": "NW375",
+    "name": "Moses Kotane",
+    "province": "NW"
+  },
+  {
+    "code": "NW381",
+    "name": "Ratlou",
+    "province": "NW"
+  },
+  {
+    "code": "NW383",
+    "name": "Mafikeng",
+    "province": "NW"
+  },
+  {
+    "code": "NW397",
+    "name": "Kagisano-Molopo",
+    "province": "NW"
+  }
+]
