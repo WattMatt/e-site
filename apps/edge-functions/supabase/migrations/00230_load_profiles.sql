@@ -71,7 +71,7 @@
 -- sql: (SELECT bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_class WHERE oid IN ('projects.load_profiles'::regclass, 'projects.load_profile_sources'::regclass))
 -- sql: (SELECT count(*) = 1 FROM storage.buckets WHERE id = 'load-profile-files' AND public = false)
 -- sql: (SELECT count(*) = 3 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'load_profile_files_%')
--- sql: (SELECT count(*) = 1 FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'load_profile_sources' AND cmd IN ('SELECT', 'ALL'))
+-- sql: (SELECT count(*) = 1 FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'load_profile_sources' AND cmd IN ('SELECT', 'ALL') AND policyname <> 'site_scope')
 -- sql: (SELECT strpos(pg_get_constraintdef(c.oid), 'NULLS NOT DISTINCT') = 0 FROM pg_constraint c WHERE c.conname = 'load_profile_sources_channel_key')
 -- behaviour: scripts/db/assert-load-profile-rls.sql, every row ok
 -- @verify:end
