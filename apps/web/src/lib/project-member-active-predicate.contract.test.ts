@@ -182,7 +182,7 @@ describe('project_members.is_active revokes access at the database', () => {
     expect(/search_path\s+(?:TO|=)\s+'?public'?/i.test(h), `${jwt!.file}: custom_jwt_claims search_path is not pinned`).toBe(true)
   })
 
-  describe('inspection write helpers carry their own joins and must honour the flag too (00230)', () => {
+  describe('inspection write helpers carry their own joins and must honour the flag too (00234)', () => {
     // None of these calls user_has_project_access for its membership test, so
     // 00204 did not reach them. user_can_write_responses gates every answer,
     // photo and file write; user_can_verify is validate-inspection's PM+ arm;
