@@ -9,7 +9,7 @@ import { DeleteDiaryEntryButton } from './DeleteDiaryEntryButton'
 
 interface Props {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ n?: string }>
+  searchParams: Promise<{ n?: string; new?: string }>
 }
 
 const PAGE_SIZE = 50
@@ -26,7 +26,7 @@ const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
 
 export default async function DiaryPage({ params, searchParams }: Props) {
   const { id } = await params
-  const { n } = await searchParams
+  const { n, new: openNew } = await searchParams
   const limit = Math.max(PAGE_SIZE, Math.min(2000, Number(n) || PAGE_SIZE))
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -83,7 +83,7 @@ export default async function DiaryPage({ params, searchParams }: Props) {
           <h1 className="page-title">Site Diary</h1>
           <p className="page-subtitle">{entries.length} entr{entries.length === 1 ? 'y' : 'ies'}</p>
         </div>
-        <AddDiaryEntryForm projectId={id} orgId={orgId} userId={user!.id} />
+        <AddDiaryEntryForm projectId={id} orgId={orgId} userId={user!.id} defaultOpen={openNew === '1'} />
       </div>
 
       {entries.length === 0 ? (

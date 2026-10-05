@@ -44,6 +44,15 @@ function attachFile(file: File) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('AddDiaryEntryForm', () => {
+  it('starts closed, and opens straight to the form when the Capture sheet links with defaultOpen', () => {
+    const { unmount } = render(<AddDiaryEntryForm {...props} />)
+    expect(document.querySelector('form')).toBeNull()
+    unmount()
+    render(<AddDiaryEntryForm {...props} defaultOpen />)
+    expect(document.querySelector('form')).not.toBeNull()
+    expect(screen.queryByText('+ Add Entry')).toBeNull()
+  })
+
   it('creates via the server action and refreshes on success (no attachments)', async () => {
     createActionMock.mockResolvedValue({ entryId: 'e1' })
     open()

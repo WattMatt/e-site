@@ -24,12 +24,14 @@ interface Props {
   projectId: string
   orgId: string
   userId: string
+  /** Open the form on arrival — the phone Capture sheet links here with ?new=1. */
+  defaultOpen?: boolean
 }
 
-export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
+export function AddDiaryEntryForm({ projectId, orgId, userId, defaultOpen = false }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')

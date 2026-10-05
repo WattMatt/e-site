@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import type { OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
@@ -8,7 +9,9 @@ import { listMyOrganisations } from '@/actions/active-organisation.actions'
 import { touchPresence } from '@/lib/presence'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
-import { NotificationCentre } from '@/components/ui/NotificationCentre'
+import { NotificationCentre, NotificationsProvider } from '@/components/ui/NotificationCentre'
+import { MobileTabBar } from '@/components/layout/MobileTabBar'
+import { MobileProjectBar } from '@/components/layout/MobileProjectBar'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { PaymentStatusBanner } from '@/components/layout/PaymentStatusBanner'
 import { MinimalLegalNav } from '@/components/layout/MinimalLegalNav'
@@ -64,23 +67,40 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const mvVisible = mvUnlocked || Boolean(process.env.PAYSTACK_PLAN_MV_ANNUAL)
 
   return (
-    <div className="portal-shell">
-      <a href="#main-content" className="skip-link">
-        Skip to main content
-      </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} tariffAdmin={tariffAdmin} />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        <header className="portal-header">
-          <OrgSwitcher memberships={orgMemberships} />
-          <ThemeToggle />
-          <NotificationCentre />
-        </header>
-        <main id="main-content" className="portal-main">
-          <PaymentStatusBanner />
-          {children}
-          <MinimalLegalNav />
-        </main>
+    <NotificationsProvider>
+      <div className="portal-shell">
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
+        <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} tariffAdmin={tariffAdmin} />
+        {/* Below 768 px the sidebar is hidden and the page scrolls as a document
+            (so phone browser toolbars can collapse); .portal-top sticks instead. */}
+        <div className="portal-column">
+          <div className="portal-top">
+            <header className="portal-header">
+              <Link href="/dashboard" className="portal-header-brand" aria-label="E-Site home">
+                <span className="sidebar-logo-mark" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none" width="16" height="16"><path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="var(--c-base)" /></svg>
+                </span>
+              </Link>
+              <div className="portal-header-org">
+                <OrgSwitcher memberships={orgMemberships} />
+              </div>
+              <div className="portal-header-desktop-only">
+                <ThemeToggle />
+              </div>
+              <NotificationCentre />
+            </header>
+            <MobileProjectBar mvVisible={mvVisible} />
+          </div>
+          <main id="main-content" className="portal-main">
+            <PaymentStatusBanner />
+            {children}
+            <MinimalLegalNav />
+          </main>
+        </div>
+        <MobileTabBar role={primaryRole} tariffAdmin={tariffAdmin} />
       </div>
-    </div>
+    </NotificationsProvider>
   )
 }

@@ -18,7 +18,7 @@ const IC = { className: 'sidebar-nav-icon', size: 16 } as const
 // Phase 1 launch gate. When false, the Marketplace nav item still renders
 // (so users see what's coming) but with an "In Development" badge — clicking
 // lands on the placeholder page from the (admin)/marketplace/layout.tsx gate.
-const MARKETPLACE_ENABLED = process.env.NEXT_PUBLIC_PHASE_2_MARKETPLACE === 'true'
+export const MARKETPLACE_ENABLED = process.env.NEXT_PUBLIC_PHASE_2_MARKETPLACE === 'true'
 
 function InDevBadge() {
   return (
@@ -62,7 +62,9 @@ function LogoMark() {
   )
 }
 
-const GLOBAL_NAV = [
+// Exported so the phone shell (MobileTabBar / MobileProjectBar) renders the
+// SAME destinations as the sidebar — one list, two layouts.
+export const GLOBAL_NAV = [
   { href: '/dashboard',   label: 'Dashboard',   Icon: LayoutGrid },
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
   { href: '/solar',       label: 'Solar portfolio', Icon: Sun },
@@ -70,7 +72,7 @@ const GLOBAL_NAV = [
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
 ] as const
 
-function projectNav(id: string) {
+export function projectNav(id: string) {
   return [
     { href: `/projects/${id}`,              label: 'Overview',    Icon: LayoutGrid,    exact: true },
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
@@ -92,14 +94,30 @@ function projectNav(id: string) {
   ]
 }
 
-const FOOTER_ITEMS = [
+export const FOOTER_ITEMS = [
   { href: '/site',                label: 'Site capture', Icon: HardHat,   adminOnly: false },
   { href: '/cable-schedule/sans', label: 'SANS ref',     Icon: BookMarked, adminOnly: false },
   { href: '/metrics',             label: 'Adoption',     Icon: BarChart3, adminOnly: true },
   { href: '/settings',            label: 'Settings',     Icon: Settings,  adminOnly: true },
 ] as const
 
-function extractProjectId(pathname: string): string | null {
+/**
+ * Hide owner/admin-only entries from non-admin roles. The pages themselves
+ * enforce the gate server-side (requireRolePage / layout-level redirects) —
+ * this is the discovery-surface fix so contractors/suppliers/inspectors don't
+ * see links that just bounce them back to /dashboard. Shared by the sidebar and
+ * the phone shell's More sheet so the two can never disagree.
+ */
+export function navForRole(role: OrgRole | null) {
+  const isAdmin = role !== null && OWNER_ADMIN.includes(role)
+  const globalNav = isAdmin
+    ? GLOBAL_NAV
+    : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
+  const footerItems = isAdmin ? FOOTER_ITEMS : FOOTER_ITEMS.filter(item => !item.adminOnly)
+  return { globalNav, footerItems }
+}
+
+export function extractProjectId(pathname: string): string | null {
   const m = pathname.match(/^\/projects\/([^/]+)/)
   return m ? m[1] : null
 }
@@ -121,15 +139,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
   const projectIdFromQuery = searchParams.get('projectId')
   const projectId = projectIdFromPath ?? projectIdFromQuery
 
-  // Hide owner/admin-only entries from non-admin roles. The pages themselves
-  // enforce the gate server-side (requireRolePage / layout-level redirects)
-  // — this is the discovery-surface fix so contractors/suppliers/inspectors
-  // don't see links that just bounce them back to /dashboard.
-  const isAdmin = role !== null && OWNER_ADMIN.includes(role)
-  const globalNav = isAdmin
-    ? GLOBAL_NAV
-    : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
-  const footerItems = isAdmin ? FOOTER_ITEMS : FOOTER_ITEMS.filter(item => !item.adminOnly)
+  const { globalNav, footerItems } = navForRole(role)
 
   return (
     <>
