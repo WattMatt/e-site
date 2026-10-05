@@ -21,6 +21,12 @@ async function sha256OfBlob(b: Blob): Promise<string> {
   return Array.from(new Uint8Array(d), (x) => x.toString(16).padStart(2, '0')).join('')
 }
 
+/** From the extension, never the browser's guess (Windows reports CSV as application/csv or text/x-csv, which the bucket refuses). */
+function contentTypeOf(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase()
+  return ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : ext === 'csv' ? 'text/csv' : 'text/plain'
+}
+
 interface PendingFile { path: string; fileName: string; parts: ParsedPart[] }
 type Pick = { checked: boolean; label: string; withKva: boolean }
 
@@ -62,13 +68,14 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
     const out: string[] = []
     const ready: PendingFile[] = []
     const nextPicks: Record<string, Pick> = {}
+    try {
     for (const f of files) {
       if (!LOAD_PROFILE_UPLOAD_RE.test(f.name)) { out.push(`${f.name}: only .csv, .txt or .xlsx meter exports can be imported (save an .xls as .xlsx or CSV).`); continue }
       if (f.size > LOAD_PROFILE_MAX_BYTES) { out.push(`${f.name}: larger than 50 MB.`); continue }
       out.push(`${f.name}: uploading…`)
       setLines([...out])
       const path = loadProfileFilePath(view.projectId, await sha256OfBlob(f), f.name) as string
-      const { error: upErr } = await createClient().storage.from(LOAD_PROFILE_BUCKET).upload(path, f, { upsert: false, contentType: f.type || 'application/octet-stream' })
+      const { error: upErr } = await createClient().storage.from(LOAD_PROFILE_BUCKET).upload(path, f, { upsert: false, contentType: contentTypeOf(f.name) })
       if (upErr && !/exist|duplicate/i.test(upErr.message)) { out[out.length - 1] = `${f.name}: the upload failed — try again.`; continue }
       out[out.length - 1] = `${f.name}: reading…`
       setLines([...out])
@@ -84,16 +91,21 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
       ready.push(pf)
       out[out.length - 1] = `${f.name}: read — choose what to import below.`
     }
-    setLines(out)
-    setPending(ready)
-    setPicks(nextPicks)
-    setBusy(false)
+    } catch {
+      out.push('The upload stopped part-way (the connection or the server timed out). Try again with fewer or smaller files.')
+    } finally {
+      setLines(out)
+      setPending(ready)
+      setPicks(nextPicks)
+      setBusy(false)
+    }
   }
 
   async function commitAll() {
     setBusy(true)
     setError(null)
     const out: string[] = []
+    try {
     for (const f of pending) {
       for (const part of f.parts) {
         if (part.plan.status !== 'ok') continue
@@ -102,22 +114,31 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
           .map((c) => ({ column: c.column, label: picks[key(f, part.sheet, c.column)].label, withKva: picks[key(f, part.sheet, c.column)].withKva }))
         if (selections.length === 0) continue
         const r = await commitLoadProfileFileAction(view.projectId, { path: f.path, fileName: f.fileName, sheet: part.sheet, selections })
-        out.push('error' in r ? `${f.fileName}: ${r.error}` : `${f.fileName}: ${r.imported} imported${r.replaced ? `, ${r.replaced} replaced` : ''}`)
+        out.push('error' in r ? `${f.fileName}: ${r.error}` : `${f.fileName}: ${r.imported} imported${r.replaced ? `, ${r.replaced} replaced` : ''}${r.warnings.length ? ` — ${r.warnings.join(' ')}` : ''}`)
       }
     }
-    setLines(out)
-    setPending([])
-    setBusy(false)
-    router.refresh()
+    } catch {
+      out.push('The import stopped part-way (the connection or the server timed out). Channels already listed above were saved; try the rest again.')
+    } finally {
+      setLines(out)
+      setPending([])
+      setBusy(false)
+      router.refresh()
+    }
   }
 
   async function run(p: Promise<{ ok: true } | { error: string }>) {
     setBusy(true)
     setError(null)
-    const r = await p
-    setBusy(false)
-    if ('error' in r) setError(r.error)
-    else { setForm('none'); router.refresh() }
+    try {
+      const r = await p
+      if ('error' in r) setError(r.error)
+      else { setForm('none'); router.refresh() }
+    } catch {
+      setError('That did not save (the connection or the server timed out). Try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (

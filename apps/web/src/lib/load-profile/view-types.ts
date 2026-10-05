@@ -42,7 +42,7 @@ export interface AnalysisView {
   annual: Array<{ day: string; min: number; mean: number; max: number }>
   ldc: Array<{ pct: number; kw: number }>
   heatmap: { dates: string[]; cells: number[][] }
-  md: { months: MdMonthView[]; peak: { kva: number; kw: number | null; at: string; source: string }; intervalMin: number } | null
+  md: { months: MdMonthView[]; peak: { kva: number; kw: number | null; at: string; source: string }; intervalMin: number; basis: 'single' | 'coincident' | 'sum_of_meter_peaks' } | null
   nmd: { kva: number; basis: NmdBasis; basisKva: number; rule: string }
   composition: { measuredKwh: number; syntheticKwh: number }
   /** The 8 760 hourly kW values (exports only; the page does not send them to the browser). */
@@ -70,6 +70,7 @@ export type CostView =
       touSplit: boolean
       calendarNote: string | null
       nmdKva: number
+      /** true when no NMD was confirmed: costing then uses the highest demand itself (no headroom). */
       nmdIsSuggestion: boolean
       months: CostMonthView[]
       annual: { kwh: number; tou: { peak: number; standard: number; off_peak: number }; totalExclVat: number; vat: number; totalInclVat: number }

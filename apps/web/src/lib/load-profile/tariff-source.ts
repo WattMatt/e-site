@@ -61,17 +61,37 @@ export async function listPublishedTariffs(licenseeId: string): Promise<Publishe
   }))
 }
 
-/** The tariff as the engine models it, with its licensee's TOU calendar — or null if not published. */
+/**
+ * The tariff as the engine models it, with its licensee's TOU calendar. A tariff whose year is no
+ * longer published (superseded each April / July) follows into the licensee's CURRENT published
+ * year by code, else by exact name; null when there is no such successor.
+ */
 export async function loadCostingTariff(tariffId: string): Promise<CostingTariff | null> {
   const client = service()
   const t = client.schema('tariffs')
-  const { data: tr } = await t.from('tariff').select('id, tariff_year_id').eq('id', tariffId).maybeSingle()
-  if (!tr) return null
-  const { data: y } = await t.from('tariff_year').select('id, licensee_id, financial_year, effective_from, state').eq('id', (tr as Row).tariff_year_id as string).maybeSingle()
-  const year = y as Row | null
-  if (!year || year.state !== 'published') return null
+  const { data: tr } = await t.from('tariff').select('id, name, code, tariff_year_id').eq('id', tariffId).maybeSingle()
+  const chosen = tr as Row | null
+  if (!chosen) return null
+  const { data: y } = await t.from('tariff_year').select('id, licensee_id, financial_year, effective_from, state').eq('id', chosen.tariff_year_id as string).maybeSingle()
+  let year = y as Row | null
+  if (!year) return null
+  let id = tariffId
+  let followedFrom: string | null = null
+  if (year.state !== 'published') {
+    const { data: cur } = await t.from('tariff_year').select('id, licensee_id, financial_year, effective_from, state')
+      .eq('licensee_id', year.licensee_id as string).eq('state', 'published').order('financial_year', { ascending: false }).limit(1)
+    const next = ((cur ?? []) as Row[])[0]
+    if (!next) return null
+    const q = t.from('tariff').select('id').eq('tariff_year_id', next.id as string)
+    const { data: match } = await (chosen.code ? q.eq('code', chosen.code as string) : q.eq('name', chosen.name as string)).limit(2)
+    const rows = (match ?? []) as Row[]
+    if (rows.length !== 1) return null
+    followedFrom = String(year.financial_year)
+    id = String(rows[0].id)
+    year = next
+  }
   const { data: lic } = await t.from('licensee').select('name').eq('id', year.licensee_id as string).maybeSingle()
-  const loaded = (await loadYearTariffs(client, String(year.id))).find((l) => l.id === tariffId)
+  const loaded = (await loadYearTariffs(client, String(year.id))).find((l) => l.id === id)
   if (!loaded) return null
   const cal = await loadStudyCalendar(client, String(year.licensee_id), String(year.effective_from ?? new Date().toISOString().slice(0, 10)))
   const licenseeName = String((lic as Row | null)?.name ?? '')
@@ -79,8 +99,8 @@ export async function loadCostingTariff(tariffId: string): Promise<CostingTariff
     tariff: loaded.tariff,
     calendar: cal.calendar,
     calendarAssumedEskom: cal.assumedEskom,
-    tariffId,
-    label: `${licenseeName} · ${String(year.financial_year)} · ${loaded.tariff.name}`,
+    tariffId: id,
+    label: `${licenseeName} · ${String(year.financial_year)} · ${loaded.tariff.name}${followedFrom ? ` (chosen in ${followedFrom}; now ${String(year.financial_year)})` : ''}`,
     licenseeName,
     financialYear: String(year.financial_year),
   }

@@ -94,7 +94,7 @@ export async function buildMeterRows(input: {
   sheet: string | null
   options?: ParseOptions
   selections: ChannelSelection[]
-}): Promise<{ ok: true; rows: MeterSourceRow[] } | { ok: false; error: string }> {
+}): Promise<{ ok: true; rows: MeterSourceRow[]; warnings: string[] } | { ok: false; error: string }> {
   if (input.selections.length === 0) return { ok: false, error: 'Choose at least one channel to import.' }
   const f = await loadVerified(input.download, input.projectId, input.path)
   if (!f.ok) return f
@@ -104,6 +104,7 @@ export async function buildMeterRows(input: {
   if (plan.status !== 'ok') return { ok: false, error: plan.message }
   const series = part.outcome as SeriesOutcome
   const rows: MeterSourceRow[] = []
+  const warnings: string[] = []
   for (const sel of input.selections) {
     const cand = plan.candidates.find((c) => c.column === sel.column)
     if (!cand) return { ok: false, error: `The file has no column "${sel.column}".` }
@@ -124,7 +125,7 @@ export async function buildMeterRows(input: {
         const step = stored.intervalMin * 60_000
         kvaValues = stored.values.map((_, i) => finite(byTs.get(stored.firstTsEnd + i * step) ?? null))
         kvaColumn = storedColumn(input.sheet, cand.kvaColumn)
-      }
+      } else warnings.push(`"${cand.kvaColumn}" is not on the same ${ch.intervalMin}-minute grid as "${sel.column}", so maximum demand uses kW ÷ power factor instead.`)
     }
     const label = sel.label.trim().slice(0, 200) || storedColumn(input.sheet, sel.column)
     rows.push({
@@ -146,5 +147,5 @@ export async function buildMeterRows(input: {
       parser_version: series.report.parserVersion,
     })
   }
-  return { ok: true, rows }
+  return { ok: true, rows, warnings }
 }

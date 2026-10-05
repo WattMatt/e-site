@@ -115,7 +115,7 @@ export function OutputsPanel({ view }: { view: LoadProfileView }) {
         {c?.ok && (
           <ul style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '8px 0 0', paddingLeft: 18 }}>
             <li>{c.demandNote}</li>
-            <li>NMD used for costing: {c.nmdKva} kVA{c.nmdIsSuggestion ? ' (the suggestion; set your own under Settings)' : ''}.</li>
+            <li>NMD used for costing: {formatNumber(c.nmdKva, 2)} kVA{c.nmdIsSuggestion ? ' (not confirmed: the highest demand itself is used; enter the notified value under Settings)' : ' (confirmed)'}.</li>
             {c.calendarNote && <li>{c.calendarNote}</li>}
             {c.calendarAssumedEskom && <li>This supplier publishes no time-of-use hours; Eskom&apos;s are assumed.</li>}
             {c.notModelled.map((n, i) => <li key={i}>Not modelled: {n.component} ({n.reason}).</li>)}

@@ -23,6 +23,9 @@ export interface MeasuredInput {
   intervalMin: number
 }
 
+/** Below this many coincident days several meters' MD is not taken from their coincident sum. */
+export const MIN_COINCIDENT_DAYS = 30
+export type MdBasis = 'single' | 'coincident' | 'sum_of_meter_peaks'
 export type NmdBasis = 'measured_md' | 'measured_md_plus_synthetic' | 'design_peak'
 export interface NmdSuggestion { kva: number; basis: NmdBasis; basisKva: number }
 
@@ -35,7 +38,14 @@ export interface ProfileAnalysis {
   monthlyKwh: number[]
   ldc: Array<{ pct: number; kw: number }>
   heatmap: { dates: string[]; cells: number[][] }
-  md: { months: MonthlyMd[]; peak: { kw: number | null; kva: number; at: string; source: MonthlyMd['source'] }; intervalMin: number } | null
+  md: {
+    /** Per calendar month of data; empty when the meters never ran together (basis sum_of_meter_peaks). */
+    months: MonthlyMd[]
+    peak: { kw: number | null; kva: number; at: string; source: MonthlyMd['source'] | 'sum_of_meter_peaks' }
+    intervalMin: number
+    /** single meter · coincident sum of several · sum of each meter's own peak (they never overlapped) */
+    basis: MdBasis
+  } | null
   nmd: NmdSuggestion
 }
 
@@ -91,15 +101,38 @@ export function coincidentSum(channels: Array<{ readings: Reading[]; intervalMin
   return { intervalMin: target, readings: keys.map((k) => ({ tsEnd: k, value: maps.reduce((s, m) => s + (m.get(k) as number), 0), quality: QUALITY.OK })) }
 }
 
-function measuredMd(measured: MeasuredInput[], powerFactor: number): ProfileAnalysis['md'] {
-  const kw = coincidentSum(measured.map((m) => ({ readings: m.kw, intervalMin: m.intervalMin })))
-  if (!kw || kw.readings.length === 0 || kw.intervalMin >= 1440) return null
-  const kva = measured.every((m) => m.kva) ? coincidentSum(measured.map((m) => ({ readings: m.kva as Reading[], intervalMin: m.intervalMin }))) : null
+function mdOf(kw: { readings: Reading[]; intervalMin: number }, kva: { readings: Reading[]; intervalMin: number } | null, powerFactor: number) {
+  if (kw.readings.length === 0 || kw.intervalMin >= 1440) return null
   const r = monthlyMaxDemand({ kw: kw.readings, kva: kva && kva.intervalMin === kw.intervalMin ? kva.readings : null, intervalMin: kw.intervalMin }, { powerFactor })
   if ('error' in r) return null
   const top = r.months.reduce((a, b) => (b.kva > a.kva ? b : a))
   const kwAt = top.tsEnd === null ? null : (kw.readings.find((x) => x.tsEnd === top.tsEnd)?.value ?? null)
-  return { months: r.months, peak: { kw: kwAt, kva: top.kva, at: top.tsEnd === null ? '' : localLabel(top.tsEnd), source: top.source }, intervalMin: kw.intervalMin }
+  return { months: r.months, peak: { kw: kwAt, kva: top.kva, at: top.tsEnd === null ? '' : localLabel(top.tsEnd), source: top.source as MonthlyMd['source'] | 'sum_of_meter_peaks' } }
+}
+
+function measuredMd(measured: MeasuredInput[], powerFactor: number): ProfileAnalysis['md'] {
+  if (measured.length === 0) return null
+  const kw = coincidentSum(measured.map((m) => ({ readings: m.kw, intervalMin: m.intervalMin })))
+  const kva = measured.every((m) => m.kva) ? coincidentSum(measured.map((m) => ({ readings: m.kva as Reading[], intervalMin: m.intervalMin }))) : null
+  if (measured.length === 1) {
+    const one = kw && mdOf(kw, kva, powerFactor)
+    return one ? { ...one, intervalMin: kw!.intervalMin, basis: 'single' } : null
+  }
+  const coincidentDays = kw ? (kw.readings.length * kw.intervalMin) / 1440 : 0
+  if (kw && coincidentDays >= MIN_COINCIDENT_DAYS) {
+    const c = mdOf(kw, kva, powerFactor)
+    if (c) return { ...c, intervalMin: kw.intervalMin, basis: 'coincident' }
+  }
+  // The meters did not run together long enough to know their coincident peak: add each meter's
+  // own peak (an upper bound, never an understatement) rather than dropping the measured MD.
+  const each = measured.map((m) => mdOf({ readings: m.kw, intervalMin: m.intervalMin }, m.kva ? { readings: m.kva, intervalMin: m.intervalMin } : null, powerFactor)).filter((x) => x !== null)
+  if (each.length === 0) return null
+  return {
+    months: [],
+    peak: { kw: null, kva: each.reduce((s, e) => s + e.peak.kva, 0), at: '', source: 'sum_of_meter_peaks' },
+    intervalMin: Math.max(...measured.map((m) => m.intervalMin)),
+    basis: 'sum_of_meter_peaks',
+  }
 }
 
 export function analyseProfile(input: {

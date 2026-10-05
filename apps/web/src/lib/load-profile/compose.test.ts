@@ -27,7 +27,7 @@ describe('composeView', () => {
     expect(v.analysis!.kpis.annualKwh).toBeCloseTo(87_600, 6)
     expect(v.analysis!.md!.peak.kva).toBeCloseTo(10 / 0.95, 9)
     expect(v.analysis!.nmd).toMatchObject({ kva: 15, basis: 'measured_md' }) // 10.526 × 1.1 = 11.58 → 15
-    expect(v.cost).toMatchObject({ ok: true, nmdKva: 15, nmdIsSuggestion: true })
+    expect(v.cost).toMatchObject({ ok: true, nmdKva: 10.53, nmdIsSuggestion: true }) // the highest demand itself, not the suggestion
     if (v.cost?.ok) expect(v.cost.annual.totalExclVat).toBeCloseTo(87_600 * 2, 6) // R2.00/kWh
     expect(v.sources[0]).toMatchObject({ status: 'ok', annualKwh: 87_600, filled: { ownShape: 0 } })
   })
@@ -81,5 +81,33 @@ describe('composeView', () => {
     if (ok.cost?.ok) expect(ok.cost.annual.totalExclVat).toBeCloseTo(87_600 * 2, 6)
     const refused = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a')], costing: { tariffId: 't', tariff, calendar: null, calendarAssumedEskom: false, label: 'TOU' } })
     expect(refused.cost).toEqual({ ok: false, tariffId: 't', error: NO_CALENDAR })
+  })
+
+  it('unconfirmed NMD: a demand tariff bills the measured MD, not the suggestion with headroom', () => {
+    const demand = makeTariff({ name: 'Demand', structure: 'flat', charges: [makeCharge({ component: 'demand', unit: 'R_per_kVA_month', amountExclVat: 100, demandBasis: 'actual_md' })] })
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a')], costing: { tariffId: 'd', tariff: demand, calendar: flat, calendarAssumedEskom: false, label: 'D' } })
+    if (!v.cost?.ok) throw new Error('expected a cost')
+    expect(v.cost.months[0].totalExclVat).toBeCloseTo(100 * 10.53, 6) // 10/0.95 = 10.526 → 10.53 kVA, not 15
+    const confirmed = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: 40, tenants: [], sources: [constantMeter('a')], costing: { tariffId: 'd', tariff: demand, calendar: flat, calendarAssumedEskom: false, label: 'D' } })
+    if (confirmed.cost?.ok) expect(confirmed.cost.months[0].totalExclVat).toBeCloseTo(4000, 6) // max(MD, NMD 40)
+  })
+
+  it('measured + ADMD: the billed monthly MD includes the block\'s own peak', () => {
+    const demand = makeTariff({ name: 'Demand', structure: 'flat', charges: [makeCharge({ component: 'demand', unit: 'R_per_kVA_month', amountExclVat: 1, demandBasis: 'actual_md' })] })
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: 1, tenants: [], sources: [constantMeter('a'), synthetic('flats', 'admd', { units: 10, admdKva: 2, archetype: 'anchor_24h' })], costing: { tariffId: 'd', tariff: demand, calendar: flat, calendarAssumedEskom: false, label: 'D' } })
+    if (!v.cost?.ok) throw new Error('expected a cost')
+    // January: meter 10 kW → 10.526 kVA; ADMD block peaks at 19 kW → 20 kVA (its January peak, seasonal 1.1 × … ≤ the annual peak).
+    expect(v.cost.months[0].mdKva).toBeGreaterThan(10 / 0.95 + 1)
+    expect(v.cost.demandNote).toMatch(/plus the estimated block's own monthly peak/)
+  })
+
+  it('a malformed stored quality report is dropped, not rendered', () => {
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [{ ...constantMeter('a'), quality_report: { coveragePct: 'lots' } as never }] })
+    expect(v.sources[0].quality).toBeNull()
+  })
+
+  it('the composed view survives a JSON round trip unchanged (page → client props)', () => {
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a'), synthetic('flats', 'admd', { units: 10, admdKva: 2, archetype: 'retail' })], costing: { tariffId: 't', tariff, calendar: flat, calendarAssumedEskom: false, label: 'Flat' } })
+    expect(JSON.parse(JSON.stringify(v))).toEqual(v)
   })
 })

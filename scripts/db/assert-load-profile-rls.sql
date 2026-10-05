@@ -29,6 +29,11 @@ DECLARE
   v_n           INT;
   v_sha         TEXT := repeat('a', 64);
   v_path        TEXT;
+  v_pm          UUID;
+  v_other_proj  UUID;
+  v_other_prof  UUID;
+  v_tmp_proj    UUID;
+  v_tmp_prof    UUID;
 BEGIN
   -- ── Fixtures ──────────────────────────────────────────────────────────────
   -- The rbac-test contractor (a project member whose effective role is contractor).
@@ -170,6 +175,77 @@ BEGIN
   SELECT count(*) INTO v_n FROM storage.objects WHERE bucket_id = 'load-profile-files' AND name = v_path;
   INSERT INTO _r VALUES ('stranger_sees_no_file', v_n = 0);
   RESET ROLE;
+  -- ═══ 5. PROJECT-PROMOTED PROJECT MANAGER — writes on that project only ════
+  -- None exists in production, so one is minted here and rolled back: an org contractor promoted
+  -- to project_manager on v_project by a project_members row (user_effective_project_role clause 2).
+  v_pm := gen_random_uuid();
+  INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  VALUES (v_pm, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-lp-pm@example.invalid', '', now(), now(), now(), '{}'::jsonb, '{}'::jsonb);
+  INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES (v_pm, v_org, 'contractor', TRUE);
+  INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES (v_project, v_pm, v_org, 'project_manager', TRUE);
+  -- Another org's project with its own profile: nobody above may touch it.
+  SELECT p.id INTO v_other_proj FROM projects.projects p WHERE p.organisation_id <> v_org LIMIT 1;
+  INSERT INTO projects.load_profiles (project_id) VALUES (v_other_proj) ON CONFLICT (project_id) DO NOTHING;
+  SELECT id INTO v_other_prof FROM projects.load_profiles WHERE project_id = v_other_proj;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('promoted_pm_effective_role', public.user_effective_project_role(v_project) = 'project_manager');
+  BEGIN
+    INSERT INTO projects.load_profile_sources (profile_id, kind, label, params) VALUES (v_profile, 'admd', 'pm wrote', '{}');
+    INSERT INTO _r VALUES ('promoted_pm_inserts', true);
+  EXCEPTION WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('promoted_pm_inserts', false);
+  END;
+  RESET ROLE;
+
+  -- ═══ 6. CROSS-PROJECT — a writer on A cannot reach B through profile_id ═══
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO projects.load_profile_sources (profile_id, kind, label, params) VALUES (v_other_prof, 'admd', 'smuggled', '{}');
+    INSERT INTO _r VALUES ('insert_into_foreign_profile_REFUSED', false);
+  -- The bind trigger runs under the caller's RLS, so it cannot see the foreign profile and raises
+  -- 23503 "not found" before WITH CHECK would: either refusal is the right outcome.
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN INSERT INTO _r VALUES ('insert_into_foreign_profile_REFUSED', true);
+  END;
+  BEGIN
+    UPDATE projects.load_profile_sources SET profile_id = v_other_prof WHERE id = v_source;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('move_source_to_foreign_profile_REFUSED', v_n = 0);
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN INSERT INTO _r VALUES ('move_source_to_foreign_profile_REFUSED', true);
+  END;
+  RESET ROLE;
+
+  -- ═══ 7. STORAGE DELETE — the policy decides (the API's own flag lifts protect_delete) ═══
+  PERFORM set_config('storage.allow_delete_query', 'true', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_contractor::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  DELETE FROM storage.objects WHERE bucket_id = 'load-profile-files' AND name = v_path;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('contractor_file_delete_affects_nothing', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  DELETE FROM storage.objects WHERE bucket_id = 'load-profile-files' AND name = v_path;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('admin_file_delete_works', v_n = 1);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', NULL, true);
+
+  -- ═══ 8. PROJECT DELETE CASCADES — the 00221 failure mode ═════════════════
+  -- Two channels of the same column from two files, then delete the whole project.
+  INSERT INTO projects.projects (organisation_id, name, created_by) VALUES (v_org, 'probe load profile project', v_admin) RETURNING id INTO v_tmp_proj;
+  INSERT INTO projects.load_profiles (project_id) VALUES (v_tmp_proj) RETURNING id INTO v_tmp_prof;
+  INSERT INTO projects.load_profile_sources (profile_id, kind, label, file_sha256, source_column, interval_min, first_ts_end, "values", quality)
+  VALUES (v_tmp_prof, 'meter', 'f1', repeat('1', 64), 'kW', 30, now(), ARRAY[1]::real[], ARRAY[0]::smallint[]),
+         (v_tmp_prof, 'meter', 'f2', repeat('2', 64), 'kW', 30, now(), ARRAY[1]::real[], ARRAY[0]::smallint[]);
+  BEGIN
+    DELETE FROM projects.projects WHERE id = v_tmp_proj;
+    INSERT INTO _r SELECT 'project_delete_cascades', NOT EXISTS (SELECT 1 FROM projects.load_profiles WHERE project_id = v_tmp_proj)
+                                                 AND NOT EXISTS (SELECT 1 FROM projects.load_profile_sources WHERE project_id = v_tmp_proj);
+  EXCEPTION WHEN OTHERS THEN INSERT INTO _r VALUES ('project_delete_cascades', false);
+  END;
+
   PERFORM set_config('request.jwt.claims', NULL, true);
 END $$;
 

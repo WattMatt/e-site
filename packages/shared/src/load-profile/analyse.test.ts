@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { QUALITY } from '../meter-data/types'
-import { analyseProfile, suggestNmd } from './analyse'
+import { analyseProfile, coincidentSum, suggestNmd } from './analyse'
 import { measuredReferenceSeries } from './measured'
 import { HAND, handCheckedReadings } from './__fixtures__/hand-checked'
 
@@ -72,5 +72,43 @@ describe('measuredReferenceSeries — gaps', () => {
   })
   it('refuses a meter with no complete day', () => {
     expect(() => measuredReferenceSeries([{ tsEnd: 3_600_000, value: 1, quality: 0 as never }], 60, 2025)).toThrow(/no complete day/)
+  })
+})
+
+describe('several meters', () => {
+  /** Constant kW on 30-min slots for [fromDay, toDay) of 2025 (day index from 1 Jan). */
+  const constant = (kw: number, fromDay: number, toDay: number, intervalMin = 30) => {
+    const out = []
+    const start = Date.UTC(2025, 0, 1) - 7_200_000
+    for (let t = start + fromDay * 86_400_000 + intervalMin * 60_000; t <= start + toDay * 86_400_000; t += intervalMin * 60_000) out.push({ tsEnd: t, value: kw, quality: QUALITY.OK as never })
+    return out
+  }
+
+  it('coincidentSum re-buckets to the coarsest interval and sums only where every meter has a value', () => {
+    const a = constant(10, 0, 2, 15)
+    const b = constant(5, 1, 3, 30)
+    const s = coincidentSum([{ readings: a, intervalMin: 15 }, { readings: b, intervalMin: 30 }])!
+    expect(s.intervalMin).toBe(30)
+    expect(s.readings).toHaveLength(48) // the one overlapping day
+    expect(s.readings.every((r) => r.value === 15)).toBe(true)
+  })
+
+  it('overlapping meters: MD is the coincident sum', () => {
+    const a = constant(10, 0, 60)
+    const b = constant(20, 0, 60)
+    const md = analyseProfile({ series: new Float64Array(8760).fill(30), referenceYear: 2025, powerFactor: 0.95, measured: [{ kw: a, kva: null, intervalMin: 30 }, { kw: b, kva: null, intervalMin: 30 }], syntheticPeakKw: 0 }).md!
+    expect(md.basis).toBe('coincident')
+    expect(md.peak.kva).toBeCloseTo(30 / 0.95, 9)
+  })
+
+  it('meters that do not overlap (< 30 coincident days): MD is the sum of each meter\'s own peak, never dropped', () => {
+    const a = constant(10, 0, 40) // Jan–Feb
+    const b = constant(20, 180, 220) // Jul–Aug
+    const r = analyseProfile({ series: new Float64Array(8760).fill(30), referenceYear: 2025, powerFactor: 0.95, measured: [{ kw: a, kva: null, intervalMin: 30 }, { kw: b, kva: null, intervalMin: 30 }], syntheticPeakKw: 0 })
+    expect(r.md).not.toBeNull()
+    expect(r.md!.basis).toBe('sum_of_meter_peaks')
+    expect(r.md!.peak.kva).toBeCloseTo(30 / 0.95, 9)
+    expect(r.md!.months).toEqual([]) // no month-by-month coincident data
+    expect(r.nmd.basis).toBe('measured_md')
   })
 })

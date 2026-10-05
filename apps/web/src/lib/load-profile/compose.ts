@@ -5,7 +5,7 @@
  * measured channels' native intervals only; costing goes through the shared engine.
  */
 import {
-  admdSeries, analyseProfile, costProfile, fromStoredChannel, isCalendarIndependent, localLabel, mdByCalendarMonth, NEUTRAL_CALENDAR, measuredReferenceSeries, MeasuredSeriesError,
+  admdSeries, analyseProfile, costProfile, MIN_COINCIDENT_DAYS, fromStoredChannel, isCalendarIndependent, localLabel, mdByCalendarMonth, NEUTRAL_CALENDAR, measuredReferenceSeries, MeasuredSeriesError,
   NMD_RULE, sumSeries, tenantScheduleSeries, type ImportQuality, type MeasuredInput, type TenantSynthInput,
 } from '@esite/shared/load-profile'
 import type { Tariff, TouCalendar } from '@esite/shared'
@@ -50,11 +50,53 @@ const sum = (a: ArrayLike<number>) => { let s = 0; for (let i = 0; i < a.length;
 const max = (a: ArrayLike<number>) => { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m }
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+/** Highest hourly kW per reference month (12 values). */
+function monthlyPeaks(series: Float64Array): number[] {
+  const out: number[] = []
+  let h = 0
+  for (const d of MONTH_DAYS) {
+    let m = 0
+    for (let i = 0; i < d * 24; i++, h++) if (series[h] > m) m = series[h]
+    out.push(m)
+  }
+  return out
+}
+
+/**
+ * The monthly MD handed to the bill. Measured interval MD where a month has it; a synthetic block's
+ * own monthly peak is ADDED (non-coincident, the NMD rule's convention) so a mixed profile is not
+ * billed as if the estimate drew nothing. A month with no measured MD is left to the engine, which
+ * takes it from the hourly profile (measured + synthetic).
+ */
+function billedMonthlyMd(md: ReturnType<typeof analyseProfile>['md'], synthetic: Float64Array | null, pf: number): Array<number | null> | undefined {
+  if (!md || md.months.length === 0) return undefined
+  const measured = mdByCalendarMonth(md.months)
+  if (!synthetic) return measured
+  const synth = monthlyPeaks(synthetic)
+  return measured.map((v, i) => (v == null ? null : v + synth[i] / pf))
+}
+
+function demandNote(md: ReturnType<typeof analyseProfile>['md'], hasSynthetic: boolean): string {
+  const tail = 'Peak-window demand is taken from hourly averages (an approximation).'
+  if (!md) return 'No measured interval data: demand is taken from hourly averages, which understate a billed maximum demand.'
+  if (md.basis === 'sum_of_meter_peaks') return `The meters never ran together for ${MIN_COINCIDENT_DAYS} days, so monthly demand comes from the hourly profile; the NMD basis adds each meter's own peak. ${tail}`
+  return `Maximum demand per month from ${md.intervalMin}-minute measured data${md.basis === 'coincident' ? ' (the meters\' coincident sum)' : ''}${hasSynthetic ? ', plus the estimated block\'s own monthly peak' : ''}. ${tail}`
+}
+
+function validQuality(q: unknown): ImportQuality | null {
+  if (!q || typeof q !== 'object') return null
+  const o = q as Record<string, unknown>
+  const nums = ['slots', 'usable', 'coveragePct', 'gapRuns', 'longestGapMin', 'spikes', 'negatives', 'conflictingDuplicates', 'exactDuplicates']
+  return nums.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k])) && typeof o.first === 'string' && typeof o.last === 'string' ? (q as ImportQuality) : null
+}
+
 function blankSource(r: SourceRow): SourceView {
   return {
     id: r.id, kind: r.kind, label: r.label, included: r.included, status: 'ok', error: null,
     fileName: r.file_name, format: r.format, column: r.source_column, kvaColumn: r.kva_column, intervalMin: r.interval_min,
-    conversion: r.conversion, quality: r.quality_report, filled: null, window: null,
+    conversion: r.conversion, quality: validQuality(r.quality_report), filled: null, window: null,
     params: r.params, detail: null, annualKwh: null, peakKw: null,
   }
 }
@@ -124,6 +166,7 @@ export function composeView(input: ComposeInput): { sources: SourceView[]; analy
       months: a.md.months.map((m) => ({ month: m.month, kva: m.kva, kw: m.source === 'measured_kva' ? null : m.kva * (m.powerFactor ?? 1), at: m.tsEnd === null ? null : localLabel(m.tsEnd), source: m.source })),
       peak: a.md.peak,
       intervalMin: a.md.intervalMin,
+      basis: a.md.basis,
     } : null,
     nmd: { ...a.nmd, rule: NMD_RULE.text },
     composition: { measuredKwh: measuredSeries.length ? sum(sumSeries(measuredSeries)) : 0, syntheticKwh: synthetic ? sum(synthetic) : 0 },
@@ -138,9 +181,11 @@ export function composeView(input: ComposeInput): { sources: SourceView[]; analy
     const calendar = c.calendar ?? (neutral ? NEUTRAL_CALENDAR : null)
     if (!calendar) cost = { ok: false, tariffId: c.tariffId, error: NO_CALENDAR }
     else {
-      const nmdKva = input.nmdKva ?? a.nmd.kva
+      // Unconfirmed NMD: cost on the highest demand itself, NOT the suggestion — the engine bills
+      // actual-MD charges at max(MD, NMD), so the suggestion's headroom would inflate every month.
+      const nmdKva = input.nmdKva ?? Math.ceil(a.nmd.basisKva * 100) / 100
       try {
-        const r = costProfile({ tariff: c.tariff, calendar, series: profile, referenceYear, powerFactor, mdKvaByMonth: a.md ? mdByCalendarMonth(a.md.months) : undefined, nmdKva })
+        const r = costProfile({ tariff: c.tariff, calendar, series: profile, referenceYear, powerFactor, mdKvaByMonth: billedMonthlyMd(a.md, synthetic, powerFactor), nmdKva })
         cost = {
           ok: true,
           tariffId: c.tariffId,
@@ -157,9 +202,7 @@ export function composeView(input: ComposeInput): { sources: SourceView[]; analy
           })),
           annual: r.annual,
           notModelled: r.notModelled,
-          demandNote: a.md
-            ? `Maximum demand per month from ${a.md.intervalMin}-minute measured data; peak-window demand from hourly averages (an approximation).`
-            : 'No measured interval data: demand is taken from hourly averages, which understate a billed maximum demand.',
+          demandNote: demandNote(a.md, Boolean(synthetic)),
         }
       } catch (e) {
         cost = { ok: false, tariffId: c.tariffId, error: e instanceof Error ? e.message : 'The tariff could not be costed' }

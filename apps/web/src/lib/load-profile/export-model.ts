@@ -55,7 +55,7 @@ export function buildExportModel(v: LoadProfileView, generatedAt: Date): ExportM
   ]
   if (v.cost?.ok) {
     notes.push(v.cost.demandNote)
-    notes.push(`NMD used for costing: ${v.cost.nmdKva} kVA${v.cost.nmdIsSuggestion ? ' (the suggestion; not confirmed)' : ' (confirmed)'}.`)
+    notes.push(`NMD used for costing: ${v.cost.nmdKva} kVA${v.cost.nmdIsSuggestion ? ' (not confirmed: the highest demand itself is used)' : ' (confirmed)'}.`)
     if (v.cost.calendarNote) notes.push(v.cost.calendarNote)
     if (v.cost.calendarAssumedEskom) notes.push('This licensee publishes no time-of-use hours; Eskom\'s hours are assumed.')
     for (const n of v.cost.notModelled) notes.push(`Not modelled: ${n.component} (${n.reason}).`)

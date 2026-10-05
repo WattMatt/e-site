@@ -59,40 +59,59 @@ export async function parseLoadProfileFileAction(projectId: string, path: string
   }
 }
 
-const SelectionSchema = z.object({ column: z.string().min(1).max(200), label: z.string().max(200), withKva: z.boolean() })
+const SelectionSchema = z.object({
+  column: z.string().min(1).max(200),
+  label: z.string().max(200, 'A label can be at most 200 characters.'),
+  withKva: z.boolean(),
+})
 const CommitSchema = z.object({
   path: z.string().min(1).max(300),
   fileName: z.string().min(1).max(255),
   sheet: z.string().max(200).nullable(),
-  selections: z.array(SelectionSchema).min(1).max(20),
+  selections: z.array(SelectionSchema).min(1, 'Choose at least one channel to import.').max(20, 'Import at most 20 channels at a time.'),
 })
 
-export async function commitLoadProfileFileAction(projectId: string, input: { path: string; fileName: string; sheet: string | null; selections: ChannelSelection[] }): Promise<{ ok: true; imported: number; replaced: number } | Err> {
+/**
+ * Every page view composes the profile from the stored channels, so their total size is capped:
+ * 1 000 000 slots ≈ 28 channel-years at 30 minutes, or about 9 at 5 minutes.
+ */
+export const MAX_PROFILE_SLOTS = 1_000_000
+
+export async function commitLoadProfileFileAction(projectId: string, input: { path: string; fileName: string; sheet: string | null; selections: ChannelSelection[] }): Promise<{ ok: true; imported: number; replaced: number; warnings: string[] } | Err> {
   const parsed = CommitSchema.safeParse(input)
-  if (!parsed.success) return { error: 'Choose at least one channel to import.' }
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the channels to import.' }
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
   const profileId = await ensureProfile(g.supabase, projectId)
   if (typeof profileId !== 'string') return profileId
   const built = await buildMeterRows({ download: downloader(g.supabase), projectId, ...parsed.data })
   if (!built.ok) return { error: built.error }
-  const t = g.supabase.schema('projects').from('load_profile_sources')
+  const t = () => g.supabase.schema('projects').from('load_profile_sources')
+  const { data: held } = await t().select('file_sha256, source_column, slots:quality_report->>slots').eq('profile_id', profileId).eq('kind', 'meter')
+  const replacing = new Set(built.rows.map((r) => `${r.file_sha256}|${r.source_column}`))
+  const kept = ((held ?? []) as Array<{ file_sha256: string; source_column: string; slots: string | null }>)
+    .filter((h) => !replacing.has(`${h.file_sha256}|${h.source_column}`))
+    .reduce((sum, h) => sum + Number(h.slots ?? 0), 0)
+  const adding = built.rows.reduce((sum, r) => sum + r.values.length, 0)
+  if (kept + adding > MAX_PROFILE_SLOTS) {
+    return { error: `This would hold ${(kept + adding).toLocaleString('en-ZA')} readings; a profile holds at most ${MAX_PROFILE_SLOTS.toLocaleString('en-ZA')}. Remove a source, or import fewer channels.` }
+  }
   let imported = 0
   let replaced = 0
   for (const row of built.rows) {
-    const { data: existing } = await t.select('id').eq('profile_id', profileId).eq('file_sha256', row.file_sha256).eq('source_column', row.source_column).maybeSingle()
+    const { data: existing } = await t().select('id').eq('profile_id', profileId).eq('file_sha256', row.file_sha256).eq('source_column', row.source_column).maybeSingle()
     if (existing) {
-      const { error } = await t.update({ ...row, included: true }).eq('id', (existing as { id: string }).id)
+      const { error } = await t().update({ ...row, included: true }).eq('id', (existing as { id: string }).id)
       if (error) return { error: GENERIC }
       replaced++
     } else {
-      const { error } = await t.insert({ ...row, profile_id: profileId })
+      const { error } = await t().insert({ ...row, profile_id: profileId })
       if (error) return { error: GENERIC }
       imported++
     }
   }
   revalidatePath(pagePath(projectId))
-  return { ok: true, imported, replaced }
+  return { ok: true, imported, replaced, warnings: built.warnings }
 }
 
 // ── Synthetic blocks ──────────────────────────────────────────────────────────
@@ -138,14 +157,14 @@ export async function deleteLoadProfileSourceAction(projectId: string, sourceId:
   if (!uuid.safeParse(sourceId).success) return { error: 'Unknown source.' }
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
-  const t = g.supabase.schema('projects').from('load_profile_sources')
-  const { data, error } = await t.delete().eq('id', sourceId).eq('project_id', projectId).select('file_path')
+  const t = () => g.supabase.schema('projects').from('load_profile_sources')
+  const { data, error } = await t().delete().eq('id', sourceId).eq('project_id', projectId).select('file_path')
   if (error) return { error: GENERIC }
   if (!data || data.length === 0) return { error: 'That source is not in this project.' }
   // Remove the raw file once no source of this project still points at it.
   const filePath = (data[0] as { file_path: string | null }).file_path
   if (filePath) {
-    const { count } = await t.select('id', { count: 'exact', head: true }).eq('project_id', projectId).eq('file_path', filePath)
+    const { count } = await t().select('id', { count: 'exact', head: true }).eq('project_id', projectId).eq('file_path', filePath)
     if (!count) await g.supabase.storage.from(LOAD_PROFILE_BUCKET).remove([filePath])
   }
   revalidatePath(pagePath(projectId))
@@ -177,8 +196,9 @@ export async function saveLoadProfileSettingsAction(projectId: string, input: z.
   return { ok: true }
 }
 
+/** The pickers serve whoever may CHOOSE a tariff (write roles); readers see only the chosen one's bill. */
 export async function listPublishedLicenseesAction(projectId: string): Promise<{ ok: true; licensees: PublishedLicensee[] } | Err> {
-  const g = await gate(projectId, LOAD_PROFILE_READ_ROLES)
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
   try {
     return { ok: true, licensees: await listPublishedLicensees() }
@@ -189,7 +209,7 @@ export async function listPublishedLicenseesAction(projectId: string): Promise<{
 
 export async function listPublishedTariffsAction(projectId: string, licenseeId: string): Promise<{ ok: true; tariffs: PublishedTariffOption[] } | Err> {
   if (!uuid.safeParse(licenseeId).success) return { error: 'Unknown supplier.' }
-  const g = await gate(projectId, LOAD_PROFILE_READ_ROLES)
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
   try {
     return { ok: true, tariffs: await listPublishedTariffs(licenseeId) }

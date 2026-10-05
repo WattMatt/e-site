@@ -53,6 +53,6 @@ describe('LoadProfileClient', () => {
     expect(screen.getByText('15 kVA')).toBeTruthy()
     expect(screen.getAllByText('R 175 200.00')).toHaveLength(2) // the KPI and the table's Year row
     expect(screen.getByText('Export Excel').getAttribute('href')).toBe('/api/projects/11111111-2222-3333-4444-555555555555/load-profile/export?format=xlsx')
-    expect(screen.getByText(/NMD used for costing: 15 kVA \(the suggestion/)).toBeTruthy()
+    expect(screen.getByText(/NMD used for costing: 10.53 kVA \(not confirmed/)).toBeTruthy()
   })
 })

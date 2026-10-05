@@ -10,6 +10,8 @@ import { loadLoadProfileView, type AnyClient } from '@/lib/load-profile/load'
 import { LoadProfileClient } from './_components/LoadProfileClient'
 
 export const dynamic = 'force-dynamic'
+/** Parsing a large meter export in a server action runs inside this page's function. */
+export const maxDuration = 60
 
 const ARCHETYPES = [
   { code: 'retail', name: 'Retail (09:00-18:00 Mon-Sat)' },
@@ -22,7 +24,7 @@ const ARCHETYPES = [
 ]
 
 export default async function LoadProfilePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+  const id = (await params).id.toLowerCase()
   const supabase = (await createClient()) as unknown as AnyClient
   const gate = await requireEffectiveRole(supabase, id, LOAD_PROFILE_READ_ROLES)
   if (!gate.ok) {
