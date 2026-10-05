@@ -39,6 +39,10 @@ export interface ColumnSpec {
   type?: 'number' | 'text'
   /** Printed header group this column sits under, for display ("Buried directly"). */
   group?: string
+  /** Text columns: a description that wraps continues on the line(s) BELOW its row. Unset → a wrapped line is refused. */
+  wrapsBelow?: boolean
+  /** Text columns: numbers printed in this column (a rule like "16") are accepted without the drift check. */
+  numbersAnywhere?: boolean
 }
 
 export interface KeyColumnSpec extends ColumnSpec {
@@ -372,7 +376,7 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
         // Any number far from every centre is refused — the key, a named column or an
         // unnamed one alike — so nothing is dropped because its nearest column is unnamed.
         // Text columns are the exception: a description is left-aligned and wide.
-        if (v !== undefined && drift > maxDrift && slot.col?.type !== 'text') { stray = tok; continue }
+        if (v !== undefined && drift > maxDrift && !(slot.col?.type === 'text' && slot.col.numbersAnywhere)) { stray = tok; continue }
         if (slot.col === spec.keyColumn) { if (!ordered) keyTokens.push(tok.text); continue }
         if (!slot.col) continue
         if (slot.col.type === 'text') {
@@ -408,8 +412,13 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
         // A text key ("A1") needs a number on its line; header lines carry only words.
         key = keyTokens.join(' ').trim(); sortKey = rows.size + 1
       }
-      if (key === null && lastKey && textTokens.size > 0 && numberCells === 0 && keyTokens.length === 0 && !stray) {
-        // A description that wraps: its next line carries only text-column words. Append them.
+      if (key === null && textTokens.size > 0 && numberCells === 0 && keyTokens.length === 0 && !stray) {
+        // A words-only line in a text column. It continues the row above only where the spec says
+        // descriptions wrap downwards; otherwise which row it belongs to is a guess — refuse.
+        // Before this page's first row it is a header line ("Occupancy description"): skip it.
+        if (!lastKey) continue
+        const wraps = [...textTokens.keys()].every((k) => allCols.find((c) => c.key === k)?.wrapsBelow)
+        if (!wraps) throw new Error(`${clauseLabel}: a text line without a row: "${line.trim()}"`)
         const prev = rows.get(lastKey)!
         for (const [k, words] of textTokens) {
           const more = words.join(' ')
@@ -467,7 +476,10 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
       const ln = orderedLines[i]
       // The label must be near ITS value line and below the previous row's label, so a
       // missed line plus a stray one cannot shift every row by one and still pass.
-      const at = ln.context.findIndex((l) => d.near.test(l))
+      // The matching line closest to the value line (context index 4 is the value line itself).
+      const valueAt = Math.min(4, ln.li % 100000)
+      let at = -1
+      ln.context.forEach((l, k) => { if (d.near.test(l) && (at < 0 || Math.abs(k - valueAt) < Math.abs(at - valueAt))) at = k })
       if (at < 0) throw new Error(`${clauseLabel}: row "${d.key}" — label not found near its values`)
       const absAt = ln.li - Math.min(4, ln.li % 100000) + at
       if (absAt <= lastLabelAt) throw new Error(`${clauseLabel}: row "${d.key}" — its label is not below the previous row's`)

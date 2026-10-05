@@ -207,10 +207,27 @@ describe('review guards', () => {
     const { rows } = extractTable(splitPdfText(T), {
       clause: '7.9', title: 't', topic: 'building_energy',
       keyColumn: { key: 'code', label: 'Class', unit: null, header: 1, kind: 'text' },
-      valueColumns: [{ key: 'desc', label: 'Description', unit: null, header: 2, type: 'text' }, { key: 'w', label: 'W', unit: null, header: 3 }],
+      valueColumns: [{ key: 'desc', label: 'Description', unit: null, header: 2, type: 'text', wrapsBelow: true }, { key: 'w', label: 'W', unit: null, header: 3 }],
       expectedTextKeys: ['A1', 'G1'],
     })
     expect(rows[0].row_data.desc).toBe('Assembly hall and outdoor seating')
+  })
+
+  it('refuses a wrapped text line when the spec does not say descriptions wrap downwards', () => {
+    const T = doc([
+      '   Table 7.9 — Codes',
+      '     1      2                         3',
+      '     A1     Assembly hall and         5',
+      '            outdoor seating',
+      '     G1     Office block              12',
+      foot(9),
+    ])
+    expect(() => extractTable(splitPdfText(T), {
+      clause: '7.9', title: 't', topic: 'building_energy',
+      keyColumn: { key: 'code', label: 'Class', unit: null, header: 1, kind: 'text' },
+      valueColumns: [{ key: 'desc', label: 'Description', unit: null, header: 2, type: 'text' }, { key: 'w', label: 'W', unit: null, header: 3 }],
+      expectedTextKeys: ['A1', 'G1'],
+    })).toThrow(/a text line without a row/)
   })
 
   it('does not merge "35 120" into one number in a left-aligned grid', () => {

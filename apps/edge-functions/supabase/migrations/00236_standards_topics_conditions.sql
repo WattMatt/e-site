@@ -78,7 +78,7 @@ NOTIFY pgrst, 'reload schema';
 -- constraint: sans_tables_extracted_has_topic_conditions ON cable_schedule.sans_tables
 -- constraint: sans_tables_conditions_cited ON cable_schedule.sans_tables
 -- function: cable_schedule.reference_conditions_cited(jsonb)
--- sql: (SELECT count(*) = 0 FROM cable_schedule.sans_tables WHERE topic IS NULL)
+-- sql: (SELECT count(*) = 0 FROM cable_schedule.sans_tables WHERE provenance = 'extracted' AND topic IS NULL)
 -- sql: (SELECT count(*) = 0 FROM cable_schedule.sans_tables WHERE provenance = 'extracted' AND NOT cable_schedule.reference_conditions_cited(conditions))
 -- behaviour: scripts/db/assert-standards-topics-conditions.sql, every row ok
 -- @verify:end

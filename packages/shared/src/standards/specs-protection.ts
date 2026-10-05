@@ -47,7 +47,8 @@ export const PROTECTION_SPECS: Record<string, TableSpec> = {
     title: 'Minimum cross-sectional area of protective conductors',
     topic: 'earthing_protection',
     // ORDERED: each row is a size range of the phase conductor S; the range is matched by `near`, not read.
-    keyColumn: { key: 'phase_size_range', label: 'Phase conductor size S', unit: 'mm²', header: 1, type: 'text' },
+    // The rule labels ("16 < S ≤ 35") are free text: their numbers need not sit on the column centre.
+    keyColumn: { key: 'phase_size_range', label: 'Phase conductor size S', unit: 'mm²', header: 1, type: 'text', numbersAnywhere: true },
     // The value is a rule in S or a fixed size, kept as printed text. Its x is the 4th token of the first rule line.
     valueColumns: [{ key: 'min_pe_size', label: 'Minimum protective conductor size Sp', unit: 'mm²', header: 4, type: 'text' }],
     // The first rule line (S up to 16 mm²) gives the positions: key, relation sign, bound, value. It is also data.
@@ -83,7 +84,7 @@ export const PROTECTION_SPECS: Record<string, TableSpec> = {
       { key: 'max_resistance_ohm', label: 'Maximum resistance of earth continuity path', unit: 'Ω', header: 2 },
     ],
     expectedKeys: [6, 10, 16, 20, 25, 32, 40, 45, 50, 63],
-    remark: 'Final circuits above 63 A: use table 6.28.',
+    remark: 'For larger protective devices, see Table 6.28.',
   },
   '6.28(a)': {
     clause: '6.28(a)',
