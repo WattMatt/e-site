@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 /**
  * Tariffs (E7): the published NERSA-approved library for every signed-in
  * organisation (D1, 2026-10-05). The (admin) layout already bounces client
- * viewers to /portal; RLS (00224) decides what each caller reads.
+ * viewers to /portal; RLS (00225) decides what each caller reads.
  */
 export default async function TariffsLayout({ children }: { children: React.ReactNode }) {
   const supabase = (await createClient()) as unknown as AnyClient

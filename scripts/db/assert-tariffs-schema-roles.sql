@@ -488,14 +488,14 @@ BEGIN
 
   -- ── 5. An unsubscribed org reads the PUBLISHED library only ──────────────
   -- D-03b ("an unsubscribed org reads nothing") was superseded by E7 D1 /
-  -- 00224 (2026-10-05): every signed-in org reads published years; drafts stay
+  -- 00225 (2026-10-05): every signed-in org reads published years; drafts stay
   -- admin-only. scripts/db/assert-tariff-explorer.sql covers it in full.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_unsub::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO _r VALUES ('unsubscribed_has_no_solar_org', NOT public.caller_has_any_solar_org());
   SELECT count(*) INTO v_n FROM tariffs.licensee WHERE id = v_lic;
   SELECT count(*) INTO v_n2 FROM tariffs.tariff_year WHERE licensee_id = v_lic AND state IN ('ingesting', 'in_review');
-  INSERT INTO _r VALUES ('unsubscribed_reads_licensee_but_no_draft_00224', v_n = 1 AND v_n2 = 0);
+  INSERT INTO _r VALUES ('unsubscribed_reads_licensee_but_no_draft_00225', v_n = 1 AND v_n2 = 0);
   RESET ROLE;
 
   -- ── 6. The service role (ingestion) sees drafts but cannot edit history ───
