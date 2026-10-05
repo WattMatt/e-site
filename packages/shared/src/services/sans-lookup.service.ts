@@ -11,6 +11,8 @@
  */
 
 import type { TypedSupabaseClient } from '@esite/db'
+import { LEGACY_CROSSCHECKS } from '../standards/crosscheck'
+import { tableCode } from '../standards/dataset'
 
 /** Standardised columns the schedule grid expects per row from Table 6.4-like rating tables. */
 export interface CablePropertyLookup {
@@ -47,6 +49,11 @@ interface SansOverrideShape {
  * Returns null when no bundled table exists for the combo — the caller
  * should fall back to a sensible default or surface "missing rating".
  */
+/** Legacy tables the cable calculator auto-fills Ω/km and base ratings from (tableCodeFor). */
+export const RATING_TABLE_CODES = ['TABLE_6_2', 'TABLE_6_3', 'TABLE_6_4', 'TABLE_6_5'] as const
+/** Legacy tables lookupDeratingFactors reads, one per derating axis. */
+export const DERATING_TABLE_CODES = ['TABLE_6_3_1', 'TABLE_6_3_2', 'TABLE_6_3_3', 'TABLE_6_3_4', 'TABLE_6_3_5', 'TABLE_6_3_6'] as const
+
 export function tableCodeFor(
   conductor: 'CU' | 'AL',
   insulation: 'PVC' | 'XLPE' | 'PILC',
@@ -236,11 +243,19 @@ export async function lookupDeratingFactors(
      */
     grouping_arrangement?: 'TOUCHING' | 'SPACING_D'
   },
+  /**
+   * cite: also read the SANS 10142-1 tables that back each factor and return
+   * the citation in `sources`. Off by default — it costs extra reads and the
+   * cable actions only need the factors.
+   */
+  opts?: { cite?: boolean },
 ): Promise<{
   depth: number | null
   thermal: number | null
   grouping: number | null
   temperature: number | null
+  /** Per axis: where the factor was read, and its SANS citation when one is held. */
+  sources: DeratingSources
 }> {
   // LV derating tables (migration 00057, Aberdare F&F §6.3 shape, aligned
   // to SANS 10142-1 Tables 6.10–6.16 where SANS publishes a value). The
@@ -265,21 +280,29 @@ export async function lookupDeratingFactors(
   const buriedGroupingKey =
     args.installation_method === 'DUCT' ? 'duct_touching' : 'ground_touching'
 
+  const cite = opts?.cite === true
+  const none: CitedFactor = { factor: 1, tableCode: null, citation: null, sansDisagrees: false }
   const [d, th, gr, te] = await Promise.all([
     basis.inAir
-      ? Promise.resolve(1)
-      : lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',        args.depth_mm,                basis.soilFactorKey),
+      ? Promise.resolve(none)
+      : lookupFactorCited(supabase, 'TABLE_6_3_1', args.depth_mm,                basis.soilFactorKey, cite),
     basis.inAir
-      ? Promise.resolve(1)
-      : lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, basis.soilFactorKey),
+      ? Promise.resolve(none)
+      : lookupFactorCited(supabase, 'TABLE_6_3_2', args.thermal_resistivity_kmw, basis.soilFactorKey, cite),
     args.grouped_with <= 1
-      ? Promise.resolve(1)
+      ? Promise.resolve(none)
       : basis.inAir
-        ? lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables', args.grouped_with, airGroupingKey)
-        : lookupFactor(supabase, 'TABLE_6_3_3', 'n_cables', args.grouped_with, buriedGroupingKey),
-    lookupFactor(supabase, basis.temperatureTable, 'ambient_c', args.ambient_c, tempFactorKey),
+        ? lookupFactorCited(supabase, 'TABLE_6_3_6', args.grouped_with, airGroupingKey, cite)
+        : lookupFactorCited(supabase, 'TABLE_6_3_3', args.grouped_with, buriedGroupingKey, cite),
+    lookupFactorCited(supabase, basis.temperatureTable, args.ambient_c, tempFactorKey, cite),
   ])
-  return { depth: d, thermal: th, grouping: gr, temperature: te }
+  return {
+    depth: d.factor,
+    thermal: th.factor,
+    grouping: gr.factor,
+    temperature: te.factor,
+    sources: { depth: d, thermal: th, grouping: gr, temperature: te },
+  }
 }
 
 /**
@@ -302,13 +325,38 @@ export function selectConservativeSortKey(
   return ascendingKeys[ascendingKeys.length - 1]!
 }
 
-async function lookupFactor(
+/** A derating factor and, when the model holds one, the SANS cell it is cited to. */
+export interface CitedFactor {
+  factor: number | null
+  /** Legacy table the factor was read from; null when the axis does not apply. */
+  tableCode: string | null
+  /** The SANS cell the factor equals, read from the extracted table. */
+  citation: {
+    tableCode: string
+    clause: string
+    page_pdf: number
+    page_printed: number
+  } | null
+  /** The cited SANS table is readable but its cell differs — surfaced, never applied. */
+  sansDisagrees: boolean
+}
+
+export interface DeratingSources {
+  depth: CitedFactor
+  thermal: CitedFactor
+  grouping: CitedFactor
+  temperature: CitedFactor
+}
+
+/** The SANS 10142-1 edition whose extracted tables cite the legacy derating factors. */
+export const CITED_SANS_10142_1_YEAR = 2021
+
+interface FactorRow { sort_key: number; row_data: Record<string, unknown>; citation?: Record<string, unknown> | null }
+
+async function readTableRows(
   supabase: TypedSupabaseClient,
   code: string,
-  key: string,
-  value: number,
-  factorKey = 'factor',
-): Promise<number | null> {
+): Promise<FactorRow[] | null> {
   const { data: t } = await (supabase as any)
     .schema('cable_schedule')
     .from('sans_tables')
@@ -319,14 +367,20 @@ async function lookupFactor(
   const { data: rows } = await (supabase as any)
     .schema('cable_schedule')
     .from('sans_rows')
-    .select('row_data, sort_key')
+    .select('row_data, sort_key, citation')
     .eq('table_id', (t as { id: string }).id)
     .order('sort_key', { ascending: true })
-  const list = ((rows ?? []) as Array<{ sort_key: number; row_data: Record<string, unknown> }>)
-  if (list.length === 0) return null
+  return (rows ?? []) as FactorRow[]
+}
 
-  const chosenKey = selectConservativeSortKey(list.map((r) => r.sort_key), value)
-  const startIdx = list.findIndex((r) => r.sort_key === chosenKey)
+/**
+ * Conservative lookup in one table. Returns the factor and the key of the row
+ * it came from (after scanning upward past rows that lack the column).
+ */
+function pickFactor(list: FactorRow[], value: number, factorKey: string, keyScale = 1): { factor: number; key: number; row: FactorRow } | null {
+  if (list.length === 0) return null
+  const chosenKey = selectConservativeSortKey(list.map((r) => r.sort_key * keyScale), value)
+  const startIdx = list.findIndex((r) => r.sort_key * keyScale === chosenKey)
   if (startIdx === -1) return null
   // The chosen row may not carry this column — e.g. the PVC-only uprating
   // rows below the 25 °C ground reference omit factor_xlpe_90c. Rows further
@@ -337,9 +391,78 @@ async function lookupFactor(
   // null: no published factor exists.
   for (let i = startIdx; i < list.length; i++) {
     const f = list[i]!.row_data[factorKey]
-    if (typeof f === 'number') return f
+    if (typeof f === 'number') return { factor: f, key: list[i]!.sort_key * keyScale, row: list[i]! }
   }
   return null
+}
+
+/**
+ * The calculator's factor is ALWAYS the legacy table's — this never changes a
+ * number. It is cited to SANS 10142-1 only when the extracted table (which
+ * row security shows to WM members only, owner decision D2) is readable AND
+ * its conservative lookup lands on the same row AND that cell holds the same
+ * value. The column pairing comes from LEGACY_CROSSCHECKS, the same mapping
+ * the audit proved cell by cell. A readable SANS cell that differs is
+ * reported as `sansDisagrees` and not applied.
+ */
+async function lookupFactorCited(
+  supabase: TypedSupabaseClient,
+  code: string,
+  value: number,
+  factorKey: string,
+  cite: boolean,
+): Promise<CitedFactor> {
+  const legacy = await readTableRows(supabase, code)
+  const picked = legacy ? pickFactor(legacy, value, factorKey) : null
+  const result: CitedFactor = { factor: picked?.factor ?? null, tableCode: code, citation: null, sansDisagrees: false }
+  if (!picked || !cite) return result
+
+  const mapping = LEGACY_CROSSCHECKS.find(
+    (m) => m.legacyCode === code && m.pairs.some((p) => p.legacy === factorKey),
+  )
+  if (!mapping) return result
+  const sansColumn = mapping.pairs.find((p) => p.legacy === factorKey)!.sans
+  const sansCode = tableCode('SANS 10142-1', CITED_SANS_10142_1_YEAR, mapping.sansClause)
+  const sans = await readTableRows(supabase, sansCode)
+  if (!sans || sans.length === 0) return result
+  const sansPick = pickFactor(sans, value, sansColumn, mapping.keyScale ?? 1)
+  if (!sansPick || Math.abs(sansPick.key - picked.key) > 1e-9) return result
+  if (Math.abs(sansPick.factor - picked.factor) > 1e-9) return { ...result, sansDisagrees: true }
+  const c = sansPick.row.citation
+  if (!c || typeof c.page_pdf !== 'number' || typeof c.page_printed !== 'number' || typeof c.clause !== 'string') return result
+  return {
+    ...result,
+    citation: { tableCode: sansCode, clause: c.clause, page_pdf: c.page_pdf, page_printed: c.page_printed },
+  }
+}
+
+/** One legacy table's audit verdict, as stored in sans_tables.verification. */
+export interface ReferenceVerdict {
+  status: 'verified' | 'partially_verified' | 'mismatch' | 'not_checkable'
+  checked_on?: string
+  against?: Array<{ standard?: string; edition?: string; clause?: string; page_printed?: number; citation?: string }>
+  /** Per legacy column, how far up the key range SANS backs it (see columnCoverage). */
+  coverage?: Record<string, { up_to: number | null; whole: boolean; values?: Record<string, number>; against_index?: number }>
+  note?: string | null
+}
+/** Verdicts keyed by legacy table code. Plain JSON — safe to hand to a client component. */
+export type ReferenceProvenance = Record<string, ReferenceVerdict>
+
+/**
+ * The audit verdict of every legacy reference table, read from the model
+ * (written by scripts/standards/load.ts). Empty when none has been stamped.
+ */
+export async function loadReferenceProvenance(supabase: TypedSupabaseClient): Promise<ReferenceProvenance> {
+  const { data } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('sans_tables')
+    .select('code, verification')
+    .eq('provenance', 'transcribed')
+  const out: ReferenceProvenance = {}
+  for (const r of (data ?? []) as Array<{ code: string; verification: ReferenceVerdict | null }>) {
+    if (r.verification && typeof r.verification.status === 'string') out[r.code] = r.verification
+  }
+  return out
 }
 
 function normalise(r: Record<string, unknown>): CablePropertyLookup {

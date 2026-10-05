@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ENTRY_TYPE_LABELS } from '@esite/shared'
@@ -20,16 +20,43 @@ const ENTRY_TYPE_STYLES: Record<DiaryEntryType, { color: string; bg: string; bor
   general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)', border: 'var(--c-border)' },
 }
 
+/**
+ * How the form arrives when reached from the project's Capture page:
+ * `entry` opens it ready to type, `photo` opens it with the photo control
+ * leading. Absent = the usual collapsed "+ Add Entry" button.
+ */
+export type DiaryCaptureMode = 'entry' | 'photo'
+
 interface Props {
   projectId: string
   orgId: string
   userId: string
+  initialMode?: DiaryCaptureMode
 }
 
-export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
+export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(initialMode !== undefined)
+  // The Capture mode applies to the first form only. Closing the form (save or
+  // cancel) drops it, and drops ?new= from the URL so a reload or Back does not
+  // reopen it; the next "+ Add Entry" opens the ordinary layout.
+  const [mode, setMode] = useState<DiaryCaptureMode | undefined>(initialMode)
+  function close() {
+    setOpen(false)
+    if (mode) {
+      setMode(undefined)
+      // Drop only ?new=; any other query (e.g. ?n=) and the hash survive.
+      const url = new URL(window.location.href)
+      url.searchParams.delete('new')
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+    }
+  }
+  const formRef = useRef<HTMLFormElement>(null)
+  // Arriving from Capture: bring the open form into view once, on mount.
+  useEffect(() => {
+    if (initialMode) formRef.current?.scrollIntoView?.({ block: 'start' })
+  }, [initialMode])
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')
@@ -111,7 +138,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
       setDelays('')
       setFiles([])
       setCreatedEntryId(null)
-      setOpen(false)
+      close()
       startTransition(() => router.refresh())
     } finally {
       submittingRef.current = false
@@ -127,13 +154,76 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
     )
   }
 
+  const photoMode = mode === 'photo'
+
+  // Attachments lead the form in photo mode (reached from Capture → Photo), so
+  // the photo control is the first thing on screen; otherwise they sit last.
+  const attachments = (
+      <div>
+        <label className="ob-label">Attachments</label>
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          {([
+            { label: photoMode ? '📷 Take or add photos' : '📷 Photo', accept: 'image/*' },
+            { label: '🎥 Video', accept: 'video/*' },
+            { label: '📄 Document', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
+          ] as const).map(ctrl => (
+            <label
+              key={ctrl.label}
+              style={{
+                flex: 1, textAlign: 'center', cursor: 'pointer', fontSize: 12,
+                padding: '8px 10px', borderRadius: 6,
+                ...(photoMode && ctrl.accept === 'image/*'
+                  ? { border: '1px solid var(--c-amber)', background: 'var(--c-amber-dim)', color: 'var(--c-amber)', fontWeight: 600 }
+                  : { border: '1px solid var(--c-border)', background: 'var(--c-panel)', color: 'var(--c-text-dim)' }),
+              }}
+            >
+              {ctrl.label}
+              <input
+                type="file"
+                multiple
+                accept={ctrl.accept}
+                onChange={e => {
+                  const picked = Array.from(e.target.files ?? [])
+                  // De-dupe: the same photo picked twice (or via two of the three
+                  // inputs) must not upload as two attachments.
+                  setFiles(prev => {
+                    const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`
+                    const seen = new Set(prev.map(key))
+                    return [...prev, ...picked.filter(f => !seen.has(key(f)))]
+                  })
+                  e.target.value = ''
+                }}
+                style={{ display: 'none' }}
+              />
+            </label>
+          ))}
+        </div>
+        {files.length > 0 && (
+          <ul style={{ marginTop: 6, fontSize: 12, color: 'var(--c-text-dim)', listStyle: 'none', padding: 0 }}>
+            {files.map((f, i) => (
+              <li key={`${f.name}-${f.size}-${f.lastModified}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>{f.name} ({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                <button
+                  type="button"
+                  onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                  style={{ background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer' }}
+                >✕</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+  )
+
   return (
-    <form onSubmit={submit} className="data-panel" style={{ marginTop: 16 }}>
+    <form ref={formRef} id="new-entry" onSubmit={submit} className="data-panel" style={{ marginTop: 16 }}>
       <div className="data-panel-header">
         <span className="data-panel-title">New Diary Entry</span>
       </div>
       <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
+
+        {photoMode && attachments}
 
         {/* Entry type */}
         <div>
@@ -287,59 +377,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
           </div>
         )}
 
-        {/* Attachments */}
-        <div>
-          <label className="ob-label">Attachments</label>
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            {([
-              { label: '📷 Photo', accept: 'image/*' },
-              { label: '🎥 Video', accept: 'video/*' },
-              { label: '📄 Document', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
-            ] as const).map(ctrl => (
-              <label
-                key={ctrl.label}
-                style={{
-                  flex: 1, textAlign: 'center', cursor: 'pointer', fontSize: 12,
-                  padding: '8px 10px', borderRadius: 6, border: '1px solid var(--c-border)',
-                  background: 'var(--c-panel)', color: 'var(--c-text-dim)',
-                }}
-              >
-                {ctrl.label}
-                <input
-                  type="file"
-                  multiple
-                  accept={ctrl.accept}
-                  onChange={e => {
-                    const picked = Array.from(e.target.files ?? [])
-                    // De-dupe: the same photo picked twice (or via two of the three
-                    // inputs) must not upload as two attachments.
-                    setFiles(prev => {
-                      const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`
-                      const seen = new Set(prev.map(key))
-                      return [...prev, ...picked.filter(f => !seen.has(key(f)))]
-                    })
-                    e.target.value = ''
-                  }}
-                  style={{ display: 'none' }}
-                />
-              </label>
-            ))}
-          </div>
-          {files.length > 0 && (
-            <ul style={{ marginTop: 6, fontSize: 12, color: 'var(--c-text-dim)', listStyle: 'none', padding: 0 }}>
-              {files.map((f, i) => (
-                <li key={`${f.name}-${f.size}-${f.lastModified}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
-                  <span>{f.name} ({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
-                  <button
-                    type="button"
-                    onClick={() => setFiles(files.filter((_, j) => j !== i))}
-                    style={{ background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer' }}
-                  >✕</button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        {!photoMode && attachments}
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 8 }}>
@@ -353,7 +391,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
           </button>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={close}
             style={{
               padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
               border: '1px solid var(--c-border)',
