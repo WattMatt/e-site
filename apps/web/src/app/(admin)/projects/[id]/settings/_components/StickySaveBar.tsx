@@ -56,6 +56,7 @@ export function StickySaveBar({ isDirty, onSave, onDiscard }: StickySaveBarProps
 
   return (
     <div
+      className="sticky-save-bar"
       role="region"
       aria-label="Unsaved changes"
       aria-live="polite"

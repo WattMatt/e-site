@@ -472,6 +472,26 @@ body {
   flex-direction: column;
 }
 
+/* The main column beside the sidebar. Was an inline style on the (admin)
+   layout; a class so the phone shell below can re-flow it. */
+.portal-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.portal-top { flex-shrink: 0; }
+
+/* Wrappers around header controls exist only for the phone layout; on wider
+   screens they generate no box, so the header lays out exactly as before. */
+.portal-header-contents { display: contents; }
+
+/* Phone-shell pieces are hidden on wider screens. */
+.portal-header-brand,
+.mobile-tabbar,
+.mobile-project-bar { display: none; }
+
 /* ─── Page Header ───────────────────────────────────────────── */
 .page-header {
   display: flex;
@@ -1396,6 +1416,176 @@ body {
   letter-spacing: -0.025em;
   font-variation-settings: 'opsz' 144, 'SOFT' 30;
 }
+
+
+/* ─── Phone shell (below 768 px) ───────────────────────────────────
+   One DOM, two layouts, switched by media query only — no matchMedia
+   in layout, so there is no first-paint flash (roadmap §09(b)).
+   The sidebar is hidden; the page scrolls as a document so phone
+   browser toolbars can collapse; .portal-top sticks to the top and
+   the tab bar is fixed to the bottom, both inside the safe areas. */
+@media screen and (max-width: 767.98px) {
+  .sidebar { display: none; }
+  .portal-shell { display: block; min-height: 100dvh; }
+  .portal-column { display: block; overflow: visible; }
+
+  .portal-top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--c-surface);
+  }
+  .portal-header {
+    height: auto;
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    justify-content: flex-start;
+    gap: 10px;
+  }
+  .portal-header-brand { display: inline-flex; flex-shrink: 0; text-decoration: none; }
+  /* Ellipsis on the org NAME only — never overflow:hidden on a box that
+     contains the switcher's absolutely-positioned menu, or the menu is
+     clipped to nothing. */
+  .portal-header-org { display: flex; align-items: center; flex: 1; min-width: 0; }
+  .portal-header-org .org-switcher { max-width: 100%; }
+  .portal-header-org .org-switcher-button { max-width: 100%; min-height: 40px; }
+  .portal-header-org .org-switcher-name {
+    display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .portal-header-org .org-switcher-menu { left: 0; right: auto !important; max-width: calc(100vw - 24px); }
+  /* Fixed bottom bars (settings StickySaveBar) sit above the tab bar. */
+  .sticky-save-bar { bottom: calc(72px + env(safe-area-inset-bottom)) !important; }
+  .portal-header-desktop-only { display: none !important; }
+
+  .portal-main {
+    overflow: visible;
+    padding: 16px max(16px, env(safe-area-inset-right)) calc(88px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  .page-header { flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+  .page-title { font-size: 20px; overflow-wrap: anywhere; }
+  .minimal-legal-nav { padding-left: 0 !important; padding-right: 0 !important; }
+
+  /* Bottom tab bar */
+  .mobile-tabbar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    background: var(--c-surface);
+    border-top: 1px solid var(--c-border);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .mobile-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 56px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--c-text-mid);
+    background: none;
+    border: none;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-tab.active { color: var(--c-amber); }
+  .mobile-tab:focus-visible { outline: 2px solid var(--c-amber); outline-offset: -2px; }
+
+  /* In-project bar: name + back, then the section chips */
+  .mobile-project-bar { display: block; border-bottom: 1px solid var(--c-border); }
+  .mobile-project-title { display: flex; align-items: center; gap: 2px; padding: 0 12px 0 2px; min-height: 44px; }
+  .mobile-project-back {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; color: var(--c-text-mid); flex-shrink: 0;
+  }
+  .mobile-project-name { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .project-chip-row {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px 12px 10px;
+    scrollbar-width: none;
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .project-chip-row::-webkit-scrollbar { display: none; }
+  .project-chip {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 22px;
+    border: 1px solid var(--c-border);
+    background: var(--c-panel);
+    color: var(--c-text-mid);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .project-chip.active { color: var(--c-base); background: var(--c-amber); border-color: var(--c-amber); }
+}
+
+/* ─── Bottom sheet (phone shell) ──────────────────────────────────
+   Opacity-only entrance: a transform animation offsets Safari's
+   hit-testing while it runs (PR #150). */
+@keyframes sheetFade { from { opacity: 0; } to { opacity: 1; } }
+.bottom-sheet-root { position: fixed; inset: 0; z-index: 100; }
+.bottom-sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); animation: sheetFade 0.18s ease both; }
+.bottom-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0 auto;
+  max-width: 640px;
+  max-height: 85dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-panel);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheetFade 0.18s ease both;
+  outline: none;
+}
+.bottom-sheet-grip { width: 36px; height: 4px; border-radius: 2px; background: var(--c-border-mid); margin: 8px auto 0; flex-shrink: 0; }
+.bottom-sheet-header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 2px 16px; flex-shrink: 0; }
+.bottom-sheet-title { font-size: 16px; font-weight: 700; }
+.bottom-sheet-close {
+  width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--c-text-mid); cursor: pointer;
+}
+.bottom-sheet-body { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 12px; }
+.sheet-list { list-style: none; margin: 0; padding: 0; }
+.sheet-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 56px; padding: 8px 16px;
+  background: none; border: none; border-top: 1px solid var(--c-border);
+  color: var(--c-text); text-decoration: none; text-align: left; cursor: pointer; font: inherit;
+}
+.sheet-row.active { color: var(--c-amber); }
+.sheet-row-static { cursor: default; justify-content: space-between; }
+.sheet-row-icon { display: inline-flex; justify-content: center; width: 24px; color: var(--c-amber); flex-shrink: 0; }
+.sheet-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.sheet-row-label { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.sheet-row-hint { font-size: 12px; color: var(--c-text-dim); margin-top: 2px; }
+.sheet-row-chevron { color: var(--c-text-dim); flex-shrink: 0; }
+.sheet-context { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px 16px; }
+.sheet-context-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-text-dim); }
+.sheet-context-value { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-context-change { min-height: 44px; padding: 0 8px; background: none; border: none; color: var(--c-amber); font: inherit; font-size: 13px; cursor: pointer; }
+.sheet-prompt { padding: 4px 16px 12px; color: var(--c-text-mid); font-size: 14px; }
+.sheet-empty { padding: 24px 16px; color: var(--c-text-dim); font-size: 14px; text-align: center; }
 
 /* ── Standards reference (/standards) ─────────────────────────────────────── */
 .std-layout { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }

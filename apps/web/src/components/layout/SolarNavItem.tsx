@@ -12,12 +12,14 @@ import type { SolarNavBadge } from '@esite/shared'
 import { getSolarNavStateAction } from '@/actions/solar-requests.actions'
 
 export function SolarNavItem({
-  projectId, active, refreshKey,
+  projectId, active, refreshKey, variant = 'sidebar',
 }: {
   projectId: string
   active: boolean
   /** Changes on every navigation (the pathname) so an approval or withdraw shows without a reload. */
   refreshKey?: string
+  /** 'chip' renders it in the phone shell's project chip bar, with the same visibility rule. */
+  variant?: 'sidebar' | 'chip'
 }) {
   const [badge, setBadge] = useState<SolarNavBadge | null>(null)
   const shownFor = useRef<string | null>(null)
@@ -41,10 +43,10 @@ export function SolarNavItem({
   return (
     <Link
       href={`/projects/${projectId}/solar`}
-      className={`sidebar-nav-item${active ? ' active' : ''}`}
+      className={variant === 'chip' ? `project-chip${active ? ' active' : ''}` : `sidebar-nav-item${active ? ' active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <Sun className="sidebar-nav-icon" size={16} />
+      {variant === 'sidebar' && <Sun className="sidebar-nav-icon" size={16} />}
       Solar
       {badge === 'locked' && <Lock size={12} aria-label="Solar is locked" style={{ marginLeft: 'auto', opacity: 0.7 }} />}
       {badge === 'pending' && <Clock size={12} aria-label="Solar access request pending" style={{ marginLeft: 'auto', opacity: 0.7 }} />}
