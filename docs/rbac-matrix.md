@@ -39,6 +39,7 @@ membership.
 | `/dashboard` | W | W | W | W | W | W | R |
 | `/projects` (list) | W | W | W | W | R | — | R |
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
+| `/projects/[id]/capture` (the single in-project Capture menu — diary entry, snag, site form, inspection, photo; added 2026-10-05). Each tile is shown only to the roles its target already admits (`lib/capture/capture-actions.ts`); the inspection tile is PM-or-above and links to `/inspections/unlock` when the org has not unlocked inspections | W | W | W | W (no inspection) | W (snag, site form) | W (snag, site form) | → `/portal` |
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/quality-control` (list) | W | W | W | W | R | — | R⁹ |
@@ -61,6 +62,7 @@ membership.
 | `/rfis?projectId=…` | W | W | W | W | R | — | R |
 | `/inspections/templates` | W² | W² | — | — | — | — | — |
 | `/inspections/unlock` | W | R | R | — | — | — | — |
+| `/site` — the global "Site capture" page was removed 2026-10-05; the bare path is a temporary redirect for old links. The QR resolver `/site/tag/[text]` is a separate route and unchanged | → `/projects` | → `/projects` | → `/projects` | → `/projects` | → `/projects` | → `/projects` | → `/portal` |
 | `/marketplace` | W³ | W³ | W³ | W³ | — | — | — |
 | `/marketplace/supplier/*` | — | — | — | — | — | W | — |
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |

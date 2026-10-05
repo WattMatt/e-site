@@ -188,3 +188,46 @@ describe('AddDiaryEntryForm', () => {
     expect(uploadMock.mock.calls[0][1].files).toHaveLength(1)
   })
 })
+
+describe('AddDiaryEntryForm — arriving from Capture', () => {
+  it('stays collapsed behind "+ Add Entry" when opened normally', () => {
+    render(<AddDiaryEntryForm {...props} />)
+    expect(screen.getByText('+ Add Entry')).toBeTruthy()
+    expect(document.querySelector('form')).toBeNull()
+  })
+
+  it('initialMode="entry" opens the form straight away', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="entry" />)
+    expect(screen.queryByText('+ Add Entry')).toBeNull()
+    expect(document.querySelector('form#new-entry')).not.toBeNull()
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+  })
+
+  it('initialMode="photo" opens the form with the photo control leading', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    const form = document.querySelector('form#new-entry')!
+    expect(form).not.toBeNull()
+    const photo = screen.getByText('📷 Take or add photos')
+    const typeLabel = screen.getByText('Entry type')
+    // The photo control precedes the entry-type picker in document order.
+    expect(photo.compareDocumentPosition(typeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const input = photo.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input.accept).toBe('image/*')
+  })
+
+  it('a photo picked in photo mode is uploaded with the entry', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    uploadMock.mockResolvedValue(undefined)
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    const input = screen.getByText('📷 Take or add photos').querySelector('input') as HTMLInputElement
+    const file = new File(['x'], 'site.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [file] } })
+    typeProgress('Board MB1 installed.')
+    await submitForm()
+    expect(uploadMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ entryId: 'e1', files: [file] }),
+      expect.any(Function),
+    )
+  })
+})

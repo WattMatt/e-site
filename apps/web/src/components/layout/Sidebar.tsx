@@ -9,7 +9,7 @@ import {
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
-  ShieldCheck, FileText, BarChart3, Sun,
+  ShieldCheck, FileText, BarChart3, Sun, Camera,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
 
@@ -73,6 +73,9 @@ const GLOBAL_NAV = [
 function projectNav(id: string) {
   return [
     { href: `/projects/${id}`,              label: 'Overview',    Icon: LayoutGrid,    exact: true },
+    // Site capture is always about one project, so its single entry lives here
+    // (E1, 2026-10-05) — never in the global footer.
+    { href: `/projects/${id}/capture`,      label: 'Capture',     Icon: Camera,        exact: false },
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
     { href: `/projects/${id}/quality-control`, label: 'Quality Control', Icon: ShieldCheck, exact: false },
     { href: `/projects/${id}/diary`,        label: 'Site Diary',  Icon: BookOpen,      exact: false },
