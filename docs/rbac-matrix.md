@@ -50,6 +50,7 @@ membership.
 | `/projects/[id]/forms` (site forms list) | W | W | W | W | W | W | R¹⁰ |
 | `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
 | `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
+| `/projects/[id]/tenders` and `/projects/[id]/tenders/[tenderId]` (tender BOQ import + review; `requireEffectiveRole(ORG_WRITE_ROLES)`, RLS 00226) | W | W | W | — | — | — | — |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/cables/[revisionId]/measure` (the cable-route tool: worklist, sheet canvas and run — `?supply=` `?sheet=` `?page=`) | W | W | W | → schedule | → schedule | → schedule | → schedule |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
@@ -796,6 +797,15 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 > **Acting on WhatsApp is acting as the user.** Every WhatsApp action runs through a `whatsapp.wa_*` function owned by the `whatsapp_actor` role (NOLOGIN, no BYPASSRLS, member of `authenticated`) after setting the user's JWT claims, so the table's real RLS policies and the work-item transition guard judge it — there is no parallel rule set (migration `00222`; proven by `scripts/db/assert-whatsapp-actor.sql` including a re-own-to-`postgres` mutation). **Edge functions:** `whatsapp-webhook` is deployed `--no-verify-jwt` and authenticates Meta by the `X-Hub-Signature-256` HMAC only; `whatsapp-worker` is gateway-verified + `requireServiceRole`.
 >
 > **Project channel (sub-project 2, migration `00223`).** Over WhatsApp a member can list their projects (`wa_my_projects`: projects where they hold an effective role), list open items (`wa_project_items`: RLS `work_items_select`), re-open a card (`wa_item_card`), and post to the project as a **diary entry** (`wa_post_diary`: the diary INSERT policy — org member, not a client viewer, project not payment-paused) or a **triage issue** (`wa_post_issue`: `work_items_insert` + `work_items_insert_gate`, i.e. `task.write_roles` = owner/admin/PM/contractor; assignee = triage owner, gatekeeper = creator). A client viewer is never offered Post, and the database refuses them regardless. WhatsApp diary posts do **not** send the diary email (it is sent by the web action, not a trigger).
+
+### Tenders (`tender.actions.ts`, E5 slice A, migration `00226`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `listTendersAction` / `createTenderAction` / `getTenderDetailAction` | W | W | W | — | — | — | — |
+| `getTenderUploadUrlAction` / `importTenderAction` / `setRateCellTypeAction` / `deleteTenderAction` (draft only) | W | W | W | — | — | — | — |
+
+> Every tender table (`projects.tenders`, `tender_boq_items`, `tender_estimate_lines`, `tender_requirements`) is readable **only** by the project's owner/admin/project manager (`user_effective_project_role`), not by every project member: a contractor on site must not see a tender being prepared, and nobody outside WM may ever read `tender_estimate_lines` (WM's internal estimate). Proven by `scripts/db/assert-tender-boq-roles.sql` (29 assertions, impersonating real production users; mutation-tested). Once a tender leaves `draft` its BOQ, estimate and requirements are frozen by trigger. The `tender-files` bucket has no client storage policies; the server mints signed upload/download URLs after the role check. Import runs through `projects.tender_replace_boq` (SECURITY DEFINER with one `user_can_manage_tender` gate up front, measured 268 ms for 3,000 rows vs 5.3 s as invoker against the 8 s `authenticated` statement timeout); stored workbook paths must sit inside `org/project/tender/`. Status only moves forward; an issued tender's import is frozen and needs every fixed sum priced. Slice B adds the tenderer read path.
 
 ## Public / unauthenticated
 
