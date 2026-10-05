@@ -60,3 +60,14 @@ describe('Sidebar — Tariffs link (E7)', () => {
     }
   })
 })
+
+describe('Sidebar — Rate library link', () => {
+  it.each(['owner', 'admin', 'project_manager'] as const)('%s sees it', role => {
+    render(<Sidebar role={role} />)
+    expect(screen.getByRole('link', { name: 'Rate library' }).getAttribute('href')).toBe('/rates')
+  })
+  it.each(['contractor', 'client_viewer', 'supplier', 'inspector'] as const)('%s does not', role => {
+    render(<Sidebar role={role} />)
+    expect(screen.queryByRole('link', { name: 'Rate library' })).toBeNull()
+  })
+})

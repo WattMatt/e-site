@@ -1,0 +1,2150 @@
+{
+ "_about": "Hand-labelled sample of auto-matched BOQ lines (labelled by the implementing agent on 2026-10-05, not by the owner). Headings, descriptions and units only: no rates, no contractor names. tuning = 137 lines drawn first (seed 20261005) and used to fix rules; holdout = 100 distinct texts drawn afterwards (seed 777) from texts not in the tuning set. firstPassCorrect records whether the matcher was right BEFORE any fix found by that set. split = which rate columns the original line priced (an input, kept because scope depends on it). 2026-10-05 review: a rule with no required attribute no longer auto-confirms (bare \"Power pole\" → review queue); its expected label became null. firstPassCorrect is unchanged — it records the matcher as it was when measured.",
+ "_measured": {
+  "tuning": {
+   "n": 137,
+   "correct": 131,
+   "precision": 0.9562
+  },
+  "holdout": {
+   "n": 100,
+   "correct": 98,
+   "precision": 0.98
+  }
+ },
+ "rows": [
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 T-Piece",
+   "unit": "No",
+   "expected": "trunking|no|component=t_piece|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "Double 16 A, Combo socket 164-2(Dedicated)",
+   "unit": "No",
+   "expected": null,
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin, switched socket outlet in 100x100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES - SUPPLY AND INSTALL",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "FLAT TWIN AND EARTH FIXED TO CEILINGS HANGERS",
+   "description": "2,5mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2+e|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "16A, 5 pin three phase socket outlet complete with socket",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=5|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "PVC CONDUITS",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWERSKIRTING",
+   "description": "Blank/Telephone data cover",
+   "unit": "No",
+   "expected": "powerskirting|no|component=cover",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2,5mm2",
+   "unit": "m",
+   "expected": "earth_conductor|m|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "48 Way (DB-BU)",
+   "unit": "No",
+   "expected": "distribution_board|no|scope=install_only|ways=48",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE ON CABLE LADDER",
+   "description": "4C x 6mm2",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ladder|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES - SUPPLY AND INSTALL",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Laborer:- Saturday",
+   "unit": "HR",
+   "expected": "labour|hr|time=saturday|trade=labourer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P8000 Straight lengths",
+   "unit": "No",
+   "expected": "trunking|no|component=straight|profile=p8000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "300 wide  Crossovers",
+   "unit": "No",
+   "expected": "cable_tray|no|component=crossover|type=tray|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWERSKIRTING",
+   "description": "Straight lengths",
+   "unit": "No",
+   "expected": "powerskirting|no|component=straight",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Laborer:- Normal Time",
+   "unit": "HR",
+   "expected": "labour|hr|time=normal|trade=labourer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "25mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWERSKIRTING",
+   "description": "16A, 3 pin switched socket outlet",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=powerskirting|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 70mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=70",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "2 Core x 2,5mm",
+   "unit": "No",
+   "expected": "multicore_wiring|no|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "2 Core x 4mm",
+   "unit": "No",
+   "expected": "multicore_wiring|no|cores=2|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Conduit Installer:- Saturday",
+   "unit": "HR",
+   "expected": "labour|hr|time=saturday|trade=conduit_installer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Conduit Installer:- Sunday",
+   "unit": "HR",
+   "expected": "labour|hr|time=sunday|trade=conduit_installer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "5A unswitched socket outlet mounted in 100 x 50 box (Box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=5|switching=unswitched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "TRUNKING CHASED INTO CONCRETE FLOOR COMPLETE WITH COVER PLATE",
+   "description": "P2 200 Vertical bends",
+   "unit": "No",
+   "expected": "trunking|no|component=vertical_bend|profile=p2-200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 50 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x50x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "4 Core x 2.5mm",
+   "unit": "No",
+   "expected": "multicore_wiring|no|cores=4|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "800 wide T - Pieces",
+   "unit": "No",
+   "expected": "cable_tray|no|component=t_piece|type=tray|width=800",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "32A, 5 pin, three phase socket outlet complete with socket",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=5|rating=32|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRE BASKET",
+   "description": "200mm Wide Straight lengths",
+   "unit": "m",
+   "expected": "cable_tray|m|component=straight|type=wire_basket|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWER POLES",
+   "description": "32A, 5 pin, three phase socket outlet complete with socket",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=power_pole|pins=5|rating=32|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "FLOOR BOXES",
+   "description": "FD2 surface pedestal",
+   "unit": "No",
+   "expected": "floor_box|no|type=fd2",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 Corners",
+   "unit": "No",
+   "expected": "trunking|no|component=corner|profile=p2000",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWER POLES",
+   "description": "Power pole",
+   "unit": "No",
+   "expected": null,
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "ISOLATORS",
+   "description": "30A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=30",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "5A, 3 pin unswitched socket outlet in 100x50 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=5|switching=unswitched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "Double 16A, 3 pin switched socket outlet in 100 x 100 box (Box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=double|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 Bends",
+   "unit": "No",
+   "expected": "trunking|no|component=bend|profile=p2000",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "4mm2",
+   "unit": "m",
+   "expected": "conductor|m|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES - SUPPLY AND INSTALL",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES - SUPPLY AND INSTALL",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "Double 16A, 3 pin switched socket outlet in 100 x 100 box (Box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=double|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 185mm² ECC  cable",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=185",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "GEYSERS",
+   "description": "20A connection",
+   "unit": "No",
+   "expected": "geyser_connection|no|rating=20",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "ELECTRICAL INSTALLATION ASSOCIATED WITH THE AIR-CONDITIONING TO THE LINE SHOPS",
+   "description": "20A DP",
+   "unit": "No",
+   "expected": "isolator|no|poles=dp|rating=20",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "48 Way (DB-BU)",
+   "unit": "No",
+   "expected": "distribution_board|no|scope=install_only|ways=48",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P8000 Bend",
+   "unit": "No",
+   "expected": "trunking|no|component=bend|profile=p8000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 70mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=70",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWERSKIRTING",
+   "description": "Bends",
+   "unit": "No",
+   "expected": "powerskirting|no|component=bend",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "300 wide vertical bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=vertical_bend|type=tray|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin double switched socket outlet in   100x100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=double|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "DRAW WIRE",
+   "description": "Supply and draw into conduit or trunking 1mm Ø galvanized draw wire",
+   "unit": "m",
+   "expected": "draw_wire|m|dia=1",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "ISOLATORS",
+   "description": "80A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=80",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 Straight lengths",
+   "unit": "No",
+   "expected": "trunking|no|component=straight|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "SURFIX 4C x 4mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=4|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "FLOOR BOXES",
+   "description": "FD2 surface pedestal",
+   "unit": "No",
+   "expected": "floor_box|no|type=fd2",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWERSKIRTING",
+   "description": "16A, 3 pin dedicated switched socket outlet",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=powerskirting|pins=3|rating=16|switching=dedicated",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "POWER POLES",
+   "description": "16A, 5 pin three phase socket outlet complete with socket",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=power_pole|pins=5|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "1000 wide T - Pieces",
+   "unit": "No",
+   "expected": "cable_tray|no|component=t_piece|type=tray|width=1000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "300 wide",
+   "unit": "m",
+   "expected": "cable_tray|m|component=straight|type=tray|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "300 wide T - Pieces",
+   "unit": "No",
+   "expected": "cable_tray|no|component=t_piece|type=tray|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 10mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=10",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "100 wide horizontal bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=horizontal_bend|type=tray|width=100",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUCTOR",
+   "description": "4mm",
+   "unit": "m",
+   "expected": "conductor|m|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "50mm Ø (Galvanized)",
+   "unit": "No",
+   "expected": "conduit_box|no|material=steel|size=round50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUITS",
+   "description": "25mm Ø galvanized",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=steel",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2,5mm",
+   "unit": "m",
+   "expected": "earth_conductor|m|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "200 Wide Horizontal Bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=horizontal_bend|type=tray|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "TRENCHING AND CABLE SLEEVES (300 WIDE X 600 DEEP)",
+   "description": "Hard pickable ground",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=600|ground=hard_pickable|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 10mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=10",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "72 Way (150A TP)",
+   "unit": "Lot",
+   "expected": "distribution_board|no|scope=install_only|ways=72",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 4mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 70mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=70",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "50mm Ø (PVC)",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=round50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "200 Wide Straight Lengths",
+   "unit": "No",
+   "expected": "cable_tray|no|component=straight|type=tray|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "GEYSERS",
+   "description": "20A connection",
+   "unit": "No",
+   "expected": "geyser_connection|no|rating=20|scope=install_only",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin, switched socket outlet in 100x100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 Bends",
+   "unit": "No",
+   "expected": "trunking|no|component=bend|profile=p2000",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 T-Piece",
+   "unit": "No",
+   "expected": "trunking|no|component=t_piece|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 10mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=10",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 150mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=150",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 50mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 4mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 95mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=95",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Conduit Installer:- Over Time",
+   "unit": "HR",
+   "expected": "labour|hr|time=overtime|trade=conduit_installer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 35mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=35",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 185mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=185",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "TRENCHING (600 WIDE x 1000 DEEP)",
+   "description": "Hard pickable ground",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=1000|ground=hard_pickable|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "25mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "25mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 6mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Conduit Installer:- Sunday",
+   "unit": "HR",
+   "expected": "labour|hr|time=sunday|trade=conduit_installer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 50mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "TRENCHING AND CABLE SLEEVES    (300 WIDE x 600 DEEP)",
+   "description": "Blasting",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=600|ground=blasting|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "FLOOR BOXES",
+   "description": "16A Switched socket outlet",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=floor_box|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Electrician:- Normal Time",
+   "unit": "HR",
+   "expected": "labour|hr|time=normal|trade=electrician",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "ELECTRICAL INSTALLATION ASSOCIATED WITH THE AIR-CONDITIONING TO THE LINE SHOPS",
+   "description": "100A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=100",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TRAY",
+   "description": "100 wide T - Pieces",
+   "unit": "No",
+   "expected": "cable_tray|no|component=t_piece|type=tray|width=100",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT",
+   "description": "20mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LABOUR",
+   "description": "Electrician:- Over Time",
+   "unit": "HR",
+   "expected": "labour|hr|time=overtime|trade=electrician",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 25mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=25",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 50 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x50x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 Straight lengths",
+   "unit": "No",
+   "expected": "trunking|no|component=straight|profile=p2000",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "TRENCHING AND CABLE SLEEVES (300 WIDE X 600 DEEP)",
+   "description": "150 Ø NEXTUBE cable sleeves supply and install",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=150|material=nextube",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "50mm Ø",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=round50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 50mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "ELECTRICAL INSTALLATION ASSOCIATED WITH THE AIR-CONDITIONING TO THE LINE SHOPS",
+   "description": "25A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=25",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 6mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "CONDUIT BOXES",
+   "description": "100 x 100 x 50",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=100x100x50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2 Core x 2,5mm",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "APPLIANCES",
+   "description": "5A, 3 pin unswitched socket outlet in 100x50 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=5|switching=unswitched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 End caps",
+   "unit": "No",
+   "expected": "trunking|no|component=end_cap|profile=p2000",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 25mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=25",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "DRAW WIRE",
+   "description": "Galvanized (1.6mm Ø) draw wire drawn into conduit",
+   "unit": "m",
+   "expected": "draw_wire|m|dia=1.6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "LV CABLE DRAWN ON CABLE TRAY OR IN TRUNKING",
+   "description": "4C x 16mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=tray+trunking|size=16",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "Excavate and Backfill 600mm Wide & 1400mm deep with 200mm Soft Soil Bedding",
+   "description": "Pickable Soil",
+   "unit": "m",
+   "expected": "trenching|m|depth=1400|ground=pickable|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "Excavate and Backfill 600mm Wide & 1400mm deep with 200mm Soft Soil Bedding",
+   "description": "Soft Rock",
+   "unit": "m",
+   "expected": "trenching|m|depth=1400|ground=soft_rock|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "Excavate and Backfill 600mm Wide & 1400mm deep with 200mm Soft Soil Bedding",
+   "description": "Import material for bedding",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=1400|ground=bedding|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "Excavate and Backfill 600mm Wide & 1400mm deep with 200mm Soft Soil Bedding",
+   "description": "Backfill & Compact to min 91% MOD ASHTO",
+   "unit": "m",
+   "expected": "trenching|m|depth=1400|ground=backfill|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "MV Cable 300mm² x 3 AL 11KV XLPE",
+   "description": "MV Cable 300mm² x 3 AL 11KV XLPE",
+   "unit": "m",
+   "expected": "mv_cable|m|conductor=al|cores=3|kv=11|size=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "MV Cable 300mm² x 3 AL 11KV XLPE",
+   "description": "T - End Glanded Terminated",
+   "unit": "no",
+   "expected": "mv_cable_termination|no|conductor=al|cores=3|kv=11|size=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "tuning",
+   "heading": "MV Cable 300mm² x 3 AL 11KV XLPE",
+   "description": "J - Joint",
+   "unit": "no",
+   "expected": "mv_cable_joint|no|conductor=al|cores=3|kv=11|size=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "4mm",
+   "unit": "No",
+   "expected": "conductor|no|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR LAID ON CABLE TRAY",
+   "description": "4C x 70mm² ECC  cable",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=70",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 Straight lengths",
+   "unit": "m",
+   "expected": "trunking|m|component=straight|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ISOLATORS",
+   "description": "100A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=100",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING AND CABLE SLEEVES    (300 WIDE x 600 DEEP)",
+   "description": "Soft pickable ground",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=600|ground=soft_pickable|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUITS",
+   "description": "32mm Ø PVC",
+   "unit": "m",
+   "expected": "conduit|m|dia=32|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ELECTRICAL SLEEVES",
+   "description": "110mm Ø NEXTUBE cable sleeve",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=110|material=nextube",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERSKIRTING",
+   "description": "16A dedicated (red) S.S.O installed on power skirting",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=powerskirting|pins=3|rating=16|switching=dedicated",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "63A, 5 pin, three phase socket outlet complete with socket",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=5|rating=63|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 End caps",
+   "unit": "No",
+   "expected": "trunking|no|component=end_cap|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P8000 Bends",
+   "unit": "No",
+   "expected": "trunking|no|component=bend|profile=p8000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERSKIRTING",
+   "description": "Straight lengths",
+   "unit": "m",
+   "expected": "powerskirting|m|component=straight",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LABOUR",
+   "description": "Electrician:- Sunday",
+   "unit": "HR",
+   "expected": "labour|hr|time=sunday|trade=electrician",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TWIN AND EARTH CONDUCTOR",
+   "description": "2 Core x 2,5mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2 Core x 2,5mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "100 wide cover",
+   "unit": "No",
+   "expected": "cable_tray|no|component=cover|type=tray|width=100",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 95mm² ECC  cable",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=95",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 150mm2",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=150",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ELECTRICAL INSTALLATION ASSOCIATED WITH THE AIR-CONDITIONING TO THE LINE SHOPS",
+   "description": "80A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=80",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 50mm² ECC  cable",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin dedicated double switched socket outlet in 100 x 100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=double|pins=3|rating=16|switching=dedicated",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING AND CABLE SLEEVES (300 WIDE X 600 DEEP)",
+   "description": "100 Ø NEXTUBE cable sleeve supply and install",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=100|material=nextube",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ELECTRICAL SLEEVES",
+   "description": "160 Ø NEXTUBE sleeve",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=160|material=nextube",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 T - Pieces",
+   "unit": "No",
+   "expected": "trunking|no|component=t_piece|profile=p2000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING AND CABLE SLEEVES (600 WIDE X 1000 DEEP)",
+   "description": "160mm Ø NEXTUBE supply and install",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=160|material=nextube",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUITS",
+   "description": "25mm Ø PVC",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 6mm2",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2 core x 2,5mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH TERMINATIONS",
+   "description": "110mm Ø NEXTUBE supply and install",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=110|material=nextube",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "MINIATURE SUBSTATIONS",
+   "description": "1000KVA",
+   "unit": "No",
+   "expected": "mini_substation|no|kva=1000|scope=install_only",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "1000 wide horizontal bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=horizontal_bend|type=tray|width=1000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "60 Way (100A TP)",
+   "unit": "Lot",
+   "expected": "distribution_board|no|scope=install_only|ways=60",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "5A, 3 pin unswitched socket outlet in 100 x 50 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=5|switching=unswitched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "FLOOR BOX",
+   "description": "16A Euro 2 pin S.S.O installed in floor box",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=floor_box|pins=euro|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "200mm Wide Straight lengths",
+   "unit": "No",
+   "expected": "cable_tray|no|component=straight|type=tray|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERPOLE",
+   "description": "16A Euro S.S.O installed on power pole",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=power_pole|pins=euro|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRE BASKET",
+   "description": "200 Wide Vertical Bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=vertical_bend|type=wire_basket|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERSKIRTING",
+   "description": "End caps",
+   "unit": "No",
+   "expected": "powerskirting|no|component=end_cap",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING AND CABLE SLEEVES    (300 WIDE x 600 DEEP)",
+   "description": "Hard pickable ground",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=600|ground=hard_pickable|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUITS",
+   "description": "50mm Ø Draw Box",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=round50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLES LAID IN GROUND",
+   "description": "4 Core x 4mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 35mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=35",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P8000 Corners",
+   "unit": "No",
+   "expected": "trunking|no|component=corner|profile=p8000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 10mm2",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=10",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "500 wide T - Pieces",
+   "unit": "No",
+   "expected": "cable_tray|no|component=t_piece|type=tray|width=500",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin single switched socket outlet in 100 x 100 box (Box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR LAID ON CABLE TRAY",
+   "description": "4C x 185mm² ECC  cable",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=185",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUITS",
+   "description": "20mm Ø Galvanized",
+   "unit": "m",
+   "expected": "conduit|m|dia=20|material=steel",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2,5mm2",
+   "unit": "m",
+   "expected": "conductor|m|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ISOLATORS",
+   "description": "63A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=63",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4C x 240mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=240",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ISOLATORS",
+   "description": "32A DP",
+   "unit": "No",
+   "expected": "isolator|no|poles=dp|rating=32",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "600 wide horizontal bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=horizontal_bend|type=tray|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 4mm2",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TERMINATIONS",
+   "description": "4 Core x 6mm",
+   "unit": "No",
+   "expected": "cable_termination|no|conductor=cu|cores=4|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERSKIRTING",
+   "description": "16A Normal switched socket outlet on Powerskirting",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=powerskirting|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LABOUR",
+   "description": "Laborer:- Sunday",
+   "unit": "HR",
+   "expected": "labour|hr|time=sunday|trade=labourer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "ELECTRICAL INSTALLATION ASSOCIATED WITH THE AIR-CONDITIONING TO THE LINE SHOPS",
+   "description": "125A TP",
+   "unit": "No",
+   "expected": "isolator|no|poles=tp|rating=125",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH CONDUCTOR",
+   "description": "4mm",
+   "unit": "No",
+   "expected": "earth_conductor|no|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "1.0 mm x 7 core Screencable",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=7|size=1",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING (300 WIDE X 600 DEEP)",
+   "description": "Soft pickable ground",
+   "unit": "m3",
+   "expected": "trenching|m3|depth=600|ground=soft_pickable|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "600 wide Crossovers",
+   "unit": "No",
+   "expected": "cable_tray|no|component=crossover|type=tray|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "1000 wide",
+   "unit": "m",
+   "expected": "cable_tray|m|component=straight|type=tray|width=1000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING AND CABLE SLEEVES (300 WIDE X 600 DEEP)",
+   "description": "Sand filling",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=600|ground=sand_fill|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin single switched socket outlet in   100x100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 25mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=25",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUITS",
+   "description": "25mm Ø Galvanized",
+   "unit": "m",
+   "expected": "conduit|m|dia=25|material=steel",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRUNKING CHASED INTO CONCRETE FLOOR COMPLETE WITH COVER PLATE",
+   "description": "P2 200 Horizontal bends",
+   "unit": "No",
+   "expected": "trunking|no|component=horizontal_bend|profile=p2-200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "PVC CONDUITS",
+   "description": "32mm Ø",
+   "unit": "m",
+   "expected": "conduit|m|dia=32|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "PVC SLEEVES",
+   "description": "110mm Ø",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=110|material=pvc",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 Straight lengths",
+   "unit": "m",
+   "expected": "trunking|m|component=straight|profile=p2000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING (600 WIDE x 1000 DEEP)",
+   "description": "Blasting",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=1000|ground=blasting|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LABOUR",
+   "description": "Conduit Installer:- Normal Time",
+   "unit": "HR",
+   "expected": "labour|hr|time=normal|trade=conduit_installer",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWER SKIRTING WITH RELEVANT APPLIANCES",
+   "description": "Bends",
+   "unit": "No",
+   "expected": "powerskirting|no|component=bend",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "MINIATURE SUBSTATIONS",
+   "description": "630kVA",
+   "unit": "No",
+   "expected": "mini_substation|no|kva=630|scope=install_only",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "holdout",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "36 Way (60A TP)",
+   "unit": "Lot",
+   "expected": "distribution_board|no|scope=install_only|ways=36",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2 Core x 4mm",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2,5mm",
+   "unit": "No",
+   "expected": "conductor|no|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2 Core x 2,5mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUCTOR",
+   "description": "2.5mm",
+   "unit": "m",
+   "expected": "conductor|m|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "600 wide",
+   "unit": "m",
+   "expected": "cable_tray|m|component=straight|type=tray|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2 Core x 4mm2",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=2|size=4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P2000 T-Piece",
+   "unit": "No",
+   "expected": "trunking|no|component=t_piece|profile=p2000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERPOLE",
+   "description": "3.4m Power pole",
+   "unit": "No",
+   "expected": "power_pole|no|height=3.4",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH TERMINATIONS",
+   "description": "160mm Ø NEXTUBE supply and install",
+   "unit": "m",
+   "expected": "cable_sleeve|m|dia=160|material=nextube",
+   "firstPassCorrect": false,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING (600 WIDE x 1000 DEEP)",
+   "description": "Soft pickable ground",
+   "unit": "m³",
+   "expected": "trenching|m3|depth=1000|ground=soft_pickable|width=600",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERSKIRTING",
+   "description": "Corners",
+   "unit": "No",
+   "expected": "powerskirting|no|component=corner",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 6mm2",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=6",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "WIRING TRUNKING",
+   "description": "P9000 Bend",
+   "unit": "No",
+   "expected": "trunking|no|component=bend|profile=p9000",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "EARTH CONDUCTOR",
+   "description": "2.5mm x 4 core Norsk",
+   "unit": "m",
+   "expected": "multicore_wiring|m|cores=4|size=2.5",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CONDUIT BOXES - SUPPLY AND INSTALL",
+   "description": "50mm Ø (PVC)",
+   "unit": "No",
+   "expected": "conduit_box|no|material=pvc|size=round50",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "APPLIANCES",
+   "description": "16A, 3 pin, double switched socket outlet in100x100 box (box elsewhere measured)",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=double|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "POWERPOLE",
+   "description": "16A normal (white) S.S.O installed on power pole",
+   "unit": "No",
+   "expected": "socket_outlet|no|gang=single|mount=power_pole|pins=3|rating=16|switching=switched",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LIGHT SWITCHES",
+   "description": "Flush one way, 1 lever",
+   "unit": "No",
+   "expected": "light_switch|no|levers=1|ways=1",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR ON CABLE TRAY",
+   "description": "4C x 185mm",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=185",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LV CABLE LAID IN GROUND, DRAWN THROUGH SLEEVES OR LAID ON CABLE TRAY",
+   "description": "4C x 35mm² ECC  cable",
+   "unit": "m",
+   "expected": "lv_cable|m|conductor=cu|cores=4|install=ground+sleeve+tray|size=35",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "LOW VOLTAGE DISTRIBUTION BOARDS",
+   "description": "36 Way (DB-BOH)",
+   "unit": "No",
+   "expected": "distribution_board|no|scope=install_only|ways=36",
+   "firstPassCorrect": true,
+   "split": "install_only"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "800 wide vertical bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=vertical_bend|type=tray|width=800",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "CABLE TRAY",
+   "description": "200 wide horizontal bends",
+   "unit": "No",
+   "expected": "cable_tray|no|component=horizontal_bend|type=tray|width=200",
+   "firstPassCorrect": true,
+   "split": "both"
+  },
+  {
+   "set": "holdout",
+   "heading": "TRENCHING (300 WIDE X 600 DEEP)",
+   "description": "Hard pickable ground",
+   "unit": "m3",
+   "expected": "trenching|m3|depth=600|ground=hard_pickable|width=300",
+   "firstPassCorrect": true,
+   "split": "both"
+  }
+ ]
+}

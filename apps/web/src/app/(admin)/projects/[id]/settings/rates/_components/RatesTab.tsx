@@ -6,7 +6,7 @@
  * Empty state (no current import): a prompt + an Import button (only when
  * canEdit). Otherwise: BoqMainSummary (bill list + grand totals) with a
  * drill-down into the selected bill's BoqSectionTree, plus a Re-import button
- * (canEdit).
+ * and the collapsed "Price from library" panel (both canEdit).
  *
  * Owns: the selected bill, and a local copy of items/totals so an inline rate
  * edit updates the section/bill rollups optimistically (computeRollups) before
@@ -30,6 +30,7 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { BoqMainSummary } from './BoqMainSummary'
 import { BoqSectionTree } from './BoqSectionTree'
 import { BoqImportDialog } from './BoqImportDialog'
+import { LibraryPricingPanel } from './LibraryPricingPanel'
 
 export interface RatesTabData {
   import: BoqImport | null
@@ -42,6 +43,8 @@ export interface RatesTabData {
 interface Props {
   projectId: string
   canEdit: boolean
+  /** The caller's ORG role can use the rate library (a project-promoted PM cannot). */
+  libraryEnabled?: boolean
   initial: RatesTabData | null
   /**
    * Approved variation qty-deltas by boq_item_id (from
@@ -52,11 +55,18 @@ interface Props {
   adjustments?: Record<string, number[]>
 }
 
-export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
+export function RatesTab({ projectId, canEdit, initial, adjustments, libraryEnabled = false }: Props) {
   const [importing, setImporting] = useState(false)
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null)
   // Local item copy so inline rate edits can recompute rollups optimistically.
   const [items, setItems] = useState<BoqItem[]>(initial?.items ?? [])
+  // A server refresh (e.g. after "Price from library" applies rates) hands a
+  // NEW initial.items; adopt it, or the tab keeps showing the pre-apply rates.
+  const [itemsSource, setItemsSource] = useState(initial?.items)
+  if (initial?.items !== itemsSource) {
+    setItemsSource(initial?.items)
+    setItems(initial?.items ?? [])
+  }
 
   // Stable reference (initial is a server-passed prop, constant for the mount).
   const sections = useMemo(() => initial?.sections ?? [], [initial])
@@ -161,6 +171,8 @@ export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
           </Button>
         )}
       </div>
+
+      {canEdit && libraryEnabled && <LibraryPricingPanel projectId={projectId} />}
 
       {selectedBill ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
