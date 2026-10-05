@@ -91,8 +91,11 @@ export interface ArithmeticFinding {
 export interface Adjudication {
   rows: ItemRow[]
   bills: string[]
+  /** Null when there is no estimate, or when it is incomplete (see estimateMissing). */
   estimateTotal: number | null
   estimateByBill: Record<string, number>
+  /** Priced items the estimate has no rate or amount for. A total that left them out would understate it. */
+  estimateMissing: number
   totals: BidTotal[]
   checklist: { requirement: AdjRequirement; byBidder: Record<string, { ok: boolean; detail: string }> }[]
   /**
@@ -143,12 +146,14 @@ export function adjudicate(
 
   let estTotal = 0
   let estKnown = false
+  let estimateMissing = 0
   const estimateByBill = new Map<string, number>()
   const arithmetic: ArithmeticFinding[] = []
 
   const rows: ItemRow[] = priceable.map((item) => {
     const est = estimate[item.id] ?? null
     const ec = estimateCents(item, est, hasEstimate)
+    if (hasEstimate && item.rate_cell_type === 'priced' && ec == null) estimateMissing++
     if (ec != null) {
       estKnown = true
       estTotal += ec
@@ -206,7 +211,7 @@ export function adjudicate(
     return { item, estimate: est, bids: cells, medianRate: med }
   })
 
-  const estimateTotal = estKnown ? estTotal / 100 : null
+  const estimateTotal = estKnown && estimateMissing === 0 ? estTotal / 100 : null
   const ranked = bids
     .map((b) => ({ b, t: totals.get(b.participantId)! }))
     .sort((x, y) => x.t.cents - y.t.cents || x.b.company.localeCompare(y.b.company))
@@ -240,7 +245,8 @@ export function adjudicate(
     rows,
     bills,
     estimateTotal,
-    estimateByBill: Object.fromEntries(Array.from(estimateByBill.entries()).map(([k, v]) => [k, v / 100])),
+    estimateByBill: estimateTotal == null ? {} : Object.fromEntries(Array.from(estimateByBill.entries()).map(([k, v]) => [k, v / 100])),
+    estimateMissing,
     totals: totalsOut,
     checklist,
     arithmetic: { estimate: arithmetic },

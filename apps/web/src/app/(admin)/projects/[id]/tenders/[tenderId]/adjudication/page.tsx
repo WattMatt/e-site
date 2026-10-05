@@ -40,6 +40,9 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
           <a className="btn btn-sm" href={`/api/tenders/${tenderId}/adjudication`}>Download adjudication (Excel)</a>
           <AdjudicationActions tenderId={tenderId} status={tender.status} />
         </div>
+        {a.estimateMissing > 0 && (
+          <p style={{ fontSize: 13 }}>WM&apos;s estimate has no rate for {a.estimateMissing} priced item(s), so no estimate total is shown (it would be understated). Item-level comparisons still use the rates it has.</p>
+        )}
         {draftsAtClosing.length > 0 && (
           <p style={{ fontSize: 13 }}>Not submitted by the closing time (excluded): {draftsAtClosing.join(', ')}.</p>
         )}

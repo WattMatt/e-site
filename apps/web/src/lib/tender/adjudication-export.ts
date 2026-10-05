@@ -79,6 +79,9 @@ export async function buildAdjudicationWorkbook(
     ])
     moneyCols.forEach((c) => (r.getCell(c).numFmt = MONEY))
   }
+  if (a.estimateMissing > 0) {
+    s.addRow(['', `WM estimate: incomplete (no rate for ${a.estimateMissing} priced item(s)), so no total is shown.`]).font = { italic: true }
+  }
   if (a.estimateTotal != null) {
     const v = vat(a.estimateTotal)
     const r = s.addRow(['', 'WM estimate', '', a.estimateTotal, v.vat, v.incl, '', '', '', ...a.bills.map((b) => a.estimateByBill[b] ?? 0)])

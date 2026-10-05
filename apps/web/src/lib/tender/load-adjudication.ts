@@ -1,5 +1,6 @@
 import 'server-only'
 import { gateTender, type AnyClient } from '@/lib/tender/gate'
+import { readAll } from './read-all'
 import { adjudicate, type AdjBid, type AdjItem, type Adjudication, type AdjCompliance, type AdjRequirement } from './adjudication'
 
 export interface AdjudicationLoad {
@@ -12,18 +13,6 @@ export interface AdjudicationLoad {
 
 const READ_FAILED = 'Could not read the tender. Try again.'
 
-/** PostgREST caps every response at max_rows (1 000): page until a short page. */
-const PAGE = 1000
-async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<{ data: T[] } | { error: string }> {
-  const out: T[] = []
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await page(from, from + PAGE - 1)
-    if (error) return { error: error.message }
-    const rows = (data ?? []) as T[]
-    out.push(...rows)
-    if (rows.length < PAGE) return { data: out }
-  }
-}
 
 /**
  * Load everything adjudication needs through the MANAGER'S OWN session. The
@@ -51,7 +40,7 @@ export async function loadAdjudication(tenderId: string): Promise<{ ok: true; da
 
   const [items, est, parts, subs, reqs, proj] = await Promise.all([
     readAll<AdjItem>((f, t) =>
-      sb.from('tender_boq_items').select('id, sheet_name, row_number, bill_code, code, description, unit, quantity, rate_cell_type, fixed_amount').eq('tender_id', tenderId).eq('kind', 'item').order('sort_order').range(f, t)),
+      sb.from('tender_boq_items').select('id, sheet_name, row_number, bill_code, code, description, unit, quantity, rate_cell_type, fixed_amount').eq('tender_id', tenderId).eq('kind', 'item').order('sort_order').order('id').range(f, t)),
     readAll<{ item_id: string; rate: number | null; amount: number | null }>((f, t) =>
       sb.from('tender_estimate_lines').select('item_id, rate, amount').eq('tender_id', tenderId).order('item_id').range(f, t)),
     readAll<{ id: string; company_name: string; cidb_grade: string | null; bbbee_level: string | null; registration_number: string | null; vat_number: string | null }>((f, t) =>

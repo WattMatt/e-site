@@ -89,6 +89,14 @@ describe('adjudicate', () => {
     ])
   })
 
+  it('withholds an incomplete estimate total rather than understate it', () => {
+    const r2 = adjudicate(items, { a: { rate: 11, amount: 1100 } }, [bid('x', { a: 1, b: 1, d: 1 })], [], [])
+    expect(r2.estimateMissing).toBe(1) // item d has no estimate line
+    expect(r2.estimateTotal).toBeNull()
+    expect(r2.totals[0].vsEstimatePct).toBeNull()
+    expect(r2.rows.find((x) => x.item.id === 'a')!.bids.x.vsEstimate).toBe('below') // item-level comparison still works
+  })
+
   it('gives equal totals the same rank', () => {
     const r2 = adjudicate(items, {}, [bid('x', { a: 10, b: 1, d: 1 }), bid('y', { a: 10, b: 2, d: 1 }), bid('z', { a: 20, b: 1, d: 1 })], [], [])
     expect(r2.totals.map((t) => [t.participantId, t.rank])).toEqual([['x', 1], ['y', 1], ['z', 3]])
