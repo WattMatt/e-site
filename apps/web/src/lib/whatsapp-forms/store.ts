@@ -18,7 +18,7 @@ function must<T>(r: { data: T; error: { message: string } | null }, what: string
   return r.data
 }
 
-const SESSION_COLS = 'id, token_hash, user_id, inspection_id, template_row_id, status, expires_at, answered_inbound_id, pending_photo_inbound_id'
+const SESSION_COLS = 'id, token_hash, user_id, inspection_id, template_row_id, status, expires_at, answered_inbound_id, pending_photo_inbound_ids, last_photo_item, last_photo_at'
 
 export function createFormsStore(sb: Sb): FormsStore {
   const wa = () => sb.schema('whatsapp')
@@ -90,6 +90,9 @@ export function createFormsStore(sb: Sb): FormsStore {
     },
     async submit(userId, inspectionId) {
       return must(await wa().rpc('wa_inspection_submit', { p_user: userId, p_inspection: inspectionId }), 'submit')
+    },
+    async inspectionState(inspectionId) {
+      return must(await insp().from('inspections').select('status, submitted_via').eq('id', inspectionId).maybeSingle(), 'inspection state')
     },
     async profileName(userId) {
       const r = must(await sb.from('profiles').select('full_name').eq('id', userId).maybeSingle(), 'profile')

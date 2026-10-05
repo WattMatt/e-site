@@ -233,3 +233,51 @@ describe('createFormsClient', () => {
     await expect(c.call('open', {})).rejects.toThrow(/HTTP 500/)
   })
 })
+
+describe('review fixes (edge routing)', () => {
+  const ITEM = '77777777-7777-4777-8777-777777777777'
+  const recent = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString()
+
+  it('H2: a photo sent as a reply to a work-item card goes to the item, not the form', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(5) })
+    ;(store.itemForSentMessage as ReturnType<typeof vi.fn>).mockResolvedValue(ITEM)
+    await processInbound(row({ type: 'image', imageId: 'MEDIA', contextId: 'wamid.card' }), deps())
+    expect(forms.ops).toEqual([])
+  })
+  it('H2: an unnumbered photo after acknowledging an item (newer than the form) goes to the item', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(10), active_item_id: ITEM, active_item_at: recent(1) })
+    await processInbound(row({ type: 'image', imageId: 'MEDIA' }), deps())
+    expect(forms.ops).toEqual([])
+  })
+  it('H2: a numbered photo still goes to the form even right after an item', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(10), active_item_id: ITEM, active_item_at: recent(1) })
+    await processInbound(row({ type: 'image', imageId: 'MEDIA', text: '10' }), deps())
+    expect(forms.ops.map((o) => o[0])).toEqual(['photo'])
+  })
+  it('H2: a "not mine" answer does not keep the form window open', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(5) })
+    reply = { code: 'not_waiting', messages: [] }
+    await processInbound(row({ text: '10' }), deps())
+    expect(current.current_form_session_at).toBe(recent(5))
+  })
+  it('M2: tapping Submit on an OLD session does not forget the live one', async () => {
+    const OLD = '88888888-8888-4888-8888-888888888888'
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(5) })
+    reply = { code: 'no_session', messages: [], session_id: null }
+    await processInbound(row({ type: 'interactive', payload: `fsubmit:${OLD}` }), deps())
+    expect(current.current_form_session_id).toBe(SESS)
+  })
+  it('M2: submitting the live session does clear it', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(5) })
+    reply = { code: 'ok', messages: [{ type: 'text', body: 'done' }], session_id: null }
+    await processInbound(row({ type: 'interactive', payload: `fsubmit:${SESS}` }), deps())
+    expect(current.current_form_session_id).toBeNull()
+  })
+  it('LOW: SUBMIT on a form that has gone says so instead of becoming a note', async () => {
+    current = link({ current_form_session_id: SESS, current_form_session_at: recent(5) })
+    reply = { code: 'no_session', messages: [] }
+    const r = await processInbound(row({ text: 'submit' }), deps())
+    expect(meta.sent.map((s) => s.body)).toContain(FORMS.noOpenForm)
+    expect(r.reason).toBe('form_submit:no_session')
+  })
+})

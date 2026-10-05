@@ -135,10 +135,24 @@ export function flowCapability(t: Template): FlowCapability {
 
   for (const s of t.sections) {
     if (s.conditional_on) reasons.push(`section "${s.section_id}" is conditional`)
+    if (!String(s.title ?? '').trim() && (s.fields ?? []).some((f) => INPUT_TYPES.has(f.type))) {
+      reasons.push(`section "${s.section_id}" has a blank title`)
+    }
+    const seen = new Set<string>()
     if (s.subsections && s.subsections.length > 0) reasons.push(`section "${s.section_id}" has subsections`)
     let count = 1 // Footer
     for (const f of s.fields ?? []) {
       if (f.conditional_on) reasons.push(`field "${f.field_id}" is conditional`)
+      if (seen.has(f.field_id)) reasons.push(`duplicate field "${f.field_id}" in section "${s.section_id}"`)
+      seen.add(f.field_id)
+      if ((INPUT_TYPES.has(f.type) || f.type === 'header') && !String(f.label ?? '').trim()) {
+        reasons.push(`field "${f.field_id}" has a blank label`)
+      }
+      if (f.type === 'dropdown' || f.type === 'multi_select') {
+        const opts = f.options ?? []
+        if (opts.some((o) => !String(o ?? '').trim())) reasons.push(`field "${f.field_id}" has a blank option`)
+        if (new Set(opts).size !== opts.length) reasons.push(`field "${f.field_id}" has a duplicate option`)
+      }
       if (f.type === 'repeating_group') reasons.push(`repeating group "${f.field_id}" is a table`)
       if (f.type === 'file') {
         if (f.required) reasons.push(`required file "${f.field_id}" cannot be sent over WhatsApp`)

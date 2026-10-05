@@ -20,6 +20,8 @@ export const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 export const LINK_TTL_MS = 15 * 60 * 1000
 export const STAGING_BUCKET = 'whatsapp-media'
 export const PHOTO_BUCKET = 'inspection-photos'
+/** Uncaptioned photos within this long of a numbered one go to the same item. */
+export const PHOTO_FOLLOW_MS = 30 * 60 * 1000
 const MAX_LINES = 12
 
 export type FormsOp = 'open' | 'flow_reply' | 'photo' | 'item_choice' | 'submit'
@@ -51,7 +53,11 @@ export interface Session {
   status: 'open' | 'answered' | 'submitted' | 'closed'
   expires_at: string
   answered_inbound_id: string | null
-  pending_photo_inbound_id: string | null
+  /** Photos waiting for an item number, oldest first. */
+  pending_photo_inbound_ids: string[]
+  /** The item the last numbered photo went to, and when; uncaptioned photos soon after follow it (albums). */
+  last_photo_item: number | null
+  last_photo_at: string | null
 }
 
 export interface FormsStore {
@@ -73,6 +79,8 @@ export interface FormsStore {
   addPhoto(userId: string, inspectionId: string, sectionId: string, fieldId: string, path: string,
            size: number, width: number, height: number): Promise<{ code: string; message?: string }>
   submit(userId: string, inspectionId: string): Promise<{ code: string; verifier_id?: string | null }>
+  /** Current status and submit channel, read with the service role (for retry recovery). */
+  inspectionState(inspectionId: string): Promise<{ status: string; submitted_via: string | null } | null>
   profileName(userId: string): Promise<string | null>
 }
 
@@ -115,6 +123,9 @@ export const REPLY = {
     `✅ Submitted *${label}*. It is with ${verifier ?? 'the verifier'} to verify. The PDF follows.`,
   refused: (code: string, msg?: string) => `Couldn't do that (${code}${msg ? `: ${msg}` : ''}).`,
   submitButton: 'Submit',
+  useWeb: (label: string, url: string) =>
+    `*${label}* is finished and submitted on the web:\n${url}\n\nThe link opens E-Site signed in as you. It works once, for 15 minutes.`,
+  photosAdded: (count: number, n: number, label: string) => `📎 ${count} photos added to item ${n}: ${label}.`,
 } as const
 
 const text = (body: string): FormsMessage => ({ type: 'text', body })
@@ -140,7 +151,7 @@ async function signedLink(deps: FormsDeps, userId: string, sessionId: string, pr
   await deps.store.createLink({ token_hash: deps.hash(token), user_id: userId, form_session_id: sessionId,
     target_path: `/projects/${projectId}/inspections/${inspectionId}`,
     expires_at: new Date(deps.now().getTime() + LINK_TTL_MS).toISOString() })
-  return `${deps.appUrl}/wa/go/${token}`
+  return `${deps.appUrl}/auth/wa-link/${token}`
 }
 
 /** What is still missing, in words, using the engine the web capture form uses. */
@@ -148,14 +159,16 @@ async function missingLines(deps: FormsDeps, t: Template, inspectionId: string, 
     Promise<{ lines: string[]; onlySignature: boolean; complete: boolean }> {
   const [answers, att] = await Promise.all([deps.store.answers(inspectionId), deps.store.attachments(inspectionId)])
   const ev = evaluateInspection(t, answers, att)
-  const fields = new Map(t.sections.flatMap((s) => s.fields.map((f) => [`${s.section_id}|${f.field_id}`, f] as const)))
+  const fields = new Map(t.sections.flatMap((s) => [...s.fields, ...(s.subsections ?? []).flatMap((x) => x.fields)]
+    .map((f) => [`${s.section_id}|${f.field_id}`, f] as const)))
   // Photos and signatures first: they are the steps a Flow cannot do, so the person must not miss them.
   const attachLines: string[] = []
   const answerLines: string[] = []
   let nonSignature = 0
   for (const m of ev.missingRequired) {
     const f = fields.get(`${m.sectionId}|${m.fieldId}`)
-    if (!f) continue
+    // A field the lookup cannot label (a repeating-group entry) is still missing: name it by id.
+    if (!f) { nonSignature++; answerLines.push(`• ${m.fieldId}`); continue }
     if (f.type === 'signature') { attachLines.push(`• ${f.label} (on the web, after SUBMIT)`); continue }
     nonSignature++
     const item = items.find((i) => i.sectionId === m.sectionId && i.fieldId === m.fieldId)
@@ -164,7 +177,8 @@ async function missingLines(deps: FormsDeps, t: Template, inspectionId: string, 
   }
   const all = [...attachLines, ...answerLines]
   const lines = all.length > MAX_LINES ? [...all.slice(0, MAX_LINES), `…and ${all.length - MAX_LINES} more`] : all
-  return { lines, onlySignature: all.length > 0 && nonSignature === 0, complete: all.length === 0 }
+  // Completeness is the engine's verdict, never the count of lines we managed to render.
+  return { lines, onlySignature: ev.missingRequired.length > 0 && nonSignature === 0, complete: ev.missingRequired.length === 0 }
 }
 
 async function open(b: Record<string, unknown>, deps: FormsDeps): Promise<FormsReply> {
@@ -256,7 +270,7 @@ async function attach(deps: FormsDeps, s: Session, item: PhotoItem, inboundId: s
     const r = await deps.store.addPhoto(s.user_id, s.inspection_id, item.sectionId, item.fieldId, path, bytes.length, info.width, info.height)
     if (r.code !== 'ok') return r.code === 'refused' ? reply(r.code, [text(REPLY.refused(r.code, r.message))]) : gateRefusal({ code: r.code })
   }
-  await deps.store.updateSession(s.id, { pending_photo_inbound_id: null })
+  await deps.store.updateSession(s.id, { last_photo_item: item.n, last_photo_at: deps.now().toISOString() })
   return reply('ok', [text(REPLY.photoAdded(item.n, item.label))], s.id)
 }
 
@@ -270,10 +284,14 @@ async function photo(b: Record<string, unknown>, deps: FormsDeps): Promise<Forms
   const bytes = await deps.store.download(STAGING_BUCKET, String(b.staging_path ?? ''))
   if (!bytes || !imageInfo(bytes)) return reply('not_an_image', [text(REPLY.notAnImage)])
   const items = photoItems(tpl.schema)
-  const n = typeof b.caption === 'string' ? parseItemRef(b.caption) : null
+  const caption = typeof b.caption === 'string' && b.caption.trim() ? b.caption : null
+  let n = caption ? parseItemRef(caption) : null
+  // An album: only the first photo carries the caption, so an uncaptioned photo soon after a numbered one follows it.
+  if (n === null && !caption && s.last_photo_item && isRecent(s.last_photo_at, deps.now())) n = s.last_photo_item
   const item = n === null ? undefined : items.find((i) => i.n === n)
   if (!item) {
-    await deps.store.updateSession(s.id, { pending_photo_inbound_id: inboundId })
+    const queued = [...new Set([...(s.pending_photo_inbound_ids ?? []), inboundId])]
+    await deps.store.updateSession(s.id, { pending_photo_inbound_ids: queued })
     return reply('ok', [text(n === null ? REPLY.whichItem(items.length) : REPLY.noSuchItem(n, items.length))], s.id)
   }
   return attach(deps, s, item, inboundId, bytes)
@@ -283,27 +301,51 @@ async function itemChoice(b: Record<string, unknown>, deps: FormsDeps): Promise<
   const userId = String(b.user_id ?? '')
   const s = await deps.store.sessionById(String(b.session_id ?? ''))
   if (!liveSession(s, userId, deps.now())) return reply('no_session', [], null)
-  if (!s.pending_photo_inbound_id) return reply('not_waiting', [])
+  const waiting = s.pending_photo_inbound_ids ?? []
+  if (waiting.length === 0) return reply('not_waiting', [])
   const tpl = await deps.store.template(s.template_row_id)
   if (!tpl) return reply('no_session', [], null)
   const items = photoItems(tpl.schema)
   const n = parseItemRef(String(b.text ?? ''))
   const item = n === null ? undefined : items.find((i) => i.n === n)
   if (!item) return reply('ok', [text(REPLY.noSuchItem(n ?? 0, items.length))], s.id)
-  const bytes = await deps.store.download(STAGING_BUCKET, `inbound/${s.pending_photo_inbound_id}`)
-  if (!bytes) return reply('not_an_image', [text(REPLY.notAnImage)])
-  return attach(deps, s, item, s.pending_photo_inbound_id, bytes)
+  let added = 0
+  let last: FormsReply = reply('not_an_image', [text(REPLY.notAnImage)])
+  for (const inbound of waiting) {
+    const bytes = await deps.store.download(STAGING_BUCKET, `inbound/${inbound}`)
+    if (!bytes) continue
+    last = await attach(deps, s, item, inbound, bytes)
+    if (last.code !== 'ok') return last
+    added++
+  }
+  await deps.store.updateSession(s.id, { pending_photo_inbound_ids: [] })
+  return added > 1 ? reply('ok', [text(REPLY.photosAdded(added, item.n, item.label))], s.id) : last
+}
+
+function isRecent(at: string | null, now: Date): boolean {
+  return !!at && now.getTime() - Date.parse(at) <= PHOTO_FOLLOW_MS
 }
 
 async function submit(b: Record<string, unknown>, deps: FormsDeps): Promise<FormsReply> {
   const userId = String(b.user_id ?? '')
   const s = await deps.store.sessionById(String(b.session_id ?? ''))
   if (!liveSession(s, userId, deps.now())) return reply('no_session', [], null)
-  const g = await deps.store.gate(userId, s.inspection_id)
-  if (g.code !== 'ok') return gateRefusal(g)
   const tpl = await deps.store.template(s.template_row_id)
   if (!tpl) return reply('no_session', [], null)
+  // Retry recovery: our own earlier attempt moved the inspection but its follow-up did not finish.
+  const state = await deps.store.inspectionState(s.inspection_id)
+  if (state?.status === 'awaiting_verification' && state.submitted_via === 'whatsapp') {
+    await deps.afterSubmit(s.id, { notifyVerifier: true })
+    return reply('ok', [text(REPLY.submitted(tpl.name, null))], null)
+  }
+  const g = await deps.store.gate(userId, s.inspection_id)
+  if (g.code !== 'ok') return gateRefusal(g)
   const label = g.label || tpl.name
+  // A template that cannot be a Flow (tables, conditions, files) is completed on the web, signed in as the person.
+  if (!flowCapability(tpl.schema).ok) {
+    const url = await signedLink(deps, userId, s.id, g.project_id!, s.inspection_id)
+    return reply('use_web', [text(REPLY.useWeb(label, url))], s.id)
+  }
   const miss = await missingLines(deps, tpl.schema, s.inspection_id, photoItems(tpl.schema))
   if (miss.onlySignature) {
     const url = await signedLink(deps, userId, s.id, g.project_id!, s.inspection_id)

@@ -46,6 +46,8 @@ export interface WorkerStore {
   formSummary(sessionId: string): Promise<FormSummary | null>
   /** whatsapp-media/outbound/<session>.pdf, or null if the render failed. */
   outboundPdf(sessionId: string): Promise<Uint8Array | null>
+  /** whatsapp.templates.status = 'approved' (Meta rejects an unapproved template per recipient). */
+  templateApproved(name: string): Promise<boolean>
 }
 
 /** Meta: the 24-hour customer-service window has closed, so a free-form message cannot be sent. */
@@ -96,9 +98,10 @@ async function sendOne(row: OutboxRow, deps: { store: WorkerStore; meta: MetaCli
       await store.mark(row.id, { status: 'held_quiet', send_after: at.toISOString() })
       return 'held'
     }
+    send = formSubmittedSend(summary)
+    if (!(await store.templateApproved(send.name))) return suppress('template_not_approved')
     to = link.phone_e164
     linkId = link.id
-    send = formSubmittedSend(summary)
     return deliver(row, to, linkId, send, null, deps)
   }
 

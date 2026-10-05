@@ -95,7 +95,11 @@ CREATE TABLE whatsapp.form_sessions (
   status              text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'submitted', 'closed')),
   flow_message_id     text,
   answered_inbound_id uuid REFERENCES whatsapp.inbound(id) ON DELETE SET NULL,
-  pending_photo_inbound_id uuid REFERENCES whatsapp.inbound(id) ON DELETE SET NULL,
+  -- Photos waiting for an item number (WhatsApp captions only the first photo of an album).
+  pending_photo_inbound_ids uuid[] NOT NULL DEFAULT '{}',
+  -- The item the last numbered photo went to, and when: later uncaptioned photos follow it.
+  last_photo_item     integer,
+  last_photo_at       timestamptz,
   created_at          timestamptz NOT NULL DEFAULT now(),
   expires_at          timestamptz NOT NULL,
   submitted_at        timestamptz

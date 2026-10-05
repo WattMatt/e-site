@@ -43,6 +43,7 @@ export const FORMS = {
   noneOpen: (project: string) => `No inspections to fill in on ${project} right now.`,
   photoTooLarge: 'That photo is over 5 MB. Send it as a normal photo (not a document) so WhatsApp shrinks it.',
   notConfigured: 'Forms are not available on WhatsApp yet.',
+  noOpenForm: 'There is no open form to submit. Send MENU and open the inspection again.',
 } as const
 
 const res = (outcome: ProcessResult['outcome'], reason: string | null, userId: string | null): ProcessResult =>
@@ -62,12 +63,23 @@ async function relay(deps: ProcessorDeps, link: LinkRow, r: FormsReply): Promise
   }
 }
 
-async function touch(deps: ProcessorDeps, link: LinkRow, r: FormsReply): Promise<void> {
+/**
+ * Keep the link's form pointer in step with the reply. Only the session the op was ABOUT can
+ * clear the pointer (a stale Submit button on an old session must not drop the live one), and
+ * only an owned reply refreshes the activity time (a "not mine" must not keep the window open).
+ */
+async function touch(deps: ProcessorDeps, link: LinkRow, r: FormsReply, opSession: string | null): Promise<void> {
   const patch: Record<string, unknown> = {}
-  if (r.session_id !== undefined) patch.current_form_session_id = r.session_id
-  if (r.session_id === null) patch.current_form_session_at = null
-  else if (r.session_id || link.current_form_session_id) patch.current_form_session_at = deps.now().toISOString()
-  if (r.code === 'no_session') { patch.current_form_session_id = null; patch.current_form_session_at = null }
+  const aboutCurrent = opSession === null || opSession === link.current_form_session_id
+  const clear = () => { patch.current_form_session_id = null; patch.current_form_session_at = null }
+  if (r.code === 'no_session' || r.session_id === null) {
+    if (aboutCurrent && link.current_form_session_id) clear()
+  } else if (r.session_id) {
+    patch.current_form_session_id = r.session_id
+    patch.current_form_session_at = deps.now().toISOString()
+  } else if (owned(r) && link.current_form_session_id && aboutCurrent) {
+    patch.current_form_session_at = deps.now().toISOString()
+  }
   if (Object.keys(patch).length === 0) return
   await deps.store.updateLink(link.id, patch)
   Object.assign(link, patch)
@@ -76,8 +88,15 @@ async function touch(deps: ProcessorDeps, link: LinkRow, r: FormsReply): Promise
 async function run(deps: ProcessorDeps & { forms: FormsClient }, link: LinkRow, op: FormsOp,
                    body: Record<string, unknown>): Promise<ProcessResult | null> {
   const r = await deps.forms.call(op, { user_id: link.user_id, link_id: link.id, ...body })
-  await touch(deps, link, r)
-  if (!owned(r)) return null
+  await touch(deps, link, r, typeof body.session_id === 'string' ? body.session_id : null)
+  if (!owned(r)) {
+    // SUBMIT is never ordinary text: tell the person instead of filing the word somewhere.
+    if (op === 'submit') {
+      await deps.meta.sendText(link.phone_e164, FORMS.noOpenForm)
+      return res('refused', 'form_submit:no_session', link.user_id)
+    }
+    return null
+  }
   await relay(deps, link, r)
   return res(r.code === 'ok' ? 'applied' : 'refused', `form_${op}${r.code === 'ok' ? '' : `:${r.code}`}`, link.user_id)
 }
@@ -142,10 +161,15 @@ export async function handleFormsContent(msg: InboundMessage, link: LinkRow, inb
   const d = deps as ProcessorDeps & { forms: FormsClient }
   const session = link.current_form_session_id
   const active = isWithin(link.current_form_session_at ?? null, deps.now(), FORM_ACTIVITY_WINDOW_MS)
+  // A reply to a work-item card belongs to that item.
+  if (msg.contextId && (await deps.store.itemForSentMessage(msg.contextId))) return null
+  // Something done on a work item since the last form step: unlabelled photos and bare numbers are about it.
+  const itemSince = !!link.active_item_at && (!link.current_form_session_at ||
+    Date.parse(link.active_item_at) > Date.parse(link.current_form_session_at))
 
   if (msg.type === 'image' && msg.imageId) {
     const numbered = msg.text ? parseItemRef(msg.text) !== null : false
-    if (!numbered && !active) return null
+    if (!numbered && (!active || itemSince)) return null
     const { bytes, mime } = await deps.meta.fetchMedia(msg.imageId)
     if (bytes.length > FORM_PHOTO_MAX_BYTES) {
       await deps.meta.sendText(link.phone_e164, FORMS.photoTooLarge)
@@ -159,7 +183,7 @@ export async function handleFormsContent(msg: InboundMessage, link: LinkRow, inb
   if (msg.type === 'text' && msg.text) {
     // The web app decides whether the session is still live; "no_session" falls through.
     if (isSubmitWord(msg.text)) return run(d, link, 'submit', { session_id: session })
-    if (parseItemRef(msg.text) !== null && active) {
+    if (parseItemRef(msg.text) !== null && active && !itemSince) {
       return run(d, link, 'item_choice', { session_id: session, inbound_id: inbound.id, text: msg.text })
     }
   }

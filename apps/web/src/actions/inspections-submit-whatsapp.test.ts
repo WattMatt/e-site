@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const { afterWeb, notify, updateResult } = vi.hoisted(() => ({
   afterWeb: vi.fn(async () => {}),
   notify: vi.fn(async () => {}),
-  updateResult: { error: null as null | { message: string } },
+  updateResult: { error: null as null | { message: string }, data: [{ id: 'i-1' }] as Array<{ id: string }> },
 }))
 
 function client() {
@@ -13,7 +13,7 @@ function client() {
   const self = () => chain
   Object.assign(chain, {
     from: self, select: self, eq: self,
-    update: () => ({ eq: () => ({ in: async () => updateResult }) }),
+    update: () => ({ eq: () => ({ in: () => ({ select: async () => updateResult }) }) }),
     single: async () => ({ data: { verifier_id: 'v-1', target_label: 'MINI SUB 1' }, error: null }),
   })
   return { auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) }, schema: () => chain }
@@ -29,7 +29,7 @@ vi.mock('@/lib/whatsapp-forms/after-submit', () => ({ afterWebSubmitOfWhatsAppFo
 
 import { submitInspectionAction } from './inspections.actions'
 
-beforeEach(() => { afterWeb.mockClear(); updateResult.error = null })
+beforeEach(() => { afterWeb.mockClear(); notify.mockClear(); updateResult.error = null; updateResult.data = [{ id: 'i-1' }] })
 
 describe('submitInspectionAction and WhatsApp', () => {
   it('runs the WhatsApp follow-up for the submitter after a successful submit', async () => {
@@ -40,5 +40,11 @@ describe('submitInspectionAction and WhatsApp', () => {
     updateResult.error = { message: 'nope' }
     await expect(submitInspectionAction('i-1', 'p-1')).rejects.toBeTruthy()
     expect(afterWeb).not.toHaveBeenCalled()
+  })
+  it('M4: a submit that moved nothing (someone else already submitted) sends no follow-up and no notice', async () => {
+    updateResult.data = []
+    await submitInspectionAction('i-1', 'p-1')
+    expect(afterWeb).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
   })
 })

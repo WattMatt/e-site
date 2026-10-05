@@ -36,7 +36,7 @@ let tokens: number
 
 function session(over: Partial<Session> = {}): Session {
   return { id: 's-1', user_id: USER, inspection_id: INSP, template_row_id: TROW, status: 'answered',
-    expires_at: new Date(NOW.getTime() + HOUR).toISOString(), answered_inbound_id: null, pending_photo_inbound_id: null, ...over }
+    expires_at: new Date(NOW.getTime() + HOUR).toISOString(), answered_inbound_id: null, pending_photo_inbound_ids: [], last_photo_item: null, last_photo_at: null, ...over }
 }
 
 beforeEach(() => {
@@ -69,6 +69,7 @@ function deps(): FormsDeps {
     upload: async (bucket, path) => { uploads.push({ bucket, path }) },
     addPhoto: async (u, _i, section_id, field_id, path) => { photos.push({ section_id, field_id, path, user: u }); return { code: 'ok' } },
     submit: async (_u, i) => { submitted.push(i); return { code: 'ok', verifier_id: 'v-1' } },
+    inspectionState: async () => ({ status: 'in_progress', submitted_via: null }),
     profileName: async () => 'Johan B',
   }
   return { store, now: () => NOW, appUrl: 'https://www.e-site.live', afterSubmit, newToken: () => `tok${++tokens}`, hash }
@@ -102,7 +103,7 @@ describe('open', () => {
     flowRow = null
     const r = await handleFormsOp('open', { user_id: USER, inspection_id: INSP }, deps())
     expect(r.code).toBe('ok')
-    expect(texts(r)).toContain('https://www.e-site.live/wa/go/tok2')
+    expect(texts(r)).toContain('https://www.e-site.live/auth/wa-link/tok2')
     expect(links[0]).toMatchObject({ token_hash: hash('tok2'), user_id: USER, form_session_id: 's-1',
       target_path: `/projects/${PROJ}/inspections/${INSP}`, expires_at: new Date(NOW.getTime() + 15 * 60_000).toISOString() })
   })
@@ -110,7 +111,7 @@ describe('open', () => {
     flowRow = { ...flowRow!, flow_json_sha256: '0'.repeat(64) }
     const r = await handleFormsOp('open', { user_id: USER, inspection_id: INSP }, deps())
     expect(r.messages.some((m) => m.type === 'flow')).toBe(false)
-    expect(texts(r)).toContain('/wa/go/')
+    expect(texts(r)).toContain('/auth/wa-link/')
   })
 })
 
@@ -177,14 +178,14 @@ describe('photos', () => {
   })
   it('an unnumbered photo is held and the bot asks which item', async () => {
     const r = await photo(null)
-    expect(sessions[0].pending_photo_inbound_id).toBe('in-7')
+    expect(sessions[0].pending_photo_inbound_ids).toEqual(['in-7'])
     expect(photos).toEqual([])
     expect(texts(r)).toMatch(/Which item/)
   })
   it('a number with no such item is held and the range is given', async () => {
     const r = await photo('99')
     expect(photos).toEqual([])
-    expect(sessions[0].pending_photo_inbound_id).toBe('in-7')
+    expect(sessions[0].pending_photo_inbound_ids).toEqual(['in-7'])
     expect(texts(r)).toMatch(/1 to 25/)
   })
   it('bytes that are not a JPEG or PNG are refused, whatever Meta called them', async () => {
@@ -204,7 +205,7 @@ describe('photos', () => {
     const r = await handleFormsOp('item_choice', { user_id: USER, session_id: 's-1', inbound_id: 'in-8', text: 'item 10' }, deps())
     expect(r.code).toBe('ok')
     expect(photos[0]).toMatchObject({ field_id: 'thermographic_survey', path: expect.stringContaining('wa-in-7.jpg') })
-    expect(sessions[0].pending_photo_inbound_id).toBeNull()
+    expect(sessions[0].pending_photo_inbound_ids).toEqual([])
   })
   it('a number with no photo waiting is "not mine"', async () => {
     const r = await handleFormsOp('item_choice', { user_id: USER, session_id: 's-1', inbound_id: 'in-8', text: '10' }, deps())
@@ -234,7 +235,7 @@ describe('submit', () => {
     everyAnswer()
     const r = await submit()
     expect(r.code).toBe('needs_signature')
-    expect(texts(r)).toContain('/wa/go/')
+    expect(texts(r)).toContain('/auth/wa-link/')
     expect(links[0]).toMatchObject({ form_session_id: 's-1', target_path: `/projects/${PROJ}/inspections/${INSP}` })
     expect(submitted).toEqual([])
   })
@@ -266,4 +267,86 @@ it('an unknown op is refused', async () => {
   const r = await handleFormsOp('delete_everything' as never, {}, deps())
   expect(r.code).toBe('bad_request')
   expect(REPLY).toBeDefined()
+})
+
+describe('review fixes', () => {
+  const MIN = 60_000
+
+  it('H1: a missing answer the line-renderer cannot label still blocks submit', async () => {
+    // A template with a subsection is not Flow-capable; its required subsection field is missing.
+    const withSub = { ...T, sections: [...T.sections, { section_id: 'extra', title: 'Extra', fields: [],
+      subsections: [{ subsection_id: 'sub', title: 'Sub', fields: [{ field_id: 'sub_req', label: 'Sub required', type: 'text', required: true }] }] }] } as Template
+    sessions.push(session())
+    for (const s of T.sections) for (const f of s.fields) {
+      if (f.type === 'pass_fail') answers.push({ section_id: s.section_id, field_id: f.field_id, value_bool: true, pass_state: 'pass' })
+      else if (f.type === 'number') answers.push({ section_id: s.section_id, field_id: f.field_id, value_number: 1 })
+      else if (['text', 'textarea', 'dropdown', 'date'].includes(f.type)) answers.push({ section_id: s.section_id, field_id: f.field_id, value_text: f.type === 'dropdown' ? 'none' : '2026-01-01' })
+    }
+    photos.push({ section_id: 'electrical_functional_thermal_checks', field_id: 'thermographic_survey', path: 'x', user: USER })
+    signatures.push({ section_id: 'critical_safety_checks', field_id: 'inspector_signature' })
+    const d = deps()
+    d.store.template = async () => ({ name: 'X', schema: withSub })
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).not.toBe('ok')
+    expect(submitted).toEqual([])
+  })
+
+  it('H1: a template that cannot be a Flow is finished on the web, not by SUBMIT in chat', async () => {
+    const withGroup = { ...T, sections: [{ section_id: 'g', title: 'G', fields: [{ field_id: 'grp', label: 'Rows', type: 'repeating_group', fields: [] }] }] } as Template
+    sessions.push(session())
+    const d = deps()
+    d.store.template = async () => ({ name: 'X', schema: withGroup })
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).toBe('use_web')
+    expect(texts(r)).toContain('/auth/wa-link/')
+    expect(submitted).toEqual([])
+  })
+
+  it('M1: a submit whose follow-up failed is finished by the retry instead of being refused', async () => {
+    sessions.push(session())
+    const d = deps()
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'whatsapp' })
+    gateCode = 'not_writable'
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).toBe('ok')
+    expect(afterSubmit).toHaveBeenCalledWith('s-1', { notifyVerifier: true })
+    expect(submitted).toEqual([])
+  })
+
+  it('M1: but a submit someone else made on the web is not claimed', async () => {
+    sessions.push(session())
+    const d = deps()
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: null })
+    gateCode = 'not_writable'
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).toBe('not_writable')
+    expect(afterSubmit).not.toHaveBeenCalled()
+  })
+
+  describe('M3: albums (WhatsApp captions only the first photo)', () => {
+    beforeEach(() => { staged['inbound/in-8'] = JPEG; staged['inbound/in-9'] = JPEG })
+    const photo = (inbound: string, caption: string | null) =>
+      handleFormsOp('photo', { user_id: USER, session_id: 's-1', inbound_id: inbound, staging_path: `inbound/${inbound}`, caption }, deps())
+
+    it('uncaptioned photos right after a numbered one go to the same item', async () => {
+      sessions.push(session())
+      await photo('in-7', '10'); await photo('in-8', null); await photo('in-9', null)
+      expect(photos.map((p) => p.field_id)).toEqual(['thermographic_survey', 'thermographic_survey', 'thermographic_survey'])
+      expect(sessions[0].last_photo_item).toBe(10)
+    })
+    it('several held photos all go to the item named next', async () => {
+      sessions.push(session())
+      await photo('in-7', null); await photo('in-8', null)
+      expect(sessions[0].pending_photo_inbound_ids).toEqual(['in-7', 'in-8'])
+      await handleFormsOp('item_choice', { user_id: USER, session_id: 's-1', inbound_id: 'in-x', text: '10' }, deps())
+      expect(photos).toHaveLength(2)
+      expect(sessions[0].pending_photo_inbound_ids).toEqual([])
+    })
+    it('the follow-on rule lapses after the activity window', async () => {
+      sessions.push(session({ last_photo_item: 10, last_photo_at: new Date(NOW.getTime() - 31 * MIN).toISOString() }))
+      await photo('in-8', null)
+      expect(photos).toEqual([])
+      expect(sessions[0].pending_photo_inbound_ids).toEqual(['in-8'])
+    })
+  })
 })

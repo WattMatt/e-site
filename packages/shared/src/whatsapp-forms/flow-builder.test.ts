@@ -57,6 +57,18 @@ describe('flowCapability', () => {
     expect(cap.reasons.join()).toMatch(/50 components/)
   })
 
+  it('refuses what Meta would reject at publish: blank labels, blank or duplicate options, duplicate field ids', () => {
+    const one = (f: object) => flowCapability({ ...MINI, sections: [{ section_id: 's', title: 'S', fields: [f as never] }] })
+    expect(one({ field_id: 'a', label: '  ', type: 'text' }).reasons.join()).toMatch(/blank label/)
+    expect(one({ field_id: 'd', label: 'D', type: 'dropdown', options: ['x', ''] }).reasons.join()).toMatch(/blank option/)
+    expect(one({ field_id: 'd', label: 'D', type: 'dropdown', options: ['x', 'x'] }).reasons.join()).toMatch(/duplicate option/)
+    const dup = flowCapability({ ...MINI, sections: [{ section_id: 's', title: 'S', fields: [
+      { field_id: 'a', label: 'A', type: 'text' }, { field_id: 'a', label: 'A2', type: 'text' }] }] })
+    expect(dup.reasons.join()).toMatch(/duplicate field "a"/)
+    expect(flowCapability({ ...MINI, sections: [{ section_id: 's', title: ' ', fields: [{ field_id: 'a', label: 'A', type: 'text' }] }] })
+      .reasons.join()).toMatch(/blank title/)
+  })
+
   it('refuses dropdown options beyond the radio/dropdown limits', () => {
     const options = Array.from({ length: 201 }, (_, i) => `o${i}`)
     const cap = flowCapability({ ...MINI, sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'd', label: 'D', type: 'dropdown', options }] }] })

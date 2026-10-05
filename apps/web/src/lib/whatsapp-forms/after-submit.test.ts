@@ -17,7 +17,7 @@ function deps(): AfterSubmitDeps {
     const chain: Record<string, unknown> = {}
     const self = () => chain
     Object.assign(chain, {
-      select: self, eq: self, in: self, order: self,
+      select: self, eq: self, in: self, order: self, gt: (c: string, v: string) => { log.push(`gt ${c} ${v}`); return chain },
       limit: async () => ({ data: liveRows, error: null }),
       maybeSingle: async () => ({ data: table === 'form_sessions' ? sessionRow : { verifier_id: 'v-1', target_label: 'MINI SUB 1', project_id: 'p-1' }, error: null }),
       update: (p: Record<string, unknown>) => { log.push(`update ${table} ${JSON.stringify(p)}`); return { eq: async () => ({ error: null }) } },
@@ -70,10 +70,14 @@ describe('afterWebSubmitOfWhatsAppForm', () => {
     expect(log).toContain('rpc enqueue_form_submitted {"p_session":"s-1"}')
     expect(log).not.toContain('notify')
   })
+  it('H3: only a session that has not expired gets the follow-up', async () => {
+    await afterWebSubmitOfWhatsAppForm('i-1', 'u-1', deps())
+    expect(log).toContain('gt expires_at 2026-10-05T10:00:00.000Z')
+  })
   it('does nothing when the inspection was never opened on WhatsApp', async () => {
     liveRows = []
     await afterWebSubmitOfWhatsAppForm('i-1', 'u-1', deps())
-    expect(log).toEqual([])
+    expect(log.filter((l) => !l.startsWith('gt '))).toEqual([])
   })
   it('never throws into the web submit', async () => {
     sessionRow = null

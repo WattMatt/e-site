@@ -60,7 +60,7 @@ export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerif
   }
 
   await d.sb.schema('whatsapp').from('form_sessions')
-    .update({ status: 'submitted', submitted_at: d.now().toISOString(), pending_photo_inbound_id: null }).eq('id', sessionId)
+    .update({ status: 'submitted', submitted_at: d.now().toISOString(), pending_photo_inbound_ids: [] }).eq('id', sessionId)
   const { error: qErr } = await d.sb.schema('whatsapp').rpc('enqueue_form_submitted', { p_session: sessionId })
   if (qErr) console.error('[whatsapp-forms] enqueue_form_submitted failed', sessionId, qErr.message)
 
@@ -93,6 +93,9 @@ export async function afterWebSubmitOfWhatsAppForm(inspectionId: string, submitt
     const deps = d ?? defaults()
     const { data } = await deps.sb.schema('whatsapp').from('form_sessions').select('id')
       .eq('inspection_id', inspectionId).eq('user_id', submitterId).in('status', ['open', 'answered'])
+      // An expired session means the person has not been in the chat for a day: a free-form
+      // confirmation would land outside Meta's 24-hour window.
+      .gt('expires_at', deps.now().toISOString())
       .order('created_at', { ascending: false }).limit(1)
     const id = data?.[0]?.id as string | undefined
     if (id) await afterWhatsAppSubmit(id, { notifyVerifier: false }, deps)

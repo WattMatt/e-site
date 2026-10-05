@@ -523,13 +523,16 @@ export async function submitInspectionAction(
 ): Promise<void> {
   const supabase = (await createClient()) as AnyClient
 
-  const { error } = await supabase
+  const { data: moved, error } = await supabase
     .schema('inspections')
     .from('inspections')
     .update({ status: 'awaiting_verification', completed_at: new Date().toISOString() })
     .eq('id', inspectionId)
     .in('status', ['in_progress', 're-inspect_required'])
+    .select('id')
   if (error) throw error
+  // Nothing moved (already submitted, or not in a submittable state): no notices, no WhatsApp follow-up.
+  const didSubmit = (moved ?? []).length > 0
 
   const { data: insp } = await supabase
     .schema('inspections')
@@ -541,7 +544,7 @@ export async function submitInspectionAction(
   const verifierId = (insp as { verifier_id: string | null } | null)?.verifier_id ?? null
   const targetLabel = (insp as { target_label: string } | null)?.target_label ?? 'inspection'
 
-  if (verifierId) {
+  if (verifierId && didSubmit) {
     await dispatchNotification({
       userIds: [verifierId],
       title: 'Inspection awaiting your verification',
@@ -556,7 +559,7 @@ export async function submitInspectionAction(
   // Opened on WhatsApp (E4)? Then the person's chat gets the confirmation with the PDF and the
   // site's linked members get the summary. Never throws.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await afterWebSubmitOfWhatsAppForm(inspectionId, user.id)
+  if (user && didSubmit) await afterWebSubmitOfWhatsAppForm(inspectionId, user.id)
 
   revalidatePath(`/projects/${projectId}/inspections/${inspectionId}`)
   revalidatePath(`/projects/${projectId}/inspections`)

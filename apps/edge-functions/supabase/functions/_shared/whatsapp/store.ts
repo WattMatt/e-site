@@ -11,8 +11,10 @@ import { classifyMetaError } from './meta-client.ts'
 type Sb = any
 const wa = (sb: Sb) => sb.schema('whatsapp')
 const LIVE = ['active', 'pending_optin']
+const WINDOW_CLOSED = 131047
 
-function must<T>(r: { data: T; error: { message: string } | null }, what: string): T {
+// deno-lint-ignore no-explicit-any
+function must(r: { data: any; error: { message: string } | null }, what: string): any {
   if (r.error) throw new Error(`${what}: ${r.error.message}`)
   return r.data
 }
@@ -34,7 +36,8 @@ export async function applyStatuses(sb: Sb, statuses: StatusUpdate[]): Promise<v
     if (!cur) continue
     if (s.status === 'failed') {
       must(await wa(sb).from('outbox').update({ status: 'failed', error_code: s.errorCode, error_text: s.errorTitle, updated_at: new Date().toISOString() }).eq('id', cur.id), 'status failed')
-      if (s.errorCode !== null && classifyMetaError(s.errorCode, 200) === 'recipient') {
+      // 131047 = the 24-hour window had closed: that message is lost, the number is fine.
+      if (s.errorCode !== null && s.errorCode !== WINDOW_CLOSED && classifyMetaError(s.errorCode, 200) === 'recipient') {
         must(await wa(sb).from('phone_links').update({ status: 'undeliverable', undeliverable_reason: `${s.errorCode} ${s.errorTitle ?? ''}`.trim() })
           .eq('user_id', cur.user_id).eq('status', 'active'), 'mark undeliverable')
       }
@@ -151,6 +154,10 @@ export function createWorkerStore(sb: Sb): WorkerStore {
       const templateName = must(t, 'form template')?.name ?? 'Inspection'
       return { label: i.target_label || templateName, templateName, projectName: must(p, 'form project')?.name ?? 'the project',
         submitterName: name(s.user_id) ?? 'A team member', verifierName: name(i.verifier_id) }
+    },
+    async templateApproved(name) {
+      const r = must(await wa(sb).from('templates').select('status').eq('name', name).maybeSingle(), 'template status')
+      return r?.status === 'approved'
     },
     async outboundPdf(sessionId) {
       const { data, error } = await sb.storage.from('whatsapp-media').download(`outbound/${sessionId}.pdf`)

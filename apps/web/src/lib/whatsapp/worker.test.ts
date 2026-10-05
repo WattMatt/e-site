@@ -116,14 +116,17 @@ describe('drainOutbox: inspection forms (E4)', () => {
     projectName: '(643) KINGSWALK', submitterName: 'Johan B', verifierName: 'Arno' }
   let pdf: Uint8Array | null
   let check: string
+  let approved: boolean
 
   beforeEach(() => {
     pdf = new Uint8Array([37, 80, 68, 70])
     check = 'ok'
+    approved = true
     Object.assign(store, {
       formReceiveCheck: vi.fn(async () => check),
       formSummary: vi.fn(async () => summary),
       outboundPdf: vi.fn(async () => pdf),
+      templateApproved: vi.fn(async () => approved),
     })
     Object.assign(meta, {
       uploadMedia: vi.fn(async () => 'MEDIA1'),
@@ -177,5 +180,12 @@ describe('drainOutbox: inspection forms (E4)', () => {
       expect(store.marks[0][1]).toMatchObject({ status: 'suppressed', error_text: reason })
     }
     expect(meta.sendTemplate).not.toHaveBeenCalled()
+  })
+  it('summary: held back while Meta has not approved the template (no per-recipient policy errors)', async () => {
+    approved = false
+    rows = [orow({ trigger: 'form_submitted', work_item_id: null, form_session_id: S })]
+    await run()
+    expect(meta.sendTemplate).not.toHaveBeenCalled()
+    expect(store.marks[0][1]).toMatchObject({ status: 'suppressed', error_text: 'template_not_approved' })
   })
 })
