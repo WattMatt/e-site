@@ -100,7 +100,7 @@ The gap in the web client is narrower and more specific than "no camera". Camera
 
 Snags fail for a nearer reason than the unpublished Expo app. The web snag uploader exists and is reachable (`(admin)/snags/[id]/SnagPhotoUploader.tsx`), but its input at `:117-125` sets `accept` and `multiple` and **no `capture` attribute** — on a phone it opens a file picker rather than the camera. Photographing a defect therefore means taking a photo in the camera app, leaving it, opening the browser, finding the snag and picking the file back out of the gallery. Zero snag photos is the predictable result of that sequence, not of a missing app.
 
-Two phone-shaped surfaces already exist in the navigation and should be absorbed by the PWA work rather than rebuilt: `/site` (`Sidebar.tsx:93`), which lists every cable pending site length confirmation across all accessible draft revisions (`(admin)/site/page.tsx`), and the `(scan)` route group's tag lookup (`(scan)/site/tag/[text]/page.tsx`), which renders outside the admin shell.
+One phone-shaped surface already exists and should be absorbed by the PWA work rather than rebuilt: the `(scan)` route group's tag lookup (`(scan)/site/tag/[text]/page.tsx`), which renders outside the admin shell. *(Amended 2026-10-05: the `/site` "Site capture" cable-length list was removed from the sidebar, and `/site` now redirects to `/projects` — capture lives inside the project at `/projects/[id]/capture`. The list was dropped because it had produced 0 confirmed lengths across 636 cables, included ISSUED revisions, silently capped at 200 rows, and deep-linked to an anchor that did not exist.)*
 
 #### Finding 4 — The modules that thrive are the ones WM must maintain for its own work
 

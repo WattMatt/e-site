@@ -18,6 +18,7 @@ membership.
 | **R** | Read-only — page renders or GET returns data, but writes are blocked |
 | **—** | No access — page redirects, or API returns 401/403/404 |
 | **→** | Permanent redirect to a successor route — access is governed by the target's row |
+| **⇢** | Temporary (307) redirect — the path is kept free for a later decision |
 | **?** | Behaviour not verified; flag for audit |
 
 ## Roles
@@ -39,6 +40,7 @@ membership.
 | `/dashboard` | W | W | W | W | W | W | R |
 | `/projects` (list) | W | W | W | W | R | — | R |
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
+| `/projects/[id]/capture` (the single in-project Capture menu — diary entry, snag, site form, inspection, photo; added 2026-10-05). Each tile is shown only to the roles its target already admits (`lib/capture/capture-actions.ts`, pinned by a contract test that reads the targets): snag follows `SNAG_FIELD_ROLES`, site form `FORMS_FIELD_ROLES`, diary/photo the diary row's write set. The inspection tile needs an ORG role of owner/admin/PM in the project's org (the gate `createInspectionAction` applies) and links to `/inspections/unlock` when the org has not unlocked inspections. A caller with no project role sees an explanation instead of tiles | W | W | W | W (no inspection) | W (snag, site form) | W (snag, site form) | → `/portal` |
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/quality-control` (list) | W | W | W | W | R | — | R⁹ |
@@ -61,9 +63,9 @@ membership.
 | `/rfis?projectId=…` | W | W | W | W | R | — | R |
 | `/inspections/templates` | W² | W² | — | — | — | — | — |
 | `/inspections/unlock` | W | R | R | — | — | — | — |
+| `/site` — the global "Site capture" page was removed 2026-10-05; the bare path is a temporary redirect for old links. The QR resolver `/site/tag/[text]` is a separate route and unchanged | ⇢ `/projects` | ⇢ `/projects` | ⇢ `/projects` | ⇢ `/projects` | ⇢ `/projects` | ⇢ `/projects` | → `/portal` |
 | `/marketplace` | W³ | W³ | W³ | W³ | — | — | — |
 | `/marketplace/supplier/*` | — | — | — | — | — | W | — |
-| `/site` (site capture) | W | W | W | W | W | — | — |
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
