@@ -1,10 +1,12 @@
 // apps/web/src/app/(admin)/settings/whatsapp/WhatsAppAdminPanel.tsx
 'use client'
 import { useState, useTransition } from 'react'
-import { setWhatsAppAlertEmailAction, setWhatsAppSendingAction } from '@/actions/whatsapp-admin.actions'
+import { setWhatsAppAlertEmailAction, setWhatsAppFormsEnabledAction, setWhatsAppSendingAction } from '@/actions/whatsapp-admin.actions'
 
 interface Props {
   sendingEnabled: boolean
+  /** Inspection forms over WhatsApp for THIS organisation (E4). */
+  formsEnabled: boolean
   alertEmail: string
   lastPolicyError: string | null
   links: Array<{ name: string; phone: string; status: string; reason: string | null }>
@@ -17,6 +19,7 @@ interface Props {
 
 export function WhatsAppAdminPanel(p: Props) {
   const [enabled, setEnabled] = useState(p.sendingEnabled)
+  const [forms, setForms] = useState(p.formsEnabled)
   const [email, setEmail] = useState(p.alertEmail)
   const [msg, setMsg] = useState<string | null>(null)
   const [pending, start] = useTransition()
@@ -39,6 +42,16 @@ export function WhatsAppAdminPanel(p: Props) {
           <button type="button" disabled={pending} onClick={() => start(async () => { const r = await setWhatsAppAlertEmailAction({ email }); setMsg('error' in r ? r.error : 'Saved.') })}>Save</button>
         </div>
         {msg && <p style={{ fontSize: 12 }}>{msg}</p>}
+      </div>
+      <div style={section}>
+        <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13 }}>
+          <input type="checkbox" checked={forms} disabled={pending} onChange={(e) => {
+            const v = e.target.checked; setForms(v)
+            start(async () => { const r = await setWhatsAppFormsEnabledAction({ enabled: v }); if ('error' in r) { setForms(!v); setMsg(r.error) } })
+          }} />
+          Inspection forms over WhatsApp (this organisation). Members can fill in inspections assigned on their projects
+          from WhatsApp; answers, photos and the PDF pass through Meta&apos;s servers.
+        </label>
       </div>
       <div style={section}>
         <h2 style={{ fontSize: 14, marginTop: 0 }}>Last 7 days</h2>

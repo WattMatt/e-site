@@ -13,13 +13,14 @@ export default async function WhatsAppSettingsPage() {
   const { data: members } = await svc.from('user_organisations').select('user_id').eq('organisation_id', ctx.organisationId).eq('is_active', true)
   const ids: string[] = (members ?? []).map((m: { user_id: string }) => m.user_id)
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString()
-  const [settings, links, profiles, out7, in7, templates] = await Promise.all([
+  const [settings, links, profiles, out7, in7, templates, orgForms] = await Promise.all([
     svc.schema('whatsapp').from('settings').select('*').eq('id', true).maybeSingle(),
     svc.schema('whatsapp').from('phone_links').select('user_id, phone_e164, status, created_at, undeliverable_reason').in('user_id', ids),
     svc.from('profiles').select('id, full_name').in('id', ids),
     svc.schema('whatsapp').from('outbox').select('status, trigger').in('user_id', ids).gte('created_at', since),
     svc.schema('whatsapp').from('inbound').select('outcome, outcome_reason').in('resolved_user_id', ids).gte('received_at', since),
     svc.schema('whatsapp').from('templates').select('name, category, status'),
+    svc.schema('whatsapp').from('org_settings').select('forms_enabled').eq('organisation_id', ctx.organisationId).maybeSingle(),
   ])
   const nameOf = (id: string) => (profiles.data ?? []).find((p: { id: string }) => p.id === id)?.full_name ?? id.slice(0, 8)
   const count = (rows: Array<Record<string, string>> | null, key: string) =>
@@ -32,6 +33,7 @@ export default async function WhatsAppSettingsPage() {
       <div className="page-header"><h1 className="page-title">WhatsApp</h1></div>
       <WhatsAppAdminPanel
         sendingEnabled={Boolean(settings.data?.sending_enabled)}
+        formsEnabled={Boolean(orgForms.data?.forms_enabled)}
         alertEmail={settings.data?.alert_email ?? ''}
         lastPolicyError={settings.data?.last_policy_error ? `${settings.data.last_policy_error_at}: ${settings.data.last_policy_error}` : null}
         links={(links.data ?? []).map((l: { user_id: string; phone_e164: string; status: string; undeliverable_reason: string | null }) =>
