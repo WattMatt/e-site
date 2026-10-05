@@ -48,10 +48,21 @@ describe('afterWhatsAppSubmit', () => {
     await afterWhatsAppSubmit('s-1', { notifyVerifier: true }, deps())
     expect(log[0]).toBe('rpc enqueue_form_submitted {"p_session":"s-1"}')
     expect(log[1]).toBe('notify')
-    expect(log[2]).toBe('render')
-    expect(log[3]).toBe(`upload whatsapp-media ${outboundPdfPath('s-1')}`)
-    expect(log[4]).toBe('kick')
-    expect(log[5]).toMatch(/^update form_sessions .*"status":"submitted"/)
+    expect(log[2]).toMatch(/^update form_sessions .*followup_notified_at/)
+    expect(log[3]).toBe('render')
+    expect(log[4]).toBe(`upload whatsapp-media ${outboundPdfPath('s-1')}`)
+    expect(log[5]).toBe('kick')
+    expect(log[6]).toMatch(/^update form_sessions .*"status":"submitted"/)
+  })
+  it('a retried follow-up does not notify the verifier again', async () => {
+    sessionRow = { ...sessionRow!, followup_notified_at: '2026-10-05T09:59:00Z' }
+    await afterWhatsAppSubmit('s-1', { notifyVerifier: true }, deps())
+    expect(log).not.toContain('notify')
+    expect(log).toContain('kick')
+  })
+  it('stamps the session after notifying, so the next retry knows', async () => {
+    await afterWhatsAppSubmit('s-1', { notifyVerifier: true }, deps())
+    expect(log.some((l) => /^update form_sessions .*followup_notified_at/.test(l))).toBe(true)
   })
   it('does not notify the verifier twice when the web submit already did', async () => {
     await afterWhatsAppSubmit('s-1', { notifyVerifier: false }, deps())

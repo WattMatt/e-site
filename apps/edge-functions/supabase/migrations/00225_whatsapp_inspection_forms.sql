@@ -44,6 +44,10 @@
 -- function: whatsapp.form_session_hold_photo(uuid,uuid)
 -- function: whatsapp.form_session_release_photos(uuid,uuid[])
 -- column: inspections.inspections.submitted_session_id
+-- column: whatsapp.form_sessions.followup_notified_at
+-- function: inspections.guard_submit_marker()
+-- trigger: trg_guard_submit_marker ON inspections.inspections
+-- sql: (SELECT NOT prosecdef FROM pg_proc WHERE oid = 'inspections.guard_submit_marker()'::regprocedure)
 -- function: whatsapp.enqueue_form_submitted(uuid)
 -- function: whatsapp.form_receive_check(uuid)
 -- constraint: outbox_trigger_check ON whatsapp.outbox
@@ -103,6 +107,8 @@ CREATE TABLE whatsapp.form_sessions (
   -- The item the last numbered photo went to, and when: later uncaptioned photos follow it.
   last_photo_item     integer,
   last_photo_at       timestamptz,
+  -- The verifier is told once per session, however often an interrupted follow-up is retried.
+  followup_notified_at timestamptz,
   created_at          timestamptz NOT NULL DEFAULT now(),
   expires_at          timestamptz NOT NULL,
   submitted_at        timestamptz
@@ -159,6 +165,29 @@ ALTER TABLE inspections.inspections ADD COLUMN submitted_via text CHECK (submitt
 -- The WhatsApp session whose SUBMIT moved the inspection, stamped in the same statement. A retry may
 -- finish that submit's follow-up only when it is the same session (never someone else's submit).
 ALTER TABLE inspections.inspections ADD COLUMN submitted_session_id uuid REFERENCES whatsapp.form_sessions(id) ON DELETE SET NULL;
+
+-- Contributors may update inspections.inspections directly (inspections_update_contributors), so the
+-- marker that lets a WhatsApp retry finish a submit's follow-up must not be writable by them: only
+-- the WhatsApp actor (inside wa_inspection_submit) may SET it or mark a submit as 'whatsapp'; anyone
+-- may clear it or record 'web' / 'mobile'. SECURITY INVOKER on purpose: current_user must be the
+-- caller (a definer function would see its owner and wave everyone through).
+CREATE OR REPLACE FUNCTION inspections.guard_submit_marker()
+RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF current_user IN ('whatsapp_actor', 'service_role', 'postgres', 'supabase_admin') THEN RETURN NEW; END IF;
+  IF NEW.submitted_session_id IS NOT NULL AND NEW.submitted_session_id IS DISTINCT FROM OLD.submitted_session_id THEN
+    RAISE EXCEPTION 'submitted_session_id is set only by a WhatsApp submit' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.submitted_via = 'whatsapp' AND NEW.submitted_via IS DISTINCT FROM OLD.submitted_via THEN
+    RAISE EXCEPTION 'submitted_via = whatsapp is set only by a WhatsApp submit' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION inspections.guard_submit_marker() FROM PUBLIC;
+REVOKE ALL ON FUNCTION inspections.guard_submit_marker() FROM anon;
+REVOKE ALL ON FUNCTION inspections.guard_submit_marker() FROM authenticated;
+CREATE TRIGGER trg_guard_submit_marker BEFORE UPDATE OF submitted_session_id, submitted_via ON inspections.inspections
+  FOR EACH ROW EXECUTE FUNCTION inspections.guard_submit_marker();
 
 -- ── 6. Grants: the new tables are service-role only ──────────────────────────
 ALTER TABLE whatsapp.org_settings  ENABLE ROW LEVEL SECURITY;

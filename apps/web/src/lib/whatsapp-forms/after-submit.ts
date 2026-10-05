@@ -47,7 +47,7 @@ function defaults(): AfterSubmitDeps {
 export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerifier: boolean },
                                           d: AfterSubmitDeps = defaults()): Promise<void> {
   const { data: s, error } = await d.sb.schema('whatsapp').from('form_sessions')
-    .select('id, user_id, inspection_id, status').eq('id', sessionId).maybeSingle()
+    .select('id, user_id, inspection_id, status, followup_notified_at').eq('id', sessionId).maybeSingle()
   if (error || !s) throw new Error(`afterWhatsAppSubmit: session ${sessionId} not found`)
 
   // Queue the messages and notify FIRST: they are cheap and idempotent, and a timeout in the PDF
@@ -55,7 +55,7 @@ export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerif
   const { error: qErr } = await d.sb.schema('whatsapp').rpc('enqueue_form_submitted', { p_session: sessionId })
   if (qErr) throw new Error(`enqueue_form_submitted: ${qErr.message}`)
 
-  if (opts.notifyVerifier) {
+  if (opts.notifyVerifier && !s.followup_notified_at) {
     const { data: insp } = await d.sb.schema('inspections').from('inspections')
       .select('verifier_id, target_label, project_id').eq('id', s.inspection_id).maybeSingle()
     if (insp?.verifier_id) {
@@ -69,6 +69,7 @@ export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerif
         entityId: s.inspection_id,
       })
     }
+    await d.sb.schema('whatsapp').from('form_sessions').update({ followup_notified_at: d.now().toISOString() }).eq('id', sessionId)
   }
 
   try {

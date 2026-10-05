@@ -144,7 +144,36 @@ INSERT INTO _r VALUES
                       '[{"section_id":"visual_structural_checks","field_id":"enclosure_integrity","value_bool":true,"pass_state":"pass"}]', NULL));
 RESET ROLE;
 
+-- 5. The submit marker cannot be forged through PostgREST (only the WhatsApp actor may set it).
+CREATE TEMP TABLE _f (k text PRIMARY KEY, v text);
+GRANT ALL ON _f TO authenticated;
+GRANT SELECT ON _i TO authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('x.c'), 'role', 'authenticated')::text, true);
+UPDATE projects.project_members SET is_active = true
+ WHERE user_id = current_setting('x.c')::uuid AND project_id = current_setting('x.kw')::uuid;
+SET LOCAL ROLE authenticated;
+DO $$ BEGIN
+  UPDATE inspections.inspections SET submitted_session_id = current_setting('x.sess')::uuid WHERE id = (SELECT id FROM _i WHERE k = 'WA probe off');
+  INSERT INTO _f VALUES ('forge_session', 'ok');
+EXCEPTION WHEN OTHERS THEN INSERT INTO _f VALUES ('forge_session', SQLERRM);
+END $$;
+DO $$ BEGIN
+  UPDATE inspections.inspections SET submitted_via = 'whatsapp' WHERE id = (SELECT id FROM _i WHERE k = 'WA probe off');
+  INSERT INTO _f VALUES ('forge_via', 'ok');
+EXCEPTION WHEN OTHERS THEN INSERT INTO _f VALUES ('forge_via', SQLERRM);
+END $$;
+DO $$ BEGIN
+  UPDATE inspections.inspections SET submitted_session_id = NULL, submitted_via = 'web' WHERE id = (SELECT id FROM _i WHERE k = 'WA probe off');
+  INSERT INTO _f VALUES ('clear', 'ok');
+EXCEPTION WHEN OTHERS THEN INSERT INTO _f VALUES ('clear', SQLERRM);
+END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claims', '', true);
+
 SELECT * FROM (VALUES
+  ('a contributor cannot forge the submit session marker', (SELECT v FROM _f WHERE k = 'forge_session') <> 'ok'),
+  ('a contributor cannot mark a submit as WhatsApp',       (SELECT v FROM _f WHERE k = 'forge_via') <> 'ok'),
+  ('a web submit may clear the marker and say web',        (SELECT v FROM _f WHERE k = 'clear') = 'ok'),
   ('flag off: gate refuses',                 (SELECT v->>'code' FROM _r WHERE k = 'gate_off') = 'flag_off'),
   ('flag off: nothing listed',               (SELECT v = '[]'::jsonb FROM _r WHERE k = 'list_off')),
   ('flag off: save refused',                 (SELECT v->>'code' FROM _r WHERE k = 'save_off') = 'flag_off'),
