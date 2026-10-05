@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * Reads a project's load profile through the CALLER's session (00225 RLS) and composes the view.
- * Tariffs come from tariff-source (service client, published years only).
+ * Tariffs too (tariff-source: published years only; the library's own RLS is the gate, ADR-007).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TenantSynthInput } from '@esite/shared/load-profile'
@@ -51,10 +51,10 @@ export async function loadLoadProfileView(supabase: AnyClient, projectId: string
   }
   let costing: ComposeInput['costing'] = null
   if (settings.tariffId) {
-    const t = await loadCostingTariff(settings.tariffId)
+    const t = await loadCostingTariff(supabase, settings.tariffId)
     costing = t
       ? { tariffId: t.tariffId, tariff: t.tariff, calendar: t.calendar, calendarAssumedEskom: t.calendarAssumedEskom, label: t.label }
-      : { tariffId: settings.tariffId, error: 'This tariff is no longer published. Choose another.' }
+      : { tariffId: settings.tariffId, error: 'This tariff is not available: it is no longer published, or the tariff library is not open to your organisation yet. Choose another.' }
   }
   const view = composeView({ ...settings, sources: rows, tenants, costing, includeHourly: opts.includeHourly })
   return {

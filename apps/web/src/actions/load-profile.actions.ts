@@ -185,7 +185,7 @@ export async function saveLoadProfileSettingsAction(projectId: string, input: z.
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the values.' }
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
-  if (parsed.data.tariffId && !(await loadCostingTariff(parsed.data.tariffId))) return { error: 'That tariff is not published.' }
+  if (parsed.data.tariffId && !(await loadCostingTariff(g.supabase, parsed.data.tariffId))) return { error: 'That tariff is not published.' }
   const profileId = await ensureProfile(g.supabase, projectId)
   if (typeof profileId !== 'string') return profileId
   const { referenceYear, powerFactor, nmdKva, tariffId } = parsed.data
@@ -201,7 +201,7 @@ export async function listPublishedLicenseesAction(projectId: string): Promise<{
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
   try {
-    return { ok: true, licensees: await listPublishedLicensees() }
+    return { ok: true, licensees: await listPublishedLicensees(g.supabase) }
   } catch {
     return { error: GENERIC }
   }
@@ -212,7 +212,7 @@ export async function listPublishedTariffsAction(projectId: string, licenseeId: 
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
   try {
-    return { ok: true, tariffs: await listPublishedTariffs(licenseeId) }
+    return { ok: true, tariffs: await listPublishedTariffs(g.supabase, licenseeId) }
   } catch {
     return { error: GENERIC }
   }

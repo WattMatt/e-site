@@ -1,21 +1,17 @@
 import 'server-only'
 /**
- * Published tariffs for the Load profile tab, which every plan can open (E8-D1). The `tariffs`
- * schema's own policies admit only platform tariff admins and orgs with a Solar subscription
- * (00210, caller_has_any_solar_org), so this module reads it with the SERVICE client and narrows
- * every query to tariff years in state 'published' — NERSA-approved, public regulatory data.
- * Drafts (`in_review`) and superseded years are never read here. Callers must already have passed
- * the page's own project gate. When E7 settles the tariff audience (its D1), a SELECT policy can
- * replace this module; nothing else would change.
+ * Published tariffs for the Load profile tab, read through the CALLER's session. The database is
+ * the gate (ADR-007, PR #239): `caller_can_read_tariff_library()` lets every signed-in org read the
+ * published library; drafts stay admin-only. Every query is still narrowed to tariff years in state
+ * 'published' here, so a tariff admin using this tab never sees an in-review draft either.
+ * Until #239 is applied, an org without a Solar subscription reads nothing and the tab says so.
  */
 import type { Tariff, TouCalendar } from '@esite/shared'
-import { createServiceClient } from '@/lib/supabase/server'
 import { loadStudyCalendar } from '@/lib/solar/tariff/calendar-loader'
 import { loadYearTariffs } from '@/lib/tariffs/load-year'
 import type { AnyClient } from '@/lib/tariffs/admin-gate'
 
 type Row = Record<string, unknown>
-const service = () => createServiceClient() as unknown as AnyClient
 
 export interface PublishedLicensee { id: string; name: string; kind: string; province: string | null; aliases: string[] }
 export interface PublishedTariffOption { id: string; name: string; code: string | null; structure: string; financialYear: string }
@@ -29,8 +25,8 @@ export interface CostingTariff {
   financialYear: string
 }
 
-export async function listPublishedLicensees(): Promise<PublishedLicensee[]> {
-  const t = service().schema('tariffs')
+export async function listPublishedLicensees(client: AnyClient): Promise<PublishedLicensee[]> {
+  const t = client.schema('tariffs')
   const { data: years, error } = await t.from('tariff_year').select('licensee_id').eq('state', 'published')
   if (error) throw new Error(`tariff years: ${error.message}`)
   const ids = [...new Set(((years ?? []) as Row[]).map((y) => String(y.licensee_id)))]
@@ -47,8 +43,8 @@ export async function listPublishedLicensees(): Promise<PublishedLicensee[]> {
     .sort((a, b) => (a.kind === 'eskom' ? -1 : b.kind === 'eskom' ? 1 : a.name.localeCompare(b.name)))
 }
 
-export async function listPublishedTariffs(licenseeId: string): Promise<PublishedTariffOption[]> {
-  const t = service().schema('tariffs')
+export async function listPublishedTariffs(client: AnyClient, licenseeId: string): Promise<PublishedTariffOption[]> {
+  const t = client.schema('tariffs')
   const { data: years, error } = await t.from('tariff_year').select('id, financial_year').eq('licensee_id', licenseeId).eq('state', 'published')
   if (error) throw new Error(`tariff years: ${error.message}`)
   const ys = (years ?? []) as Row[]
@@ -66,8 +62,7 @@ export async function listPublishedTariffs(licenseeId: string): Promise<Publishe
  * longer published (superseded each April / July) follows into the licensee's CURRENT published
  * year by code, else by exact name; null when there is no such successor.
  */
-export async function loadCostingTariff(tariffId: string): Promise<CostingTariff | null> {
-  const client = service()
+export async function loadCostingTariff(client: AnyClient, tariffId: string): Promise<CostingTariff | null> {
   const t = client.schema('tariffs')
   const { data: tr } = await t.from('tariff').select('id, name, code, tariff_year_id').eq('id', tariffId).maybeSingle()
   const chosen = tr as Row | null

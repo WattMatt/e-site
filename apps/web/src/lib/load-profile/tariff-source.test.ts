@@ -15,10 +15,10 @@ const tariffRow = (id: string, year: string, extra: Record<string, unknown> = {}
   eligibility: null, export_tariff_id: null, is_legacy: false, ...extra,
 })
 let tables: Record<string, Array<Record<string, unknown>>>
-vi.mock('@/lib/supabase/server', () => ({ createServiceClient: () => fakeSupabase({ tables }).client }))
 vi.mock('@/lib/solar/tariff/calendar-loader', () => ({ loadStudyCalendar: async () => ({ calendar: null, assumedEskom: false, fromEskomFallback: false }) }))
 
 const { listPublishedLicensees, listPublishedTariffs, loadCostingTariff } = await import('./tariff-source')
+const db = () => fakeSupabase({ tables }).client as never
 
 beforeEach(() => {
   tables = {
@@ -34,22 +34,22 @@ beforeEach(() => {
   }
 })
 
-describe('tariff-source (service client, published years only)', () => {
+describe('tariff-source (caller session, published years only)', () => {
   it('lists only published years’ tariffs', async () => {
-    expect((await listPublishedTariffs(L)).map((t) => t.id)).toEqual([NEW])
-    expect(await listPublishedLicensees()).toEqual([{ id: L, name: 'Test City', kind: 'municipality', province: 'GP', aliases: ['TCity'] }])
+    expect((await listPublishedTariffs(db(), L)).map((t) => t.id)).toEqual([NEW])
+    expect(await listPublishedLicensees(db())).toEqual([{ id: L, name: 'Test City', kind: 'municipality', province: 'GP', aliases: ['TCity'] }])
   })
   it('never loads a tariff from a draft year', async () => {
-    expect(await loadCostingTariff(UNPUB)).toBeNull()
+    expect(await loadCostingTariff(db(), UNPUB)).toBeNull()
   })
   it('follows a superseded tariff into the current published year by code, and says so', async () => {
-    const t = await loadCostingTariff(OLD)
+    const t = await loadCostingTariff(db(), OLD)
     expect(t?.tariffId).toBe(NEW)
     expect(t?.financialYear).toBe('2026/27')
     expect(t?.label).toBe('Test City · 2026/27 · Business Flat (chosen in 2025/26; now 2026/27)')
   })
   it('a superseded tariff with no single successor is not costed', async () => {
     tables['tariffs.tariff'] = [tariffRow(OLD, Y25), tariffRow(NEW, Y26, { code: 'OTHER' })]
-    expect(await loadCostingTariff(OLD)).toBeNull()
+    expect(await loadCostingTariff(db(), OLD)).toBeNull()
   })
 })
