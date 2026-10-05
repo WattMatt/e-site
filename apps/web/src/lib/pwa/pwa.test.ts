@@ -61,8 +61,14 @@ describe('iOS install metadata', () => {
     expect(pngSize(path.join(PUBLIC, apple))).toEqual({ w: 180, h: 180 })
   })
 
-  it('uses viewport-fit=cover so env(safe-area-inset-*) is real (insets handled in globals.css)', () => {
+  it('uses viewport-fit=cover, and every layout handles the insets that switches on', () => {
     expect(viewport.viewportFit).toBe('cover')
+    const css = readFileSync(path.join(__dirname, '../../app/globals.css'), 'utf8')
+    // Landscape notch, on every layout (auth, portal, public, app).
+    expect(css).toMatch(/body\s*\{\s*padding-left:\s*env\(safe-area-inset-left\);\s*padding-right:\s*env\(safe-area-inset-right\);/)
+    // Home indicator: the phone tab bar and the desktop sidebar's foot.
+    expect(css).toMatch(/\.mobile-tabbar\s*\{[^}]*env\(safe-area-inset-bottom\)/)
+    expect(css).toMatch(/\.sidebar\s*\{\s*padding-bottom:\s*env\(safe-area-inset-bottom\);/)
   })
 
   it('links one launch image per device, each with a distinct portrait media query', () => {
