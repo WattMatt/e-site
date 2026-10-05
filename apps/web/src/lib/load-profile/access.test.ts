@@ -5,7 +5,7 @@ const P = '11111111-2222-3333-4444-555555555555'
 const SHA = 'a'.repeat(64)
 
 describe('load profile access', () => {
-  it('read excludes only client_viewer; write is owner/admin/PM (00232)', () => {
+  it('read excludes only client_viewer; write is owner/admin/PM (00231)', () => {
     expect(LOAD_PROFILE_READ_ROLES).not.toContain('client_viewer')
     expect(LOAD_PROFILE_READ_ROLES).toEqual(expect.arrayContaining(['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier']))
     expect([...LOAD_PROFILE_WRITE_ROLES].sort()).toEqual(['admin', 'owner', 'project_manager'])
