@@ -10,6 +10,7 @@ import {
   breakerCoordinationCheck,
   type CableForCalc,
   type SupplyForCalc,
+  type ReferenceProvenance,
 } from '@esite/shared'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
 import { sansBreadcrumb, sansBreadcrumbAsTooltip } from '@/lib/cable-schedule/sans-breadcrumb'
@@ -117,6 +118,9 @@ interface Props {
    *  short-circuit column checks each strand's 1 s withstand against.
    *  Null → the column renders an unobtrusive "—" (unknown). */
   faultLevelKa: number | null
+  /** Audit verdicts of the legacy reference tables (sans_tables.verification),
+   *  shown as SANS citations in the rating tooltip. */
+  referenceProvenance?: ReferenceProvenance
 }
 
 const LENGTH_STATUS_TONE: Record<EnrichedRun['length_status'], string> = {
@@ -236,6 +240,7 @@ export function CableScheduleGrid({
   lengthMode,
   canEdit,
   faultLevelKa,
+  referenceProvenance,
 }: Props) {
   const [query, setQuery] = useState('')
   const [editConfirmed, setEditConfirmed] = useState<EnrichedCable | null>(null)
@@ -1010,7 +1015,7 @@ export function CableScheduleGrid({
                       const breadcrumb = sansBreadcrumb(run)
                       // locked ⇒ non-DRAFT: stored factors are a snapshot of the
                       // lookup rules in force at issue time, never recomputed.
-                      const tipBody = sansBreadcrumbAsTooltip(breadcrumb, { frozen: locked })
+                      const tipBody = sansBreadcrumbAsTooltip(breadcrumb, { frozen: locked, provenance: referenceProvenance, inputs: { insulation: run.insulation, installation_method: run.installation_method, grouped_with: run.grouped_with, size_mm2: run.size_mm2 } })
                       const capacityTip = run.combined_capacity_a == null
                         ? tipBody
                         : `Combined capacity: ${Math.round(run.combined_capacity_a)} A (sum of ${run.parallel_count} strands)\n\n${tipBody}`
@@ -1237,7 +1242,7 @@ export function CableScheduleGrid({
                           derate_thermal:  (c as EnrichedCable & { derate_thermal?: number | null }).derate_thermal ?? null,
                           derate_grouping: (c as EnrichedCable & { derate_grouping?: number | null }).derate_grouping ?? null,
                           derate_temp:     (c as EnrichedCable & { derate_temp?: number | null }).derate_temp ?? null,
-                        }), { frozen: locked })}>
+                        }), { frozen: locked, provenance: referenceProvenance, inputs: { insulation: c.insulation, installation_method: c.installation_method, grouped_with: c.grouped_with, size_mm2: c.size_mm2 } })}>
                           {fmt(c.derated_current_rating_a, 0)}
                         </span>
                       </Td>

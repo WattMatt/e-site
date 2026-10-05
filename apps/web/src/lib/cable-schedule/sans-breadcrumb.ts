@@ -15,7 +15,7 @@
  * 6.3.1 / 6.3.2 / 6.3.4 / 6.3.6".
  */
 
-import { tableCodeFor, deratingBasis } from '@esite/shared'
+import { tableCodeFor, deratingBasis, type ReferenceProvenance } from '@esite/shared'
 import type { EnrichedRun, EnrichedCable } from './export-payload'
 
 export interface SansBreadcrumb {
@@ -186,9 +186,73 @@ export function sansBreadcrumb(input: EnrichedRun | EnrichedCable | Sansable): S
  * lookup (the 2026-07 audit corrected the lookup after older revisions
  * were issued).
  */
+/**
+ * "= SANS 10142-1:2021 Ed 3.1 Table 6.13, p.120" — only when the model's audit
+ * verdict proves the exact cell this factor came from: its table is verified
+ * (or partly verified), its COLUMN was compared, and the input value lies in
+ * the key range proven equal (the conservative lookup then lands on a proven
+ * row). Without `use`, nothing is cited. Never on a frozen revision.
+ */
+export function sansCitationLine(
+  code: string | null,
+  provenance: ReferenceProvenance | undefined,
+  use: { column: string; value: number | null; factor?: number | null } | null,
+): string | null {
+  if (!code || !provenance || !use) return null
+  const v = provenance[code]
+  if (!v || (v.status !== 'verified' && v.status !== 'partially_verified')) return null
+  const cov = v.coverage?.[use.column]
+  if (!cov) return null
+  const backed = use.value == null ? cov.whole : cov.whole || (cov.up_to != null && use.value <= cov.up_to)
+  if (!backed) return null
+  // The number shown must BE a proven cell: the one today's conservative lookup
+  // lands on for this input, or (input unknown) one of the column's proven cells.
+  // A stale stored factor, or an edit not yet recomputed, is never cited.
+  if (use.factor !== undefined) {
+    const proven = cov.values ?? {}
+    const keys = Object.keys(proven).map(Number).sort((x, y) => x - y)
+    if (use.factor == null || keys.length === 0) return null
+    if (use.value == null) {
+      if (!keys.some((k) => Math.abs(proven[String(k)] - use.factor!) < 1e-9)) return null
+    } else {
+      const k = keys.find((x) => x >= use.value!) ?? keys[keys.length - 1]
+      if (Math.abs(proven[String(k)] - use.factor) >= 1e-9) return null
+    }
+  }
+  // Only the SANS table that backs THIS column (TABLE_6_2: ground/duct → 6.8, air → 6.4(a)).
+  const refs = (cov.against_index != null ? [v.against?.[cov.against_index]] : v.against ?? [])
+    .filter((a): a is NonNullable<typeof a> => !!a)
+    .map((a) => a.citation ?? (a.standard && a.clause
+      ? `${a.standard}${a.edition ? ` Ed ${a.edition}` : ''} ${a.clause}${a.page_printed ? `, p.${a.page_printed}` : ''}`
+      : null))
+    .filter((x): x is string => !!x)
+  return refs.length === 0 ? null : `= ${refs.join('; ')}`
+}
+
+/** Which legacy column each axis's factor was read from — the shared lookup's choice (deratingBasis). */
+function factorColumn(axis: SansBreadcrumb['derateSources'][number]['axis'], c: SansBreadcrumbInputs): string | null {
+  const basis = deratingBasis(c.installation_method ?? null)
+  const duct = c.installation_method === 'DUCT'
+  switch (axis) {
+    case 'temp': return c.insulation === 'XLPE' ? 'factor_xlpe_90c' : 'factor_pvc_70c'
+    case 'depth':
+    case 'thermal': return basis.inAir ? null : duct ? 'factor_single_way_duct' : 'factor_direct_in_ground'
+    case 'grouping':
+      if ((c.grouped_with ?? 1) <= 1 || basis.inAir) return null // single cable, or air grouping (not verified)
+      return duct ? 'duct_touching' : 'ground_touching'
+  }
+}
+
+export interface SansBreadcrumbInputs {
+  insulation: string | null
+  installation_method?: string | null
+  grouped_with?: number | null
+  size_mm2?: number | null
+}
+
 export function sansBreadcrumbAsTooltip(
   b: SansBreadcrumb,
-  opts?: { frozen?: boolean },
+  opts?: { frozen?: boolean; provenance?: ReferenceProvenance; inputs?: SansBreadcrumbInputs },
 ): string {
   if (!b.ratingTableCode) {
     return 'No SANS rating mapping for this conductor / insulation / cores combination. ' +
@@ -196,10 +260,22 @@ export function sansBreadcrumbAsTooltip(
   }
   const lines: string[] = []
   lines.push(`Base rating from ${b.ratingTableLabel}` + (b.baseRatingA != null ? ` ≈ ${b.baseRatingA} A` : ''))
+  // Citations describe today's lookup; a frozen revision's stored factors may predate it.
+  const inputs = opts?.frozen ? undefined : opts?.inputs
+  if (inputs) {
+    const m = inputs.installation_method
+    const ratingColumn = m === 'DIRECT_IN_GROUND' ? 'current_rating_ground_a' : m === 'DUCT' ? 'current_rating_duct_a' : 'current_rating_air_a'
+    const exact = inputs.size_mm2 ?? null
+    const ratingCite = exact == null ? null : sansCitationLine(b.ratingTableCode, opts?.provenance, { column: ratingColumn, value: exact, factor: b.baseRatingA })
+    if (ratingCite) lines.push(`    ${ratingCite}`)
+  }
   for (const d of b.derateSources) {
     if (d.factor == null) continue
     const lhs = d.inputValue != null ? `${d.inputValue} ${d.inputUnit}` : ''
     lines.push(`  × ${d.factor.toFixed(2)} (${d.tableLabel}${lhs ? ` @ ${lhs}` : ''})`)
+    const column = inputs ? factorColumn(d.axis, inputs) : null
+    const cite = column ? sansCitationLine(d.tableCode, opts?.provenance, { column, value: d.inputValue, factor: d.factor }) : null
+    if (cite) lines.push(`      ${cite}`)
   }
   if (b.deratedRatingA != null) {
     lines.push(`= ${b.deratedRatingA} A derated`)

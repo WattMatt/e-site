@@ -1396,3 +1396,48 @@ body {
   letter-spacing: -0.025em;
   font-variation-settings: 'opsz' 144, 'SOFT' 30;
 }
+
+/* ── Standards reference (/standards) ─────────────────────────────────────── */
+.std-layout { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
+.std-index { position: sticky; top: 12px; max-height: calc(100vh - 120px); overflow-y: auto; }
+.std-group { margin-bottom: 14px; }
+.std-group-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.std-group-code { font-weight: 700; color: var(--c-text); }
+.std-group-title { font-size: 12px; color: var(--c-text-mid); margin: 2px 0 6px; }
+.std-group-empty { font-size: 12px; color: var(--c-text-dim); }
+.std-table-list { list-style: none; margin: 0; padding: 0; }
+.std-table-link { display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; color: var(--c-text-mid); cursor: pointer; font-size: 13px; }
+.std-table-link:hover { background: var(--c-elevated); color: var(--c-text); }
+.std-table-link.is-active { border-color: var(--c-amber-mid); color: var(--c-text); background: var(--c-amber-dim); }
+.std-table-clause { flex: none; color: var(--c-amber); font-variant-numeric: tabular-nums; }
+.std-detail-head { padding: 14px 18px; border-bottom: 1px solid var(--c-border); }
+.std-detail-title { font-size: 17px; margin: 0 0 4px; }
+.std-cite { font-size: 13px; color: var(--c-text-mid); }
+.std-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.std-note { font-size: 12px; color: var(--c-text-mid); margin: 6px 0 0; }
+.std-muted { color: var(--c-text-dim); }
+.std-inline-link { background: none; border: none; padding: 0; color: var(--c-amber); cursor: pointer; text-decoration: underline; font-size: inherit; }
+.std-usedby { margin-top: 10px; font-size: 13px; }
+.std-usedby-label { font-weight: 600; margin-right: 6px; }
+.std-usedby ul { margin: 4px 0 0; padding-left: 18px; }
+.std-usedby a { color: var(--c-amber); }
+.std-table-wrap { overflow-x: auto; }
+.std-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.std-table th, .std-table td { padding: 6px 10px; border-bottom: 1px solid var(--c-border); text-align: right; white-space: nowrap; }
+.std-table thead th { color: var(--c-text-mid); font-weight: 600; white-space: normal; vertical-align: bottom; }
+.std-table tbody th { text-align: left; color: var(--c-text); }
+.std-unit { color: var(--c-text-dim); font-weight: 400; }
+.std-cards { display: none; list-style: none; margin: 0; padding: 0 12px 12px; }
+.std-card { border: 1px solid var(--c-border); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
+.std-card-key { font-size: 13px; margin-bottom: 6px; }
+.std-card dl { margin: 0; }
+.std-card-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 2px 0; }
+.std-card-row dt { color: var(--c-text-mid); }
+.std-card-row dd { margin: 0; font-variant-numeric: tabular-nums; }
+.std-card-cite { font-size: 11px; margin-top: 6px; }
+@media (max-width: 760px) {
+  .std-layout { grid-template-columns: 1fr; }
+  .std-index { position: static; max-height: none; }
+  .std-table-wrap { display: none; }
+  .std-cards { display: block; }
+}
