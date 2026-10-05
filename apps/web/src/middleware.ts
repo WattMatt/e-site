@@ -248,9 +248,9 @@ export const config = {
   matcher: [
     // Skip Next internals + favicon + common static asset extensions.
     // .mjs added so the pdfjs worker (/pdf.worker.min.mjs) bypasses auth.
-    // /sw.js and .webmanifest (E2 PWA) must reach an anonymous browser as
+    // /sw.js and /manifest.webmanifest (E2 PWA, exact paths only) must reach an anonymous browser as
     // themselves: a worker or manifest answered with a login redirect fails
     // installability silently. Guarded in middleware.test.ts.
-    '/((?!_next/static|_next/image|favicon.ico|sw\\.js$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mjs|map|woff2?|json|ico|webmanifest)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|sw\\.js$|manifest\\.webmanifest$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mjs|map|woff2?|json|ico)$).*)',
   ],
 }

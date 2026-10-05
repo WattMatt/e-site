@@ -1,9 +1,13 @@
 /* E-Site service worker — app shell only (owner decision D1, 2026-10-05).
  *
  * What it does, and nothing else:
- *   1. /_next/static/* and /icons/* — cache-first. These are content-hashed
- *      or versioned public files, identical for every user.
- *   2. Page navigations — always the network. If the network fails, an
+ *   1. /_next/static/* — cache-first. Every file there has a content hash in
+ *      its name, so a cached copy can never be stale, and it is the same for
+ *      every user. (Icons are NOT cached here: their names are fixed, so a
+ *      changed icon would never reach an installed phone. HTTP caching
+ *      covers them.)
+ *   2. Page navigations — always the network (using navigation preload so
+ *      the worker's start-up never delays a page). If the network fails, an
  *      offline page built HERE (never fetched, never cached) is shown.
  *   3. Everything else — not touched: no respondWith, the browser handles it.
  *
@@ -12,13 +16,18 @@
  * user. Only same-origin GETs under the two static prefixes reach a cache.
  * Unit-tested in src/lib/pwa/sw.test.ts against this exact file.
  *
- * Kill switch: deploy with NEXT_PUBLIC_SW_DISABLED=true and the page-side
- * registrar unregisters every installed copy on the next visit.
+ * The way back, if this worker ever misbehaves: replace this file with one
+ * whose install handler calls self.skipWaiting(), whose activate handler
+ * deletes every 'esite-' cache and calls self.registration.unregister(), and
+ * deploy. Browsers re-fetch this script on every navigation (it is served
+ * no-cache), so every installed phone picks that up on its next page load.
+ * Belt and braces: a build with NEXT_PUBLIC_SW_DISABLED=true makes the page
+ * unregister workers and clear these caches as well.
  */
 const VERSION = 'v1'
 const STATIC_CACHE = 'esite-static-' + VERSION
 const MAX_STATIC_ENTRIES = 400
-const STATIC_PREFIXES = ['/_next/static/', '/icons/']
+const STATIC_PREFIXES = ['/_next/static/']
 
 self.addEventListener('install', () => {
   self.skipWaiting()
@@ -26,6 +35,9 @@ self.addEventListener('install', () => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
+    if (self.registration && self.registration.navigationPreload) {
+      await self.registration.navigationPreload.enable().catch(() => {})
+    }
     const keys = await caches.keys()
     await Promise.all(keys.filter((k) => k.startsWith('esite-') && k !== STATIC_CACHE).map((k) => caches.delete(k)))
     await self.clients.claim()
@@ -39,23 +51,37 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
 
   if (STATIC_PREFIXES.some((p) => url.pathname.startsWith(p))) {
-    event.respondWith(cacheFirst(request))
+    event.respondWith(cacheFirst(event))
     return
   }
 
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(offlineResponse))
+    event.respondWith(networkPage(event))
   }
 })
 
-async function cacheFirst(request) {
+async function networkPage(event) {
+  try {
+    const preloaded = event.preloadResponse ? await event.preloadResponse : undefined
+    if (preloaded) return preloaded
+    return await fetch(event.request)
+  } catch {
+    return offlineResponse()
+  }
+}
+
+async function cacheFirst(event) {
+  const request = event.request
   const cache = await caches.open(STATIC_CACHE)
   const hit = await cache.match(request)
   if (hit) return hit
   const response = await fetch(request)
-  if (response.ok && response.type === 'basic') {
-    await cache.put(request, response.clone())
-    trim(cache)
+  // Only complete (200), same-origin copies are stored, and storing happens
+  // AFTER the response is handed back: a full disk (QuotaExceededError) or a
+  // refused write must never turn a successful download into a failed chunk.
+  if (response.status === 200 && response.type === 'basic') {
+    const copy = response.clone()
+    event.waitUntil(cache.put(request, copy).then(() => trim(cache)).catch(() => {}))
   }
   return response
 }

@@ -446,7 +446,7 @@ describe('middleware — matcher lets the installable-PWA files through (E2)', (
     expect(runs(p)).toBe(false)
   })
 
-  it.each(['/dashboard', '/projects/abc', '/sw.jsx', '/projects/sw.js/x', '/api/notifications/dispatch'])(
+  it.each(['/dashboard', '/projects/abc', '/sw.jsx', '/projects/sw.js/x', '/api/notifications/dispatch', '/projects/x.webmanifest'])(
     '%s still goes through the auth middleware',
     (p) => { expect(runs(p)).toBe(true) },
   )

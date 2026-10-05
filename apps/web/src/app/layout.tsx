@@ -66,6 +66,10 @@ export const metadata: Metadata = {
     startupImage: splashStartupImages(),
   },
   formatDetection: { telephone: false },
+  // Next 15 emits only the standard mobile-web-app-capable tag for
+  // appleWebApp.capable; older iOS needs the apple- prefixed one before it
+  // honours the apple-touch-startup-image launch screens.
+  other: { 'apple-mobile-web-app-capable': 'yes' },
 }
 
 export const viewport: Viewport = {

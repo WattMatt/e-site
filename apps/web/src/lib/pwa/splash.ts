@@ -13,7 +13,8 @@ export interface SplashDevice {
 }
 
 export const SPLASH_DEVICES: readonly SplashDevice[] = [
-  { width: 440, height: 956, ratio: 3 },  // iPhone 16 Pro Max
+  { width: 440, height: 956, ratio: 3 },  // iPhone 16/17 Pro Max
+  { width: 420, height: 912, ratio: 3 },  // iPhone Air
   { width: 402, height: 874, ratio: 3 },  // iPhone 16 Pro
   { width: 430, height: 932, ratio: 3 },  // iPhone 14/15 Pro Max, 15/16 Plus
   { width: 393, height: 852, ratio: 3 },  // iPhone 14/15 Pro, 15, 16
@@ -24,6 +25,8 @@ export const SPLASH_DEVICES: readonly SplashDevice[] = [
   { width: 414, height: 896, ratio: 2 },  // iPhone XR, 11
   { width: 414, height: 736, ratio: 3 },  // iPhone 8 Plus
   { width: 375, height: 667, ratio: 2 },  // iPhone SE 2/3, 8
+  { width: 1032, height: 1376, ratio: 2 }, // iPad Pro 13" (M4)
+  { width: 834, height: 1210, ratio: 2 },  // iPad Pro 11" (M4)
   { width: 1024, height: 1366, ratio: 2 }, // iPad Pro 12.9"
   { width: 834, height: 1194, ratio: 2 },  // iPad Pro 11"
   { width: 820, height: 1180, ratio: 2 },  // iPad Air

@@ -15,7 +15,6 @@ import { readFileSync, existsSync } from 'fs'
 import path from 'path'
 import manifest from '@/app/manifest'
 import { metadata, viewport } from '@/app/layout'
-import { generateStaticParams } from '@/app/apple-splash/[size]/route'
 import { SPLASH_DEVICES, parseSplashFile, splashFile, splashStartupImages } from './splash'
 
 const PUBLIC = path.join(__dirname, '../../../public')
@@ -62,20 +61,20 @@ describe('iOS install metadata', () => {
     expect(pngSize(path.join(PUBLIC, apple))).toEqual({ w: 180, h: 180 })
   })
 
-  it('uses viewport-fit=cover so env(safe-area-inset-*) is non-zero for the tab bar', () => {
+  it('uses viewport-fit=cover so env(safe-area-inset-*) is real (insets handled in globals.css)', () => {
     expect(viewport.viewportFit).toBe('cover')
   })
 
-  it('links one launch image per device, each prerendered by the splash route', () => {
+  it('links one launch image per device, each with a distinct portrait media query', () => {
     const links = splashStartupImages()
     expect(links).toHaveLength(SPLASH_DEVICES.length)
-    const prerendered = new Set(generateStaticParams().map(p => p.size))
-    for (const l of links) {
-      const file = l.url.replace('/apple-splash/', '')
-      expect(prerendered.has(file), l.url).toBe(true)
-      expect(l.media).toMatch(/-webkit-device-pixel-ratio: [23]\) and \(orientation: portrait\)$/)
-    }
+    for (const l of links) expect(l.media).toMatch(/-webkit-device-pixel-ratio: [23]\) and \(orientation: portrait\)$/)
     expect(new Set(links.map(l => l.media)).size).toBe(links.length)
+    // The image behind each link is rendered and measured in app/apple-splash/[size]/route.test.ts.
+  })
+
+  it('emits the apple-prefixed capable tag older iOS needs for launch images', () => {
+    expect((metadata.other as Record<string, string>)['apple-mobile-web-app-capable']).toBe('yes')
   })
 
   it('refuses sizes it does not publish (the route cannot be used to render arbitrary images)', () => {
