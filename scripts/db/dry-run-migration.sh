@@ -45,7 +45,7 @@ done
 
 # A file with its own transaction control ENDS the wrapping transaction below, so
 # everything before it is committed to PRODUCTION and the "dry" run is real.
-# This happened on 2026-10-05: a draft 00224 carried BEGIN;/COMMIT; in the old
+# This happened on 2026-10-05: a draft of the tender migration (then numbered 00224) carried BEGIN;/COMMIT; in the old
 # 00122 style and was persisted, then dropped by hand. Refuse such files.
 # PL/pgSQL blocks use BEGIN without a semicolon and END; inside $$, so they pass.
 TXN_RE='^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START[[:space:]]+TRANSACTION)[[:space:]]*(WORK|TRANSACTION)?[[:space:]]*;'

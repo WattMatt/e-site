@@ -1,10 +1,10 @@
--- BEHAVIOURAL assertions for 00224 (tender BOQ), run as real production roles
+-- BEHAVIOURAL assertions for 00226 (tender BOQ), run as real production roles
 -- inside a rolled-back transaction:
 --
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00224_tender_boq.sql scripts/db/assert-tender-boq-roles.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00226_tender_boq.sql scripts/db/assert-tender-boq-roles.sql
 --
 -- Run it against a no-op migration first: every row must go red (the tables do
--- not exist, so the file aborts). Then against 00224: every row green.
+-- not exist, so the file aborts). Then against 00226: every row green.
 --
 -- What it proves (not just that policies exist, but who they let through):
 --   * org admin and a project-promoted PM can read and write a tender

@@ -1,4 +1,4 @@
--- 00224_tender_boq.sql
+-- 00226_tender_boq.sql
 -- E5 slice A: tender BOQ model + import.
 --
 -- A tender is a project's call for prices on one package (electrical contract,

@@ -50,7 +50,7 @@ membership.
 | `/projects/[id]/forms` (site forms list) | W | W | W | W | W | W | R¹⁰ |
 | `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
 | `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
-| `/projects/[id]/tenders` and `/projects/[id]/tenders/[tenderId]` (tender BOQ import + review; `requireEffectiveRole(ORG_WRITE_ROLES)`, RLS 00224) | W | W | W | — | — | — | — |
+| `/projects/[id]/tenders` and `/projects/[id]/tenders/[tenderId]` (tender BOQ import + review; `requireEffectiveRole(ORG_WRITE_ROLES)`, RLS 00226) | W | W | W | — | — | — | — |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/cables/[revisionId]/measure` (the cable-route tool: worklist, sheet canvas and run — `?supply=` `?sheet=` `?page=`) | W | W | W | → schedule | → schedule | → schedule | → schedule |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
@@ -798,7 +798,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 >
 > **Project channel (sub-project 2, migration `00223`).** Over WhatsApp a member can list their projects (`wa_my_projects`: projects where they hold an effective role), list open items (`wa_project_items`: RLS `work_items_select`), re-open a card (`wa_item_card`), and post to the project as a **diary entry** (`wa_post_diary`: the diary INSERT policy — org member, not a client viewer, project not payment-paused) or a **triage issue** (`wa_post_issue`: `work_items_insert` + `work_items_insert_gate`, i.e. `task.write_roles` = owner/admin/PM/contractor; assignee = triage owner, gatekeeper = creator). A client viewer is never offered Post, and the database refuses them regardless. WhatsApp diary posts do **not** send the diary email (it is sent by the web action, not a trigger).
 
-### Tenders (`tender.actions.ts`, E5 slice A, migration `00224`)
+### Tenders (`tender.actions.ts`, E5 slice A, migration `00226`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|

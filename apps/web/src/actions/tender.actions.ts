@@ -6,7 +6,7 @@
  * Every action resolves the tender's project first, then gates on
  * ORG_WRITE_ROLES through requireEffectiveRole (project-scoped, honours
  * promotions) BEFORE any read or write. Table reads and writes go through the
- * caller's cookie client so 00224's row security applies as a second gate. The
+ * caller's cookie client so 00226's row security applies as a second gate. The
  * private `tender-files` bucket has no client policies, so only storage calls
  * use the service client, and only after the gate.
  *
