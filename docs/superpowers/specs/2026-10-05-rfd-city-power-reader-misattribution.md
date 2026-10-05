@@ -1,6 +1,6 @@
 # RfD City Power reader — prose headers, hidden headers, and published years that cannot be corrected
 
-**Date:** 2026-10-05 · **Status:** investigation complete, NO code written — awaiting owner decision
+**Date:** 2026-10-05 · **Status:** owner approved the proposal 2026-10-05; implemented (see §6)
 **Trigger:** E7 finding — MIDVAAL 2026/27 (published) has a tariff named
 "Based on the available information and the analysis performed, the REC decided:".
 
@@ -101,3 +101,23 @@ loads nothing. Optional `replaces_year_id` for audit.
 **Re-ingest:** the 10 published years above get corrected drafts, are reviewed in
 `/admin/tariffs` and published, which supersedes the bad rows. The in-review years are re-ingested
 in place (in_review → ingesting is legal).
+
+## 6. As built
+
+- **Parser.** A wide-gap numbered section closes the open tariff, and a TOC line is never a header.
+  Files this reader claims (decided on column 0 alone) are read with the label column up to indent 3.
+  Any charge row it cannot attach hands the whole file to the column readers. The page-break rule (R2)
+  was dropped: City Power "Business", Emfuleni "Miniflex" and Dikgatlong "Serviced Vacant Land" are
+  real headers whose table starts on the next page.
+- **Column reader.** A table with no name of its own is never named after a NERSA section title or a
+  numbered paragraph (a sentence ends inside it). A section-word test was tried first and rejected:
+  it dropped real tables named "Staff – Analysis and Key findings" (Hessequa) and "Three-Phase
+  Analysis…" (Oudtshoorn). A wide-gap test was also rejected: "29.    Staff   –" is a real heading.
+- **Digests.** 27 re-pinned (26 City-Power-reader files + Kgatelopele, whose opex table had been read
+  as a R3.52 million service charge); 137 unchanged. Each change was reviewed against the text.
+- **Known limitations kept** (in review, flagged by issues): sub-numbered tables ("2.1 / 2.2 / 2.3",
+  Kokstad) still merge under the parent header; multi-line "Basic Charge (R/month)" rows are not read
+  (Kouga); Modimolle and Greater Letaba now carry 1 tariff each, with the unread tables flagged for
+  review, instead of one false tariff carrying everything.
+- **Database (00232).** `replaces_year_id` + state `replaced`; one draft and one live row per
+  (licensee, FY). Loader: `--correct-published`.
