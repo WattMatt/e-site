@@ -1,11 +1,11 @@
--- BEHAVIOURAL assertions for 00231 (projects.load_profiles / load_profile_sources /
+-- BEHAVIOURAL assertions for 00230 (projects.load_profiles / load_profile_sources /
 -- bucket load-profile-files), run as real production roles in a rolled-back
 -- transaction:
 --
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00231_load_profiles.sql scripts/db/assert-load-profile-rls.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00230_load_profiles.sql scripts/db/assert-load-profile-rls.sql
 --
 -- Proven RED first against a no-op migration (every row fails: the tables do
--- not exist), then GREEN with 00231.
+-- not exist), then GREEN with 00230.
 --
 -- Impersonation: set_config('request.jwt.claims', …, true) is transaction-local
 -- and outlives RESET ROLE, so fixtures are seeded on the postgres path BEFORE the
