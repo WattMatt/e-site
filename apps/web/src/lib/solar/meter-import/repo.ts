@@ -188,7 +188,7 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
     },
     async metersForFile(fileId) {
       type Row = { meter_id: string; meters: { label: string; site_label: string | null } | null }
-      const byChannel = await solar().from('meter_channels').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
+      const byChannel = await solar().from('meter_channels').select('meter_id, meters!meter_channels_meter_id_fkey(label, site_label)').eq('file_id', fileId) // two FKs link these tables (meters.existing_pv_channel_id): name the one meant
       if (byChannel.error) throw new Error(`meters for file (channels): ${byChannel.error.message}`)
       const byHash = await solar().from('meter_series_hashes').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
       if (byHash.error) throw new Error(`meters for file (hashes): ${byHash.error.message}`)
