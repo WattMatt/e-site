@@ -1,9 +1,18 @@
 /**
  * NERSA 2026/27 "Decision and Reasons for Decision" tables, from
- * `pdftotext -layout`. A tariff opens at "N. Name" in column 0. A charge row is
- * a label in column 0 with five columns — approved, proposed %, proposed,
- * RECOMMENDED, recommended % — either on the same line or on the indented line
- * above it. Commentary to the right is ignored. Output is always for review.
+ * `pdftotext -layout`. A tariff opens at "N. Name" in the label column. A charge
+ * row is a label in the label column with five columns — approved, proposed %,
+ * proposed, RECOMMENDED, recommended % — either on the same line or on the
+ * indented line above it. Commentary to the right is ignored. Output is always
+ * for review.
+ *
+ * Two things are never a tariff header, because a header stays open until the
+ * next one and collects every charge row in between: a numbered document section
+ * ("7.   TARIFF ANALYSIS", "9.     CONFIDENTIALITY" — the number stands alone
+ * before a wide gap), which closes the open tariff; and a table-of-contents
+ * entry (dot leaders). Before this, a decision paragraph ("2. Based on the
+ * available information…") or a TOC line was the only header some files had, and
+ * every table in them was filed under it.
  */
 import type { TariffSeason, TariffUnit, Tariff } from '../types'
 import type { TariffIssue } from '../validators'
@@ -29,6 +38,13 @@ interface Row {
 const AMOUNT = /^\d{1,3}(?: \d{3})+,\d+$|^\d+,\d+$/
 const PCT = /^-?\d+,\d+%$/
 const HEADER = /^(\d{1,2})\.\s+(\S.*)$/
+const SECTION = /^\d{1,2}\.$/
+const TOC_LEADERS = /\.{4,}/
+/**
+ * pdftotext shifts some pages a few spaces right, so their labels and headers
+ * start at column 1-3 instead of 0. Value rows above a label sit far to the right.
+ */
+const SHIFTED_PAGE_INDENT = 3
 const num = (s: string): number => Number(s.replace(/ /g, '').replace('%', '').replace(',', '.'))
 
 function readFive(tokens: string[]): Row | null {
@@ -48,9 +64,11 @@ function mode(xs: number[]): number | null {
 }
 
 /**
- * The City Power reader below first. Only when it finds no tariff at all is the
- * column-aware reader (rfd-columns.ts) used: the 33 RfDs this reader already
- * handles were loaded from it, and must keep parsing byte-for-byte the same.
+ * The City Power reader below first. Only when it finds no tariff at all, or leaves
+ * a charge row it cannot attach, is the column-aware reader (rfd-columns.ts) used.
+ * Of the 33 RfDs this reader handled when they were loaded, 26 changed with the
+ * 2026-10-05 header fixes (prose and TOC headers, shifted pages) and were re-read
+ * deliberately; real-files.test.ts pins the new output.
  * When it finds nothing, its own issues (rows it could not attach to a header in
  * a layout it does not read) are noise and are not carried over.
  *
@@ -62,15 +80,25 @@ function mode(xs: number[]): number | null {
  * a deliberate re-ingest, never a side effect of a parser change.
  */
 export function parseRfdText(text: string, opts: { fileSha256: string }): ParsedRfd {
-  const first = parseRfdCityPower(text, opts)
-  if (first.tariffs.length > 0) return first
+  // Whether the file is this reader's is decided on column 0 alone: reading shifted pages too is
+  // only for the files it already claims, so it never takes a file from the column reader.
+  // A charge row it cannot attach to any header means the file's tables are in a layout it does not
+  // read (its tariff names are not "N. Name" headers); the column readers take the whole file then,
+  // and keep it only if they find nothing.
+  let own: ParsedRfd | null = null
+  if (parseRfdCityPower(text, opts, 0).tariffs.length > 0) {
+    own = parseRfdCityPower(text, opts, SHIFTED_PAGE_INDENT)
+    if (!own.issues.some((i) => i.code === 'orphan_charge')) return own
+  }
   const columns = parseRfdColumns(text, opts)
   if (columns.tariffs.length > 0) return columns
   const extended = parseRfdColumns(text, opts, { extended: true })
-  return extended.tariffs.length > 0 ? extended : columns
+  if (extended.tariffs.length > 0) return extended
+  return own ?? columns
 }
 
-function parseRfdCityPower(text: string, opts: { fileSha256: string }): ParsedRfd {
+/** `labelIndent`: the deepest indent still read as the label column. */
+function parseRfdCityPower(text: string, opts: { fileSha256: string }, labelIndent: number): ParsedRfd {
   const out: ParsedRfd = { tariffs: [], increasePct: null, issues: [], unresolved: [] }
   const taken = new Set<string>()
   const pcts: number[] = []
@@ -94,14 +122,22 @@ function parseRfdCityPower(text: string, opts: { fileSha256: string }): ParsedRf
     const line = rawLine.replace(/\f/g, '')
     if (line.trim() === '' || /^\s*-\s*$/.test(line)) return
 
-    if (/^\s/.test(line)) {
+    const body = line.trimStart()
+    if (line.length - body.length > labelIndent) {
       const row = readFive(line.trim().split(/\s{2,}/))
       if (row) pending = { row, line: lineNo }
       return
     }
 
-    const tokens = line.split(/\s{2,}/)
+    const tokens = body.split(/\s{2,}/)
     const head = HEADER.exec(tokens[0])
+    if (SECTION.test(tokens[0]) || (head && TOC_LEADERS.test(head[2]))) {
+      close()
+      pending = null
+      energySeason = 'all'
+      contextUnit = null
+      return
+    }
     if (head) {
       close()
       cur = newDraft({ name: head[2].trim(), fileSha256: opts.fileSha256, page, line: lineNo })
