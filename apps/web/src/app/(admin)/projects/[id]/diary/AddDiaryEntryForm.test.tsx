@@ -231,3 +231,37 @@ describe('AddDiaryEntryForm — arriving from Capture', () => {
     )
   })
 })
+
+describe('AddDiaryEntryForm — Capture mode is one-shot', () => {
+  it('after a save, drops ?new= from the URL and the next "+ Add Entry" opens the ordinary layout', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    const replace = vi.spyOn(window.history, 'replaceState')
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    typeProgress('Board MB1 installed.')
+    await submitForm()
+    await waitFor(() => expect(screen.getByText('+ Add Entry')).toBeTruthy())
+    expect(replace).toHaveBeenCalledWith(null, '', '/projects/p1/diary')
+    fireEvent.click(screen.getByText('+ Add Entry'))
+    expect(screen.queryByText('📷 Take or add photos')).toBeNull()
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+    replace.mockRestore()
+  })
+
+  it('cancel also ends Capture mode', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.click(screen.getByText('+ Add Entry'))
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+  })
+
+  it('an ordinary open never rewrites the URL', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    const replace = vi.spyOn(window.history, 'replaceState')
+    open()
+    typeProgress('x')
+    await submitForm()
+    await waitFor(() => expect(screen.getByText('+ Add Entry')).toBeTruthy())
+    expect(replace).not.toHaveBeenCalled()
+    replace.mockRestore()
+  })
+})

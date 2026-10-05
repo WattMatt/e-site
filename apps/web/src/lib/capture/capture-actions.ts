@@ -15,8 +15,12 @@ import {
  * never offered to someone the target page would bounce:
  * - snag       → SNAG_FIELD_ROLES  (snags/new + snag actions)
  * - site form  → FORMS_FIELD_ROLES (forms/new redirects anyone else)
- * - inspection → ORG_WRITE_ROLES   (createInspectionAction is PM-or-above),
- *                and the org must have unlocked the inspections module
+ * - inspection → the caller's ORG role (not the effective project role) must
+ *                be in ORG_WRITE_ROLES, because createInspectionAction gates on
+ *                requirePmOrAbove against user_organisations — a contractor
+ *                promoted to PM on one project would see the page but be
+ *                refused on submit. The caller passes `canAssignInspection`.
+ *                The org must also have unlocked the inspections module.
  * - diary/photo → owner/admin/PM/contractor, the write set of the
  *                `/projects/[id]/diary` row in docs/rbac-matrix.md
  *
@@ -39,12 +43,16 @@ const DIARY_CAPTURE_ROLES: readonly OrgRole[] = SNAG_FIELD_ROLES.filter(
   (r) => r !== 'inspector' && r !== 'supplier',
 )
 
-const ROLES: Record<CaptureKey, readonly OrgRole[]> = {
+const ROLES: Record<Exclude<CaptureKey, 'inspection'>, readonly OrgRole[]> = {
   diary: DIARY_CAPTURE_ROLES,
   snag: SNAG_FIELD_ROLES,
   form: FORMS_FIELD_ROLES,
-  inspection: ORG_WRITE_ROLES,
   photo: DIARY_CAPTURE_ROLES,
+}
+
+/** True when an org role may assign inspections (createInspectionAction's requirePmOrAbove). */
+export function orgRoleCanAssignInspection(orgRole: OrgRole | null): boolean {
+  return orgRole !== null && ORG_WRITE_ROLES.includes(orgRole)
 }
 
 const COPY: Record<CaptureKey, { label: string; description: string }> = {
@@ -58,7 +66,7 @@ const COPY: Record<CaptureKey, { label: string; description: string }> = {
 export function captureActions(
   projectId: string,
   role: OrgRole | null,
-  opts: { inspectionsUnlocked: boolean },
+  opts: { inspectionsUnlocked: boolean; canAssignInspection: boolean },
 ): CaptureAction[] {
   if (!role) return []
   const base = `/projects/${encodeURIComponent(projectId)}`
@@ -69,7 +77,9 @@ export function captureActions(
     inspection: opts.inspectionsUnlocked ? `${base}/inspections/new` : '/inspections/unlock',
     photo: `${base}/diary?new=photo`,
   }
-  return CAPTURE_KEYS.filter((k) => ROLES[k].includes(role)).map((key) => ({
+  const offered = (k: CaptureKey) =>
+    k === 'inspection' ? opts.canAssignInspection : ROLES[k].includes(role)
+  return CAPTURE_KEYS.filter(offered).map((key) => ({
     key,
     ...COPY[key],
     href: href[key],

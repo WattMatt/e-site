@@ -2,11 +2,11 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { BookOpen, AlertTriangle, FileText, ClipboardCheck, Camera, Lock } from 'lucide-react'
-import { ORG_ROLES, projectService } from '@esite/shared'
+import { ORG_ROLES, projectService, type OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { hasFeature } from '@/lib/features'
-import { captureActions, type CaptureKey } from '@/lib/capture/capture-actions'
+import { captureActions, orgRoleCanAssignInspection, type CaptureKey } from '@/lib/capture/capture-actions'
 
 export const metadata: Metadata = { title: 'Capture' }
 
@@ -36,12 +36,31 @@ export default async function ProjectCapturePage({ params }: Props) {
   const project = await projectService.getById(supabase as any, id).catch(() => null)
   if (!project) notFound()
 
+  const orgId = (project.organisation_id as string | null) ?? null
   const gate = await requireEffectiveRole(supabase, id, ORG_ROLES)
   const role = gate.ok ? gate.role : null
-  const inspectionsUnlocked = project.organisation_id
-    ? await hasFeature(project.organisation_id as string, 'inspections', supabase)
-    : false
-  const actions = captureActions(id, role, { inspectionsUnlocked })
+
+  // Inspections are assigned by createInspectionAction, which checks the ORG
+  // role (requirePmOrAbove), not the effective project role — so the tile reads
+  // the caller's role in the project's own organisation.
+  const { data: { user } } = await supabase.auth.getUser()
+  const [inspectionsUnlocked, orgRoleRow] = await Promise.all([
+    orgId ? hasFeature(orgId, 'inspections', supabase) : Promise.resolve(false),
+    orgId && user
+      ? supabase
+          .from('user_organisations')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('organisation_id', orgId)
+          .eq('is_active', true)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ])
+  const orgRole = ((orgRoleRow as { data: { role: OrgRole } | null }).data?.role ?? null)
+  const actions = captureActions(id, role, {
+    inspectionsUnlocked,
+    canAssignInspection: orgRoleCanAssignInspection(orgRole),
+  })
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 880 }}>
@@ -64,7 +83,9 @@ export default async function ProjectCapturePage({ params }: Props) {
       {actions.length === 0 ? (
         <div className="data-panel">
           <div className="data-panel-empty" style={{ padding: '40px 18px' }}>
-            Your role on this project is read-only, so there is nothing to capture here.
+            {role === null
+              ? 'You are not on this project’s team yet, so there is nothing to capture here. Ask a project manager to add you.'
+              : 'Your role on this project is read-only, so there is nothing to capture here.'}
           </div>
         </div>
       ) : (
@@ -83,6 +104,7 @@ export default async function ProjectCapturePage({ params }: Props) {
                 <Link
                   href={href}
                   aria-label={locked ? `${label} (locked)` : label}
+                  aria-describedby={`capture-${key}-desc`}
                   className="data-panel"
                   style={{
                     display: 'flex', alignItems: 'flex-start', gap: 14,
@@ -105,7 +127,7 @@ export default async function ProjectCapturePage({ params }: Props) {
                       {label}
                       {locked && <Lock size={12} aria-hidden="true" />}
                     </span>
-                    <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                    <span id={`capture-${key}-desc`} style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
                       {locked ? 'Inspections are not unlocked for this organisation.' : description}
                     </span>
                   </span>

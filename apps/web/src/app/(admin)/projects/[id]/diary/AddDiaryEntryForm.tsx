@@ -38,6 +38,17 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [open, setOpen] = useState(initialMode !== undefined)
+  // The Capture mode applies to the first form only. Closing the form (save or
+  // cancel) drops it, and drops ?new= from the URL so a reload or Back does not
+  // reopen it; the next "+ Add Entry" opens the ordinary layout.
+  const [mode, setMode] = useState<DiaryCaptureMode | undefined>(initialMode)
+  function close() {
+    setOpen(false)
+    if (mode) {
+      setMode(undefined)
+      window.history.replaceState(null, '', `/projects/${projectId}/diary`)
+    }
+  }
   const formRef = useRef<HTMLFormElement>(null)
   // Arriving from Capture: bring the open form into view once, on mount.
   useEffect(() => {
@@ -124,7 +135,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
       setDelays('')
       setFiles([])
       setCreatedEntryId(null)
-      setOpen(false)
+      close()
       startTransition(() => router.refresh())
     } finally {
       submittingRef.current = false
@@ -140,7 +151,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
     )
   }
 
-  const photoMode = initialMode === 'photo'
+  const photoMode = mode === 'photo'
 
   // Attachments lead the form in photo mode (reached from Capture → Photo), so
   // the photo control is the first thing on screen; otherwise they sit last.
@@ -377,7 +388,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
           </button>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={close}
             style={{
               padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
               border: '1px solid var(--c-border)',

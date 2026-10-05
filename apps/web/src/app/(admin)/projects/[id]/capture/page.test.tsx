@@ -9,7 +9,23 @@ const hasFeature = vi.fn()
 const notFound = vi.fn(() => { throw new Error('NEXT_NOT_FOUND') })
 
 vi.mock('next/navigation', () => ({ notFound: () => notFound() }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({}) }))
+// The caller's role in the PROJECT's organisation, read for the inspection tile.
+let orgRole: string | null = 'project_manager'
+const orgRoleFilters: Array<[string, unknown]> = []
+function orgRoleQuery() {
+  const q = {
+    select: () => q,
+    eq: (c: string, v: unknown) => { orgRoleFilters.push([c, v]); return q },
+    maybeSingle: async () => ({ data: orgRole ? { role: orgRole } : null }),
+  }
+  return q
+}
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => ({
+    auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    from: (t: string) => { if (t !== 'user_organisations') throw new Error(t); return orgRoleQuery() },
+  }),
+}))
 vi.mock('@/lib/auth/require-role', () => ({ requireEffectiveRole: (...a: unknown[]) => effectiveRole(...a) }))
 vi.mock('@/lib/features', () => ({ hasFeature: (...a: unknown[]) => hasFeature(...a) }))
 vi.mock('@esite/shared', async (orig) => {
@@ -26,6 +42,8 @@ beforeEach(() => {
   effectiveRole.mockReset().mockResolvedValue({ ok: true, role: 'project_manager' })
   hasFeature.mockReset().mockResolvedValue(true)
   notFound.mockClear()
+  orgRole = 'project_manager'
+  orgRoleFilters.length = 0
 })
 
 const hrefs = () =>
@@ -58,8 +76,28 @@ describe('/projects/[id]/capture', () => {
     expect(link.getAttribute('href')).toBe('/inspections/unlock')
   })
 
+  it('reads the org role in the project’s own organisation for the inspection tile', async () => {
+    render(await ProjectCapturePage({ params }))
+    expect(orgRoleFilters).toEqual(expect.arrayContaining([['user_id', 'u1'], ['organisation_id', 'o1'], ['is_active', true]]))
+  })
+
+  it('hides the inspection from a contractor promoted to PM on this project only', async () => {
+    effectiveRole.mockResolvedValue({ ok: true, role: 'project_manager' })
+    orgRole = 'contractor'
+    render(await ProjectCapturePage({ params }))
+    expect(hrefs().map(([label]) => label)).toEqual(['Diary entry', 'Snag', 'Site form', 'Photo'])
+  })
+
+  it('gives each tile an accessible description', async () => {
+    render(await ProjectCapturePage({ params }))
+    const snag = screen.getByRole('link', { name: 'Snag' })
+    const desc = document.getElementById(snag.getAttribute('aria-describedby')!)
+    expect(desc?.textContent).toMatch(/Raise a defect/)
+  })
+
   it('narrows to the caller’s role: an inspector sees snag and site form only', async () => {
     effectiveRole.mockResolvedValue({ ok: true, role: 'inspector' })
+    orgRole = 'inspector'
     render(await ProjectCapturePage({ params }))
     expect(hrefs().map(([label]) => label)).toEqual(['Snag', 'Site form'])
   })
@@ -68,7 +106,7 @@ describe('/projects/[id]/capture', () => {
     effectiveRole.mockResolvedValue({ ok: false, error: 'No access to this project' })
     render(await ProjectCapturePage({ params }))
     expect(screen.queryByRole('list', { name: 'Capture actions' })).toBeNull()
-    expect(screen.getByText(/nothing to capture here/)).toBeTruthy()
+    expect(screen.getByText(/not on this project’s team yet/)).toBeTruthy()
   })
 
   it('404s for a project the caller cannot read', async () => {
