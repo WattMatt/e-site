@@ -98,8 +98,17 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
       return id
     },
     async findYear(licenseeId, financialYear) {
-      const r = check(await t().from('tariff_year').select('id,state').eq('licensee_id', licenseeId).eq('financial_year', financialYear).maybeSingle(), 'year lookup')
-      return r.data ? { id: (r.data as Row).id as string, state: (r.data as Row).state as YearState } : null
+      // Up to two rows since 00232 (a live year and the draft correcting it); never a replaced one.
+      const r = check(await t().from('tariff_year').select('id,state,replaces_year_id').eq('licensee_id', licenseeId)
+        .eq('financial_year', financialYear).neq('state', 'replaced'), 'year lookup')
+      const rows = (r.data as Row[] | null) ?? []
+      const y = rows.find((x) => x.state === 'published' || x.state === 'superseded') ?? rows[0]
+      return y ? { id: y.id as string, state: y.state as YearState, replacesYearId: (y.replaces_year_id as string | null) ?? null } : null
+    },
+    async findCorrectionDraft(yearId) {
+      const r = check(await t().from('tariff_year').select('id,state').eq('replaces_year_id', yearId)
+        .in('state', ['ingesting', 'in_review']).maybeSingle(), 'correction lookup')
+      return r.data ? { id: (r.data as Row).id as string, state: (r.data as Row).state as YearState, replacesYearId: yearId } : null
     },
     async loadYearTariffs(yearId) {
       const ts = check(await t().from('tariff').select('*').eq('tariff_year_id', yearId), 'tariff load').data as Row[] | null ?? []
@@ -129,8 +138,8 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
     async finishIngestRun(id, patch) {
       check(await t().from('ingest_run').update({ status: patch.status, stats: patch.stats, diff: patch.diff, error: patch.error, finished_at: new Date().toISOString() }).eq('id', id), 'ingest_run finish')
     },
-    async insertYear(meta) {
-      const r = check(await t().from('tariff_year').insert({ ...yearRow(meta), state: 'ingesting' }).select('id').single(), 'year insert')
+    async insertYear(meta, replacesYearId) {
+      const r = check(await t().from('tariff_year').insert({ ...yearRow(meta), state: 'ingesting', ...(replacesYearId ? { replaces_year_id: replacesYearId } : {}) }).select('id').single(), 'year insert')
       return (r.data as Row).id as string
     },
     async updateYear(yearId, meta) {

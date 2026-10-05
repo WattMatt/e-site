@@ -2,6 +2,11 @@
  * Ingestion (D-03): E-Site staff run it; it never publishes. Idempotent on the
  * file's sha256. Dry run is the default and writes nothing. Pure: the caller
  * supplies bytes, sha256 and a TariffStore.
+ *
+ * A published or superseded year is never changed. With `correctPublished` (and
+ * only then) the file is read again even if it was ingested before, and each
+ * live year it covers gets a correction draft that names it (replaces_year_id);
+ * publishing that draft replaces the live year (00232, tariffs.tariff_year_guard).
  */
 import { previousFinancialYear } from '../financial-year'
 import { validateTariffYear, type TariffIssue } from '../validators'
@@ -50,6 +55,8 @@ export interface IngestPlan {
 export interface StoredYear {
   id: string
   state: YearState
+  /** Set on a correction draft: the published or superseded year it replaces once published. */
+  replacesYearId?: string | null
 }
 
 export interface YearMeta {
@@ -77,14 +84,18 @@ export interface TariffStore {
   findSourceDocumentBySha(sha256: string): Promise<{ id: string; hasSucceededRun: boolean } | null>
   findLicenseeIdByAlias(alias: string): Promise<string | null>
   createLicensee(input: { name: string; kind: LicenseeKind; aliases: string[] }): Promise<string>
+  /** The year that counts: the live (published or superseded) row if there is one, else the draft. Never a replaced row. */
   findYear(licenseeId: string, financialYear: string): Promise<StoredYear | null>
+  /** The draft correcting a live year, if one is open. */
+  findCorrectionDraft(yearId: string): Promise<StoredYear | null>
   loadYearTariffs(yearId: string): Promise<Tariff[]>
   uploadSource(path: string, bytes: Uint8Array, contentType: string): Promise<void>
   insertSourceDocument(row: SourceDocumentRow): Promise<string>
   insertIngestRun(row: { sourceDocumentId: string; parser: ParserName; startedBy: string | null }): Promise<string>
   /** 'partial': some year was skipped (unknown licensee, duplicate): the file may be ingested again. */
   finishIngestRun(id: string, patch: { status: 'succeeded' | 'partial' | 'failed'; stats: unknown; diff: unknown; error: string | null }): Promise<void>
-  insertYear(meta: YearMeta): Promise<string>
+  /** `replacesYearId`: open a correction draft for that live year (the service path only). */
+  insertYear(meta: YearMeta, replacesYearId?: string): Promise<string>
   updateYear(yearId: string, meta: YearMeta): Promise<void>
   setYearState(yearId: string, state: 'ingesting' | 'in_review'): Promise<void>
   /** The validators' verdict on the year's content (service role only; publish needs 0 blocking). */
@@ -97,7 +108,9 @@ export interface TariffStore {
   insertSsegRule(yearId: string, rule: SsegRule): Promise<void>
 }
 
-export type YearAction = 'create' | 'replace_draft' | 'skip_published' | 'skip_unknown_licensee' | 'skip_duplicate_licensee'
+export type YearAction =
+  | 'create' | 'replace_draft' | 'create_correction' | 'replace_correction_draft'
+  | 'skip_published' | 'skip_unknown_licensee' | 'skip_duplicate_licensee'
 
 /** Actions that leave part of the file un-ingested: the run is 'partial', not 'succeeded'. */
 const INCOMPLETE: ReadonlySet<YearAction> = new Set<YearAction>(['skip_unknown_licensee', 'skip_duplicate_licensee'])
@@ -126,6 +139,8 @@ export interface IngestReport {
   years: YearReport[]
 }
 
+const isLive = (y: StoredYear): boolean => y.state === 'published' || y.state === 'superseded'
+
 /** Same rule as the licensee_alias_normalised CHECK. */
 export function normaliseAlias(s: string): string {
   return s.normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase()
@@ -152,16 +167,16 @@ function summarise(reports: YearReport[]): Record<string, unknown> {
 
 export async function runIngest(
   plan: IngestPlan, store: TariffStore,
-  opts: { apply: boolean; createMissingLicensees: boolean; startedBy?: string | null },
+  opts: { apply: boolean; createMissingLicensees: boolean; startedBy?: string | null; correctPublished?: boolean },
 ): Promise<IngestReport> {
   const { source } = plan
   const storagePath = storagePathFor(source)
   const existing = await store.findSourceDocumentBySha(source.sha256)
-  if (existing?.hasSucceededRun) {
+  if (existing?.hasSucceededRun && !opts.correctPublished) {
     return { status: 'already_ingested', sha256: source.sha256, sourceDocumentId: existing.id, runId: null, storagePath, years: [] }
   }
 
-  const prepared: { draft: LicenseeYearDraft; report: YearReport; existingYear: StoredYear | null }[] = []
+  const prepared: { draft: LicenseeYearDraft; report: YearReport; existingYear: StoredYear | null; correctionOf: string | null }[] = []
   // One licensee, one year per file: a second draft resolving to the same licensee (or, when
   // licensees are created, the same name) would fail the run half-way on a UNIQUE constraint.
   const claimed = new Set<string>()
@@ -174,6 +189,7 @@ export async function runIngest(
     const issues = [...draft.issues, ...validateTariffYear(draft.tariffs)]
     let yoy: YearReport['yoy'] = null
     let existingYear: StoredYear | null = null
+    let correctionOf: string | null = null
     if (licenseeId) {
       const prev = await store.findYear(licenseeId, previousFinancialYear(source.financialYear))
       if (prev && (prev.state === 'published' || prev.state === 'superseded')) {
@@ -182,6 +198,10 @@ export async function runIngest(
         yoy = { added: d.added.length, removed: d.removed.length, changed: d.changed.length, outOfBand: d.issues.filter((i) => i.code === 'yoy_out_of_band').length }
       }
       existingYear = await store.findYear(licenseeId, source.financialYear)
+      if (existingYear && isLive(existingYear) && opts.correctPublished) {
+        correctionOf = existingYear.id
+        existingYear = await store.findCorrectionDraft(existingYear.id)
+      }
     }
     const claimKey = licenseeId ? `id:${licenseeId}` : `name:${normaliseAlias(draft.licenseeName)}`
     const duplicate = (licenseeId !== null || opts.createMissingLicensees) && claimed.has(claimKey)
@@ -194,11 +214,13 @@ export async function runIngest(
       ? 'skip_duplicate_licensee'
       : !licenseeId && !opts.createMissingLicensees
         ? 'skip_unknown_licensee'
-        : existingYear && (existingYear.state === 'published' || existingYear.state === 'superseded')
-          ? 'skip_published'
-          : existingYear ? 'replace_draft' : 'create'
+        : correctionOf
+          ? existingYear ? 'replace_correction_draft' : 'create_correction'
+          : existingYear && isLive(existingYear)
+            ? 'skip_published'
+            : existingYear ? 'replace_draft' : 'create'
     prepared.push({
-      draft, existingYear,
+      draft, existingYear, correctionOf,
       report: {
         licensee: draft.licenseeName, financialYear: source.financialYear, action, licenseeId, yearId: existingYear?.id ?? null,
         tariffs: draft.tariffs.length, charges: draft.tariffs.reduce((a, t) => a + t.charges.length, 0),
@@ -223,7 +245,7 @@ export async function runIngest(
   }
   const runId = await store.insertIngestRun({ sourceDocumentId, parser: plan.parser, startedBy: opts.startedBy ?? null })
   try {
-    for (const { draft, report, existingYear } of prepared) {
+    for (const { draft, report, existingYear, correctionOf } of prepared) {
       if (report.action === 'skip_published' || INCOMPLETE.has(report.action)) continue
       const licenseeId = report.licenseeId ?? await store.createLicensee({
         name: draft.licenseeName, kind: draft.kind,
@@ -241,7 +263,7 @@ export async function runIngest(
         await store.updateYear(yearId, meta)
         await store.deleteYearChildren(yearId)
       } else {
-        yearId = await store.insertYear(meta)
+        yearId = correctionOf ? await store.insertYear(meta, correctionOf) : await store.insertYear(meta)
       }
       // A backwards block is already a blocking issue (block_range_inverted); clear its bounds so the
       // year still loads for review instead of failing tariffs.charge CHECK charge_block_order mid-file.

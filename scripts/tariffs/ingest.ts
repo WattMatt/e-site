@@ -5,7 +5,11 @@
  *
  *   pnpm --filter @esite/shared exec tsx ../../scripts/tariffs/ingest.ts <file> \
  *     --parser province_xlsx|eskom_xlsm|rfd_pdf --fy 2025/26 \
- *     [--licensee "CITY POWER"] [--url <source url>] [--create-licensees] [--apply] [--json]
+ *     [--licensee "CITY POWER"] [--url <source url>] [--create-licensees] [--correct-published] [--apply] [--json]
+ *
+ * --correct-published: read the file again even if it was ingested, and give each
+ * PUBLISHED or superseded year it covers a correction draft (00232). Nothing live
+ * changes until a platform admin publishes the correction, which replaces the year.
  *
  * With NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY set, a dry run
  * reads the live registry (licensee aliases, existing years, the published
@@ -37,7 +41,7 @@ async function main(): Promise<void> {
   const parser = arg('parser') as ParserName | undefined
   const fy = arg('fy')
   if (!file || file.startsWith('--') || !parser || !fy || !['province_xlsx', 'eskom_xlsm', 'rfd_pdf'].includes(parser)) {
-    console.error('usage: ingest.ts <file> --parser province_xlsx|eskom_xlsm|rfd_pdf --fy 2026/27 [--licensee NAME] [--url URL] [--create-licensees] [--apply] [--json]')
+    console.error('usage: ingest.ts <file> --parser province_xlsx|eskom_xlsm|rfd_pdf --fy 2026/27 [--licensee NAME] [--url URL] [--create-licensees] [--correct-published] [--apply] [--json]')
     process.exit(2)
   }
   const apply = flag('apply')
@@ -84,7 +88,7 @@ async function main(): Promise<void> {
     ? createSupabaseTariffStore(url, key)
     : createMemoryTariffStore({ licensees: loadRegistry(arg('registry') ?? DEFAULT_REGISTRY).map(({ name, kind, aliases }) => ({ name, kind, aliases })) })
   if (!(url && key)) console.error('(no database credentials: dry run against the registry data file, no years)')
-  const report = await runIngest(plan, store, { apply, createMissingLicensees: flag('create-licensees') })
+  const report = await runIngest(plan, store, { apply, createMissingLicensees: flag('create-licensees'), correctPublished: flag('correct-published') })
 
   if (flag('json')) {
     console.log(JSON.stringify(report, null, 2))
@@ -93,7 +97,7 @@ async function main(): Promise<void> {
   console.log(`${report.status.toUpperCase()}  sha256 ${report.sha256}  -> tariff-sources/${report.storagePath}`)
   for (const y of report.years) {
     const yoy = y.yoy ? `  yoy +${y.yoy.added} -${y.yoy.removed} ~${y.yoy.changed} out-of-band ${y.yoy.outOfBand}` : ''
-    console.log(`  ${y.action.padEnd(22)} ${y.licensee}  tariffs ${y.tariffs}  charges ${y.charges}  block ${y.blocking}  review ${y.review}  unresolved ${y.unresolved}${yoy}`)
+    console.log(`  ${y.action.padEnd(24)} ${y.licensee}  tariffs ${y.tariffs}  charges ${y.charges}  block ${y.blocking}  review ${y.review}  unresolved ${y.unresolved}${yoy}`)
   }
   if (report.status === 'dry_run') console.log('Nothing written. Re-run with --apply to load (years land in_review).')
 }
