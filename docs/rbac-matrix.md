@@ -79,6 +79,11 @@ membership.
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
 | `/metrics` | R | R | — | — | — | — | — |
+| `/rates` (Rate library — org-wide contractor rates, CPI-escalated statistics) | R | R | R | — | — | — | — |
+| `/rates/[itemId]` (item statistics, trend, observations; **Retract** adds a void row) | W | W | W | — | — | — | — |
+| `/rates/review` (review queue: confirm / assign / new item / not a rate / AI suggest) | W | W | W | — | — | — | — |
+| `/rates/sources` (priced documents + reconciliation) | R | R | R | — | — | — | — |
+| `GET /api/rates/export` (budget CSV, median or P75) | R | R | R | — | — | — | — |
 | `/settings/account` (WhatsApp panel — own number only) | W | W | W | W | W | W | W |
 | `/settings/whatsapp` | W | W | → | → | → | → | → |
 | `/projects/[id]/items/[ref]` | R | R | R | R | R | R | R⁽ʷᵃ⁾ |
@@ -90,6 +95,21 @@ membership.
 | `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+
+> **Rate library (`/rates*`, migration 00225, E6).** Contractor rates are
+> commercially confidential. The PM column here is the **org-level**
+> `project_manager` role: the gate is `public.rate_library_can_access(org)` —
+> an *active* `user_organisations` row with role owner/admin/project_manager —
+> in every `rate_*` RLS policy, plus `requireRolePage(COST_VIEW_ROLES)` /
+> `requireRoleAPI(COST_VIEW_ROLES)`. A project-scoped promotion does **not**
+> reach it (a contractor promoted to PM on one project sees nothing; proven in
+> `scripts/db/assert-rate-library-roles.sql`). Pages and the export read through
+> the caller's own session, so RLS is exercised on every render. Every view and
+> export writes `public.rate_library_access_log`, readable by owner/admin only.
+> Observations are immutable for everyone, `postgres` included; a correction is
+> a new row. **Price from library** and **Add this BOQ to the rate library** sit
+> on `/projects/[id]/settings/rates` and follow that row (`COST_VIEW_ROLES` on
+> the project) *and* require the project to belong to the caller's org.
 
 > `/metrics` (labelled "Adoption" in the sidebar) renders
 > `public.platform_metrics_weekly` and is gated twice:

@@ -5,6 +5,11 @@ import { render, screen, fireEvent } from '@testing-library/react'
 // the leaf so the shell renders in jsdom without a server.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
 vi.mock('@/actions/boq.actions', () => ({ importBoqAction: vi.fn(), updateBoqItemRateAction: vi.fn() }))
+vi.mock('@/actions/rate-catalogue.actions', () => ({
+  previewPriceFromLibraryAction: vi.fn(),
+  applyPriceFromLibraryAction: vi.fn(),
+  addProjectBoqToLibraryAction: vi.fn(),
+}))
 
 import { RatesTab } from './RatesTab'
 
@@ -64,6 +69,29 @@ describe('RatesTab — populated state', () => {
   it('hides the re-import control when canEdit is false', () => {
     render(<RatesTab projectId="p1" canEdit={false} initial={data} />)
     expect(screen.queryByRole('button', { name: /re-import/i })).toBeNull()
+  })
+
+  it('offers "Price from library" collapsed, only when canEdit', () => {
+    const { unmount } = render(<RatesTab projectId="p1" canEdit initial={data} />)
+    expect(screen.getByRole('button', { name: 'Price from library' })).toBeTruthy()
+    // Collapsed: the preview controls are not on the page until opened.
+    expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull()
+    unmount()
+    render(<RatesTab projectId="p1" canEdit={false} initial={data} />)
+    expect(screen.queryByRole('button', { name: 'Price from library' })).toBeNull()
+  })
+
+  it('adopts refreshed server items (a router.refresh after applying library rates)', () => {
+    const item = {
+      id: 'i1', sectionId: 'b1', code: '1.1', description: 'Cable 4c 16mm', unit: 'm', quantity: 10,
+      quantityMode: 'measured' as const, rateModel: 'single' as const, supplyRate: null, installRate: null,
+      rate: 10, amount: 100, sortOrder: 0, origin: 'contract' as const, variationLineId: null,
+    }
+    const one = { ...data, items: [item] }
+    const { rerender } = render(<RatesTab projectId="p1" canEdit={false} initial={one} />)
+    expect(screen.getByText('Cable 4c 16mm')).toBeTruthy()
+    rerender(<RatesTab projectId="p1" canEdit={false} initial={{ ...one, items: [{ ...item, description: 'Cable 4c 16mm (repriced)' }] }} />)
+    expect(screen.getByText('Cable 4c 16mm (repriced)')).toBeTruthy()
   })
 })
 
