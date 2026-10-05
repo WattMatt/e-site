@@ -7,7 +7,7 @@
  * workbook can look rates up.
  *
  * Gate: COST_VIEW_ROLES on the caller's org (owner / admin / project_manager).
- * The rates are read through the caller's own client, so 00229's RLS is the
+ * The rates are read through the caller's own client, so 00231's RLS is the
  * real boundary. Every export is written to rate_library_access_log.
  */
 import { NextResponse, type NextRequest } from 'next/server'

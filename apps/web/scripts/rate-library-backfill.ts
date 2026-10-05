@@ -1,7 +1,7 @@
 /**
  * Rate library backfill (E6): load historical priced BOQs into the library.
  * ========================================================================
- * READ-ONLY on every source. Writes only the rate_* tables (00229). Re-running
+ * READ-ONLY on every source. Writes only the rate_* tables (00231). Re-running
  * is safe: a source already in the library is reported and skipped.
  *
  * Sources come from a MANIFEST kept outside the repo, because which

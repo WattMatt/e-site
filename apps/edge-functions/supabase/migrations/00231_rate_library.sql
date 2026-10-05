@@ -1,12 +1,13 @@
 -- ---------------------------------------------------------------------------
--- Migration 00229: Rate library (E6) — catalogue, sources, lines, immutable
+-- Migration 00231: Rate library (E6) — catalogue, sources, lines, immutable
 -- observations, CPI index values, access log.
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time. Immediately before applying, re-check
 -- THREE places: the ledger max(version), origin/main's migration filenames and
 -- every OPEN PR's migration filenames. Written as 00225; renumbered to 00227
 -- after #238 (00225) and #242 (00226) applied, then to 00229 after #239
--- applied 00228 (2026-10-05). If 00229 is taken, renumber this file and scripts/db/assert-rate-library-roles.sql.
+-- applied 00228, then to 00231 after #248 applied 00229 (#243 and #237 both claim
+-- 00230). If 00231 is taken, renumber this file and scripts/db/assert-rate-library-roles.sql.
 --
 -- Spec: docs/superpowers/specs/2026-10-05-rate-library-design.md
 --
@@ -443,7 +444,7 @@ GRANT EXECUTE ON FUNCTION public.rate_library_ingest(uuid, jsonb, jsonb, jsonb, 
 -- contractor's rates.
 ALTER TABLE projects.boq_imports ADD COLUMN IF NOT EXISTS library_priced_at timestamptz;
 COMMENT ON COLUMN projects.boq_imports.library_priced_at IS
-  'Set when rates from the rate library (00229) were applied to this import. Such an import is never added to the library.';
+  'Set when rates from the rate library (00231) were applied to this import. Such an import is never added to the library.';
 
 -- ── 9. Confirm a review group atomically ────────────────────────────────────
 -- One transaction: lock the lines, refuse wholesale if any is no longer in the
