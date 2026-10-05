@@ -25,7 +25,8 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
       </div>
     )
   }
-  const { adjudication: a, tender, draftsAtClosing } = res.data
+  const { adjudication: a, tender, draftsAtClosing, profiles } = res.data
+  const pct = Math.round(a.threshold * 100)
   if (tender.project_id !== id) redirect(`/projects/${id}/tenders`)
   const bidders = a.totals
 
@@ -51,24 +52,26 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ width: '100%', fontSize: 13 }}>
                 <thead>
-                  <tr><th>Rank</th><th style={{ textAlign: 'left' }}>Company</th><th>Total excl. VAT</th><th>vs estimate</th>{a.bills.map((b) => <th key={b}>Bill {b}</th>)}<th>Flags</th></tr>
+                  <tr><th>Rank</th><th style={{ textAlign: 'left' }}>Company</th><th>CIDB</th><th>B-BBEE</th><th>Total excl. VAT</th><th>vs estimate</th>{a.bills.map((b) => <th key={b}>Bill {b}</th>)}<th>Flags</th></tr>
                 </thead>
                 <tbody>
                   {bidders.map((t) => (
                     <tr key={t.participantId}>
                       <td>{t.rank}</td>
                       <td>{t.company}</td>
+                      <td>{profiles[t.participantId]?.cidb_grade ?? '—'}</td>
+                      <td>{profiles[t.participantId]?.bbbee_level ?? '—'}</td>
                       <td style={{ textAlign: 'right' }}>{formatRand(t.total)}</td>
                       <td style={{ textAlign: 'right' }}>{t.vsEstimatePct == null ? '—' : `${t.vsEstimatePct > 0 ? '+' : ''}${t.vsEstimatePct} %`}</td>
                       {a.bills.map((b) => <td key={b} style={{ textAlign: 'right' }}>{formatRand(t.byBill[b] ?? 0)}</td>)}
                       <td style={{ fontSize: 12 }}>
-                        {t.flags.high} high · {t.flags.low} low · {t.flags.zero} zero · {t.flags.unpriced} unpriced
+                        vs estimate {t.flags.aboveEstimate} above · {t.flags.belowEstimate} below · vs median {t.flags.high} high · {t.flags.low} low · {t.flags.zero} zero · {t.flags.notPriced} not priced
                       </td>
                     </tr>
                   ))}
                   {a.estimateTotal != null && (
                     <tr style={{ fontStyle: 'italic' }}>
-                      <td /><td>WM estimate</td><td style={{ textAlign: 'right' }}>{formatRand(a.estimateTotal)}</td><td />
+                      <td /><td>WM estimate</td><td /><td /><td style={{ textAlign: 'right' }}>{formatRand(a.estimateTotal)}</td><td />
                       {a.bills.map((b) => <td key={b} style={{ textAlign: 'right' }}>{formatRand(a.estimateByBill[b] ?? 0)}</td>)}
                       <td />
                     </tr>
@@ -105,7 +108,27 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
       </Card>
 
       <Card>
-        <CardHeader><span className="data-panel-title">Item comparison (outliers more than {Math.round(a.threshold * 100)} % from the median are marked)</span></CardHeader>
+        <CardHeader><span className="data-panel-title">Arithmetic check</span></CardHeader>
+        <CardBody>
+          <p style={{ marginTop: 0, fontSize: 13 }}>
+            Bids priced here carry no extension errors: every amount is quantity × rate, computed by the database (and the rate governs).
+            Checked instead: WM&apos;s own estimate.
+          </p>
+          {a.arithmetic.estimate.length === 0 ? <p style={{ margin: 0, fontSize: 13 }}>No errors in the estimate.</p> : (
+            <table className="data-table" style={{ width: '100%', fontSize: 12 }}>
+              <thead><tr><th>Sheet</th><th>Row</th><th>Item</th><th style={{ textAlign: 'left' }}>Description</th><th>Stated</th><th>Quantity × rate</th></tr></thead>
+              <tbody>
+                {a.arithmetic.estimate.map((x) => (
+                  <tr key={x.itemId}><td>{x.sheet}</td><td>{x.rowNumber}</td><td>{x.code ?? ''}</td><td>{x.description}</td><td style={{ textAlign: 'right' }}>{formatRand(x.stated)}</td><td style={{ textAlign: 'right' }}>{formatRand(x.computed)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader><span className="data-panel-title">Item comparison (shaded: more than {pct} % from WM&apos;s estimate rate, or from the median of three or more bids)</span></CardHeader>
         <CardBody>
           <div style={{ overflowX: 'auto', maxHeight: 640 }}>
             <table className="data-table" style={{ width: '100%', fontSize: 12 }}>
@@ -125,9 +148,15 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
                     <td style={{ textAlign: 'right' }}>{r.medianRate ?? ''}</td>
                     {bidders.map((t) => {
                       const c = r.bids[t.participantId]
-                      const bg = c.flag === 'high' ? 'var(--c-red-dim)' : c.flag === 'low' || c.flag === 'zero' ? 'var(--c-amber-dim, #fff4cc)' : undefined
+                      const high = c.flag === 'high' || (c.flag == null && c.vsEstimate === 'above')
+                      const low = c.flag === 'low' || c.flag === 'zero' || (c.flag == null && c.vsEstimate === 'below')
+                      const bg = high ? 'var(--c-red-dim)' : low ? 'var(--c-amber-dim, #fff4cc)' : undefined
+                      const why = [
+                        c.flag === 'high' ? 'above the median' : c.flag === 'low' ? 'below the median' : c.flag === 'zero' ? 'zero rate' : null,
+                        c.vsEstimate === 'above' ? 'above the estimate' : c.vsEstimate === 'below' ? 'below the estimate' : null,
+                      ].filter(Boolean).join('; ')
                       return (
-                        <td key={t.participantId} style={{ textAlign: 'right', background: bg }} title={c.flag ?? undefined}>
+                        <td key={t.participantId} style={{ textAlign: 'right', background: bg }} title={why || undefined}>
                           {r.item.rate_cell_type === 'fixed' ? formatRand(c.amount) : c.rate == null ? (c.flag === 'not_priced' ? 'n/p' : '—') : c.rate}
                         </td>
                       )

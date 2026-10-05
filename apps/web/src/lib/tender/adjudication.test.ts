@@ -48,8 +48,50 @@ describe('adjudicate', () => {
     expect(d.bids.z.flag).toBe('low')
     expect(d.bids.x.flag).toBeNull()
     expect(r.rows.find((x) => x.item.id === 'b')!.bids.z.flag).toBe('zero')
+  })
+
+  it('reports a submitted bid missing rates as an integrity failure, not as a cheap bid', () => {
     const r2 = adjudicate(items, {}, [bid('x', { a: 10 }), bid('y', { a: 10, b: 5, d: 2 })], [], [])
-    expect(r2.totals.find((t) => t.participantId === 'x')!.flags.unpriced).toBe(2)
+    expect(r2.integrity).toEqual([{ participantId: 'x', company: 'Co x', missing: 2 }])
+  })
+
+  it('does not count a row the bidder may leave not priced as missing', () => {
+    const np: AdjItem = { ...items[0], id: 'e', code: '1.9', rate_cell_type: 'not_priced' }
+    const r2 = adjudicate([...items, np], {}, [bid('x', { a: 1, b: 1, d: 1, e: null }, ['e'])], [], [])
+    expect(r2.integrity).toEqual([])
+    expect(r2.rows.find((x) => x.item.id === 'e')!.bids.x.flag).toBe('not_priced')
+  })
+
+  it('flags against the estimate even with one bidder, and never against a median of fewer than three', () => {
+    const one = adjudicate(items, { a: { rate: 11, amount: 1100 } }, [bid('x', { a: 40, b: 1, d: 1 })], [], [])
+    const a1 = one.rows.find((x) => x.item.id === 'a')!
+    expect(a1.bids.x.vsEstimate).toBe('above')
+    expect(a1.bids.x.flag).toBeNull()
+    expect(one.totals[0].flags.aboveEstimate).toBe(1)
+    const two = adjudicate(items, {}, [bid('x', { a: 10, b: 1, d: 1 }), bid('y', { a: 100, b: 1, d: 1 })], [], [])
+    const a2 = two.rows.find((x) => x.item.id === 'a')!
+    expect(a2.medianRate).toBeNull()
+    expect([a2.bids.x.flag, a2.bids.y.flag]).toEqual([null, null])
+    expect(a2.bids.y.vsEstimate).toBeNull()
+  })
+
+  it('shows no estimate when none was uploaded, even though fixed sums are known', () => {
+    const r2 = adjudicate(items, {}, [bid('x', { a: 1, b: 1, d: 1 })], [], [])
+    expect(r2.estimateTotal).toBeNull()
+    expect(r2.totals[0].vsEstimatePct).toBeNull()
+  })
+
+  it('puts the estimate on the bids\u2019 basis (quantity × rate) and reports its own arithmetic errors', () => {
+    const r2 = adjudicate(items, { a: { rate: 11, amount: 1200 }, d: { rate: null, amount: 2700 } }, [bid('x', { a: 1, b: 1, d: 1 })], [], [])
+    expect(r2.estimateTotal).toBe(1100 + 5000 + 2700)
+    expect(r2.arithmetic.estimate).toEqual([
+      expect.objectContaining({ itemId: 'a', stated: 1200, computed: 1100 }),
+    ])
+  })
+
+  it('gives equal totals the same rank', () => {
+    const r2 = adjudicate(items, {}, [bid('x', { a: 10, b: 1, d: 1 }), bid('y', { a: 10, b: 2, d: 1 }), bid('z', { a: 20, b: 1, d: 1 })], [], [])
+    expect(r2.totals.map((t) => [t.participantId, t.rank])).toEqual([['x', 1], ['y', 1], ['z', 3]])
   })
 
   it('splits totals by bill', () => {

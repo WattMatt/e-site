@@ -14,14 +14,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ tenderI
   const { tenderId } = await params
   const res = await loadAdjudication(tenderId)
   if (!res.ok) {
-    const status = res.error === 'Tender not found' ? 404 : /sealed/.test(res.error) ? 409 : 403
-    return NextResponse.json({ error: res.error }, { status })
+    // Loader errors are fixed sentences; DB errors are already made generic there.
+    const status = res.error === 'Tender not found' ? 404 : /sealed|Close the tender|cancelled|could not be read|Try again/i.test(res.error) ? 409 : 403
+    return NextResponse.json({ error: res.error }, { status, headers: { 'Cache-Control': 'no-store' } })
   }
   const { adjudication, tender, projectName } = res.data
   const bytes = await buildAdjudicationWorkbook(adjudication, {
     project: projectName,
     tender: `${tender.package} — ${tender.title}`,
     closedAt: tender.closing_at,
+    profiles: res.data.profiles,
   })
   const name = `${projectName} - ${tender.package} - adjudication.xlsx`.replace(/[^A-Za-z0-9 ._()-]+/g, '_')
   return new NextResponse(new Uint8Array(bytes), {
