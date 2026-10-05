@@ -12,8 +12,9 @@ describe('referenceUsedBy', () => {
   })
 
   it('marks the derating tables and the SANS 2021 tables that cite them', () => {
-    expect(referenceUsedBy('TABLE_6_3_3')[0].use).toMatch(/Derating factor/)
-    expect(referenceUsedBy('SANS_10142_1_2021_T6_13')[0].use).toMatch(/TABLE_6_3_3/)
+    expect(referenceUsedBy('TABLE_6_3_3')[0].use).toMatch(/derating factor/)
+    expect(referenceUsedBy('SANS_10142_1_2021_T6_13')[0].use).toMatch(/source of its derating factors/)
+    expect(referenceUsedBy('SANS_10142_1_2021_T6_13')[0].use).not.toMatch(/TABLE_/)
   })
 
   it('claims nothing for reference-only tables or a superseded edition', () => {

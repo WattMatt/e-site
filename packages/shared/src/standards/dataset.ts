@@ -3,7 +3,7 @@
  * loader. A dataset is produced from the licensed PDFs on a staff machine and
  * written OUTSIDE the repository (the repo is public): it carries values.
  */
-import type { ExtractedRow, TableSpec } from './extract-table'
+import type { ExtractedCondition, ExtractedRow, TableSpec, Topic } from './extract-table'
 
 export interface DatasetDocument {
   file: string
@@ -21,6 +21,9 @@ export interface DatasetTable {
   document: { code: string; edition: string; year: number }
   clause: string
   title: string
+  topic: Topic
+  /** Printed parameters the table is valid for, each with its page. */
+  conditions: ExtractedCondition[]
   keyColumn: TableSpec['keyColumn']
   valueColumns: TableSpec['valueColumns']
   remark: string | null
@@ -34,10 +37,10 @@ export interface Dataset {
 }
 
 /** SANS_10142_1_2021_T6_13 / …_T6_4A — derived, never typed. */
-export function tableCode(docCode: string, year: number, clause: string): string {
+export function tableCode(docCode: string, year: number, clause: string, suffix?: string): string {
   const doc = docCode.replace(/[^A-Za-z0-9]+/g, '_').replace(/_+$/, '').toUpperCase()
   const cl = clause.replace(/\(([a-z])\)/g, (_, l: string) => l.toUpperCase()).replace(/[^A-Za-z0-9]+/g, '_')
-  return `${doc}_${year}_T${cl}`
+  return `${doc}_${year}_T${cl}${suffix ? `_${suffix.toUpperCase()}` : ''}`
 }
 
 /**

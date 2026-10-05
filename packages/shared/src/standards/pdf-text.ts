@@ -35,12 +35,16 @@ export function splitPdfText(text: string): PdfPage[] {
  * on a line of its own or at the start of a line, so those are tried next.
  */
 export function readPrintedPage(lines: string[]): number | null {
+  // The footer line holds only the number and "© SABS". A data row can share a
+  // line with "© SABS" ("120 … © SABS …"), so anything else on the line rules it out.
   for (const l of lines) {
-    const m = l.match(/(?:^|\s)(\d{1,3})\s+©\s*SABS|©\s*SABS\s+(\d{1,3})(?:\s|$)/)
+    const m = l.match(/^\s*(\d{1,3})\s+©\s*SABS\s*$|^\s*©\s*SABS\s+(\d{1,3})\s*$/)
     if (m) return Number(m[1] ?? m[2])
   }
   const nonEmpty = lines.filter((l) => l.trim() !== '')
-  const edges = [...nonEmpty.slice(0, 6), ...nonEmpty.slice(-6)]
+  // Bottom first: a landscape page prints its number at the foot, and its header
+  // can hold a lone digit (the "2" of a superscript mm²).
+  const edges = [...nonEmpty.slice(-6).reverse(), ...nonEmpty.slice(0, 6)]
   for (const l of edges) {
     const alone = l.match(/^\s*(\d{1,3})\s*$/)
     if (alone) return Number(alone[1])
@@ -100,7 +104,8 @@ export function printedPage(page: PdfPage, offset: number): number {
 export function parseCell(token: string): number | null | undefined {
   const t = token.trim()
   if (t === '\u2013' || t === '-' || t === '\u2014') return null
-  // Tokens are whitespace-split, so a cell never carries a thousands separator.
+  // A thousands group printed with one space ("1 138") reaches here merged by lineTokens.
+  if (/^\d{1,3}(?: \d{3})+$/.test(t)) return Number(t.replace(/ /g, ''))
   if (!/^\d+(?:[,.]\d+)?$/.test(t)) return undefined
   return Number(t.replace(',', '.'))
 }
