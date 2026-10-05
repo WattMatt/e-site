@@ -2,6 +2,7 @@
  * Load a stored raw meter file ONLY if it is exactly what the file row says it is.
  *
  * The register route accepts a path only when it is `<org>/<project>/<sha256>.<ext>` of the caller's
+ * project (an org meter-archive file, which has no project, lives at `<org>/archive/<sha256>.<ext>`)
  * project and the bytes hash to that name. The row is the record of that check, but parse and commit
  * read the object again later, so they re-prove both before parsing:
  *   1. the recorded path must be byte-for-byte `<project org>/<row project>/<row sha256>.<ext>`
@@ -24,7 +25,8 @@ export function expectedRawPath(orgId: string, file: Pick<MeterFileRow, 'project
   if (!SHA_RE.test(file.sha256)) return null
   const ext = file.storage_path.match(EXT_RE)?.[1]
   if (!ext) return null
-  return `${orgId}/${file.project_id}/${file.sha256}.${ext}`
+  // An org meter-archive file belongs to no project: it lives under <org>/archive/.
+  return `${orgId}/${file.project_id ?? 'archive'}/${file.sha256}.${ext}`
 }
 
 export async function loadVerifiedRaw(repo: MeterImportRepo, file: MeterFileRow, orgId: string): Promise<RawLoad> {

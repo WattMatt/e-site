@@ -10,11 +10,12 @@
  * react-server condition then resolves it to its empty build:
  *   NODE_PATH=../../node_modules/.pnpm/server-only@0.0.1/node_modules \
  *   node --max-old-space-size=6144 --conditions=react-server --import tsx scripts/solar-meter-archive.ts --root "<006. METER CSV>" --out <dir>
- *   … --apply --org <uuid> --user <uuid> [--site "KURUMAN MALL"]
+ *   … --apply --org <uuid> --user <uuid> [--site "KURUMAN MALL"] [--max-disk-pct 75]
+ *   … --retire-projects --org <uuid> --out <dir> [--apply]   (00237 applied first: moves the first load's
+ *       per-site planning projects' files into the org archive and deletes those projects)
  *
- * --apply, per site: find or create the project (named after the folder, status 'planning'), then for each
- * `load` decision upload the raw file to solar-meter-raw at <org>/<project>/<sha256>.csv, register the
- * meter_files row, and commit it through commitMeterFile (the Solar import pipeline, unchanged: server
+ * --apply: for each `load` decision upload the raw file to solar-meter-raw at <org>/archive/<sha256>.csv,
+ * register the meter_files row with NO project (00237; the sites are not projects), and commit it through commitMeterFile (the Solar import pipeline, unchanged: server
  * re-parse, identity checks, readings read-back). Re-running is safe: an imported file is skipped.
  *
  * Env for --apply: NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL) + SUPABASE_SERVICE_ROLE_KEY.
@@ -30,7 +31,7 @@ const arg = (f: string) => { const i = argv.indexOf(f); return i === -1 ? null :
 const root = arg('--root')
 const out = arg('--out') ?? '.'
 const only = arg('--site')
-if (!root) { console.error('--root <006. METER CSV folder> is required'); process.exit(2) }
+if (!root && !argv.includes('--retire-projects')) { console.error('--root <006. METER CSV folder> is required'); process.exit(2) }
 
 function csvFiles(dir: string): string[] {
   const outFiles: string[] = []
@@ -44,6 +45,14 @@ function csvFiles(dir: string): string[] {
 }
 
 async function main() {
+  if (argv.includes('--retire-projects')) {
+    const { retireArchiveProjects } = await import('../src/lib/solar/meter-archive/apply')
+    const org = arg('--org')
+    if (!org) { console.error('--retire-projects needs --org <uuid>'); process.exit(2) }
+    mkdirSync(out, { recursive: true })
+    await retireArchiveProjects({ org, out, apply: argv.includes('--apply') })
+    return
+  }
   // ALWAYS plan over every site: the cross-site duplicate check and the downloader log (kept only in two
   // folders) need all of them. --site narrows what is APPLIED, never what is planned.
   const sites = readdirSync(root!).filter((d) => statSync(join(root!, d)).isDirectory() && !NOT_SITES.has(d)).sort()

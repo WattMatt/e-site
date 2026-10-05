@@ -363,3 +363,27 @@ describe('commitMeterFile: a tenant chosen at import is the tenant the load uses
     expect(out).toMatchObject({ tenantAssignment: null })
   })
 })
+
+describe('commitMeterFile: an org meter-archive file (no project)', () => {
+  function archiveSetup() {
+    const bytes = enc(A_TEXT)
+    const sha = createHash('sha256').update(bytes).digest('hex')
+    const path = `org1/archive/${sha}.csv`
+    const file: MeterFileRow = { id: 'f1', organisation_id: 'org1', project_id: null, sha256: sha, size_bytes: bytes.byteLength, storage_path: path, original_name: 'SITE A, 1, TENANT-1, 100.csv', status: 'uploaded' }
+    const fake = createFakeRepo({ files: [file], raw: { [path]: bytes }, studyByProject: { p1: 's1' } })
+    return { ...fake, ctx: { projectId: null, orgId: 'org1', file } }
+  }
+  it('imports at <org>/archive/<sha>: meter + readings, no study link, no project audit row', async () => {
+    const { repo, state, ctx } = archiveSetup()
+    const out = await commitMeterFile(repo, ctx, body({}))
+    expect(out).toMatchObject({ channels: [{ sourceColumn: 'p14', readings: 48 }] })
+    expect(state.meters).toHaveLength(1)
+    expect(state.studyLinks).toEqual([])
+    expect(state.audits).toEqual([])
+  })
+  it('cannot be tied to a tenant (a tenant belongs to a project)', async () => {
+    const { repo, ctx } = archiveSetup()
+    const withTenant = body({ meter: { new: { label: 'T', kind: 'tenant', nodeId: '6f1d4c1a-58a0-4b3e-9a3b-2a8a6a0c2b11' } } })
+    await expect(commitMeterFile(repo, ctx, withTenant)).rejects.toMatchObject({ status: 422, body: { error: 'tenant_not_in_project' } })
+  })
+})

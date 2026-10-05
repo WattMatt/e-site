@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseMeterFile } from '@esite/shared/meter-data'
 import { fakeSupabase } from '@/test/fake-supabase'
-import { ARCHIVE_PROJECT_DESCRIPTION, commitBody, findOrCreateProject } from './apply'
+import { tmpdir } from 'node:os'
+import { ARCHIVE_PROJECT_DESCRIPTION, commitBody, retireArchiveProjects } from './apply'
 import { planArchive, type LoadDecision } from './plan'
 
 const CORPUS = join(__dirname, '../../../../../../packages/shared/src/meter-data/__fixtures__/corpus')
@@ -28,27 +29,43 @@ describe('commitBody', () => {
   })
 })
 
-describe('findOrCreateProject', () => {
-  it('reuses a project of that name in the org', async () => {
-    const { client, calls } = fakeSupabase({ tables: { 'projects.projects': [{ id: 'p1', organisation_id: ORG, name: 'KURUMAN MALL', description: ARCHIVE_PROJECT_DESCRIPTION }] } })
-    expect(await findOrCreateProject(client as never, ORG, USER, 'KURUMAN MALL')).toEqual({ id: 'p1', created: false })
-    expect(calls.filter((c) => c.op === 'insert')).toEqual([])
+describe('retireArchiveProjects', () => {
+  const P = { id: 'p1', organisation_id: ORG, name: 'KOKSTAD', description: ARCHIVE_PROJECT_DESCRIPTION }
+  const FILE = { id: 'f1', project_id: 'p1', sha256: 'a'.repeat(64), storage_path: `${ORG}/p1/${'a'.repeat(64)}.csv` }
+  const withStorage = (client: Record<string, unknown>, moves: Array<[string, string]>) => Object.assign(client, {
+    storage: { from: () => ({ move: async (from: string, to: string) => { moves.push([from, to]); return { error: null } } }) },
   })
-  it('refuses a real project that happens to share the site name (it might carry a Solar study)', async () => {
-    const { client, calls } = fakeSupabase({ tables: { 'projects.projects': [{ id: 'p1', organisation_id: ORG, name: 'KURUMAN MALL', description: 'Solar study' }] } })
-    await expect(findOrCreateProject(client as never, ORG, USER, 'KURUMAN MALL')).rejects.toThrow(/was not made by this import/)
-    expect(calls.filter((c) => c.op === 'insert')).toEqual([])
+  it('dry run: reports and writes nothing', async () => {
+    const { client, calls } = fakeSupabase({ tables: { 'projects.projects': [P], 'solar.meter_files': [FILE], 'solar.audit_events': [] } })
+    const moves: Array<[string, string]> = []
+    await retireArchiveProjects({ org: ORG, out: tmpdir(), apply: false, client: withStorage(client as never, moves) as never })
+    expect(calls.filter((c) => c.op !== 'select')).toEqual([])
+    expect(moves).toEqual([])
   })
-  it('creates a planning-status project named after the folder, stamped with the owner', async () => {
-    const { client, calls } = fakeSupabase({ tables: { 'projects.projects': [] }, writes: { 'projects.projects:insert': { data: { id: 'new' } } } })
-    expect(await findOrCreateProject(client as never, ORG, USER, 'KURUMAN MALL')).toEqual({ id: 'new', created: true })
-    expect(calls.find((c) => c.op === 'insert')?.payload).toEqual({
-      organisation_id: ORG, name: 'KURUMAN MALL', status: 'planning', project_type: 'retail', description: ARCHIVE_PROJECT_DESCRIPTION, created_by: USER,
-    })
-  })
-  it('refuses to guess between two projects of the same name', async () => {
-    const { client } = fakeSupabase({ tables: { 'projects.projects': [{ id: 'a', organisation_id: ORG, name: 'X' }, { id: 'b', organisation_id: ORG, name: 'X' }] } })
-    await expect(findOrCreateProject(client as never, ORG, USER, 'X')).rejects.toThrow(/more than one/)
+  it('apply: moves each raw file to <org>/archive, detaches the row, then deletes the project — only a project this import made', async () => {
+    const { client, calls } = fakeSupabase({ tables: { 'projects.projects': [P], 'solar.meter_files': [FILE], 'solar.audit_events': [] } })
+    const moves: Array<[string, string]> = []
+    // After the detach the fake still holds the row; make the post-check count see none.
+    const wrapped = withStorage(client as never, moves)
+    const realSchema = (wrapped as unknown as { schema: (s: string) => unknown }).schema
+    let detached = false
+    ;(wrapped as unknown as { schema: (s: string) => unknown }).schema = (sch: string) => {
+      const api = realSchema(sch) as { from: (t: string) => Record<string, unknown> }
+      return { ...api, from: (t: string) => {
+        const b = api.from(t) as Record<string, (...x: unknown[]) => unknown>
+        if (sch === 'solar' && t === 'meter_files') {
+          return { ...b, update: (...x: unknown[]) => { detached = true; return b.update(...x) },
+            select: (cols: string, o?: { head?: boolean }) => (o?.head && detached ? { eq: async () => ({ count: 0, data: null, error: null }) } : b.select(cols, o)) }
+        }
+        return b
+      } }
+    }
+    await retireArchiveProjects({ org: ORG, out: tmpdir(), apply: true, client: wrapped as never })
+    expect(moves).toEqual([[FILE.storage_path, `${ORG}/archive/${FILE.sha256}.csv`]])
+    expect(calls.find((c) => c.op === 'update')?.payload).toEqual({ project_id: null, storage_path: `${ORG}/archive/${FILE.sha256}.csv` })
+    const del = calls.find((c) => c.op === 'delete')
+    expect(del?.table).toBe('projects.projects')
+    expect(del?.filters).toEqual(expect.arrayContaining([['eq', 'id', 'p1'], ['eq', 'description', ARCHIVE_PROJECT_DESCRIPTION]]))
   })
 })
 

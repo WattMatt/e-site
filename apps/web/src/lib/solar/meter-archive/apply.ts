@@ -1,7 +1,8 @@
 /**
- * --apply half of scripts/solar-meter-archive.ts. For each `load` decision: find or create the site's
- * project, upload the raw bytes to solar-meter-raw at <org>/<project>/<sha256>.csv, register the
- * meter_files row and COMMIT it through commitMeterFile — the Solar import pipeline unchanged (server
+ * --apply half of scripts/solar-meter-archive.ts. Archive files belong to the org's Solar meter library
+ * and to NO project (owner, 2026-10-05: the sites "cannot be and aren't projects"; migration 00237). For
+ * each `load` decision: upload the raw bytes to solar-meter-raw at <org>/archive/<sha256>.csv, register
+ * the meter_files row with no project and COMMIT it through commitMeterFile — the Solar import pipeline unchanged (server
  * re-parse, identity checks, readings read-back). Runs with the service role (write_readings and
  * clear_channel_readings admit a NULL auth.uid()); every import is audited against the owner who
  * ordered the load, marked source 'meter_archive_import'.
@@ -22,25 +23,6 @@ export const ARCHIVE_PROJECT_DESCRIPTION = 'Meter archive site: meters loaded in
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = ReturnType<typeof createClient<any, any, any>>
-
-export async function findOrCreateProject(client: AnyClient, org: string, user: string, site: string): Promise<{ id: string; created: boolean }> {
-  const p = client.schema('projects').from('projects')
-  const { data: found, error } = await p.select('id, description').eq('organisation_id', org).eq('name', site).limit(2)
-  if (error) throw new Error(`project lookup ${site}: ${error.message}`)
-  if ((found ?? []).length > 1) throw new Error(`more than one project is named "${site}"`)
-  if (found && found.length === 1) {
-    // Reuse only a project this import made (a re-run). A real project of the same name could carry a
-    // Solar study, and commitMeterFile would link every archive meter into it: refuse instead.
-    const row = found[0] as { id: string; description: string | null }
-    if (row.description !== ARCHIVE_PROJECT_DESCRIPTION) throw new Error(`a project named "${site}" already exists and was not made by this import; rename one of them`)
-    return { id: row.id, created: false }
-  }
-  const { data, error: e2 } = await p.insert({
-    organisation_id: org, name: site, status: 'planning', project_type: 'retail', description: ARCHIVE_PROJECT_DESCRIPTION, created_by: user,
-  }).select('id').single()
-  if (e2) throw new Error(`create project ${site}: ${e2.message}`)
-  return { id: (data as { id: string }).id, created: true }
-}
 
 /** The commit body for one decision: every channel of the file listed, only the chosen ones included. */
 export function commitBody(fileId: string, d: LoadDecision, f: ArchiveFile, existingMeterId: string | null = null): CommitBody {
@@ -92,7 +74,6 @@ export async function applyArchive(a: {
   const log = (row: Record<string, unknown>) => appendFileSync(join(a.out, 'meter-archive-apply.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...row }) + '\n')
   const fileOf = new Map(a.files.map((f) => [`${f.site}|${f.fileName}`, f]))
   const loads = a.decisions.filter((d): d is LoadDecision => d.action === 'load')
-  const projects = new Map<string, string>()
   /** site|pnpSerial → the meter its first file created, so the meter's later files link to it. */
   const pnpMeters = new Map<string, string>()
   let done = 0
@@ -109,16 +90,10 @@ export async function applyArchive(a: {
     }
     const f = fileOf.get(`${d.site}|${d.fileName}`)!
     try {
-      let projectId = projects.get(d.site)
-      if (!projectId) {
-        const p = await findOrCreateProject(client, a.org, a.user, d.site)
-        projectId = p.id
-        projects.set(d.site, projectId)
-        log({ site: d.site, project: projectId, projectCreated: p.created })
-      }
+      const projectId = null
       const bytes = new Uint8Array(readFileSync(f.path))
       const sha = await sha256Hex(bytes)
-      const storagePath = `${a.org}/${projectId}/${sha}.csv`
+      const storagePath = `${a.org}/archive/${sha}.csv`
       const up = await client.storage.from(METER_RAW_BUCKET).upload(storagePath, bytes, { upsert: false, contentType: 'text/csv' })
       const exists = up.error && ((up.error as { statusCode?: string }).statusCode === '409' || /already exists/i.test(up.error.message))
       if (up.error && !exists) throw new Error(`upload: ${up.error.message}`)
@@ -146,4 +121,44 @@ export async function applyArchive(a: {
     }
   }
   console.log(`done: ${done} imported of ${loads.length} planned; see meter-archive-apply.jsonl`)
+}
+
+/**
+ * Retire the planning projects the FIRST archive load created (identified by ARCHIVE_PROJECT_DESCRIPTION):
+ * each of their meter files moves to the org archive (raw bytes to <org>/archive/<sha>.<ext>, then the row
+ * detached, which 00237's bind trigger allows the service role only), their Solar audit rows are written to
+ * <out>/retired-projects-audit.json, and only then is a project with no files left deleted. Meters and
+ * readings belong to the org library and are untouched. Dry run unless `apply` is true.
+ */
+export async function retireArchiveProjects(a: { org: string; out: string; apply: boolean; client?: AnyClient }): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const client = a.client ?? createClient(url!, key!, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: projects, error } = await client.schema('projects').from('projects').select('id, name').eq('organisation_id', a.org).eq('description', ARCHIVE_PROJECT_DESCRIPTION)
+  if (error) throw new Error(`projects: ${error.message}`)
+  const list = (projects ?? []) as Array<{ id: string; name: string }>
+  console.log(`${list.length} archive project(s) to retire${a.apply ? '' : ' (dry run; pass --apply)'}`)
+  const auditDump: unknown[] = []
+  for (const p of list) {
+    const { data: files, error: fe } = await client.schema('solar').from('meter_files').select('id, sha256, storage_path').eq('project_id', p.id)
+    if (fe) throw new Error(`files of ${p.name}: ${fe.message}`)
+    const { data: audit } = await client.schema('solar').from('audit_events').select('*').eq('project_id', p.id)
+    auditDump.push({ project: p, audit: audit ?? [] })
+    console.log(`${p.name}: ${(files ?? []).length} file(s), ${(audit ?? []).length} audit row(s)`)
+    if (!a.apply) continue
+    for (const f of (files ?? []) as Array<{ id: string; sha256: string; storage_path: string }>) {
+      const ext = f.storage_path.match(/\.[a-z]+$/)?.[0] ?? '.csv'
+      const target = `${a.org}/archive/${f.sha256}${ext}`
+      const mv = await client.storage.from(METER_RAW_BUCKET).move(f.storage_path, target)
+      if (mv.error && !/not.?found|already exists/i.test(mv.error.message)) throw new Error(`move ${f.storage_path}: ${mv.error.message}`)
+      const { error: ue } = await client.schema('solar').from('meter_files').update({ project_id: null, storage_path: target }).eq('id', f.id)
+      if (ue) throw new Error(`detach ${f.id}: ${ue.message}`)
+    }
+    const { count } = await client.schema('solar').from('meter_files').select('id', { count: 'exact', head: true }).eq('project_id', p.id)
+    if (count) throw new Error(`${p.name} still has ${count} file(s); not deleted`)
+    appendFileSync(join(a.out, 'retired-projects-audit.json'), JSON.stringify(auditDump[auditDump.length - 1]) + '\n')
+    const { error: de } = await client.schema('projects').from('projects').delete().eq('id', p.id).eq('description', ARCHIVE_PROJECT_DESCRIPTION)
+    if (de) throw new Error(`delete ${p.name}: ${de.message}`)
+    console.log(`  retired ${p.name}`)
+  }
 }

@@ -71,7 +71,8 @@ export type CommitBody = z.infer<typeof CommitBodySchema>
 type SeriesBody = Extract<CommitBody, { mode: 'series' }>
 
 export interface CommitContext {
-  projectId: string
+  /** null: an org meter-archive file (no project, so no study link, no tenant, no project audit row). */
+  projectId: string | null
   orgId: string
   file: MeterFileRow
 }
@@ -160,7 +161,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     const bound = await repo.metersForFile(ctx.file.id)
     if (bound.length > 0) throw new CommitError(409, { error: 'already_imported', meters: bound })
     await repo.updateFile(ctx.file.id, { status: 'skipped', skip_reason: body.reason })
-    await repo.audit(ctx.projectId, 'meter_file_skipped', { file_id: ctx.file.id, reason: body.reason })
+    if (ctx.projectId) await repo.audit(ctx.projectId, 'meter_file_skipped', { file_id: ctx.file.id, reason: body.reason })
     return { skipped: true }
   }
 
@@ -176,7 +177,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     }))
     const inserted = rows.length > 0 ? await repo.insertRegisterRows(rows) : 0
     await repo.updateFile(ctx.file.id, { ...fileParsePatch(outcome), status: 'accepted', skip_reason: null })
-    await repo.audit(ctx.projectId, 'meter_register_imported', { file_id: ctx.file.id, rows: inserted })
+    if (ctx.projectId) await repo.audit(ctx.projectId, 'meter_register_imported', { file_id: ctx.file.id, rows: inserted })
     return { registerRows: inserted }
   }
 
@@ -196,7 +197,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   // Channel choices and the tenant are validated before anything is written.
   const selected = selectChannels(outcome, body)
   const nodeId = 'new' in body.meter ? body.meter.new.nodeId ?? null : null
-  if (nodeId && !(await repo.tenantNodeInProject(ctx.projectId, nodeId))) throw new CommitError(422, { error: 'tenant_not_in_project' })
+  if (nodeId && (!ctx.projectId || !(await repo.tenantNodeInProject(ctx.projectId, nodeId)))) throw new CommitError(422, { error: 'tenant_not_in_project' })
   const { meter, reused: reusedMeter } = await resolveMeter(repo, ctx, outcome, body)
   // Clearing and rewriting readings is not atomic across calls. Take the file out of 'accepted' before
   // the first write, so a failure part-way never leaves an accepted file with partial or empty
@@ -252,7 +253,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     }
   }
 
-  const studyId = await repo.studyId(ctx.projectId)
+  const studyId = ctx.projectId ? await repo.studyId(ctx.projectId) : null
   if (studyId) await repo.linkStudyMeter(studyId, meter.id)
   // The tenant chosen at import goes on the tenant's load basis, the one place the site load and the
   // Tenants tab read a tenant's meters from (meters.node_id alone is only a label). Only for a meter
@@ -269,7 +270,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   })
   await repo.acceptReport(reportId)
   await repo.updateFile(ctx.file.id, { ...fileParsePatch(outcome), status: 'accepted', skip_reason: null })
-  await repo.audit(ctx.projectId, 'meter_file_imported', {
+  if (ctx.projectId) await repo.audit(ctx.projectId, 'meter_file_imported', {
     file_id: ctx.file.id, meter_id: meter.id, channels: results.length, identity_resolution: body.identity.resolution,
     ...(tenantAssignment ? { tenant_node_id: nodeId, tenant_assignment: tenantAssignment } : {}),
   })

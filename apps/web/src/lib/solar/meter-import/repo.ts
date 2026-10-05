@@ -20,7 +20,8 @@ export type AreaSource = 'register_exact' | 'register_llm' | 'filename' | 'manua
 export interface MeterFileRow {
   id: string
   organisation_id: string
-  project_id: string
+  /** NULL: an org meter-archive file, not attached to any project. */
+  project_id: string | null
   sha256: string
   size_bytes: number
   storage_path: string
@@ -98,7 +99,7 @@ export interface MeterImportRepo {
   studyId(projectId: string): Promise<string | null>
   downloadRaw(storagePath: string): Promise<Uint8Array | null>
   fileBySha(orgId: string, sha256: string): Promise<MeterFileRow | null>
-  insertFile(row: { project_id: string; organisation_id: string; sha256: string; size_bytes: number; storage_path: string; original_name: string }): Promise<MeterFileRow>
+  insertFile(row: { project_id: string | null; organisation_id: string; sha256: string; size_bytes: number; storage_path: string; original_name: string }): Promise<MeterFileRow>
   getFile(fileId: string): Promise<MeterFileRow | null>
   updateFile(fileId: string, patch: Record<string, unknown>): Promise<void>
   seriesByBodyHash(orgId: string, bodyHash: string): Promise<Array<{ meterId: string; fileId: string; label: string; siteLabel: string | null }>>
