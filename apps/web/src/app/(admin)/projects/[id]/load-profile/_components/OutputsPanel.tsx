@@ -14,6 +14,12 @@ const BASIS: Record<string, string> = {
   measured_md_plus_synthetic: 'measured maximum demand + synthetic peak',
   design_peak: 'design peak (no interval data)',
 }
+const MD_LABEL: Record<string, (i: number) => string> = {
+  single: (i) => `Maximum demand (${i}-min)`,
+  coincident: (i) => `Maximum demand, meters together (${i}-min)`,
+  largest_single_meter: (i) => `Maximum demand, largest meter (${i}-min)`,
+  sum_of_meter_peaks: () => "Sum of each meter's own peak",
+}
 const hourLabel = (x: number) => `${String(Math.round(x)).padStart(2, '0')}:00`
 const pts = (ys: number[]) => ys.map((y, x) => ({ x, y }))
 const rand = (v: number) => `R ${formatNumber(v, 2)}`
@@ -40,7 +46,7 @@ export function OutputsPanel({ view }: { view: LoadProfileView }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Kpi label="Annual energy" value={`${formatNumber(a.kpis.annualKwh)} kWh`} sub={`${formatNumber(a.composition.measuredKwh)} measured · ${formatNumber(a.composition.syntheticKwh)} estimated`} />
           <Kpi label="Peak (hourly average)" value={`${formatNumber(a.kpis.peakKw, 1)} kW`} sub={a.kpis.peakAt} />
-          {a.md && <Kpi label={`Maximum demand (${a.md.intervalMin}-min)`} value={`${formatNumber(a.md.peak.kva, 1)} kVA`} sub={`${a.md.peak.at}${a.md.peak.source === 'measured_kva' ? ' · measured kVA' : ` · kW ÷ PF ${view.settings.powerFactor}`}`} />}
+          {a.md && <Kpi label={MD_LABEL[a.md.basis](a.md.intervalMin)} value={`${formatNumber(a.md.peak.kva, 1)} kVA`} sub={a.md.basis === 'sum_of_meter_peaks' ? 'never coincident: an upper bound' : `${a.md.peak.at}${a.md.peak.source === 'measured_kva' ? ' · measured kVA' : ` · kW ÷ PF ${view.settings.powerFactor}`}`} />}
           <Kpi label="Load factor" value={`${formatNumber(a.kpis.loadFactor * 100, 1)} %`} />
           <Kpi label="Suggested NMD" value={`${a.nmd.kva} kVA`} sub={`${BASIS[a.nmd.basis]}: ${formatNumber(a.nmd.basisKva, 1)} kVA`} />
           {c?.ok && <Kpi label="Annual cost excl VAT" value={rand(c.annual.totalExclVat)} sub={`${rand(c.annual.totalInclVat)} incl VAT`} />}

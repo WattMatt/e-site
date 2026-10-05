@@ -41,7 +41,10 @@ export function buildExportModel(v: LoadProfileView, generatedAt: Date): ExportM
     ['Measured energy', r(a.composition.measuredKwh, 0), 'kWh'],
     ['Synthetic energy', r(a.composition.syntheticKwh, 0), 'kWh'],
   ]
-  if (a.md) kpis.push(['Maximum demand (interval)', r(a.md.peak.kva, 1), `kVA at ${a.md.peak.at} (${a.md.intervalMin}-min data)`])
+  if (a.md) {
+    if (a.md.basis === 'sum_of_meter_peaks') kpis.push(["Sum of each meter's own peak", r(a.md.peak.kva, 1), 'kVA (the meters never ran together; an upper bound, not a measured coincident demand)'])
+    else kpis.push([a.md.basis === 'largest_single_meter' ? 'Maximum demand (largest single meter)' : 'Maximum demand (interval)', r(a.md.peak.kva, 1), `kVA at ${a.md.peak.at} (${a.md.intervalMin}-min data)`])
+  }
   kpis.push(['Suggested NMD', a.nmd.kva, `kVA (basis ${r(a.nmd.basisKva, 1)} kVA, ${BASIS[a.nmd.basis]})`])
   if (v.cost?.ok) {
     kpis.push(['Annual cost excl VAT', r(v.cost.annual.totalExclVat), `R (${v.cost.label})`])
@@ -51,7 +54,7 @@ export function buildExportModel(v: LoadProfileView, generatedAt: Date): ExportM
   const notes = [
     `Reference year ${year}: every source is aligned to ${year}'s weekdays and public holidays (29 February dropped), power factor ${v.settings.powerFactor}.`,
     `NMD rule: ${a.nmd.rule}.`,
-    a.md ? `Maximum demand is taken from the measured interval data only; the hourly profile peak is never used as maximum demand.` : 'No measured interval data: there is no measured maximum demand.',
+    a.md ? `Maximum demand comes from the measured interval data (${a.md.basis.replace(/_/g, ' ')}); the hourly profile peak is never used as maximum demand.` : 'No measured interval data: there is no measured maximum demand.',
   ]
   if (v.cost?.ok) {
     notes.push(v.cost.demandNote)

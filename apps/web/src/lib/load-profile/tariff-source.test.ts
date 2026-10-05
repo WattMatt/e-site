@@ -48,6 +48,10 @@ describe('tariff-source (caller session, published years only)', () => {
     expect(t?.financialYear).toBe('2026/27')
     expect(t?.label).toBe('Test City · 2026/27 · Business Flat (chosen in 2025/26; now 2026/27)')
   })
+  it('a draft sharing a published code is not followed into the published year', async () => {
+    tables['tariffs.tariff'] = [tariffRow(NEW, Y26), tariffRow(UNPUB, DRAFT)] // same code BF1
+    expect(await loadCostingTariff(db(), UNPUB)).toBeNull()
+  })
   it('a superseded tariff with no single successor is not costed', async () => {
     tables['tariffs.tariff'] = [tariffRow(OLD, Y25), tariffRow(NEW, Y26, { code: 'OTHER' })]
     expect(await loadCostingTariff(db(), OLD)).toBeNull()

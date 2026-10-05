@@ -68,7 +68,7 @@ export function SettingsPanel({ view }: { view: LoadProfileView }) {
         {!ro && (
           <details onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void openPicker() }} style={{ marginTop: 6 }}>
             <summary style={{ cursor: 'pointer' }}>Choose a tariff</summary>
-            {licensees === null ? <p>Loading suppliers…</p> : (
+            {licensees === null ? <p>Loading suppliers…</p> : licensees.length === 0 ? <p>No tariffs are available to your organisation yet.</p> : (
               <div style={{ display: 'grid', gap: 6, marginTop: 6, maxWidth: 640 }}>
                 <input aria-label="Search supplier" placeholder="Search a municipality or Eskom (name or alias)" value={query} onChange={(e) => setQuery(e.target.value)} />
                 <select aria-label="Supplier" size={6} value={licensee} onChange={(e) => void chooseLicensee(e.target.value)}>

@@ -105,6 +105,7 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
     setBusy(true)
     setError(null)
     const out: string[] = []
+    let finished = false
     try {
     for (const f of pending) {
       for (const part of f.parts) {
@@ -117,11 +118,12 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
         out.push('error' in r ? `${f.fileName}: ${r.error}` : `${f.fileName}: ${r.imported} imported${r.replaced ? `, ${r.replaced} replaced` : ''}${r.warnings.length ? ` — ${r.warnings.join(' ')}` : ''}`)
       }
     }
+    finished = true
     } catch {
-      out.push('The import stopped part-way (the connection or the server timed out). Channels already listed above were saved; try the rest again.')
+      out.push('The import stopped part-way (the connection or the server timed out). Channels listed above were saved; press Import selected again for the rest.')
     } finally {
       setLines(out)
-      setPending([])
+      if (finished) setPending([]) // on a failure the choices stay, so a retry needs no re-upload
       setBusy(false)
       router.refresh()
     }

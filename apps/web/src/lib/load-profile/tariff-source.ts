@@ -70,11 +70,12 @@ export async function loadCostingTariff(client: AnyClient, tariffId: string): Pr
   const { data: y } = await t.from('tariff_year').select('id, licensee_id, financial_year, effective_from, state').eq('id', chosen.tariff_year_id as string).maybeSingle()
   let year = y as Row | null
   if (!year) return null
+  if (year.state !== 'published' && year.state !== 'superseded') return null // drafts are never costed, nor followed
   let id = tariffId
   let followedFrom: string | null = null
-  if (year.state !== 'published') {
+  if (year.state === 'superseded') {
     const { data: cur } = await t.from('tariff_year').select('id, licensee_id, financial_year, effective_from, state')
-      .eq('licensee_id', year.licensee_id as string).eq('state', 'published').order('financial_year', { ascending: false }).limit(1)
+      .eq('licensee_id', year.licensee_id as string).eq('state', 'published').order('effective_from', { ascending: false }).limit(1)
     const next = ((cur ?? []) as Row[])[0]
     if (!next) return null
     const q = t.from('tariff').select('id').eq('tariff_year_id', next.id as string)

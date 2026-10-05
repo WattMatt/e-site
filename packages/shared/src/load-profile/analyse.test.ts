@@ -112,3 +112,26 @@ describe('several meters', () => {
     expect(r.nmd.basis).toBe('measured_md')
   })
 })
+
+describe('several meters — the coincidence gate', () => {
+  const constant = (kw: number, fromDay: number, toDay: number) => {
+    const out = []
+    const start = Date.UTC(2025, 0, 1) - 7_200_000
+    for (let t = start + fromDay * 86_400_000 + 1_800_000; t <= start + toDay * 86_400_000; t += 1_800_000) out.push({ tsEnd: t, value: kw, quality: QUALITY.OK as never })
+    return out
+  }
+  const run = (a: ReturnType<typeof constant>, b: ReturnType<typeof constant>) =>
+    analyseProfile({ series: new Float64Array(8760).fill(1), referenceYear: 2025, powerFactor: 1, measured: [{ kw: a, kva: null, intervalMin: 30 }, { kw: b, kva: null, intervalMin: 30 }], syntheticPeakKw: 0 }).md!
+
+  it('29 coincident days → sum of peaks; 31 → coincident', () => {
+    expect(run(constant(10, 0, 29), constant(20, 0, 29)).basis).toBe('sum_of_meter_peaks')
+    expect(run(constant(10, 0, 31), constant(20, 0, 31)).basis).toBe('coincident')
+  })
+  it('a short overlap never puts MD below the largest single meter\'s own peak', () => {
+    // A: 100 kW in January, 40 kW the rest of the year. B: 30 kW for 40 days from July.
+    const a = [...constant(100, 0, 31), ...constant(40, 31, 365)]
+    const md = run(a, constant(30, 181, 221))
+    expect(md.basis).toBe('largest_single_meter')
+    expect(md.peak.kva).toBeCloseTo(100, 9) // the coincident peak would be 70
+  })
+})

@@ -87,12 +87,13 @@ export async function commitLoadProfileFileAction(projectId: string, input: { pa
   const built = await buildMeterRows({ download: downloader(g.supabase), projectId, ...parsed.data })
   if (!built.ok) return { error: built.error }
   const t = () => g.supabase.schema('projects').from('load_profile_sources')
-  const { data: held } = await t().select('file_sha256, source_column, slots:quality_report->>slots').eq('profile_id', profileId).eq('kind', 'meter')
+  const { data: held } = await t().select('file_sha256, source_column, kva_column, slots:quality_report->>slots').eq('profile_id', profileId).eq('kind', 'meter')
   const replacing = new Set(built.rows.map((r) => `${r.file_sha256}|${r.source_column}`))
-  const kept = ((held ?? []) as Array<{ file_sha256: string; source_column: string; slots: string | null }>)
+  // A paired kVA channel stores a second array of the same length: it counts twice.
+  const kept = ((held ?? []) as Array<{ file_sha256: string; source_column: string; kva_column: string | null; slots: string | null }>)
     .filter((h) => !replacing.has(`${h.file_sha256}|${h.source_column}`))
-    .reduce((sum, h) => sum + Number(h.slots ?? 0), 0)
-  const adding = built.rows.reduce((sum, r) => sum + r.values.length, 0)
+    .reduce((sum, h) => sum + Number(h.slots ?? 0) * (h.kva_column ? 2 : 1), 0)
+  const adding = built.rows.reduce((sum, r) => sum + r.values.length * (r.kva_values ? 2 : 1), 0)
   if (kept + adding > MAX_PROFILE_SLOTS) {
     return { error: `This would hold ${(kept + adding).toLocaleString('en-ZA')} readings; a profile holds at most ${MAX_PROFILE_SLOTS.toLocaleString('en-ZA')}. Remove a source, or import fewer channels.` }
   }
@@ -185,7 +186,7 @@ export async function saveLoadProfileSettingsAction(projectId: string, input: z.
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Check the values.' }
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
   if ('error' in g) return g
-  if (parsed.data.tariffId && !(await loadCostingTariff(g.supabase, parsed.data.tariffId))) return { error: 'That tariff is not published.' }
+  if (parsed.data.tariffId && !(await loadCostingTariff(g.supabase, parsed.data.tariffId))) return { error: 'That tariff is not available: it is not published, or the tariff library is not open to your organisation yet.' }
   const profileId = await ensureProfile(g.supabase, projectId)
   if (typeof profileId !== 'string') return profileId
   const { referenceYear, powerFactor, nmdKva, tariffId } = parsed.data

@@ -82,6 +82,7 @@ function demandNote(md: ReturnType<typeof analyseProfile>['md'], hasSynthetic: b
   const tail = 'Peak-window demand is taken from hourly averages (an approximation).'
   if (!md) return 'No measured interval data: demand is taken from hourly averages, which understate a billed maximum demand.'
   if (md.basis === 'sum_of_meter_peaks') return `The meters never ran together for ${MIN_COINCIDENT_DAYS} days, so monthly demand comes from the hourly profile; the NMD basis adds each meter's own peak. ${tail}`
+  if (md.basis === 'largest_single_meter') return `The meters overlap only briefly: monthly demand comes from their coincident ${md.intervalMin}-minute data where they overlap and the hourly profile elsewhere; the NMD basis is the largest single meter's own peak. ${tail}`
   return `Maximum demand per month from ${md.intervalMin}-minute measured data${md.basis === 'coincident' ? ' (the meters\' coincident sum)' : ''}${hasSynthetic ? ', plus the estimated block\'s own monthly peak' : ''}. ${tail}`
 }
 
@@ -202,7 +203,7 @@ export function composeView(input: ComposeInput): { sources: SourceView[]; analy
           })),
           annual: r.annual,
           notModelled: r.notModelled,
-          demandNote: demandNote(a.md, Boolean(synthetic)),
+          demandNote: demandNote(a.md, Boolean(synthetic)) + (input.nmdKva == null ? ` With no notified maximum demand confirmed, every month's demand is billed at no less than ${nmdKva} kVA (the highest demand), as a supply notified at its peak would be.` : ''),
         }
       } catch (e) {
         cost = { ok: false, tariffId: c.tariffId, error: e instanceof Error ? e.message : 'The tariff could not be costed' }

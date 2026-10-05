@@ -42,7 +42,7 @@ export interface AnalysisView {
   annual: Array<{ day: string; min: number; mean: number; max: number }>
   ldc: Array<{ pct: number; kw: number }>
   heatmap: { dates: string[]; cells: number[][] }
-  md: { months: MdMonthView[]; peak: { kva: number; kw: number | null; at: string; source: string }; intervalMin: number; basis: 'single' | 'coincident' | 'sum_of_meter_peaks' } | null
+  md: { months: MdMonthView[]; peak: { kva: number; kw: number | null; at: string; source: string }; intervalMin: number; basis: 'single' | 'coincident' | 'largest_single_meter' | 'sum_of_meter_peaks' } | null
   nmd: { kva: number; basis: NmdBasis; basisKva: number; rule: string }
   composition: { measuredKwh: number; syntheticKwh: number }
   /** The 8 760 hourly kW values (exports only; the page does not send them to the browser). */

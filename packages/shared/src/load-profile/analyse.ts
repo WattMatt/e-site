@@ -25,7 +25,7 @@ export interface MeasuredInput {
 
 /** Below this many coincident days several meters' MD is not taken from their coincident sum. */
 export const MIN_COINCIDENT_DAYS = 30
-export type MdBasis = 'single' | 'coincident' | 'sum_of_meter_peaks'
+export type MdBasis = 'single' | 'coincident' | 'largest_single_meter' | 'sum_of_meter_peaks'
 export type NmdBasis = 'measured_md' | 'measured_md_plus_synthetic' | 'design_peak'
 export interface NmdSuggestion { kva: number; basis: NmdBasis; basisKva: number }
 
@@ -118,18 +118,25 @@ function measuredMd(measured: MeasuredInput[], powerFactor: number): ProfileAnal
     const one = kw && mdOf(kw, kva, powerFactor)
     return one ? { ...one, intervalMin: kw!.intervalMin, basis: 'single' } : null
   }
+  const each = measured.map((m) => mdOf({ readings: m.kw, intervalMin: m.intervalMin }, m.kva ? { readings: m.kva, intervalMin: m.intervalMin } : null, powerFactor))
+  // A meter whose MD cannot be computed would silently shrink any combination: report none instead.
+  if (each.some((e) => e === null)) return null
+  const singles = each as NonNullable<(typeof each)[number]>[]
+  const largest = singles.reduce((a, b) => (b.peak.kva > a.peak.kva ? b : a))
   const coincidentDays = kw ? (kw.readings.length * kw.intervalMin) / 1440 : 0
   if (kw && coincidentDays >= MIN_COINCIDENT_DAYS) {
     const c = mdOf(kw, kva, powerFactor)
-    if (c) return { ...c, intervalMin: kw.intervalMin, basis: 'coincident' }
+    if (c) {
+      // A short overlap can miss a meter's own peak elsewhere in the year: never report less than it.
+      if (largest.peak.kva > c.peak.kva) return { months: c.months, peak: largest.peak, intervalMin: kw.intervalMin, basis: 'largest_single_meter' }
+      return { ...c, intervalMin: kw.intervalMin, basis: 'coincident' }
+    }
   }
   // The meters did not run together long enough to know their coincident peak: add each meter's
   // own peak (an upper bound, never an understatement) rather than dropping the measured MD.
-  const each = measured.map((m) => mdOf({ readings: m.kw, intervalMin: m.intervalMin }, m.kva ? { readings: m.kva, intervalMin: m.intervalMin } : null, powerFactor)).filter((x) => x !== null)
-  if (each.length === 0) return null
   return {
     months: [],
-    peak: { kw: null, kva: each.reduce((s, e) => s + e.peak.kva, 0), at: '', source: 'sum_of_meter_peaks' },
+    peak: { kw: null, kva: singles.reduce((s, e) => s + e.peak.kva, 0), at: '', source: 'sum_of_meter_peaks' },
     intervalMin: Math.max(...measured.map((m) => m.intervalMin)),
     basis: 'sum_of_meter_peaks',
   }

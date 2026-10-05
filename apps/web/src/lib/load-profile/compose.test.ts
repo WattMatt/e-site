@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { makeCharge, makeTariff, type TouCalendar } from '@esite/shared'
 import { composeView, NO_CALENDAR, type SourceRow } from './compose'
+import { buildExportModel } from './export-model'
 
 /** 2025, 60-min, constant 10 kW: 87 600 kWh; MD 10 kW → 10.526… kVA at PF 0.95. */
 function constantMeter(id: string, included = true): SourceRow {
@@ -109,5 +110,21 @@ describe('composeView', () => {
   it('the composed view survives a JSON round trip unchanged (page → client props)', () => {
     const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a'), synthetic('flats', 'admd', { units: 10, admdKva: 2, archetype: 'retail' })], costing: { tariffId: 't', tariff, calendar: flat, calendarAssumedEskom: false, label: 'Flat' } })
     expect(JSON.parse(JSON.stringify(v))).toEqual(v)
+  })
+
+  it('meters that never ran together: labelled as a sum of peaks in the export, never as a measured MD at a time', () => {
+    const jan = { ...constantMeter('a'), values: Array(24 * 40).fill(10), quality: Array(24 * 40).fill(0) }
+    const jul = { ...constantMeter('b'), first_ts_end: new Date(Date.UTC(2025, 6, 1) - 7_200_000 + 3_600_000).toISOString(), values: Array(24 * 40).fill(20), quality: Array(24 * 40).fill(0) }
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [jan, jul] })
+    expect(v.analysis!.md!.basis).toBe('sum_of_meter_peaks')
+    const m = buildExportModel({ projectId: 'p', projectName: 'X', canEdit: false, profileId: 'x', settings: { referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tariffId: null }, tenants: { count: 0, withArea: 0, totalAreaM2: 0 }, ...v }, new Date())
+    expect(m.kpis.find(([l]) => l === "Sum of each meter's own peak")?.[1]).toBeCloseTo(30 / 0.95, 1)
+    expect(m.kpis.some(([l]) => l.startsWith('Maximum demand'))).toBe(false)
+  })
+
+  it('an unconfirmed NMD says every month is billed at no less than the highest demand', () => {
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a')], costing: { tariffId: 't', tariff, calendar: flat, calendarAssumedEskom: false, label: 'Flat' } })
+    if (!v.cost?.ok) throw new Error('expected a cost')
+    expect(v.cost.demandNote).toMatch(/billed at no less than 10.53 kVA/)
   })
 })
