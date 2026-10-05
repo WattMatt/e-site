@@ -49,7 +49,13 @@ vi.mock('@supabase/supabase-js', () => ({
   })),
 }))
 
-import { middleware } from './middleware'
+import { middleware, config as middlewareConfig } from './middleware'
+// Next's own matcher compiler — the same function the build uses. Exported at
+// runtime but missing from the package's .d.ts, hence the typed namespace cast.
+import * as nextStaticInfo from 'next/dist/build/analysis/get-page-static-info'
+const { getMiddlewareMatchers } = nextStaticInfo as unknown as {
+  getMiddlewareMatchers: (matcher: string[], config: unknown) => { regexp: string }[]
+}
 
 const CONFIRMED = { id: 'user-1', email_confirmed_at: '2026-01-01T00:00:00Z' }
 
@@ -421,4 +427,27 @@ describe('middleware — public proposal endpoints (Solar §9.4)', () => {
     expect(locationOf(await run('/api/solar/proposal-responses')).pathname).toBe('/login')
     expect(locationOf(await run('/api/solar/proposal-download/extra')).pathname).toBe('/login')
   })
+})
+
+
+describe('middleware — matcher lets the installable-PWA files through (E2)', () => {
+  // Compiled by Next's own matcher function, so this is the real rule, not a
+  // hand-written regex that only agrees with itself.
+  const matchers = getMiddlewareMatchers(middlewareConfig.matcher as string[], {})
+  const runs = (p: string) => matchers.some(m => new RegExp(m.regexp).test(p))
+
+  it.each([
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/icons/icon-192.png',
+    '/icons/icon.svg',
+    '/apple-splash/1170x2532.png',
+  ])('%s is served to an anonymous browser as itself (middleware does not run)', (p) => {
+    expect(runs(p)).toBe(false)
+  })
+
+  it.each(['/dashboard', '/projects/abc', '/sw.jsx', '/projects/sw.js/x', '/api/notifications/dispatch', '/projects/x.webmanifest'])(
+    '%s still goes through the auth middleware',
+    (p) => { expect(runs(p)).toBe(true) },
+  )
 })

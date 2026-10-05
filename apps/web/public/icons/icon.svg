@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- E-Site mark: the sidebar LogoMark (house glyph on an amber tile). Source of every PNG in this folder. -->
+  <rect width="512" height="512" rx="112" fill="#E8923A"/>
+  <g transform="translate(256 256) scale(17.5) translate(-10 -10)">
+    <path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="#0B0B12"/>
+  </g>
+</svg>
