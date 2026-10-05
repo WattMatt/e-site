@@ -4,6 +4,18 @@ The contract for "who can see/do what" across E-Site. **Every new route or
 API endpoint must be added here in the same PR that introduces it.** If a
 cell is wrong, the gate is wrong — file a bug.
 
+> **Site scope (2026-10, migration `site_scoped_access`).** Org **owner** and
+> **admin** see every project in their organisation. Every other role —
+> including an org-level `project_manager` — sees and writes only the projects
+> they are an active member of (`projects.project_members`). A route row below
+> that grants a role access means *on the projects that role can reach*.
+> Enforced by a RESTRICTIVE `site_scope` policy on every site table (generated
+> from `packages/db/src/site-scope/manifest.ts`), `site_scope_objects` on
+> storage, and `requireProjectAccess` before any service-key read
+> (`service-client-gates.contract.test.ts`). Exempt by design: the rate
+> library, billing, org settings, marketplace (IN DEV) and WhatsApp internals.
+> An org PM keeps project *creation* (and sees a project they created).
+
 The codebase has 7 org-level roles, defined in
 [`packages/shared/src/types/index.ts`](../packages/shared/src/types/index.ts).
 A user can hold different roles in different organisations (multi-tenancy),
