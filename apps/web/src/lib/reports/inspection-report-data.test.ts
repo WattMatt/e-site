@@ -339,6 +339,30 @@ describe('gatherInspectionReportData — RBAC gate', () => {
   })
 })
 
+describe('gatherInspectionReportData — asUserId (WhatsApp forms, no browser session)', () => {
+  function serviceWith(role: string | null) {
+    const service = makeClient({ tables: { ...serviceTables(), 'inspections.inspections': baseInspectionRow() } })
+    const rpc = vi.fn(async () => ({ data: role, error: null }))
+    service.rpc = rpc
+    createServiceClientMock.mockReturnValue(service)
+    return { service, rpc }
+  }
+
+  it('reads with the service client and gates on the named user\'s project role, never a cookie', async () => {
+    const { rpc } = serviceWith('contractor')
+    const data = await gatherInspectionReportData(INSPECTION_ID, { asUserId: 'user-wa' })
+    expect(data.inspectionId).toBe(INSPECTION_ID)
+    expect(createClientMock).not.toHaveBeenCalled()
+    expect(requireEffectiveRoleMock).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledWith('user_effective_project_role', { p_project_id: PROJECT_ID, p_user_id: 'user-wa' })
+  })
+
+  it('refuses a user with no role on the project', async () => {
+    serviceWith(null)
+    await expect(gatherInspectionReportData(INSPECTION_ID, { asUserId: 'stranger' })).rejects.toThrow(/No access to this project/)
+  })
+})
+
 // ─── §6 field-type mapping ─────────────────────────────────────────────────
 
 describe('gatherInspectionReportData — §6 field mapping', () => {

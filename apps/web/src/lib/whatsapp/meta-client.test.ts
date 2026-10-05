@@ -74,3 +74,50 @@ describe('classifyMetaError', () => {
     [130429, 429, 'transient'], [131056, 400, 'transient'], [131000, 500, 'transient'], [0, 503, 'transient'],
   ])('%i/%i -> %s', (code, status, klass) => expect(classifyMetaError(code, status)).toBe(klass))
 })
+
+describe('createMetaClient: Flows and documents (E4)', () => {
+  const ok = (id = 'm') => ({ status: 200, json: { messages: [{ id }] } })
+
+  it('sends a Flow message with our token, navigate action and the first screen', async () => {
+    const f = fakeFetch([ok('wamid.FLOW')])
+    const c = createMetaClient({ token: 'T', phoneNumberId: 'P', fetchImpl: f.fn as unknown as typeof fetch })
+    const id = await c.sendFlow('+27821234567', { flowId: '123', token: 'tok', cta: 'Open the inspection form', body: 'Mini sub 1', mode: 'draft', firstScreen: 'SECTION_A' })
+    expect(id).toBe('wamid.FLOW')
+    const sent = JSON.parse(String(f.calls[0].init.body))
+    expect(sent.type).toBe('interactive')
+    expect(sent.interactive.type).toBe('flow')
+    expect(sent.interactive.action.name).toBe('flow')
+    expect(sent.interactive.action.parameters).toMatchObject({ flow_message_version: '3', flow_id: '123', flow_token: 'tok',
+      flow_action: 'navigate', mode: 'draft', flow_action_payload: { screen: 'SECTION_A' } })
+    expect(sent.interactive.action.parameters.flow_cta.length).toBeLessThanOrEqual(30)
+  })
+
+  it('omits mode for a published Flow', async () => {
+    const f = fakeFetch([ok()])
+    const c = createMetaClient({ token: 'T', phoneNumberId: 'P', fetchImpl: f.fn as unknown as typeof fetch })
+    await c.sendFlow('+27821234567', { flowId: '1', token: 't', cta: 'Open', body: 'b', mode: 'published', firstScreen: 'SECTION_A' })
+    expect(JSON.parse(String(f.calls[0].init.body)).interactive.action.parameters.mode).toBeUndefined()
+  })
+
+  it('uploads media as multipart and sends it as a document with a caption', async () => {
+    const f = fakeFetch([{ status: 200, json: { id: 'MEDIA1' } }, ok('wamid.DOC')])
+    const c = createMetaClient({ token: 'T', phoneNumberId: 'P', fetchImpl: f.fn as unknown as typeof fetch })
+    const mediaId = await c.uploadMedia(new Uint8Array([37, 80, 68, 70]), 'application/pdf', 'report.pdf')
+    expect(mediaId).toBe('MEDIA1')
+    expect(f.calls[0].url).toBe('https://graph.facebook.com/v23.0/P/media')
+    const form = f.calls[0].init.body as FormData
+    expect(form.get('messaging_product')).toBe('whatsapp')
+    expect(form.get('type')).toBe('application/pdf')
+    expect(form.get('file')).toBeInstanceOf(Blob)
+    await c.sendDocument('+27821234567', mediaId, 'report.pdf', '✅ Submitted')
+    const sent = JSON.parse(String(f.calls[1].init.body))
+    expect(sent).toMatchObject({ to: '27821234567', type: 'document', document: { id: 'MEDIA1', filename: 'report.pdf', caption: '✅ Submitted' } })
+  })
+
+  it('names the list section when asked', async () => {
+    const f = fakeFetch([ok()])
+    const c = createMetaClient({ token: 'T', phoneNumberId: 'P', fetchImpl: f.fn as unknown as typeof fetch })
+    await c.sendList('+27821234567', 'Pick one', 'Inspections', [{ id: 'insp:x', title: 'Mini sub 1' }], 'Inspections')
+    expect(JSON.parse(String(f.calls[0].init.body)).interactive.action.sections[0].title).toBe('Inspections')
+  })
+})

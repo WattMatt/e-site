@@ -12,6 +12,7 @@ import type { MetaClient } from './meta-client.ts'
 import type { InboundMessage } from './parse.ts'
 import { expireStalePost, handleChannelContent, handleChannelPayload, pickPrefixRows } from './channel.ts'
 import { LINK_REPLIES, linkByInboundCode, type PendingOtpLink } from './link-code.ts'
+import { handleFormsContent, handleFormsPayload, type FormsClient } from './forms.ts'
 
 export interface LinkRow {
   id: string
@@ -29,6 +30,8 @@ export interface LinkRow {
   current_project_id?: string | null
   current_project_at?: string | null
   pending_post?: unknown
+  current_form_session_id?: string | null
+  current_form_session_at?: string | null
 }
 
 export interface ItemInfo {
@@ -85,6 +88,8 @@ export interface ProcessorDeps {
   meta: MetaClient
   now: () => Date
   appUrl: string
+  /** The web app's inspection-form service (E4). Absent: forms are off on this deployment. */
+  forms?: FormsClient
 }
 
 export const REPLIES = {
@@ -279,6 +284,8 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
   if (notice) await meta.sendText(from, notice)
 
   if (payload) {
+    const form = await handleFormsPayload(payload, link, inbound, deps)
+    if (form) return form
     const handled = await handleChannelPayload(payload, link, inbound, deps)
     if (handled) return handled
   }
@@ -309,6 +316,11 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
     await store.markInbound(held.id, { outcome: heldResult.outcome, outcome_reason: `picked:${heldResult.reason}`,
       resolved_user_id: link.user_id, resolved_item_id: payload.itemId, processed_at: nowIso })
     return result('applied', 'picked', link.user_id, payload.itemId)
+  }
+
+  if (!payload) {
+    const form = await handleFormsContent(msg, link, inbound, deps)
+    if (form) return form
   }
 
   if (!payload) {

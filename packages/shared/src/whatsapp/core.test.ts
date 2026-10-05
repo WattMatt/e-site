@@ -196,3 +196,53 @@ describe('inbound link code', () => {
     expect(parseLinkCode(t)).toBeNull())
   it('message and parser agree', () => expect(parseLinkCode(linkCodeMessage('004211'))).toBe('004211'))
 })
+
+import { isSubmitWord, FORM_SESSION_TTL_MS, FORM_ACTIVITY_WINDOW_MS, FORM_PHOTO_MAX_BYTES } from './core'
+
+describe('inspection form payloads (E4)', () => {
+  const id = '6b991e32-36af-4869-a2cd-138f7ea52b45'
+  it('round-trips the Inspections menu row, an inspection pick and a submit button', () => {
+    for (const p of [
+      { kind: 'menu', row: 'forms' },
+      { kind: 'insp', inspectionId: id },
+      { kind: 'fsubmit', sessionId: id },
+    ] as const) {
+      expect(decodePayload(encodePayload(p))).toEqual(p)
+    }
+    expect(encodePayload({ kind: 'insp', inspectionId: id })).toBe(`insp:${id}`)
+  })
+  it('refuses a malformed inspection or session id', () => {
+    expect(decodePayload('insp:not-a-uuid')).toBeNull()
+    expect(decodePayload('fsubmit:123')).toBeNull()
+    expect(decodePayload('menu:forms2')).toBeNull()
+  })
+  it('reads SUBMIT however it is typed, and nothing else', () => {
+    for (const s of ['SUBMIT', 'submit', ' Submit. ', 'submit!']) expect(isSubmitWord(s)).toBe(true)
+    for (const s of ['submit it', 'subm', 'resubmit', '']) expect(isSubmitWord(s)).toBe(false)
+  })
+  it('keeps the form windows and the photo cap where the spec puts them', () => {
+    expect(FORM_SESSION_TTL_MS).toBe(24 * 3600_000)
+    expect(FORM_ACTIVITY_WINDOW_MS).toBe(30 * 60_000)
+    expect(FORM_PHOTO_MAX_BYTES).toBe(5 * 1024 * 1024)
+  })
+})
+
+import { signInternal, verifyInternal, INTERNAL_SIGNATURE_SKEW_S } from './core'
+
+describe('edge -> web internal signature (E4)', () => {
+  const body = '{"op":"submit"}'
+  it('verifies its own signature inside the skew window', async () => {
+    const h = await signInternal('s3cret', 1_700_000_000, body)
+    expect(h).toMatch(/^t=1700000000,v1=[0-9a-f]{64}$/)
+    expect(await verifyInternal('s3cret', h, body, 1_700_000_000 + INTERNAL_SIGNATURE_SKEW_S)).toBe(true)
+  })
+  it('refuses a changed body, a wrong secret, a stale stamp, a missing secret and junk', async () => {
+    const h = await signInternal('s3cret', 1_700_000_000, body)
+    expect(await verifyInternal('s3cret', h, body + ' ', 1_700_000_000)).toBe(false)
+    expect(await verifyInternal('other', h, body, 1_700_000_000)).toBe(false)
+    expect(await verifyInternal('s3cret', h, body, 1_700_000_000 + INTERNAL_SIGNATURE_SKEW_S + 1)).toBe(false)
+    expect(await verifyInternal('', h, body, 1_700_000_000)).toBe(false)
+    expect(await verifyInternal('s3cret', 'garbage', body, 1_700_000_000)).toBe(false)
+    expect(await verifyInternal('s3cret', null, body, 1_700_000_000)).toBe(false)
+  })
+})

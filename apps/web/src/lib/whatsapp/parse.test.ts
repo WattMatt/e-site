@@ -42,3 +42,22 @@ describe('parseWebhook', () => {
     expect(parseWebhook({ entry: 'x' })).toEqual({ messages: [], statuses: [] })
   })
 })
+
+describe('parseWebhook: inspection forms (E4)', () => {
+  const flowReply = { id: 'f', from: '27821234567', timestamp: '1', type: 'interactive', context: { from: 'B', id: 'wamid.flowmsg' },
+    interactive: { type: 'nfm_reply', nfm_reply: { name: 'flow', body: 'Sent', response_json: '{"flow_token":"tok","s0_f0":"pass"}' } } }
+
+  it('keeps a Flow reply\'s response_json and carries no payload', () => {
+    const { messages } = parseWebhook(wrap({ messages: [flowReply] }))
+    expect(messages[0]).toMatchObject({ type: 'interactive', payload: null, flowResponseJson: '{"flow_token":"tok","s0_f0":"pass"}', contextId: 'wamid.flowmsg' })
+  })
+  it('keeps Meta\'s original message object for the evidence log', () => {
+    const { messages } = parseWebhook(wrap({ messages: [flowReply] }))
+    expect(messages[0].metaRaw).toEqual(flowReply)
+  })
+  it('a non-Flow interactive reply has no flow response', () => {
+    const { messages } = parseWebhook(wrap({ messages: [
+      { id: 'a', from: '1', timestamp: '1', type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'x', title: 'X' } } }] }))
+    expect(messages[0].flowResponseJson).toBeNull()
+  })
+})

@@ -14,6 +14,35 @@ import { buildHandoverDrawingName } from '@esite/shared'
 const REPORTS_BUCKET = 'reports'
 const ATTACHMENT_BUCKET = 'inspection-attachments'
 
+/**
+ * Render an inspection's branded PDF without filing it. `asUserId` is for callers with no
+ * browser session (WhatsApp forms, E4) and applies the same project-role gate to that user.
+ */
+export async function renderInspectionPdf(
+  inspectionId: string,
+  opts?: { asUserId: string },
+): Promise<{ pdf: Buffer; branding: ReturnType<typeof resolveBranding> }> {
+  const data = await gatherInspectionReportData(inspectionId, opts)
+  const today = new Date().toISOString().slice(0, 10)
+  const bi = data.brandingInput
+  const input: BrandingInput = {
+    org: { name: bi.orgName, logoSrc: bi.orgLogoDataUri ?? undefined, accent: bi.orgAccent },
+    project: {
+      name: data.summary.projectName,
+      clientLogoSrc: bi.clientLogoDataUri ?? undefined,
+      projectMarkSrc: bi.projectMarkDataUri ?? undefined,
+      accent: bi.projectAccent,
+      subtitle: bi.projectSubtitle || undefined,
+    },
+    contractor: null,
+    title: 'Inspection & Test Report',
+    kicker: 'ELECTRICAL INSPECTION',
+    date: today,
+  }
+  const branding = resolveBranding(input)
+  return { pdf: await renderInspectionReport(data, branding), branding }
+}
+
 export async function generateAndFileInspectionReport(params: {
   inspectionId: string
   projectId: string
@@ -28,25 +57,9 @@ export async function generateAndFileInspectionReport(params: {
   let pdfBuffer: Buffer
   let brandingSnapshot: unknown
   try {
-    const data = await gatherInspectionReportData(inspectionId)
-    const today = new Date().toISOString().slice(0, 10)
-    const bi = data.brandingInput
-    const input: BrandingInput = {
-      org: { name: bi.orgName, logoSrc: bi.orgLogoDataUri ?? undefined, accent: bi.orgAccent },
-      project: {
-        name: data.summary.projectName,
-        clientLogoSrc: bi.clientLogoDataUri ?? undefined,
-        projectMarkSrc: bi.projectMarkDataUri ?? undefined,
-        accent: bi.projectAccent,
-        subtitle: bi.projectSubtitle || undefined,
-      },
-      contractor: null,
-      title: 'Inspection & Test Report',
-      kicker: 'ELECTRICAL INSPECTION',
-      date: today,
-    }
-    const branding = resolveBranding(input)
-    pdfBuffer = await renderInspectionReport(data, branding)
+    const rendered = await renderInspectionPdf(inspectionId)
+    const branding = rendered.branding
+    pdfBuffer = rendered.pdf
     const issuerWordmark = (branding.issuer as { wordmark?: string }).wordmark
     brandingSnapshot = {
       accent: branding.accent,

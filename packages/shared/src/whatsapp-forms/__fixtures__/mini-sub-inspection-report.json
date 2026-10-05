@@ -1,0 +1,217 @@
+{
+  "name": "Miniature Substation Inspection Report",
+  "version": "1.0",
+  "sections": [
+    {
+      "title": "Visual & Structural Checks",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "Enclosure integrity",
+          "field_id": "enclosure_integrity",
+          "required": true
+        },
+        {
+          "type": "dropdown",
+          "label": "Corrosion level",
+          "options": [
+            "none",
+            "light",
+            "moderate",
+            "severe"
+          ],
+          "field_id": "corrosion_level",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Plinth condition",
+          "field_id": "plinth_condition",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Perimeter fence",
+          "field_id": "perimeter_fence",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Signage SANS-compliant",
+          "field_id": "signage_sans_compliant",
+          "required": true,
+          "sans_ref": "SANS 1186"
+        }
+      ],
+      "section_id": "visual_structural_checks"
+    },
+    {
+      "title": "Electrical, Functional & Thermal Checks",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "Switchgear operation",
+          "field_id": "switchgear_operation",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Interlocks",
+          "field_id": "interlocks",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "HV/LV separation",
+          "field_id": "hv_lv_separation",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Bushing condition",
+          "field_id": "bushing_condition",
+          "required": true
+        },
+        {
+          "type": "photo",
+          "label": "Thermographic survey (with reading)",
+          "field_id": "thermographic_survey",
+          "required": true,
+          "min_count": 1
+        },
+        {
+          "type": "number",
+          "unit": "\u00b0C",
+          "label": "Maximum winding temperature",
+          "field_id": "max_winding_temp",
+          "required": true
+        }
+      ],
+      "section_id": "electrical_functional_thermal_checks"
+    },
+    {
+      "title": "Service & Maintenance History",
+      "fields": [
+        {
+          "type": "date",
+          "label": "Last service date",
+          "field_id": "last_service_date",
+          "required": true
+        },
+        {
+          "type": "file",
+          "label": "Service report",
+          "field_id": "service_report"
+        },
+        {
+          "type": "pass_fail",
+          "label": "Oil sample taken",
+          "field_id": "oil_sample_taken",
+          "required": true
+        },
+        {
+          "type": "number",
+          "label": "Tap-changer position",
+          "field_id": "tap_changer_position",
+          "required": true
+        }
+      ],
+      "section_id": "service_maintenance_history"
+    },
+    {
+      "title": "Documentation & Compliance",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "SLD availability",
+          "field_id": "sld_availability",
+          "required": true
+        },
+        {
+          "type": "textarea",
+          "label": "SLD availability \u2014 notes",
+          "field_id": "sld_availability_notes"
+        },
+        {
+          "type": "pass_fail",
+          "label": "COC records on file",
+          "field_id": "coc_records",
+          "required": true
+        },
+        {
+          "type": "textarea",
+          "label": "COC records \u2014 notes",
+          "field_id": "coc_records_notes"
+        },
+        {
+          "type": "pass_fail",
+          "label": "Warning labels in place",
+          "field_id": "warning_labels",
+          "required": true
+        },
+        {
+          "type": "textarea",
+          "label": "Warning labels \u2014 notes",
+          "field_id": "warning_labels_notes"
+        }
+      ],
+      "section_id": "documentation_compliance"
+    },
+    {
+      "title": "Critical Safety Checks",
+      "fields": [
+        {
+          "type": "number",
+          "unit": "\u03a9",
+          "label": "Earth-pit resistance",
+          "field_id": "earth_pit_resistance",
+          "required": true,
+          "sans_ref": "10142-2 \u00a78.4",
+          "pass_when": "<= 1"
+        },
+        {
+          "type": "pass_fail",
+          "label": "Bonding to all metalwork",
+          "field_id": "bonding_all_metalwork",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Fence earthed",
+          "field_id": "fence_earthed",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Lightning protection",
+          "field_id": "lightning_protection",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Fire extinguisher in date",
+          "field_id": "fire_extinguisher_in_date",
+          "required": true
+        },
+        {
+          "type": "signature",
+          "label": "Inspector signature",
+          "field_id": "inspector_signature",
+          "required": true
+        }
+      ],
+      "section_id": "critical_safety_checks"
+    }
+  ],
+  "template_id": "miniature-substation-inspection",
+  "node_subtypes": [
+    "substation",
+    "mv_switchgear"
+  ],
+  "sans_reference": "SANS 10142-2 + SANS 1339 + SANS 97",
+  "deliverable_type": "inspection_only",
+  "applies_to_node_types": [
+    "source",
+    "any"
+  ]
+}

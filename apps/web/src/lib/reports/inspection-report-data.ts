@@ -321,27 +321,43 @@ function buildCaption(photo: any, capturedByLookup: Map<string, string>): string
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+const INSPECTION_COLUMNS =
+  'id, project_id, organisation_id, template_id, target_label, status, overall_result, coc_number, started_at, certified_at, assigned_to_id, verifier_id'
+
+/**
+ * `asUserId` is for callers with no browser session (the WhatsApp form service, E4): the row is
+ * read with the service client and the SAME gate is applied to the named user through
+ * public.user_effective_project_role (non-null for every one of ALL_PROJECT_ROLES).
+ */
 export async function gatherInspectionReportData(
   inspectionId: string,
+  opts?: { asUserId: string },
 ): Promise<InspectionReportData> {
-  // 1. Read the inspection row with the cookie client.
-  const supabase = await createClient()
-  const { data: inspection } = await (supabase as any)
-    .schema('inspections')
-    .from('inspections')
-    .select(
-      'id, project_id, organisation_id, template_id, target_label, status, overall_result, coc_number, started_at, certified_at, assigned_to_id, verifier_id',
-    )
-    .eq('id', inspectionId)
-    .maybeSingle()
-  if (!inspection) throw new Error(`Inspection ${inspectionId} not found`)
+  let inspection: any
+  let service: AnyService
+  if (opts?.asUserId) {
+    service = createServiceClient()
+    ;({ data: inspection } = await (service as any)
+      .schema('inspections').from('inspections').select(INSPECTION_COLUMNS).eq('id', inspectionId).maybeSingle())
+    if (!inspection) throw new Error(`Inspection ${inspectionId} not found`)
+    const { data: role, error } = await (service as any).rpc('user_effective_project_role', {
+      p_project_id: inspection.project_id, p_user_id: opts.asUserId,
+    })
+    if (error || !role || !(ALL_PROJECT_ROLES as readonly string[]).includes(role)) throw new Error('No access to this project')
+  } else {
+    // 1. Read the inspection row with the cookie client.
+    const supabase = await createClient()
+    ;({ data: inspection } = await (supabase as any)
+      .schema('inspections').from('inspections').select(INSPECTION_COLUMNS).eq('id', inspectionId).maybeSingle())
+    if (!inspection) throw new Error(`Inspection ${inspectionId} not found`)
 
-  // 2. Gate BEFORE any service-role fetch.
-  const gate = await requireEffectiveRole(supabase, inspection.project_id, ALL_PROJECT_ROLES)
-  if (!gate.ok) throw new Error(gate.error)
+    // 2. Gate BEFORE any service-role fetch.
+    const gate = await requireEffectiveRole(supabase, inspection.project_id, ALL_PROJECT_ROLES)
+    if (!gate.ok) throw new Error(gate.error)
 
-  // 3. Service client — RLS cleared by the gate; profiles/storage need service.
-  const service = createServiceClient()
+    // 3. Service client — RLS cleared by the gate; profiles/storage need service.
+    service = createServiceClient()
+  }
 
   const [
     { data: template },
