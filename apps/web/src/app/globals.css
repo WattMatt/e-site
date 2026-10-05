@@ -1631,3 +1631,64 @@ body {
   .std-table-wrap { display: none; }
   .std-cards { display: block; }
 }
+
+
+/* ─── Phone patterns (E2 slice C) ────────────────────────────────
+   Opt-in classes for page markup, plus touch rules. Same breakpoint
+   as the phone shell. Inline styles on the targets need !important. */
+@media screen and (max-width: 767.98px) {
+  /* Fixed multi-column layouts collapse to one column. */
+  .stack-on-phone { grid-template-columns: minmax(0, 1fr) !important; }
+
+  /* A panel never hides content it cannot fit; it scrolls sideways. */
+  .data-panel { overflow-x: auto; }
+
+  /* Field-list tables become labelled cards: <td data-label="…">,
+     one <td data-primary> as the card title, <td data-actions> last. */
+  table.table-cards,
+  table.table-cards tbody { display: block; width: 100%; }
+  table.table-cards thead { display: none; }
+  table.table-cards tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--c-border); }
+  table.table-cards td {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 4px 16px !important; border: none !important;
+    text-align: right !important; white-space: normal !important; overflow-wrap: anywhere;
+  }
+  table.table-cards td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0; text-align: left;
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--c-text-dim);
+  }
+  table.table-cards td[data-primary] { display: block; text-align: left !important; font-size: 15px; font-weight: 600; padding-bottom: 6px !important; }
+  table.table-cards td[data-actions] { justify-content: flex-end; gap: 8px; padding-top: 8px !important; }
+  table.table-cards td[data-actions] > * { min-height: 44px; display: inline-flex; align-items: center; }
+
+  /* 16 px text so iOS does not zoom the page when a field gets focus;
+     44 px controls so a gloved thumb can hit them. */
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=hidden]),
+  select,
+  textarea { font-size: 16px !important; }
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=hidden]),
+  select { min-height: 44px; }
+  .btn-primary-amber, .filter-tab, .link-button { min-height: 44px; }
+  .minimal-legal-nav a { display: inline-flex; align-items: center; min-height: 44px; }
+  .portal-header-brand { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+
+  /* Form actions stay on screen above the tab bar while the form scrolls. */
+  .sticky-actions {
+    position: sticky;
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    z-index: 10;
+    margin: 0 -16px;
+    padding: 12px 16px;
+    background: var(--c-base);
+    border-top: 1px solid var(--c-border);
+  }
+}
+
+/* A small control (e.g. the 20 px photo-delete ×) keeps its quiet look but
+   gets a ≥44 px hit area on touch screens (roadmap §09(g)). */
+@media (pointer: coarse) {
+  .touch-hit::after { content: ''; position: absolute; inset: -12px; }
+}

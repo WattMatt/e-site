@@ -380,7 +380,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
         {!photoMode && attachments}
 
         {/* Actions */}
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="sticky-actions" style={{ display: 'flex', gap: 8 }}>
           <button
             type="submit"
             disabled={submitting || isPending}

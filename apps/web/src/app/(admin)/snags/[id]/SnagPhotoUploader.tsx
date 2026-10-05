@@ -118,6 +118,8 @@ export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: P
         ref={inputRef}
         type="file"
         accept="image/jpeg,image/png,image/webp,image/heic"
+        // Evidence is shot on the spot: open the rear camera directly on a phone.
+        capture="environment"
         multiple
         disabled={busy}
         onChange={(e) => void handleFiles(e.target.files)}

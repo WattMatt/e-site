@@ -580,6 +580,7 @@ function AddSnagForm({
               id="asvf_photos"
               type="file"
               accept="image/jpeg,image/png,image/webp,image/heic"
+              capture="environment"
               multiple
               disabled={isPending}
               onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}

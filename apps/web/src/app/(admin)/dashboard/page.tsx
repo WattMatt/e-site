@@ -206,7 +206,7 @@ export default async function DashboardPage() {
               snags &gt;{SLA_DEFAULTS.AGING_SNAG_DAYS}d · rfis &gt;{SLA_DEFAULTS.STALE_RFI_DAYS}d / overdue · inspections drafts &gt;14d
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          <div className="stack-on-phone" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             {/* Awaiting verification (inspections) */}
             <div
               className="data-panel"
@@ -411,7 +411,7 @@ export default async function DashboardPage() {
 
       {/* Two-column grid */}
       <div
-        className="animate-fadeup animate-fadeup-2"
+        className="stack-on-phone animate-fadeup animate-fadeup-2"
         style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}
       >
         {/* Upcoming deadlines */}
