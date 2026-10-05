@@ -483,6 +483,10 @@ body {
 }
 .portal-top { flex-shrink: 0; }
 
+/* Wrappers around header controls exist only for the phone layout; on wider
+   screens they generate no box, so the header lays out exactly as before. */
+.portal-header-contents { display: contents; }
+
 /* Phone-shell pieces are hidden on wider screens. */
 .portal-header-brand,
 .mobile-tabbar,
@@ -1439,9 +1443,18 @@ body {
     gap: 10px;
   }
   .portal-header-brand { display: inline-flex; flex-shrink: 0; text-decoration: none; }
-  .portal-header-org { flex: 1; min-width: 0; overflow: hidden; }
-  .portal-header-org > div,
-  .portal-header-org button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Ellipsis on the org NAME only — never overflow:hidden on a box that
+     contains the switcher's absolutely-positioned menu, or the menu is
+     clipped to nothing. */
+  .portal-header-org { display: flex; align-items: center; flex: 1; min-width: 0; }
+  .portal-header-org .org-switcher { max-width: 100%; }
+  .portal-header-org .org-switcher-button { max-width: 100%; min-height: 40px; }
+  .portal-header-org .org-switcher-name {
+    display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .portal-header-org .org-switcher-menu { left: 0; right: auto !important; max-width: calc(100vw - 24px); }
+  /* Fixed bottom bars (settings StickySaveBar) sit above the tab bar. */
+  .sticky-save-bar { bottom: calc(72px + env(safe-area-inset-bottom)) !important; }
   .portal-header-desktop-only { display: none !important; }
 
   .portal-main {

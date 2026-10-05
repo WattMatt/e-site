@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { currentProjectId, captureTargets, orderForPhone, isActiveHref } from './shell'
+import { projectNav } from '@/components/layout/Sidebar'
 
 describe('currentProjectId', () => {
   it('reads the project from a project path', () => {
@@ -36,9 +37,11 @@ describe('captureTargets', () => {
 })
 
 describe('orderForPhone', () => {
-  it('puts field modules first and keeps the rest in sidebar order', () => {
-    const items = ['Overview', 'Equipment & Materials', 'Cables', 'Site Diary', 'Snags', 'JBCC', 'Forms'].map(label => ({ label }))
-    expect(orderForPhone(items).map(i => i.label)).toEqual(['Overview', 'Snags', 'Site Diary', 'Forms', 'Equipment & Materials', 'Cables', 'JBCC'])
+  it('puts the field sections of the REAL project nav first, then the rest in sidebar order', () => {
+    const labels = orderForPhone(projectNav('x')).map(i => i.label)
+    expect(labels.slice(0, 8)).toEqual(['Overview', 'Snags', 'Site Diary', 'Forms', 'Inspections', 'Quality Control', 'RFIs', 'Floor Plans'])
+    const rest = projectNav('x').map(i => i.label).filter(l => !labels.slice(0, 8).includes(l))
+    expect(labels.slice(8)).toEqual(rest)
   })
 })
 

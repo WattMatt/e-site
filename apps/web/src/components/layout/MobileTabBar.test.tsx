@@ -140,6 +140,36 @@ describe('MobileTabBar', () => {
     expect(within(sheet).getByText('Diary posted')).toBeTruthy()
   })
 
+  it('a link to the page you are already on still closes the sheet', () => {
+    renderBar()
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'More' })).getByRole('link', { name: /Dashboard/ }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('is modal: the page behind is inert while open, restored after, and focus returns to the opener on dismiss', () => {
+    renderBar()
+    const opener = screen.getByRole('button', { name: 'More' })
+    const pageRoot = opener.closest('body > *') as HTMLElement
+    opener.focus()
+    fireEvent.click(opener)
+    const sheet = screen.getByRole('dialog', { name: 'More' })
+    expect(pageRoot.hasAttribute('inert')).toBe(true)
+    expect(sheet.contains(document.activeElement)).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(pageRoot.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('does not pull focus back to the tab bar when a sheet link navigates', () => {
+    renderBar()
+    const opener = screen.getByRole('button', { name: 'More' })
+    opener.focus()
+    fireEvent.click(opener)
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'More' })).getByRole('link', { name: /Projects/ }))
+    expect(document.activeElement).not.toBe(opener)
+  })
+
   it('a sheet closes on Escape and on the close button', () => {
     renderBar()
     fireEvent.click(screen.getByRole('button', { name: 'More' }))

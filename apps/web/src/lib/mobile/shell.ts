@@ -39,19 +39,27 @@ export function captureTargets(projectId: string): CaptureTarget[] {
 }
 
 /**
- * Field-first ordering for the in-project chip bar: the things a phone user
- * opens on site come first, desk modules after. Unknown labels keep their
- * sidebar order at the end.
+ * Field-first ordering for the in-project chip bar: the sections a phone user
+ * opens on site come first, desk modules after in their sidebar order. Keyed on
+ * the ROUTE, not the label, so renaming a sidebar label cannot silently
+ * reshuffle the phone.
  */
-const FIELD_FIRST = ['Overview', 'Snags', 'Site Diary', 'Forms', 'Inspections', 'Quality Control', 'RFIs', 'Floor Plans']
-export function orderForPhone<T extends { label: string }>(items: readonly T[]): T[] {
-  const rank = (l: string) => {
-    const i = FIELD_FIRST.indexOf(l)
+const FIELD_FIRST = ['', '/snags', '/diary', '/forms', '/inspections', '/quality-control', '/rfis', '/floor-plans']
+
+function sectionOf(href: string): string {
+  const path = href.split('?')[0]
+  if (path === '/rfis' || path.startsWith('/rfis/')) return '/rfis'
+  return path.replace(/^\/projects\/[^/]+/, '')
+}
+
+export function orderForPhone<T extends { href: string }>(items: readonly T[]): T[] {
+  const rank = (href: string) => {
+    const i = FIELD_FIRST.indexOf(sectionOf(href))
     return i === -1 ? FIELD_FIRST.length : i
   }
   return items
     .map((item, i) => ({ item, i }))
-    .sort((a, b) => rank(a.item.label) - rank(b.item.label) || a.i - b.i)
+    .sort((a, b) => rank(a.item.href) - rank(b.item.href) || a.i - b.i)
     .map(({ item }) => item)
 }
 

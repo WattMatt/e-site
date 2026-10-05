@@ -12,6 +12,7 @@ import {
   ShieldCheck, FileText, BarChart3, Sun,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
+import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
 
@@ -140,6 +141,9 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
   const projectId = projectIdFromPath ?? projectIdFromQuery
 
   const { globalNav, footerItems } = navForRole(role)
+  // On a phone the sidebar is display:none; its Solar entry would still run an
+  // access check per navigation (the phone chip bar runs its own).
+  const phone = usePhoneViewport()
 
   return (
     <>
@@ -175,6 +179,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
               const isJbcc = basePath === `/projects/${projectId}/jbcc`
               const isMv = basePath === `/projects/${projectId}/medium-voltage`
               if (basePath === `/projects/${projectId}/solar`) {
+                if (phone) return null
                 return <SolarNavItem key={href} projectId={projectId} active={active} refreshKey={pathname} />
               }
               return (

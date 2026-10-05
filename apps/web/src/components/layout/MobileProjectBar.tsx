@@ -30,7 +30,7 @@ function MobileProjectBarInner({ mvVisible }: { mvVisible: boolean }) {
   const projectId = currentProjectId(pathname, searchParams.get('projectId'))
   const phone = usePhoneViewport()
   const name = useProjectName(phone ? projectId : null)
-  const rowRef = useRef<HTMLDivElement>(null)
+  const rowRef = useRef<HTMLElement>(null)
 
   // Bring the active chip into view so the user can see where they are.
   useEffect(() => {
@@ -52,7 +52,7 @@ function MobileProjectBarInner({ mvVisible }: { mvVisible: boolean }) {
         </Link>
         <span className="mobile-project-name">{name ?? 'Project'}</span>
       </div>
-      <div className="project-chip-row" ref={rowRef} role="navigation" aria-label="Project sections">
+      <nav className="project-chip-row" ref={rowRef} aria-label="Project sections">
         {items.map(({ href, label, exact }) => {
           const active = isActiveHref(href, pathname, exact)
           if (href.split('?')[0] === `/projects/${projectId}/solar`) {
@@ -66,7 +66,7 @@ function MobileProjectBarInner({ mvVisible }: { mvVisible: boolean }) {
             </Link>
           )
         })}
-      </div>
+      </nav>
     </div>
   )
 }

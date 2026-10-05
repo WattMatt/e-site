@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { AddDiaryEntryForm } from './AddDiaryEntryForm'
 
-const { createActionMock, notifyActionMock, uploadMock, refreshMock } = vi.hoisted(() => ({
+const { createActionMock, notifyActionMock, uploadMock, refreshMock, replaceMock } = vi.hoisted(() => ({
   createActionMock: vi.fn(),
   notifyActionMock: vi.fn(),
   uploadMock: vi.fn(),
   refreshMock: vi.fn(),
+  replaceMock: vi.fn(),
 }))
 
 vi.mock('@/actions/diary.actions', () => ({
@@ -18,7 +19,7 @@ vi.mock('@/lib/diary-attachments', () => ({
   DIARY_ATTACHMENT_ACCEPT_DOC: 'application/pdf',
 }))
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({}) }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock, replace: replaceMock }) }))
 
 const props = { projectId: 'p1', orgId: 'o1', userId: 'u1' }
 
@@ -51,6 +52,27 @@ describe('AddDiaryEntryForm', () => {
     render(<AddDiaryEntryForm {...props} defaultOpen />)
     expect(document.querySelector('form')).not.toBeNull()
     expect(screen.queryByText('+ Add Entry')).toBeNull()
+  })
+
+  it('opens when ?new=1 arrives on a diary page that is already showing (prop changes, component kept)', () => {
+    const { rerender } = render(<AddDiaryEntryForm {...props} />)
+    expect(document.querySelector('form')).toBeNull()
+    rerender(<AddDiaryEntryForm {...props} defaultOpen />)
+    expect(document.querySelector('form')).not.toBeNull()
+  })
+
+  it('drops ?new=1 on cancel and after a save, so the next Capture tap opens the form again', async () => {
+    render(<AddDiaryEntryForm {...props} defaultOpen />)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(replaceMock).toHaveBeenCalledWith('/projects/p1/diary', { scroll: false })
+
+    replaceMock.mockClear()
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    fireEvent.click(screen.getByText('+ Add Entry'))
+    typeProgress('Cable pulled.')
+    await submitForm()
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/projects/p1/diary', { scroll: false }))
+    expect(refreshMock).not.toHaveBeenCalled()
   })
 
   it('creates via the server action and refreshes on success (no attachments)', async () => {

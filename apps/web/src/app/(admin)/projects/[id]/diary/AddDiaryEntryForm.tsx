@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ENTRY_TYPE_LABELS } from '@esite/shared'
@@ -32,6 +32,17 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, defaultOpen = fals
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [open, setOpen] = useState(defaultOpen)
+  // The Capture sheet can link here with ?new=1 while the diary is already
+  // showing; Next keeps this component's state across a query-only change, so
+  // follow the prop rather than reading it once.
+  useEffect(() => { if (defaultOpen) setOpen(true) }, [defaultOpen])
+  // Leaving the form drops ?new=1, so the NEXT Capture → Diary entry is a real
+  // navigation that opens it again (a link to the current URL does nothing).
+  const diaryPath = `/projects/${projectId}/diary`
+  function closeForm() {
+    setOpen(false)
+    if (defaultOpen) router.replace(diaryPath, { scroll: false })
+  }
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')
@@ -114,7 +125,10 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, defaultOpen = fals
       setFiles([])
       setCreatedEntryId(null)
       setOpen(false)
-      startTransition(() => router.refresh())
+      startTransition(() => {
+        if (defaultOpen) router.replace(diaryPath, { scroll: false })
+        else router.refresh()
+      })
     } finally {
       submittingRef.current = false
       setSubmitting(false)
@@ -355,7 +369,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, defaultOpen = fals
           </button>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={closeForm}
             style={{
               padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
               border: '1px solid var(--c-border)',

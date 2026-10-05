@@ -24,11 +24,14 @@ export function useProjectName(projectId: string | null): string | null {
       .select('name')
       .eq('id', projectId)
       .maybeSingle()
-      .then(({ data }) => {
-        const n = (data as { name?: string } | null)?.name
-        if (n) nameCache.set(projectId, n)
-        if (live) setName(n ?? null)
-      })
+      .then(
+        ({ data }) => {
+          const n = (data as { name?: string } | null)?.name
+          if (n) nameCache.set(projectId, n)
+          if (live) setName(n ?? null)
+        },
+        () => { /* offline / transient: the bar keeps its generic label */ },
+      )
     return () => { live = false }
   }, [projectId])
   return name
@@ -48,13 +51,16 @@ export function useActiveProjects(enabled: boolean): { projects: ProjectRef[] | 
       .eq('status', 'active')
       .order('name')
       .limit(100)
-      .then(({ data, error: e }) => {
-        if (!live) return
-        if (e) { setError(true); return }
-        const list = (data ?? []) as ProjectRef[]
-        for (const p of list) nameCache.set(p.id, p.name)
-        setProjects(list)
-      })
+      .then(
+        ({ data, error: e }) => {
+          if (!live) return
+          if (e) { setError(true); return }
+          const list = (data ?? []) as ProjectRef[]
+          for (const p of list) nameCache.set(p.id, p.name)
+          setProjects(list)
+        },
+        () => { if (live) setError(true) },
+      )
     return () => { live = false }
   }, [enabled, projects])
   return { projects, error }

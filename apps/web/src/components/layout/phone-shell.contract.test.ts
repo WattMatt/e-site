@@ -37,6 +37,19 @@ describe('phone shell CSS contract', () => {
     expect(outside).toMatch(/\.mobile-tabbar,\s*\n?\.mobile-project-bar\s*\{\s*display:\s*none;\s*\}/)
   })
 
+  it('never clips the header org box (the switcher menu is absolutely positioned inside it)', () => {
+    const rules = [...(block ?? '').matchAll(/([^{}]*\.portal-header-org[^{}]*)\{([^}]*)\}/g)]
+    expect(rules.length).toBeGreaterThan(0)
+    for (const [, selector, body] of rules) {
+      if (/org-switcher-name/.test(selector)) continue // the label itself may ellipsis
+      expect(body, selector.trim()).not.toMatch(/overflow:\s*hidden/)
+    }
+  })
+
+  it('lifts fixed bottom save bars above the tab bar', () => {
+    expect(block).toMatch(/\.sticky-save-bar\s*\{[^}]*bottom:\s*calc\(72px/)
+  })
+
   it('is screen-only, so a printed page (≈680 px wide) never gets the phone layout', () => {
     expect(PHONE_QUERY.startsWith('screen and ')).toBe(true)
   })

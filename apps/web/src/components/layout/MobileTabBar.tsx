@@ -97,13 +97,13 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
       </nav>
 
       <BottomSheet open={sheet === 'capture'} onClose={close} title="Capture">
-        <CaptureSheetBody projectId={projectId} />
+        <CaptureSheetBody projectId={projectId} onNavigate={close} />
       </BottomSheet>
       <BottomSheet open={sheet === 'inbox'} onClose={close} title="Inbox">
         <NotificationList showTitle={false} onNavigate={close} />
       </BottomSheet>
       <BottomSheet open={sheet === 'more'} onClose={close} title="More">
-        <MoreSheetBody role={role} tariffAdmin={tariffAdmin} pathname={pathname} />
+        <MoreSheetBody role={role} tariffAdmin={tariffAdmin} pathname={pathname} onNavigate={close} />
       </BottomSheet>
     </>
   )
@@ -113,7 +113,7 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
  * Inside a project: the capture verbs for that project. Elsewhere: pick a
  * project first (the last one used is listed first), then the verbs.
  */
-function CaptureSheetBody({ projectId }: { projectId: string | null }) {
+function CaptureSheetBody({ projectId, onNavigate }: { projectId: string | null; onNavigate: () => void }) {
   const [chosen, setChosen] = useState<string | null>(projectId)
   const { projects, error } = useActiveProjects(chosen === null)
   const chosenName = useProjectName(chosen)
@@ -137,7 +137,7 @@ function CaptureSheetBody({ projectId }: { projectId: string | null }) {
             const Icon = CAPTURE_ICON[t.key]
             return (
               <li key={t.key}>
-                <Link href={t.href} className="sheet-row">
+                <Link href={t.href} className="sheet-row" onClick={onNavigate}>
                   <span className="sheet-row-icon"><Icon size={20} aria-hidden="true" /></span>
                   <span className="sheet-row-text">
                     <span className="sheet-row-label">{t.label}</span>
@@ -182,7 +182,9 @@ function CaptureSheetBody({ projectId }: { projectId: string | null }) {
   )
 }
 
-function MoreSheetBody({ role, tariffAdmin, pathname }: { role: OrgRole | null; tariffAdmin: boolean; pathname: string }) {
+// Links close the sheet on tap: a link to the page you are already on changes
+// neither pathname nor query, so the navigation effect alone would leave it open.
+function MoreSheetBody({ role, tariffAdmin, pathname, onNavigate }: { role: OrgRole | null; tariffAdmin: boolean; pathname: string; onNavigate: () => void }) {
   const { globalNav, footerItems } = navForRole(role)
   const rows = [
     ...globalNav.map(({ href, label, Icon }) => ({ href, label, Icon, note: href === '/marketplace' && !MARKETPLACE_ENABLED ? 'In development' : null })),
@@ -192,7 +194,7 @@ function MoreSheetBody({ role, tariffAdmin, pathname }: { role: OrgRole | null; 
   return (
     <div>
       {pathname.startsWith('/projects/') && (
-        <Link href="/projects" className="sheet-row">
+        <Link href="/projects" className="sheet-row" onClick={onNavigate}>
           <span className="sheet-row-icon"><ArrowLeft size={20} aria-hidden="true" /></span>
           <span className="sheet-row-text"><span className="sheet-row-label">All projects</span></span>
         </Link>
@@ -202,7 +204,7 @@ function MoreSheetBody({ role, tariffAdmin, pathname }: { role: OrgRole | null; 
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
             <li key={href}>
-              <Link href={href} className={`sheet-row${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined}>
+              <Link href={href} className={`sheet-row${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} onClick={onNavigate}>
                 <span className="sheet-row-icon"><Icon size={20} aria-hidden="true" /></span>
                 <span className="sheet-row-text">
                   <span className="sheet-row-label">{label}</span>

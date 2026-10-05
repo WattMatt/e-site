@@ -47,7 +47,7 @@ export function OrgSwitcher({ memberships }: Props) {
   // Single-org users: render static label, no dropdown.
   if (memberships.length <= 1) {
     return current ? (
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
+      <div className="org-switcher-name" style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
         {current.organisation_name}
       </div>
     ) : null
@@ -71,9 +71,10 @@ export function OrgSwitcher({ memberships }: Props) {
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+    <div ref={ref} className="org-switcher" style={{ position: 'relative', display: 'inline-block' }}>
       <button
         type="button"
+        className="org-switcher-button"
         onClick={() => setOpen((o) => !o)}
         disabled={isPending}
         style={{
@@ -83,12 +84,13 @@ export function OrgSwitcher({ memberships }: Props) {
           cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
         }}
       >
-        {current?.organisation_name ?? '—'}
+        <span className="org-switcher-name">{current?.organisation_name ?? '—'}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--c-text-dim)' }}>▼</span>
       </button>
       {open && (
         <div
           role="menu"
+          className="org-switcher-menu"
           style={{
             position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 240,
             background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 6,

@@ -83,10 +83,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                   <svg viewBox="0 0 20 20" fill="none" width="16" height="16"><path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="var(--c-base)" /></svg>
                 </span>
               </Link>
-              <div className="portal-header-org">
+              <div className="portal-header-org portal-header-contents">
                 <OrgSwitcher memberships={orgMemberships} />
               </div>
-              <div className="portal-header-desktop-only">
+              <div className="portal-header-desktop-only portal-header-contents">
                 <ThemeToggle />
               </div>
               <NotificationCentre />
