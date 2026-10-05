@@ -12,6 +12,12 @@ export const LOAD_PROFILE_BUCKET = 'load-profile-files'
 export const LOAD_PROFILE_UPLOAD_RE = /\.(csv|txt|xlsx)$/i
 export const LOAD_PROFILE_MAX_BYTES = 50 * 1024 * 1024
 
+/**
+ * Every page view composes the profile from the stored channels, so their total size is capped
+ * (a paired kVA array counts too): 1 000 000 slots ≈ 28 channel-years at 30 minutes, or about 9 at 5.
+ */
+export const MAX_PROFILE_SLOTS = 1_000_000
+
 /** {project_id}/{sha256}.{ext} — the shape 00225's storage policies parse. */
 export function loadProfileFilePath(projectId: string, sha256: string, fileName: string): string | null {
   const ext = fileName.match(LOAD_PROFILE_UPLOAD_RE)?.[1]?.toLowerCase()

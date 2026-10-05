@@ -8,7 +8,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { LOAD_PROFILE_BUCKET, LOAD_PROFILE_READ_ROLES, LOAD_PROFILE_WRITE_ROLES } from '@/lib/load-profile/access'
+import { LOAD_PROFILE_BUCKET, LOAD_PROFILE_READ_ROLES, LOAD_PROFILE_WRITE_ROLES, MAX_PROFILE_SLOTS } from '@/lib/load-profile/access'
 import { buildMeterRows, parseStoredFile, type ChannelSelection, type ParseResult } from '@/lib/load-profile/pipeline'
 import { listPublishedLicensees, listPublishedTariffs, loadCostingTariff, type PublishedLicensee, type PublishedTariffOption } from '@/lib/load-profile/tariff-source'
 import type { AnyClient } from '@/lib/load-profile/load'
@@ -71,11 +71,6 @@ const CommitSchema = z.object({
   selections: z.array(SelectionSchema).min(1, 'Choose at least one channel to import.').max(20, 'Import at most 20 channels at a time.'),
 })
 
-/**
- * Every page view composes the profile from the stored channels, so their total size is capped:
- * 1 000 000 slots ≈ 28 channel-years at 30 minutes, or about 9 at 5 minutes.
- */
-export const MAX_PROFILE_SLOTS = 1_000_000
 
 export async function commitLoadProfileFileAction(projectId: string, input: { path: string; fileName: string; sheet: string | null; selections: ChannelSelection[] }): Promise<{ ok: true; imported: number; replaced: number; warnings: string[] } | Err> {
   const parsed = CommitSchema.safeParse(input)

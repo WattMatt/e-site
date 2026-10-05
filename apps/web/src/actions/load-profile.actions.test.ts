@@ -23,6 +23,7 @@ const built = vi.fn()
 vi.mock('@/lib/load-profile/pipeline', () => ({ buildMeterRows: (...a: unknown[]) => built(...a), parseStoredFile: vi.fn() }))
 
 const A = await import('./load-profile.actions')
+const { MAX_PROFILE_SLOTS } = await import('@/lib/load-profile/access')
 const input = { path: `${P}/${SHA}.csv`, fileName: 'm.csv', sheet: null, selections: [{ column: 'P', label: 'Bulk', withKva: false }] }
 const writes = () => fake.calls.filter((c) => c.op !== 'select')
 
@@ -57,7 +58,7 @@ describe('commitLoadProfileFileAction', () => {
     expect(writes().map((w) => w.op)).toEqual(['update'])
   })
   it('refuses an import that would take the profile over the size cap, writing nothing', async () => {
-    state.tables['projects.load_profile_sources'] = [{ id: 's1', profile_id: PROFILE, kind: 'meter', file_sha256: 'b'.repeat(64), source_column: 'X', slots: String(A.MAX_PROFILE_SLOTS - 5) }]
+    state.tables['projects.load_profile_sources'] = [{ id: 's1', profile_id: PROFILE, kind: 'meter', file_sha256: 'b'.repeat(64), source_column: 'X', slots: String(MAX_PROFILE_SLOTS - 5) }]
     const r = await A.commitLoadProfileFileAction(P, input)
     expect('error' in r && r.error).toMatch(/at most 1\s000\s000/)
     expect(writes()).toEqual([])
