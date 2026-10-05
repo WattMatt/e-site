@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Server code: under jsdom, crypto.subtle.digest rejects a Node-realm Uint8Array on CI (cross-realm instanceof).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
