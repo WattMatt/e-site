@@ -181,6 +181,15 @@ const config: NextConfig = {
           { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
         ],
       },
+      // The service worker script must be re-checked on every navigation so a
+      // fix (or the NEXT_PUBLIC_SW_DISABLED kill switch) reaches every phone.
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+        ],
+      },
       // API routes must never be cached
       {
         source: '/api/(.*)',

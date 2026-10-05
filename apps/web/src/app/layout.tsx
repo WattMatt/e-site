@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Syne, JetBrains_Mono, Fraunces, IBM_Plex_Mono } from 'next/font/google'
 import '@fontsource-variable/mona-sans'
 import './globals.css'
@@ -10,6 +10,9 @@ import { cookies } from 'next/headers'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { parseThemeMode, resolveDataTheme } from '@/lib/theme/resolve'
 import { THEME_COOKIE } from '@/lib/theme/types'
+import { ServiceWorkerRegistrar } from '@/components/pwa/ServiceWorkerRegistrar'
+import { PWA_BRAND } from '@/lib/pwa/brand'
+import { splashStartupImages } from '@/lib/pwa/splash'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -43,7 +46,38 @@ export const metadata: Metadata = {
     template: '%s — E-Site',
     default: 'E-Site — Construction Management',
   },
-  description: 'Construction management for SA electrical contractors',
+  description: PWA_BRAND.description,
+  applicationName: PWA_BRAND.name,
+  // Installable web app (E2). The manifest link is added by app/manifest.ts.
+  icons: {
+    icon: [
+      { url: '/icons/icon.svg', type: 'image/svg+xml' },
+      { url: '/icons/favicon-32.png', sizes: '32x32', type: 'image/png' },
+    ],
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180' }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: PWA_BRAND.name,
+    // 'default' keeps content BELOW an opaque status bar, so no page — public,
+    // auth or app — can draw under the clock. 'black-translucent' would need
+    // safe-area padding on every layout, not just the app shell.
+    statusBarStyle: 'default',
+    startupImage: splashStartupImages(),
+  },
+  formatDetection: { telephone: false },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  // Lets the phone tab bar sit above the home indicator via
+  // env(safe-area-inset-bottom) instead of under it.
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: PWA_BRAND.surfaceDark },
+    { media: '(prefers-color-scheme: light)', color: PWA_BRAND.surfaceLight },
+  ],
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -56,6 +90,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className={`${syne.variable} ${mono.variable} ${fraunces.variable} ${plexMono.variable}`}>
         <ErrorBoundary>
           <SentryBoot />
+          <ServiceWorkerRegistrar />
           <AuthHashErrorRedirect />
           <ThemeProvider initialMode={mode}>
             <AnalyticsProvider>
