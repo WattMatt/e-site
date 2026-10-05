@@ -1,23 +1,24 @@
 # supabase/powersync/sync-rules.yaml
 #
 # Deploy via: PowerSync Dashboard > Sync Rules > paste contents
-# Each bucket is partitioned by org_id from the JWT token_parameters.
-# This mirrors the Supabase RLS policies — each user only syncs their org's data.
+# Org-wide buckets sync only for tokens with all_sites = true (org owner/admin,
+# custom_jwt_claims). Everyone else syncs their sites through project_access.
+# This mirrors site-scoped RLS (spec 2026-10-01).
 
 bucket_definitions:
   org_projects:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT id, name, status, city, province, organisation_id
         FROM projects
         WHERE organisation_id = bucket.org_id
 
   org_snags:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT id, title, description, status, priority,
                project_id, organisation_id, assigned_to,
@@ -26,9 +27,9 @@ bucket_definitions:
         WHERE organisation_id = bucket.org_id
 
   org_snag_photos:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT sp.id, sp.snag_id, sp.file_path, sp.caption, sp.photo_type, sp.uploaded_by, sp.created_at
         FROM field.snag_photos sp
@@ -40,9 +41,9 @@ bucket_definitions:
   # have source_provider populated; locally-uploaded rows have it null.
   # Both shapes sync identically.
   org_floor_plans:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT id, project_id, organisation_id, name, level, file_path,
                file_size_bytes, width_px, height_px, scale, is_active,
@@ -55,9 +56,9 @@ bucket_definitions:
   # handovers, photos). Mobile gets read-only access offline. Phase 1
   # has no mobile-side write path; that's a Phase 3+ feature.
   org_documents:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT id, project_id, organisation_id, name, category,
                storage_path, mime_type, size_bytes,
@@ -83,9 +84,9 @@ bucket_definitions:
   # awaiting_verification, re-inspect_required). Certified + abandoned drop off
   # the device once they're terminal.
   org_inspections:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT *
         FROM inspections.inspections
@@ -95,9 +96,9 @@ bucket_definitions:
   # inspections.responses — captured field values for in-flight inspections.
   # Joined via inspection_id so the bucket scope mirrors org_inspections.
   org_inspection_responses:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT r.*
         FROM inspections.responses r
@@ -110,9 +111,9 @@ bucket_definitions:
   # signed URL. Mobile-side captures go through the local attachment_uploads
   # queue and only land in this table once the upload worker has succeeded.
   org_inspection_photos_meta:
-    parameters:
-      - name: org_id
-        token_parameter: org_id
+    # Site scope (2026-10): org-wide buckets only for owner/admin tokens; everyone
+    # else gets their sites through project_access below.
+    parameters: SELECT request.jwt() ->> 'org_id' AS org_id WHERE request.jwt() ->> 'all_sites' = 'true'
     data:
       - SELECT p.id, p.inspection_id, p.section_id, p.field_id,
                p.storage_path, p.caption, p.taken_at, p.gps_lat, p.gps_lng,
