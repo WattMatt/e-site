@@ -27,6 +27,8 @@ DECLARE
   v_line   UUID := gen_random_uuid();
   v_obs    UUID := gen_random_uuid();
   v_new    UUID;
+  v_lid    UUID := gen_random_uuid();
+  v_res    JSONB;
   v_n      INT;
   v_by     UUID;
   u        UUID;
@@ -144,12 +146,42 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN INSERT INTO _r VALUES ('access_log_user_bound_to_caller', false);
   END;
   SELECT count(*) INTO v_n FROM public.rate_library_access_log;      INSERT INTO _r VALUES ('owner_reads_access_log', v_n = 1);
+  -- Atomic ingest: one document in, observations linked to its line, re-run writes nothing.
+  v_res := public.rate_library_ingest(v_org,
+    jsonb_build_object('kind', 'historical_file', 'source_ref', 'ingest-probe', 'contractor_name', 'Probe B', 'province', 'Limpopo',
+                       'priced_on', '2026-05-01', 'priced_on_basis', 'document_date'),
+    jsonb_build_array(jsonb_build_object('code', 'CONDUIT-25-PVC-M', 'signature', 'conduit|m|dia=25|material=pvc', 'category', 'conduit',
+                                         'description', 'Conduit, PVC, 25 mm dia', 'unit', 'm', 'attributes', '{}'::jsonb)),
+    jsonb_build_array(jsonb_build_object('id', v_lid, 'section_path', ARRAY['CONDUIT'], 'description', '25mm Ø', 'unit', 'm',
+                                         'supply_rate', 6, 'install_rate', 4, 'group_key', 'k', 'match_status', 'auto_confirmed',
+                                         'matched_signature', 'conduit|m|dia=25|material=pvc', 'match_method', 'rule')),
+    jsonb_build_array(jsonb_build_object('signature', 'conduit|m|dia=25|material=pvc', 'source_line_id', v_lid, 'occurrences', 3,
+                                         'unit', 'm', 'supply_rate', 6, 'install_rate', 4, 'rate', 10)));
+  INSERT INTO _r VALUES ('ingest_writes_source_lines_observation',
+    (v_res->>'already')::boolean = false AND (v_res->>'lines')::int = 1 AND (v_res->>'observations')::int = 1 AND (v_res->>'items')::int = 1);
+  SELECT count(*) INTO v_n FROM public.rate_observations o WHERE o.source_line_id = v_lid AND o.province = 'Limpopo' AND o.occurrences = 3;
+  INSERT INTO _r VALUES ('ingest_observation_takes_source_fields', v_n = 1);
+  v_res := public.rate_library_ingest(v_org, jsonb_build_object('kind', 'historical_file', 'source_ref', 'ingest-probe'), '[]', '[]', '[]');
+  INSERT INTO _r VALUES ('ingest_rerun_is_a_no_op', (v_res->>'already')::boolean);
+  BEGIN
+    -- An auto-confirmed line naming an item that does not exist: the whole call must roll back.
+    PERFORM public.rate_library_ingest(v_org,
+      jsonb_build_object('kind', 'historical_file', 'source_ref', 'ingest-broken', 'contractor_name', 'X', 'priced_on', '2026-05-01', 'priced_on_basis', 'stated'),
+      '[]', jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'description', 'x', 'group_key', 'k', 'match_status', 'auto_confirmed',
+                                                 'matched_signature', 'nope|m')), '[]');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('ingest_broken_payload_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('ingest_broken_payload_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM public.rate_sources WHERE source_ref = 'ingest-broken';
+  INSERT INTO _r VALUES ('ingest_broken_payload_leaves_nothing', v_n = 0);
   RESET ROLE;
 
   -- ── 2. Org-level project manager: reads the library, not the audit log ───
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO v_n FROM public.rate_items;                    INSERT INTO _r VALUES ('pm_reads_items', v_n = 1);
+  SELECT count(*) INTO v_n FROM public.rate_items;                    INSERT INTO _r VALUES ('pm_reads_items', v_n = 2);  -- the fixture item + the one the owner's ingest added
   SELECT count(*) INTO v_n FROM public.rate_library_access_log;      INSERT INTO _r VALUES ('pm_cannot_read_access_log', v_n = 0);
   RESET ROLE;
 
@@ -170,6 +202,14 @@ BEGIN
     EXCEPTION
       WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('insert_REFUSED:' || u, true);
       WHEN OTHERS THEN INSERT INTO _r VALUES ('insert_REFUSED:' || u, false);
+    END;
+    BEGIN
+      PERFORM public.rate_library_ingest(v_org, jsonb_build_object('kind', 'manual', 'source_ref', 'x' || u, 'contractor_name', 'X',
+        'priced_on', '2026-05-01', 'priced_on_basis', 'stated'), '[]', '[]', '[]');
+      RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+    EXCEPTION
+      WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('ingest_REFUSED:' || u, true);
+      WHEN OTHERS THEN INSERT INTO _r VALUES ('ingest_REFUSED:' || u, false);
     END;
     RESET ROLE;
   END LOOP;

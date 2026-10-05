@@ -261,7 +261,6 @@ export interface IngestResult {
   counts: { lines: number; autoConfirmed: number; suggested: number; unmatched: number; excluded: number; newItems: number; observations: number }
 }
 
-const chunk = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n))
 
 export async function loadKnownItems(client: AnyClient, organisationId: string): Promise<(KnownItem & { id: string })[]> {
   const items = await loadItems(client, organisationId)
@@ -269,68 +268,45 @@ export async function loadKnownItems(client: AnyClient, organisationId: string):
 }
 
 /**
- * Write one priced document into the library. Idempotent per
- * (organisation, kind, source_ref): a second run returns alreadyImported and
- * writes nothing.
+ * Write one priced document into the library, atomically: the whole document
+ * goes through public.rate_library_ingest (00225) in ONE transaction, with the
+ * caller's RLS. Idempotent per (organisation, kind, source_ref): a second run
+ * returns alreadyImported and writes nothing. A failure leaves nothing behind.
  */
 export async function ingestSource(client: AnyClient, organisationId: string, meta: SourceMeta, lines: IngestLine[]): Promise<IngestResult> {
-  const existing = await client.from('rate_sources').select('id').eq('organisation_id', organisationId).eq('kind', meta.kind).eq('source_ref', meta.sourceRef).maybeSingle()
-  if (existing.error) throw new Error(existing.error.message)
-  const zero = { lines: 0, autoConfirmed: 0, suggested: 0, unmatched: 0, excluded: 0, newItems: 0, observations: 0 }
-  if (existing.data) return { sourceId: existing.data.id, alreadyImported: true, counts: zero }
-
   const known = await loadKnownItems(client, organisationId)
   const plan = planIngest(lines, known)
-
-  // Items first (another ingest may have created the same signature meanwhile: ignore duplicates).
-  if (plan.newItems.length) {
-    const { error } = await client.from('rate_items').upsert(plan.newItems.map(n => ({
-      organisation_id: organisationId, code: n.code, signature: n.signature, category: n.category,
-      description: n.description, unit: n.unit, attributes: n.attributes, origin: 'rule',
-    })), { onConflict: 'organisation_id,signature', ignoreDuplicates: true })
-    if (error) throw new Error(`rate_items: ${error.message}`)
+  const ids = plan.lines.map(() => crypto.randomUUID())
+  const { data, error } = await client.rpc('rate_library_ingest', {
+    p_org: organisationId,
+    p_source: {
+      kind: meta.kind, source_ref: meta.sourceRef, contractor_name: meta.contractorName, project_id: meta.projectId,
+      project_label: meta.projectLabel, province: meta.province, priced_on: meta.pricedOn, priced_on_basis: meta.pricedOnBasis,
+      source_file: meta.sourceFile, total_ex_vat: meta.totalExVat, reconciliation: meta.reconciliation,
+    },
+    p_items: plan.newItems.map(n => ({ code: n.code, signature: n.signature, category: n.category, description: n.description, unit: n.unit, attributes: n.attributes })),
+    p_lines: plan.lines.map((l: PlannedLine, i) => ({
+      id: ids[i], sheet: l.sheet, row_ref: l.rowRef, code: l.code, section_path: l.sectionPath, description: l.description, unit: l.unit,
+      quantity: l.quantity, supply_rate: l.supplyRate, install_rate: l.installRate, rate: l.rate, amount: l.amount, group_key: l.groupKey,
+      match_status: l.status, exclusion_reason: l.exclusionReason,
+      matched_signature: l.status === 'auto_confirmed' ? l.matchedSignature : null,
+      suggested_signature: l.status === 'suggested' ? l.suggestedItemSignature : null,
+      match_method: l.status === 'excluded' ? null : 'rule', match_detail: l.detail,
+    })),
+    p_observations: plan.observations.map(o => ({
+      signature: o.signature, source_line_id: ids[o.lineIndexes[0]], occurrences: o.occurrences, unit: o.unit,
+      supply_rate: o.supplyRate, install_rate: o.installRate, rate: o.rate,
+    })),
+  })
+  if (error) throw new Error(`rate_library_ingest: ${error.message}`)
+  const zero = { lines: 0, autoConfirmed: 0, suggested: 0, unmatched: 0, excluded: 0, newItems: 0, observations: 0 }
+  if (data.already) return { sourceId: data.source_id, alreadyImported: true, counts: zero }
+  if (data.lines !== plan.lines.length || data.observations !== plan.observations.length) {
+    throw new Error(`rate_library_ingest wrote ${data.lines} lines / ${data.observations} observations, expected ${plan.lines.length} / ${plan.observations.length}`)
   }
-  const itemIds = new Map((await loadKnownItems(client, organisationId)).map(i => [i.signature, i.id]))
-
-  const { data: src, error: se } = await client.from('rate_sources').insert({
-    organisation_id: organisationId, kind: meta.kind, source_ref: meta.sourceRef, contractor_name: meta.contractorName,
-    project_id: meta.projectId, project_label: meta.projectLabel, province: meta.province, priced_on: meta.pricedOn,
-    priced_on_basis: meta.pricedOnBasis, source_file: meta.sourceFile, total_ex_vat: meta.totalExVat,
-    reconciliation: meta.reconciliation,
-  }).select('id').single()
-  if (se) throw new Error(`rate_sources: ${se.message}`)
-
-  const lineRows = plan.lines.map((l: PlannedLine) => ({
-    organisation_id: organisationId, source_id: src.id, sheet: l.sheet, row_ref: l.rowRef, code: l.code,
-    section_path: l.sectionPath, description: l.description, unit: l.unit, quantity: l.quantity,
-    supply_rate: l.supplyRate, install_rate: l.installRate, rate: l.rate, amount: l.amount, group_key: l.groupKey,
-    match_status: l.status, exclusion_reason: l.exclusionReason,
-    matched_item_id: l.status === 'auto_confirmed' ? itemIds.get(l.matchedSignature!) ?? null : null,
-    suggested_item_id: l.status === 'suggested' ? itemIds.get(l.suggestedItemSignature!) ?? null : null,
-    match_method: l.status === 'excluded' ? null : 'rule', match_detail: l.detail,
-  }))
-  const lineIds: string[] = []
-  for (const part of chunk(lineRows, 500)) {
-    const { data, error } = await client.from('rate_source_lines').insert(part).select('id')
-    if (error) throw new Error(`rate_source_lines: ${error.message}`)
-    if ((data ?? []).length !== part.length) throw new Error('rate_source_lines: insert returned fewer rows than sent')
-    lineIds.push(...data.map((d: { id: string }) => d.id))
-  }
-
-  const obsRows = plan.observations.map(o => ({
-    organisation_id: organisationId, rate_item_id: itemIds.get(o.signature), source_id: src.id,
-    source_line_id: lineIds[o.lineIndexes[0]], occurrences: o.occurrences, unit: o.unit,
-    supply_rate: o.supplyRate, install_rate: o.installRate, rate: o.rate, contractor_name: meta.contractorName,
-    project_id: meta.projectId, project_label: meta.projectLabel, province: meta.province, priced_on: meta.pricedOn,
-  }))
-  for (const part of chunk(obsRows, 500)) {
-    const { error } = await client.from('rate_observations').insert(part)
-    if (error) throw new Error(`rate_observations: ${error.message}`)
-  }
-
-  const c = (s: string) => plan.lines.filter(l => l.status === s).length
+  const c = (st: string) => plan.lines.filter(l => l.status === st).length
   return {
-    sourceId: src.id, alreadyImported: false,
-    counts: { lines: plan.lines.length, autoConfirmed: c('auto_confirmed'), suggested: c('suggested'), unmatched: c('unmatched'), excluded: c('excluded'), newItems: plan.newItems.length, observations: obsRows.length },
+    sourceId: data.source_id, alreadyImported: false,
+    counts: { lines: data.lines, autoConfirmed: c('auto_confirmed'), suggested: c('suggested'), unmatched: c('unmatched'), excluded: c('excluded'), newItems: data.items, observations: data.observations },
   }
 }
