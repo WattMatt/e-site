@@ -42,7 +42,8 @@ export async function GET(req: NextRequest) {
   const csv = budgetCsv({
     statistic: stat, escalatedTo: lib.cpiLatest ?? '', generatedOn: today,
     items: lib.summaries.map(s => ({
-      code: s.item.code, description: s.item.description, unit: s.item.unit, n: s.nominal.n,
+      // n counts the observations behind the escalated rate (pre-2015 prices cannot be escalated).
+      code: s.item.code, description: s.item.description, unit: s.item.unit, n: s.escalated.n,
       rate: pick(s.escalated), nominal: pick(s.nominal),
       earliest: s.earliest, latest: s.nominal.latest?.pricedOn ?? null,
     })),

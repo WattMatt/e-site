@@ -27,7 +27,7 @@ vi.mock('@esite/shared', async orig => ({
   boqService: { updateItemRate: h.updateItemRate },
 }))
 
-import { aiSuggestGroupAction, applyPriceFromLibraryAction, confirmGroupAction } from './rate-catalogue.actions'
+import { addProjectBoqToLibraryAction, aiSuggestGroupAction, applyPriceFromLibraryAction, confirmGroupAction } from './rate-catalogue.actions'
 import { cpiFromTable } from '@esite/shared'
 
 /** A fake Supabase client: each call records (table, ops) and resolves via `handler`. */
@@ -47,7 +47,12 @@ function fakeClient(handler: (op: Op) => { data?: unknown; error?: unknown }) {
     b.then = (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => resolve().then(ok, ko)
     return b
   }
-  return { from: builder, schema: () => ({ from: builder }), calls }
+  const rpc = (name: string, args: unknown) => {
+    const op: Op = { table: `rpc:${name}`, ops: [['args', [args]]] }
+    calls.push(op)
+    return Promise.resolve({ data: null, error: null, ...handler(op) })
+  }
+  return { from: builder, schema: () => ({ from: builder }), rpc, calls }
 }
 const has = (op: Op, m: string) => op.ops.some(([n]) => n === m)
 
@@ -87,48 +92,31 @@ describe('confirmGroupAction', () => {
     expect(db.calls.some(c => has(c, 'update') || has(c, 'insert'))).toBe(false)
   })
 
-  it('collapses identical rates into one observation with an occurrence count', async () => {
-    let inserted: Record<string, unknown>[] = []
+  it('confirms in ONE call to rate_library_confirm_lines with exactly the queued lines', async () => {
     const db = fakeClient(op => {
       if (op.table === 'rate_items') return { data: { id: 'i1', unit: 'no', is_active: true } }
-      if (op.table === 'rate_sources') return { data: [source] }
-      if (op.table === 'rate_observations') { inserted = op.ops.find(([m]) => m === 'insert')![1][0] as Record<string, unknown>[]; return {} }
-      if (has(op, 'update')) return { data: lines.map(l => ({ id: l.id })) }
+      if (op.table === 'rpc:rate_library_confirm_lines') return { data: { lines: 3, observations: 2 } }
       return { data: lines }
     })
     h.createClient.mockResolvedValue(db)
     const r = await confirmGroupAction('g', 'i1')
     expect(r).toEqual({ ok: true, data: { lines: 3, observations: 2 } })
-    expect(inserted.map(o => [o.supply_rate, o.occurrences, o.rate, o.province, o.priced_on])).toEqual([
-      [10, 2, 15, 'Gauteng', '2026-06-25'], [12, 1, 17, 'Gauteng', '2026-06-25'],
-    ])
+    const call = db.calls.find(c => c.table === 'rpc:rate_library_confirm_lines')!
+    expect(call.ops[0][1][0]).toEqual({ p_org: ORG, p_line_ids: ['l1', 'l2', 'l3'], p_item: 'i1', p_method: 'manual' })
+    // No direct writes: the function is the only writer.
+    expect(db.calls.some(c => has(c, 'update') || has(c, 'insert'))).toBe(false)
   })
 
-  it('reports a concurrent review instead of half-confirming', async () => {
+  it('reports a concurrent review (40001) and writes nothing else', async () => {
     const db = fakeClient(op => {
       if (op.table === 'rate_items') return { data: { id: 'i1', unit: 'no', is_active: true } }
-      if (has(op, 'update')) return { data: [{ id: 'l1' }] }
+      if (op.table === 'rpc:rate_library_confirm_lines') return { error: { code: '40001', message: '1 of 3 lines are no longer in the queue' } }
       return { data: lines }
     })
     h.createClient.mockResolvedValue(db)
     const r = await confirmGroupAction('g', 'i1')
     expect(!r.ok && r.error).toContain('Another reviewer')
-    expect(db.calls.some(c => c.table === 'rate_observations')).toBe(false)
-  })
-
-  it('puts the lines back when the observations cannot be written', async () => {
-    const db = fakeClient(op => {
-      if (op.table === 'rate_items') return { data: { id: 'i1', unit: 'no', is_active: true } }
-      if (op.table === 'rate_sources') return { data: [source] }
-      if (op.table === 'rate_observations') return { error: { message: 'boom' } }
-      if (has(op, 'update')) return { data: lines.map(l => ({ id: l.id })) }
-      return { data: lines }
-    })
-    h.createClient.mockResolvedValue(db)
-    const r = await confirmGroupAction('g', 'i1')
-    expect(r).toEqual({ ok: false, error: 'boom' })
-    const restores = db.calls.filter(c => c.table === 'rate_source_lines' && c.ops.some(([m, a]) => m === 'update' && (a[0] as { match_status: string }).match_status === 'unmatched'))
-    expect(restores).toHaveLength(3)
+    expect(db.calls.some(c => has(c, 'update') || has(c, 'insert'))).toBe(false)
   })
 })
 
@@ -139,6 +127,18 @@ describe('aiSuggestGroupAction', () => {
     const r = await aiSuggestGroupAction('g')
     expect(!r.ok && r.error).toContain('no Anthropic API key')
     expect(db.calls).toEqual([])
+  })
+})
+
+describe('addProjectBoqToLibraryAction', () => {
+  it('refuses an import that holds library rates (no loop back into the library)', async () => {
+    h.createServiceClient.mockReturnValue(fakeClient(() => ({ data: { id: 'p1', name: 'P', province: 'Gauteng', organisation_id: ORG } })))
+    const db = fakeClient(() => ({}))
+    h.createClient.mockResolvedValue(db)
+    h.loadProjectBoq.mockResolvedValue({ importId: 'imp', sourceFilename: null, importedAt: '2026-06-01T00:00:00Z', totalExVat: null, libraryPricedAt: '2026-10-05T10:00:00Z', lines: [] })
+    const r = await addProjectBoqToLibraryAction('p1', { contractorName: 'AEEC' })
+    expect(!r.ok && r.error).toContain('cannot go back into the library')
+    expect(db.calls.some(c => c.table.startsWith('rpc:'))).toBe(false)
   })
 })
 
@@ -166,21 +166,34 @@ describe('applyPriceFromLibraryAction', () => {
     h.loadIndexSeries.mockResolvedValue(cpiFromTable({ 2026: [100, 100] }))
   })
 
-  it('writes recomputed rates, excluding the project\'s own observations', async () => {
-    const r = await applyPriceFromLibraryAction(projectId, 'median', ['b-conduit'])
+  const shown = (boqItemId: string, supplyRate: number | null, installRate: number | null) => ({ boqItemId, proposed: { supplyRate, installRate, rate: null } })
+
+  it('writes the rates that were shown, excluding the project\'s own observations, and stamps the import', async () => {
+    const service = h.createServiceClient()
+    const r = await applyPriceFromLibraryAction(projectId, 'median', [shown('b-conduit', 5, 3)])
     expect(r).toEqual({ ok: true, data: { updated: 1 } })
     expect(h.updateItemRate).toHaveBeenCalledWith(expect.anything(), 'b-conduit', { supplyRate: 5, installRate: 3 })
+    const stamp = service.calls.find((c: Op) => c.table === 'boq_imports' && has(c, 'update'))
+    expect(stamp?.ops.find(([m]: [string]) => m === 'update')![1][0]).toHaveProperty('library_priced_at')
+  })
+
+  it('refuses when the library changed since the preview, writing nothing', async () => {
+    const service = h.createServiceClient()
+    const r = await applyPriceFromLibraryAction(projectId, 'median', [shown('b-conduit', 6, 3)])
+    expect(!r.ok && r.error).toContain('changed since the preview')
+    expect(h.updateItemRate).not.toHaveBeenCalled()
+    expect(service.calls.some((c: Op) => c.table === 'boq_imports' && has(c, 'update'))).toBe(false)
   })
 
   it('refuses a line the library cannot price, writing nothing', async () => {
-    const r = await applyPriceFromLibraryAction(projectId, 'median', ['b-conduit', 'b-light'])
+    const r = await applyPriceFromLibraryAction(projectId, 'median', [shown('b-conduit', 5, 3), shown('b-light', 1, 1)])
     expect(r.ok).toBe(false)
     expect(h.updateItemRate).not.toHaveBeenCalled()
   })
 
   it('refuses a project of another organisation', async () => {
     h.createServiceClient.mockReturnValue(fakeClient(() => ({ data: { id: projectId, name: 'P', province: null, organisation_id: 'org-2' } })))
-    const r = await applyPriceFromLibraryAction(projectId, 'median', ['b-conduit'])
+    const r = await applyPriceFromLibraryAction(projectId, 'median', [shown('b-conduit', 5, 3)])
     expect(r).toEqual({ ok: false, error: 'Project not found in your organisation' })
     expect(h.updateItemRate).not.toHaveBeenCalled()
   })

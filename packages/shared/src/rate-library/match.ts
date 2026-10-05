@@ -228,7 +228,7 @@ const RULES: Rule[] = [
       set(a, 'cores', cs.cores ?? (twin ? '2+e' : undefined))
       set(a, 'size', cs.size ?? (twin ? sizeMm2(c.d) : undefined))
       const assumed: string[] = []
-      const cond = conductorOf(c.t)
+      const cond = conductorOf(`${c.path} | ${c.d}`)
       if (cond) a.conductor = cond
       else { a.conductor = 'cu'; assumed.push('conductor') }
       // A 3-core aluminium termination with no voltage is as likely MV as LV.
@@ -247,7 +247,7 @@ const RULES: Rule[] = [
       set(a, 'cores', cs.cores); set(a, 'size', cs.size)
       set(a, 'install', installMethods(c.t))
       const assumed: string[] = []
-      const cond = conductorOf(c.t)
+      const cond = conductorOf(`${c.path} | ${c.d}`)
       if (cond) a.conductor = cond
       else { a.conductor = 'cu'; assumed.push('conductor') }
       return { attrs: a, required: ['cores', 'size', 'install'], assumed }
@@ -317,7 +317,9 @@ const RULES: Rule[] = [
       else if (/three phase|3 phase/.test(c.d)) a.pins = '5'
       else if (a.rating && Number(a.rating) <= 16) { a.pins = '3'; assumed.push('pins') }
       a.gang = /\bdouble\b|\btwin\b/.test(c.d) ? 'double' : 'single'
+      if (!/\b(double|twin|single)\b/.test(c.d)) assumed.push('gang')
       a.switching = /unswitched/.test(c.d) ? 'unswitched' : /dedicated|\bred\b/.test(c.d) ? 'dedicated' : 'switched'
+      if (!/unswitched|switched|dedicated|\bred\b/.test(c.d)) assumed.push('switching')
       const mount = /power ?skirting/.test(c.t) ? 'powerskirting' : /power ?pole/.test(c.t) ? 'power_pole'
         : /floor box/.test(c.t) ? 'floor_box' : undefined
       set(a, 'mount', mount)
@@ -408,7 +410,7 @@ const RULES: Rule[] = [
   {
     category: 'power_pole',
     when: c => /power ?pole/.test(c.d) && !/socket|s\.?s\.?o|data|outlet/.test(c.d),
-    extract: c => { const a: Attrs = {}; set(a, 'height', c.d.match(/\b(\d+(?:\.\d+)?)\s*m\b/)?.[1]); return { attrs: a, required: [] } },
+    extract: c => { const a: Attrs = {}; set(a, 'height', c.d.match(/\b(\d+(?:\.\d+)?)\s*m\b/)?.[1]); return { attrs: a, required: ['height'] } },
   },
   {
     category: 'telephone_board',
@@ -483,6 +485,8 @@ export function matchLine(input: MatchInput): MatchResult {
   // A matched item priced "per lot/sum" is one of that item.
   const itemUnit: RateUnit | null = unit === 'sum' || unit === 'lot' ? 'no' : unit
   const missing = out.required.filter(k => !(k in attrs))
+  // A rule with nothing to check (photocell) names a family, not an item.
+  if (out.required.length === 0) missing.push('identifying_attribute')
   if (!itemUnit || itemUnit === 'other') missing.push('unit')
   if (missing.length) {
     return { kind: 'partial', method: 'rule', category: rule.category, unit: itemUnit, attributes: attrs, missing }

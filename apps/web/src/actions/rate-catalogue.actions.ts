@@ -20,13 +20,14 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { getOrgContext } from '@/lib/auth-org'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import {
-  boqService, collapseObservations, lineTotalRate, normaliseText, normaliseUnit, proposeRates, COST_VIEW_ROLES,
+  boqService, lineTotalRate, normaliseText, normaliseUnit, proposeRates, COST_VIEW_ROLES,
   RATE_CATEGORIES, type BudgetStatistic, type LibraryObservation, type RateProposal,
 } from '@esite/shared'
 import {
   ingestSource, loadActiveObservations, loadIndexSeries, loadItems, logRateAccess, type AnyClient, type IngestResult,
 } from '@/lib/rate-library/data'
 import { loadProjectBoq } from '@/lib/rate-library/project-boq'
+import { SA_PROVINCES } from '@/lib/rate-library/format'
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string }
 const QUEUE = ['suggested', 'unmatched', 'rejected'] as const
@@ -54,9 +55,11 @@ async function queueLines(db: AnyClient, orgId: string, groupKey: string): Promi
 }
 
 /**
- * Assign every queued line of a group to a catalogue item and record the
- * observations. Lines and item must share a unit. If the observation insert
- * fails, the lines are put back as they were.
+ * Assign every queued line of a group to a catalogue item. The unit check
+ * runs here (unit normalisation lives in @esite/shared); the write is ONE
+ * transaction in public.rate_library_confirm_lines (00225): it refuses
+ * wholesale if any line left the queue meanwhile, and never adds a second
+ * observation for a rate that document already contributes to the item.
  */
 export async function confirmGroupAction(groupKey: string, itemId: string): Promise<Result<{ lines: number; observations: number }>> {
   const g = await gate(); if (!g.ok) return g
@@ -71,45 +74,16 @@ export async function confirmGroupAction(groupKey: string, itemId: string): Prom
     if (units.size !== 1 || !units.has(item.unit)) {
       return { ok: false, error: `These lines are priced per ${[...units].join(' / ') || 'nothing'}; the item is per ${item.unit}. Pick or create an item with the same unit.` }
     }
-    const priced = lines.filter(l => lineTotalRate({ supplyRate: l.supply_rate, installRate: l.install_rate, rate: l.rate }) > 0)
-    if (!priced.length) return { ok: false, error: 'None of these lines carries a rate' }
-
-    const ids = lines.map(l => l.id)
-    const { data: upd, error: ue } = await db.from('rate_source_lines')
-      .update({ match_status: 'confirmed', matched_item_id: itemId, suggested_item_id: null, match_method: 'manual' })
-      .eq('organisation_id', orgId).in('id', ids).in('match_status', QUEUE as unknown as string[]).select('id')
-    if (ue) throw new Error(ue.message)
-    if ((upd ?? []).length !== ids.length) {
-      return { ok: false, error: 'Another reviewer changed some of these lines first. Reload the queue.' }
+    if (!lines.some(l => lineTotalRate({ supplyRate: l.supply_rate, installRate: l.install_rate, rate: l.rate }) > 0)) {
+      return { ok: false, error: 'None of these lines carries a rate' }
     }
-
-    const sourceIds = [...new Set(priced.map(l => l.source_id))]
-    const { data: sources, error: se } = await db.from('rate_sources')
-      .select('id, contractor_name, project_id, project_label, province, priced_on').in('id', sourceIds)
-    if (se) throw new Error(se.message)
-    const sMap = new Map((sources ?? []).map((s: { id: string }) => [s.id, s]))
-    const collapsed = collapseObservations(priced.map((l, i) => ({
-      key: l.source_id, unit: item.unit, supplyRate: l.supply_rate, installRate: l.install_rate,
-      rate: lineTotalRate({ supplyRate: l.supply_rate, installRate: l.install_rate, rate: l.rate }), lineIndex: i,
-    })))
-    const rows = collapsed.map(c => {
-      const s = sMap.get(c.key) as { contractor_name: string; project_id: string | null; project_label: string | null; province: string | null; priced_on: string }
-      return {
-        organisation_id: orgId, rate_item_id: itemId, source_id: c.key, source_line_id: priced[c.lineIndexes[0]].id,
-        occurrences: c.occurrences, unit: item.unit, supply_rate: c.supplyRate, install_rate: c.installRate, rate: c.rate,
-        contractor_name: s.contractor_name, project_id: s.project_id, project_label: s.project_label, province: s.province, priced_on: s.priced_on,
-      }
-    })
-    const { error: oe } = await db.from('rate_observations').insert(rows)
-    if (oe) {
-      // Compensate: put the lines back in the queue exactly as they were.
-      for (const l of lines) {
-        await db.from('rate_source_lines').update({ match_status: l.match_status, matched_item_id: null, match_method: null }).eq('id', l.id)
-      }
-      throw new Error(oe.message)
+    const { data, error } = await db.rpc('rate_library_confirm_lines', { p_org: orgId, p_line_ids: lines.map(l => l.id), p_item: itemId, p_method: 'manual' })
+    if (error) {
+      if (error.code === '40001') return { ok: false, error: 'Another reviewer changed some of these lines first. Reload the queue.' }
+      throw new Error(error.message)
     }
     bust()
-    return { ok: true, data: { lines: ids.length, observations: rows.length } }
+    return { ok: true, data: { lines: data.lines, observations: data.observations } }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Confirm failed' }
   }
@@ -224,25 +198,23 @@ export async function aiSuggestGroupAction(groupKey: string): Promise<Result<{ i
 }
 
 // ── Corrections ─────────────────────────────────────────────────────────────
-/** Retract an observation by adding a void row (observations are never edited). */
-export async function voidObservationAction(observationId: string, note: string): Promise<Result<{ voidId: string }>> {
+/**
+ * Retract an observation: one transaction adds a void row (observations are
+ * never edited) and sends the lines it came from back to the queue, so the
+ * rate can be assigned to the right item.
+ */
+export async function voidObservationAction(observationId: string, note: string): Promise<Result<{ voidId: string; linesRequeued: number }>> {
   const g = await gate(); if (!g.ok) return g
   if (note.trim().length < 3) return { ok: false, error: 'Say why this observation is wrong' }
   const { db, orgId } = g
-  const { data: o, error } = await db.from('rate_observations')
-    .select('id, kind, rate_item_id, source_id, unit, contractor_name, project_id, project_label, province, priced_on')
-    .eq('organisation_id', orgId).eq('id', observationId).maybeSingle()
+  const { data: o, error } = await db.from('rate_observations').select('id, rate_item_id').eq('organisation_id', orgId).eq('id', observationId).maybeSingle()
   if (error) return { ok: false, error: error.message }
-  if (!o || o.kind !== 'observation') return { ok: false, error: 'Observation not found' }
-  const { data, error: ie } = await db.from('rate_observations').insert({
-    organisation_id: orgId, kind: 'void', rate_item_id: o.rate_item_id, source_id: o.source_id, supersedes_id: o.id, unit: o.unit,
-    contractor_name: o.contractor_name, project_id: o.project_id, project_label: o.project_label, province: o.province,
-    priced_on: o.priced_on, note: note.trim().slice(0, 500),
-  }).select('id').single()
-  if (ie) return { ok: false, error: ie.code === '23505' ? 'This observation was already corrected' : ie.message }
+  if (!o) return { ok: false, error: 'Observation not found' }
+  const { data, error: ve } = await db.rpc('rate_library_void_observation', { p_org: orgId, p_observation: observationId, p_note: note })
+  if (ve) return { ok: false, error: ve.code === '23505' ? 'This observation was already corrected' : ve.message }
   revalidatePath(`/rates/${o.rate_item_id}`)
   bust()
-  return { ok: true, data: { voidId: data.id } }
+  return { ok: true, data: { voidId: data.void_id, linesRequeued: data.lines_requeued } }
 }
 
 // ── Project BOQ ⇄ library ───────────────────────────────────────────────────
@@ -255,10 +227,17 @@ async function projectGate(projectId: string): Promise<{ ok: true; db: AnyClient
   if (error) return { ok: false, error: error.message }
   // The library belongs to the org; a project of another org never feeds it or reads it.
   if (!p || p.organisation_id !== g.orgId) return { ok: false, error: 'Project not found in your organisation' }
-  return { ok: true, db: g.db, orgId: g.orgId, project: { id: p.id, name: p.name, province: p.province ?? null } }
+  // projects.province is free text; the library keeps only the nine provinces.
+  const province = (SA_PROVINCES as readonly string[]).includes((p.province ?? '').trim()) ? (p.province as string).trim() : null
+  return { ok: true, db: g.db, orgId: g.orgId, project: { id: p.id, name: p.name, province } }
 }
 
-/** Add this project's current (contractor-priced) BOQ to the rate library. */
+/**
+ * Add this project's current (contractor-priced) BOQ to the rate library.
+ * Refused for an import that has had library rates applied — those are the
+ * library's own medians, not a contractor's prices. Variation items are left
+ * out: their amount is an approved value change, not a unit rate.
+ */
 export async function addProjectBoqToLibraryAction(projectId: string, input: { contractorName: string; pricedOn?: string }): Promise<Result<IngestResult>> {
   const pg = await projectGate(projectId); if (!pg.ok) return pg
   const contractor = input.contractorName.trim()
@@ -267,12 +246,16 @@ export async function addProjectBoqToLibraryAction(projectId: string, input: { c
   try {
     const boq = await loadProjectBoq(createServiceClient(), projectId)
     if (!boq) return { ok: false, error: 'This project has no imported BOQ' }
+    if (boq.libraryPricedAt) {
+      return { ok: false, error: 'Rates from the library were applied to this BOQ, so it cannot go back into the library as a contractor\'s prices' }
+    }
+    const lines = boq.lines.filter(l => l.origin !== 'variation')
     const res = await ingestSource(pg.db, pg.orgId, {
       kind: 'boq_import', sourceRef: boq.importId, contractorName: contractor, projectId, projectLabel: pg.project.name,
       province: pg.project.province, pricedOn: input.pricedOn ?? boq.importedAt.slice(0, 10),
       pricedOnBasis: input.pricedOn ? 'stated' : 'import_date', sourceFile: boq.sourceFilename, totalExVat: boq.totalExVat,
-      reconciliation: { lines: boq.lines.length, importTotalExVat: boq.totalExVat, sumOfLineAmounts: Math.round(boq.lines.reduce((a, l) => a + (l.amount ?? 0), 0) * 100) / 100 },
-    }, boq.lines)
+      reconciliation: { lines: lines.length, importTotalExVat: boq.totalExVat, sumOfLineAmounts: Math.round(lines.reduce((a, l) => a + (l.amount ?? 0), 0) * 100) / 100 },
+    }, lines)
     bust()
     return { ok: true, data: res }
   } catch (e) {
@@ -316,28 +299,51 @@ export async function previewPriceFromLibraryAction(projectId: string, statistic
   }
 }
 
+export interface ShownRate { boqItemId: string; proposed: { supplyRate: number | null; installRate: number | null; rate: number | null } }
+
+const sameRates = (a: ShownRate['proposed'], b: ShownRate['proposed']) =>
+  (['supplyRate', 'installRate', 'rate'] as const).every(k => (a[k] === null ? null : Number(a[k]).toFixed(2)) === (b[k] === null ? null : Number(b[k]).toFixed(2)))
+
 /**
  * Write library rates onto the chosen BOQ lines. The proposals are recomputed
- * here, never taken from the browser; only lines of THIS project's current
- * import can be touched.
+ * here and must equal what the person was shown: if the library changed since
+ * the preview (a confirm or a retract), nothing is written. Only lines of THIS
+ * project's current import can be touched. The import is stamped so it can
+ * never be added back to the library as a contractor's prices.
  */
-export async function applyPriceFromLibraryAction(projectId: string, statistic: BudgetStatistic, boqItemIds: string[]): Promise<Result<{ updated: number }>> {
+export async function applyPriceFromLibraryAction(projectId: string, statistic: BudgetStatistic, shown: ShownRate[]): Promise<Result<{ updated: number }>> {
   if (statistic !== 'median' && statistic !== 'p75') return { ok: false, error: 'Statistic must be median or P75' }
-  if (!boqItemIds.length) return { ok: false, error: 'Choose at least one line' }
+  if (!shown.length) return { ok: false, error: 'Choose at least one line' }
+  let updated = 0
+  let ctx: { db: AnyClient; orgId: string } | null = null
   try {
     const r = await proposalsFor(projectId, statistic); if (!r.ok) return r
-    const want = new Set(boqItemIds)
-    const chosen = r.proposals.filter(p => want.has(p.boqItemId) && p.status === 'priced' && p.proposed)
-    if (chosen.length !== want.size) return { ok: false, error: 'Some chosen lines can no longer be priced from the library. Preview again.' }
-    const service = createServiceClient()
-    for (const p of chosen) {
-      const patch = p.proposed!.rate !== null ? { rate: p.proposed!.rate } : { supplyRate: p.proposed!.supplyRate, installRate: p.proposed!.installRate }
-      await boqService.updateItemRate(service as AnyClient, p.boqItemId, patch)
+    ctx = { db: r.pg.db, orgId: r.pg.orgId }
+    const now = new Map(r.proposals.filter(p => p.status === 'priced' && p.proposed).map(p => [p.boqItemId, p.proposed!]))
+    const changed = shown.filter(s => !now.has(s.boqItemId) || !sameRates(now.get(s.boqItemId)!, s.proposed))
+    if (changed.length) {
+      return { ok: false, error: `The library changed since the preview for ${changed.length} line(s). Preview again; nothing was written.` }
     }
-    await logRateAccess(r.pg.db, r.pg.orgId, 'price_from_library', projectId, { mode: 'apply', statistic, updated: chosen.length })
+    const service = createServiceClient()
+    // Stamp first: even a partial apply means this import holds library rates.
+    const { error: se } = await (service as AnyClient).schema('projects').from('boq_imports')
+      .update({ library_priced_at: new Date().toISOString() }).eq('id', r.boq.importId).eq('project_id', projectId)
+    if (se) throw new Error(se.message)
+    for (const s of shown) {
+      const p = now.get(s.boqItemId)!
+      const patch = p.rate !== null ? { rate: p.rate } : { supplyRate: p.supplyRate, installRate: p.installRate }
+      await boqService.updateItemRate(service as AnyClient, s.boqItemId, patch)
+      updated++
+    }
+    await logRateAccess(r.pg.db, r.pg.orgId, 'price_from_library', projectId, { mode: 'apply', statistic, updated })
     revalidatePath(`/projects/${projectId}/settings/rates`)
-    return { ok: true, data: { updated: chosen.length } }
+    return { ok: true, data: { updated } }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Applying rates failed' }
+    if (ctx && updated) {
+      await logRateAccess(ctx.db, ctx.orgId, 'price_from_library', projectId, { mode: 'apply', statistic, updated, partial: true })
+      revalidatePath(`/projects/${projectId}/settings/rates`)
+    }
+    const msg = e instanceof Error ? e.message : 'Applying rates failed'
+    return { ok: false, error: updated ? `${updated} of ${shown.length} line(s) were updated before an error: ${msg}` : msg }
   }
 }

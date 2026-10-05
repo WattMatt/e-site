@@ -137,7 +137,7 @@ describe('LibraryPricingPanel — apply', () => {
     fireEvent.click(confirm)
 
     await waitFor(() => expect(applyPriceFromLibraryAction).toHaveBeenCalledTimes(1))
-    expect(applyPriceFromLibraryAction).toHaveBeenCalledWith('p1', 'median', ['a'])
+    expect(applyPriceFromLibraryAction).toHaveBeenCalledWith('p1', 'median', [expect.objectContaining({ boqItemId: 'a', proposed: expect.any(Object) })])
     expect(await screen.findByText('Updated 1 line')).toBeTruthy()
     expect(refresh).toHaveBeenCalledTimes(1)
   })

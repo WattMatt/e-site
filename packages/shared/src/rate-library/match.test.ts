@@ -151,6 +151,22 @@ describe('matchLine — deterministic rules', () => {
     expect(r).toMatchObject({ kind: 'match', signature: 'cable_tray|m|component=straight|type=tray|width=300', assumed: ['component'] })
     expect(m(['CABLE TRAY'], '300 wide', 'No').kind).toBe('partial')
   })
+  it('a rule with nothing to check never auto-confirms', () => {
+    expect(m(['POWER POLES'], 'Power pole', 'No').kind).toBe('partial')
+    expect(m(['PHOTOCELL'], 'Supply, install and connect photocell switch', 'No').kind).toBe('partial')
+    expect(m(['POWERPOLE'], '3.4m Power pole', 'No')).toMatchObject({ kind: 'match', signature: 'power_pole|no|height=3.4' })
+  })
+  it('reads the conductor from the whole section path, not only the last heading', () => {
+    expect(m(['LV CABLES - ALUMINIUM', 'LAID IN GROUND'], '4C x 95mm cable', 'm'))
+      .toMatchObject({ signature: 'lv_cable|m|conductor=al|cores=4|install=ground|size=95', assumed: [] })
+  })
+  it('lists every defaulted socket attribute as assumed', () => {
+    const r = m(['POWERSKIRTING'], '16A Normal socket outlet', 'No')
+    expect(r).toMatchObject({ kind: 'match' })
+    expect(r.kind === 'match' && [...r.assumed].sort()).toEqual(['gang', 'pins', 'switching'])
+    const e = m(['APPLIANCES'], 'Double 16A, 3 pin unswitched socket outlet', 'No')
+    expect(e.kind === 'match' && e.assumed).toEqual([])
+  })
   it('unknown products are left unmatched, not guessed', () => {
     expect(m(['LIGHT FITTINGS'], 'Type HL1-MC428 Linear Hi Bay-120 W Led-4000K', 'No').kind).toBe('none')
   })

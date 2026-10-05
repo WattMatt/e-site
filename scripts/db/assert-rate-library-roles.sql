@@ -28,6 +28,8 @@ DECLARE
   v_obs    UUID := gen_random_uuid();
   v_new    UUID;
   v_lid    UUID := gen_random_uuid();
+  v_l2     UUID := gen_random_uuid();
+  v_l3     UUID := gen_random_uuid();
   v_res    JSONB;
   v_n      INT;
   v_by     UUID;
@@ -57,13 +59,17 @@ BEGIN
     VALUES (v_line, v_org, v_src, ARRAY['CONDUIT'], '20mm Ø', 'm', 5.15, 4.5, 'conduit | 20mm dia | m', 'auto_confirmed', v_item, 'rule');
   INSERT INTO public.rate_observations (id, organisation_id, rate_item_id, source_id, source_line_id, unit, supply_rate, install_rate, rate, contractor_name, project_id, province, priced_on)
     VALUES (v_obs, v_org, v_item, v_src, v_line, 'm', 5.15, 4.5, 9.65, 'Probe Electrical', v_proj, 'Gauteng', DATE '2026-06-25');
+  -- Two queued lines, worded differently, same contractor and same rate.
+  INSERT INTO public.rate_source_lines (id, organisation_id, source_id, section_path, description, unit, supply_rate, install_rate, group_key, match_status)
+    VALUES (v_l2, v_org, v_src, ARRAY['CONDUITS'], '20 mm PVC', 'm', 7, 3, 'g2', 'unmatched'),
+           (v_l3, v_org, v_src, ARRAY['PVC CONDUIT'], '20mm dia', 'm', 7, 3, 'g3', 'unmatched');
 
   -- ── 1. Owner: reads, inserts (attribution bound), never edits a fact ─────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO v_n FROM public.rate_observations;            INSERT INTO _r VALUES ('owner_reads_observations', v_n = 1);
   SELECT count(*) INTO v_n FROM public.rate_items;                    INSERT INTO _r VALUES ('owner_reads_only_own_org_items', v_n = 1);
-  SELECT count(*) INTO v_n FROM public.rate_source_lines;             INSERT INTO _r VALUES ('owner_reads_lines', v_n = 1);
+  SELECT count(*) INTO v_n FROM public.rate_source_lines;             INSERT INTO _r VALUES ('owner_reads_lines', v_n = 3);
   SELECT count(*) INTO v_n FROM public.rate_index_values WHERE series = 'statssa_cpi_headline';
   INSERT INTO _r VALUES ('owner_reads_cpi', v_n = 140);
   BEGIN
@@ -176,11 +182,40 @@ BEGIN
   END;
   SELECT count(*) INTO v_n FROM public.rate_sources WHERE source_ref = 'ingest-broken';
   INSERT INTO _r VALUES ('ingest_broken_payload_leaves_nothing', v_n = 0);
+  -- Confirm: one observation; the same rate from the same document again adds none.
+  v_res := public.rate_library_confirm_lines(v_org, ARRAY[v_l2], v_item, 'manual');
+  INSERT INTO _r VALUES ('confirm_adds_observation', (v_res->>'lines')::int = 1 AND (v_res->>'observations')::int = 1);
+  v_res := public.rate_library_confirm_lines(v_org, ARRAY[v_l3], v_item, 'manual');
+  INSERT INTO _r VALUES ('confirm_same_rate_twice_not_double_counted', (v_res->>'lines')::int = 1 AND (v_res->>'observations')::int = 0);
+  BEGIN
+    PERFORM public.rate_library_confirm_lines(v_org, ARRAY[v_l2, v_line], v_item, 'manual');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN serialization_failure THEN INSERT INTO _r VALUES ('confirm_lines_not_in_queue_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('confirm_lines_not_in_queue_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM public.rate_source_lines WHERE id = v_line AND match_status = 'rejected';
+  INSERT INTO _r VALUES ('refused_confirm_changed_nothing', v_n = 1);
+  -- Retract: the observation leaves the statistics and BOTH its lines go back to the queue.
+  SELECT id INTO v_new FROM public.rate_observations WHERE source_line_id = v_l2;
+  v_res := public.rate_library_void_observation(v_org, v_new, 'assigned to the wrong item');
+  INSERT INTO _r VALUES ('void_requeues_its_lines', (v_res->>'lines_requeued')::int = 2);
+  SELECT count(*) INTO v_n FROM public.rate_observations_active WHERE id = v_new;
+  INSERT INTO _r VALUES ('void_removes_from_active', v_n = 0);
+  BEGIN
+    UPDATE public.rate_items SET unit = 'no' WHERE id = v_item;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('item_unit_change_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('item_unit_change_REFUSED', false);
+  END;
   RESET ROLE;
 
   -- ── 2. Org-level project manager: reads the library, not the audit log ───
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
+  INSERT INTO public.rate_observations (organisation_id, rate_item_id, source_id, unit, rate, contractor_name, priced_on)
+    VALUES (v_org, v_item, v_src, 'm', 11, 'Probe Electrical', DATE '2026-06-25');
   SELECT count(*) INTO v_n FROM public.rate_items;                    INSERT INTO _r VALUES ('pm_reads_items', v_n = 2);  -- the fixture item + the one the owner's ingest added
   SELECT count(*) INTO v_n FROM public.rate_library_access_log;      INSERT INTO _r VALUES ('pm_cannot_read_access_log', v_n = 0);
   RESET ROLE;
@@ -240,6 +275,16 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('postgres_update_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('postgres_update_REFUSED', false);
+  END;
+
+  -- ── 6. A person who recorded rates can still be deleted; the facts stay ──
+  BEGIN
+    DELETE FROM auth.users WHERE id = v_pm;
+    SELECT count(*) INTO v_n FROM public.rate_observations WHERE rate = 11 AND created_by IS NULL AND organisation_id = v_org;
+    INSERT INTO _r VALUES ('deleting_a_user_keeps_their_observations', v_n = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('deleting_a_user_keeps_their_observations', false);
+    RAISE NOTICE 'user delete failed: %', SQLERRM;
   END;
 END $$;
 

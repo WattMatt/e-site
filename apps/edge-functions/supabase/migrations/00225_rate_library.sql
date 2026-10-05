@@ -48,6 +48,12 @@
 -- function: public.rate_observations_guard()
 -- function: public.rate_library_ingest(uuid,jsonb,jsonb,jsonb,jsonb)
 -- grant_absent: anon EXECUTE ON public.rate_library_ingest(uuid,jsonb,jsonb,jsonb,jsonb)
+-- function: public.rate_library_confirm_lines(uuid,uuid[],uuid,text)
+-- function: public.rate_library_void_observation(uuid,uuid,text)
+-- grant_absent: anon EXECUTE ON public.rate_library_confirm_lines(uuid,uuid[],uuid,text)
+-- grant_absent: anon EXECUTE ON public.rate_library_void_observation(uuid,uuid,text)
+-- column: projects.boq_imports.library_priced_at
+-- sql: (SELECT bool_and(confdeltype = 'n') FROM pg_constraint WHERE contype = 'f' AND confrelid = 'auth.users'::regclass AND conrelid IN ('public.rate_items'::regclass, 'public.rate_sources'::regclass, 'public.rate_source_lines'::regclass, 'public.rate_observations'::regclass, 'public.rate_library_access_log'::regclass))
 -- trigger: rate_observations_guard ON public.rate_observations
 -- trigger: rate_source_lines_guard ON public.rate_source_lines
 -- policy: rate_items_select ON public.rate_items PERMISSIVE
@@ -70,7 +76,7 @@
 -- sql: (SELECT reloptions::text LIKE '%security_invoker=true%' FROM pg_class WHERE oid = 'public.rate_observations_active'::regclass)
 -- grant_absent: anon EXECUTE ON public.rate_library_can_access(uuid)
 -- grant_absent: anon EXECUTE ON public.rate_library_is_admin(uuid)
--- sql: (SELECT bool_and(NOT p.prosecdef) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('rate_library_can_access', 'rate_library_is_admin', 'rate_library_bind', 'rate_source_lines_guard', 'rate_observations_guard', 'rate_library_ingest'))
+-- sql: (SELECT bool_and(NOT p.prosecdef) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('rate_library_can_access', 'rate_library_is_admin', 'rate_library_bind', 'rate_source_lines_guard', 'rate_observations_guard', 'rate_library_ingest', 'rate_library_confirm_lines', 'rate_library_void_observation'))
 -- behaviour: scripts/db/assert-rate-library-roles.sql — every row ok
 -- @verify:end
 
@@ -104,7 +110,7 @@ CREATE TABLE public.rate_items (
   attributes       jsonb NOT NULL DEFAULT '{}'::jsonb CONSTRAINT rate_items_attributes_object CHECK (jsonb_typeof(attributes) = 'object'),
   origin           text NOT NULL DEFAULT 'rule' CHECK (origin IN ('rule', 'manual')),
   is_active        boolean NOT NULL DEFAULT true,
-  created_by       uuid REFERENCES auth.users(id),
+  created_by       uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT rate_items_org_code_key UNIQUE (organisation_id, code),
@@ -127,7 +133,7 @@ CREATE TABLE public.rate_sources (
   source_file      text,
   total_ex_vat     numeric(16,2),
   reconciliation   jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(reconciliation) = 'object'),
-  imported_by      uuid REFERENCES auth.users(id),
+  imported_by      uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   imported_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT rate_sources_org_kind_ref_key UNIQUE (organisation_id, kind, source_ref),
   UNIQUE (organisation_id, id)
@@ -155,7 +161,7 @@ CREATE TABLE public.rate_source_lines (
   matched_item_id    uuid,
   match_method       text CHECK (match_method IN ('rule', 'manual', 'ai')),
   match_detail       jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(match_detail) = 'object'),
-  reviewed_by        uuid REFERENCES auth.users(id),
+  reviewed_by        uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   reviewed_at        timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   -- Same-org binding through composite keys: a line can never point at another org's source or item.
@@ -190,7 +196,7 @@ CREATE TABLE public.rate_observations (
   province         text,
   priced_on        date NOT NULL,
   note             text,
-  created_by       uuid REFERENCES auth.users(id),
+  created_by       uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT rate_observations_item_fk FOREIGN KEY (organisation_id, rate_item_id) REFERENCES public.rate_items(organisation_id, id),
   CONSTRAINT rate_observations_source_fk FOREIGN KEY (organisation_id, source_id) REFERENCES public.rate_sources(organisation_id, id),
@@ -215,7 +221,7 @@ CREATE TABLE public.rate_index_values (
 CREATE TABLE public.rate_library_access_log (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organisation_id  uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
-  user_id          uuid REFERENCES auth.users(id),
+  user_id          uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   action           text NOT NULL CHECK (action IN ('view_library', 'view_item', 'view_review', 'view_sources', 'export_budget', 'price_from_library')),
   target           text,
   detail           jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(detail) = 'object'),
@@ -242,10 +248,15 @@ BEGIN
     END CASE;
   END IF;
   IF TG_TABLE_NAME = 'rate_items' AND TG_OP = 'UPDATE' THEN
-    IF NEW.organisation_id <> OLD.organisation_id OR NEW.signature <> OLD.signature OR NEW.code <> OLD.code THEN
-      RAISE EXCEPTION 'rate_items: organisation, signature and code are immutable' USING ERRCODE = '42501';
+    -- The signature encodes the unit and attributes: changing either would
+    -- silently re-meaning every observation of the item.
+    IF NEW.organisation_id <> OLD.organisation_id OR NEW.signature <> OLD.signature OR NEW.code <> OLD.code
+       OR NEW.unit <> OLD.unit OR NEW.category <> OLD.category OR NEW.attributes <> OLD.attributes THEN
+      RAISE EXCEPTION 'rate_items: organisation, signature, code, unit, category and attributes are immutable' USING ERRCODE = '42501';
     END IF;
-    NEW.created_by := OLD.created_by; NEW.created_at := OLD.created_at; NEW.updated_at := now();
+    -- created_by may only become NULL (the auth.users ON DELETE SET NULL action).
+    IF NEW.created_by IS NOT NULL THEN NEW.created_by := OLD.created_by; END IF;
+    NEW.created_at := OLD.created_at; NEW.updated_at := now();
   END IF;
   RETURN NEW;
 END $$;
@@ -263,7 +274,16 @@ CREATE TRIGGER rate_source_lines_bind BEFORE UPDATE ON public.rate_source_lines 
 CREATE OR REPLACE FUNCTION public.rate_observations_guard()
 RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $$
 BEGIN
-  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'rate_observations are immutable: insert a correcting row with supersedes_id instead' USING ERRCODE = '42501';
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    -- The one permitted change: the auth.users ON DELETE SET NULL action
+    -- clearing created_by when that person is deleted. Every fact stays.
+    IF NEW.created_by IS NULL AND OLD.created_by IS NOT NULL
+       AND (to_jsonb(NEW) - 'created_by') = (to_jsonb(OLD) - 'created_by') THEN
+      RETURN NEW;
+    END IF;
     RAISE EXCEPTION 'rate_observations are immutable: insert a correcting row with supersedes_id instead' USING ERRCODE = '42501';
   END IF;
   -- INSERT: a superseding row stays in its organisation.
@@ -416,7 +436,88 @@ END $$;
 REVOKE ALL ON FUNCTION public.rate_library_ingest(uuid, jsonb, jsonb, jsonb, jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.rate_library_ingest(uuid, jsonb, jsonb, jsonb, jsonb) TO authenticated, service_role;
 
--- ── 8. Seed: Stats SA CPI headline (Dec 2024 = 100), P0141 CPIHistory Table B1 ──
+-- ── 8. Loop guard: a BOQ priced FROM the library must never feed it back ─────
+-- applyPriceFromLibraryAction stamps the import; adding a stamped import to the
+-- library is refused, so the library's own medians can never come back as a
+-- contractor's rates.
+ALTER TABLE projects.boq_imports ADD COLUMN IF NOT EXISTS library_priced_at timestamptz;
+COMMENT ON COLUMN projects.boq_imports.library_priced_at IS
+  'Set when rates from the rate library (00225) were applied to this import. Such an import is never added to the library.';
+
+-- ── 9. Confirm a review group atomically ────────────────────────────────────
+-- One transaction: lock the lines, refuse wholesale if any is no longer in the
+-- queue, mark them confirmed, and add one observation per (source, exact
+-- rates) — skipping any that already exists as an ACTIVE observation of the
+-- same item, so one contractor's rate is never counted twice.
+CREATE OR REPLACE FUNCTION public.rate_library_confirm_lines(p_org uuid, p_line_ids uuid[], p_item uuid, p_method text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE v_unit text; v_n int; v_obs int;
+BEGIN
+  IF p_method NOT IN ('manual', 'ai', 'rule') THEN RAISE EXCEPTION 'bad method' USING ERRCODE = '22023'; END IF;
+  SELECT i.unit INTO v_unit FROM public.rate_items i WHERE i.organisation_id = p_org AND i.id = p_item AND i.is_active;
+  IF v_unit IS NULL THEN RAISE EXCEPTION 'rate_library_confirm_lines: item not found' USING ERRCODE = 'P0002'; END IF;
+  PERFORM 1 FROM public.rate_source_lines l
+   WHERE l.organisation_id = p_org AND l.id = ANY (p_line_ids) AND l.match_status IN ('suggested', 'unmatched', 'rejected')
+   FOR UPDATE;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n <> cardinality(p_line_ids) THEN
+    RAISE EXCEPTION 'rate_library_confirm_lines: % of % lines are no longer in the queue', cardinality(p_line_ids) - v_n, cardinality(p_line_ids)
+      USING ERRCODE = '40001';
+  END IF;
+  UPDATE public.rate_source_lines l
+     SET match_status = 'confirmed', matched_item_id = p_item, suggested_item_id = NULL, match_method = p_method
+   WHERE l.organisation_id = p_org AND l.id = ANY (p_line_ids);
+  INSERT INTO public.rate_observations (organisation_id, rate_item_id, source_id, source_line_id, occurrences, unit,
+                                        supply_rate, install_rate, rate, contractor_name, project_id, project_label, province, priced_on)
+  SELECT p_org, p_item, g.source_id, g.first_line, g.occ, v_unit, g.supply_rate, g.install_rate, g.total,
+         s.contractor_name, s.project_id, s.project_label, s.province, s.priced_on
+    FROM (SELECT l.source_id, l.supply_rate, l.install_rate,
+                 round(COALESCE(NULLIF(l.rate, 0), COALESCE(l.supply_rate, 0) + COALESCE(l.install_rate, 0)), 4) AS total,
+                 count(*)::int AS occ, (array_agg(l.id ORDER BY l.created_at, l.id))[1] AS first_line
+            FROM public.rate_source_lines l
+           WHERE l.organisation_id = p_org AND l.id = ANY (p_line_ids)
+           GROUP BY 1, 2, 3, 4) g
+    JOIN public.rate_sources s ON s.id = g.source_id
+   WHERE g.total > 0
+     AND NOT EXISTS (SELECT 1 FROM public.rate_observations o
+                      WHERE o.organisation_id = p_org AND o.rate_item_id = p_item AND o.source_id = g.source_id AND o.kind = 'observation'
+                        AND o.supply_rate IS NOT DISTINCT FROM g.supply_rate AND o.install_rate IS NOT DISTINCT FROM g.install_rate
+                        AND o.rate = g.total
+                        AND NOT EXISTS (SELECT 1 FROM public.rate_observations n WHERE n.supersedes_id = o.id));
+  GET DIAGNOSTICS v_obs = ROW_COUNT;
+  RETURN jsonb_build_object('lines', v_n, 'observations', v_obs);
+END $$;
+REVOKE ALL ON FUNCTION public.rate_library_confirm_lines(uuid, uuid[], uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.rate_library_confirm_lines(uuid, uuid[], uuid, text) TO authenticated, service_role;
+
+-- ── 10. Retract an observation and send its lines back to the queue ─────────
+-- The void row removes the rate from every statistic; the lines it came from
+-- return to 'unmatched' so the rate can be assigned to the RIGHT item.
+CREATE OR REPLACE FUNCTION public.rate_library_void_observation(p_org uuid, p_observation uuid, p_note text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE o record; v_void uuid; v_lines int;
+BEGIN
+  IF p_note IS NULL OR length(btrim(p_note)) < 3 THEN RAISE EXCEPTION 'say why the observation is wrong' USING ERRCODE = '22023'; END IF;
+  SELECT * INTO o FROM public.rate_observations x WHERE x.organisation_id = p_org AND x.id = p_observation AND x.kind = 'observation';
+  IF NOT FOUND THEN RAISE EXCEPTION 'rate_library_void_observation: observation not found' USING ERRCODE = 'P0002'; END IF;
+  INSERT INTO public.rate_observations (organisation_id, kind, rate_item_id, source_id, supersedes_id, unit, contractor_name,
+                                        project_id, project_label, province, priced_on, note)
+  VALUES (p_org, 'void', o.rate_item_id, o.source_id, o.id, o.unit, o.contractor_name, o.project_id, o.project_label, o.province,
+          o.priced_on, left(btrim(p_note), 500))
+  RETURNING id INTO v_void;
+  UPDATE public.rate_source_lines l
+     SET match_status = 'unmatched', matched_item_id = NULL, suggested_item_id = NULL, match_method = NULL
+   WHERE l.organisation_id = p_org AND l.source_id = o.source_id AND l.matched_item_id = o.rate_item_id
+     AND l.match_status IN ('auto_confirmed', 'confirmed')
+     AND l.supply_rate IS NOT DISTINCT FROM o.supply_rate AND l.install_rate IS NOT DISTINCT FROM o.install_rate
+     AND round(COALESCE(NULLIF(l.rate, 0), COALESCE(l.supply_rate, 0) + COALESCE(l.install_rate, 0)), 4) = o.rate;
+  GET DIAGNOSTICS v_lines = ROW_COUNT;
+  RETURN jsonb_build_object('void_id', v_void, 'lines_requeued', v_lines);
+END $$;
+REVOKE ALL ON FUNCTION public.rate_library_void_observation(uuid, uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.rate_library_void_observation(uuid, uuid, text) TO authenticated, service_role;
+
+-- ── 11. Seed: Stats SA CPI headline (Dec 2024 = 100), P0141 CPIHistory Table B1 ──
 INSERT INTO public.rate_index_values (series, month, value, source)
 SELECT 'statssa_cpi_headline', make_date(t.y, u.m::int, 1), u.v,
        'Stats SA P0141 CPIHistory.pdf Table B1 (Dec 2024=100), retrieved 2026-10-05'

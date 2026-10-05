@@ -36,6 +36,7 @@ import { createClient } from '@supabase/supabase-js'
 import { parsePricedSheets, planIngest, splitExtractedSheetText, type IngestLine } from '@esite/shared'
 import { ingestSource, loadKnownItems, type SourceMeta } from '../src/lib/rate-library/data'
 import { loadProjectBoq } from '../src/lib/rate-library/project-boq'
+import { SA_PROVINCES } from '../src/lib/rate-library/format'
 
 interface ProjectBoqSource { type: 'project_boq'; projectId: string; contractorName: string; pricedOn?: string; pricedOnBasis?: SourceMeta['pricedOnBasis'] }
 interface SheetTextSource {
@@ -64,6 +65,9 @@ async function prepare(s: ProjectBoqSource | SheetTextSource): Promise<{ meta: S
     if (p.organisation_id !== manifest.organisationId) throw new Error(`project ${p.name} is not in organisation ${manifest.organisationId}`)
     const boq = await loadProjectBoq(db, s.projectId)
     if (!boq) throw new Error(`project ${p.name} has no current BOQ import`)
+    if (boq.libraryPricedAt) throw new Error(`project ${p.name}: library rates were applied to this import on ${boq.libraryPricedAt}; it is not a contractor's prices`)
+    // Variation items carry an approved value change, not a unit rate.
+    boq.lines = boq.lines.filter(l => l.origin !== 'variation')
     const sumLines = round2(boq.lines.reduce((a, l) => a + (l.amount ?? 0), 0))
     const report = [
       `  lines in current import: ${boq.lines.length}`,
@@ -75,7 +79,7 @@ async function prepare(s: ProjectBoqSource | SheetTextSource): Promise<{ meta: S
       ok: true, report, lines: boq.lines,
       meta: {
         kind: 'boq_import', sourceRef: boq.importId, contractorName: s.contractorName, projectId: p.id, projectLabel: p.name,
-        province: p.province ?? null, pricedOn: s.pricedOn ?? boq.importedAt.slice(0, 10), pricedOnBasis: s.pricedOnBasis ?? 'import_date',
+        province: SA_PROVINCES.includes((p.province ?? '').trim() as (typeof SA_PROVINCES)[number]) ? p.province!.trim() : null, pricedOn: s.pricedOn ?? boq.importedAt.slice(0, 10), pricedOnBasis: s.pricedOnBasis ?? 'import_date',
         sourceFile: boq.sourceFilename, totalExVat: boq.totalExVat,
         reconciliation: { lines: boq.lines.length, sumOfLineAmounts: sumLines, importTotalExVat: boq.totalExVat },
       },

@@ -211,10 +211,11 @@ export function LibraryPricingPanel({ projectId }: { projectId: string }) {
     }
     disarm()
     setError(null)
-    const ids = pricedRows.filter((r) => checked.has(r.boqItemId)).map((r) => r.boqItemId)
+    // Send back exactly what was shown: the server refuses if the library has changed since.
+    const shown = pricedRows.filter((r) => checked.has(r.boqItemId)).map((r) => ({ boqItemId: r.boqItemId, proposed: r.proposed! }))
     const stat = preview.statistic
     startApply(async () => {
-      const res = await applyPriceFromLibraryAction(projectId, stat, ids)
+      const res = await applyPriceFromLibraryAction(projectId, stat, shown)
       if (!res.ok) {
         setError(res.error)
         return

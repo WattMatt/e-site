@@ -71,13 +71,17 @@ describe('RatesTab — populated state', () => {
     expect(screen.queryByRole('button', { name: /re-import/i })).toBeNull()
   })
 
-  it('offers "Price from library" collapsed, only when canEdit', () => {
-    const { unmount } = render(<RatesTab projectId="p1" canEdit initial={data} />)
+  it('offers "Price from library" collapsed, only when canEdit AND the org role can use the library', () => {
+    const first = render(<RatesTab projectId="p1" canEdit libraryEnabled initial={data} />)
     expect(screen.getByRole('button', { name: 'Price from library' })).toBeTruthy()
     // Collapsed: the preview controls are not on the page until opened.
     expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull()
-    unmount()
-    render(<RatesTab projectId="p1" canEdit={false} initial={data} />)
+    first.unmount()
+    // A project-promoted PM (canEdit, but no org-level library access) never sees it.
+    const second = render(<RatesTab projectId="p1" canEdit initial={data} />)
+    expect(screen.queryByRole('button', { name: 'Price from library' })).toBeNull()
+    second.unmount()
+    render(<RatesTab projectId="p1" canEdit={false} libraryEnabled initial={data} />)
     expect(screen.queryByRole('button', { name: 'Price from library' })).toBeNull()
   })
 

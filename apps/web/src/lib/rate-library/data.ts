@@ -169,12 +169,19 @@ export async function loadItemDetail(client: AnyClient, organisationId: string, 
   const obs = applyFilters(obsAll, f)
   const sourceIds = [...new Set(obs.map(o => o.source_id))]
   const lineIds = obs.map(o => o.source_line_id).filter((x): x is string => !!x)
-  const [sources, lines] = await Promise.all([
-    sourceIds.length ? client.from('rate_sources').select('*').in('id', sourceIds) : { data: [] },
-    lineIds.length ? client.from('rate_source_lines').select('*').in('id', lineIds) : { data: [] },
-  ])
-  const sMap = new Map<string, SourceRow>((sources.data ?? []).map((s: SourceRow) => [s.id, s]))
-  const lMap = new Map<string, LineRow>((lines.data ?? []).map((l: LineRow) => [l.id, l]))
+  // Ids go in the URL: read them in chunks so a long list cannot overflow it.
+  const byIds = async <T,>(table: string, ids: string[]): Promise<T[]> => {
+    const out: T[] = []
+    for (let i = 0; i < ids.length; i += 150) {
+      const { data, error } = await client.from(table).select('*').in('id', ids.slice(i, i + 150))
+      if (error) throw new Error(`${table}: ${error.message}`)
+      out.push(...(data ?? []))
+    }
+    return out
+  }
+  const [sources, lines] = await Promise.all([byIds<SourceRow>('rate_sources', sourceIds), byIds<LineRow>('rate_source_lines', lineIds)])
+  const sMap = new Map<string, SourceRow>(sources.map(s => [s.id, s]))
+  const lMap = new Map<string, LineRow>(lines.map(l => [l.id, l]))
   const provinces = [...new Set(obs.map(o => o.province ?? 'Unspecified'))].sort()
   return {
     summary: summarise(item, obs, cpi),

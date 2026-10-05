@@ -1,5 +1,5 @@
 {
- "_about": "Hand-labelled sample of auto-matched BOQ lines (labelled by the implementing agent on 2026-10-05, not by the owner). Headings, descriptions and units only: no rates, no contractor names. tuning = 137 lines drawn first (seed 20261005) and used to fix rules; holdout = 100 distinct texts drawn afterwards (seed 777) from texts not in the tuning set. firstPassCorrect records whether the matcher was right BEFORE any fix found by that set. split = which rate columns the original line priced (an input, kept because scope depends on it).",
+ "_about": "Hand-labelled sample of auto-matched BOQ lines (labelled by the implementing agent on 2026-10-05, not by the owner). Headings, descriptions and units only: no rates, no contractor names. tuning = 137 lines drawn first (seed 20261005) and used to fix rules; holdout = 100 distinct texts drawn afterwards (seed 777) from texts not in the tuning set. firstPassCorrect records whether the matcher was right BEFORE any fix found by that set. split = which rate columns the original line priced (an input, kept because scope depends on it). 2026-10-05 review: a rule with no required attribute no longer auto-confirms (bare \"Power pole\" → review queue); its expected label became null. firstPassCorrect is unchanged — it records the matcher as it was when measured.",
  "_measured": {
   "tuning": {
    "n": 137,
@@ -360,7 +360,7 @@
    "heading": "POWER POLES",
    "description": "Power pole",
    "unit": "No",
-   "expected": "power_pole|no",
+   "expected": null,
    "firstPassCorrect": true,
    "split": "both"
   },

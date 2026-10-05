@@ -43,6 +43,8 @@ export interface RatesTabData {
 interface Props {
   projectId: string
   canEdit: boolean
+  /** The caller's ORG role can use the rate library (a project-promoted PM cannot). */
+  libraryEnabled?: boolean
   initial: RatesTabData | null
   /**
    * Approved variation qty-deltas by boq_item_id (from
@@ -53,7 +55,7 @@ interface Props {
   adjustments?: Record<string, number[]>
 }
 
-export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
+export function RatesTab({ projectId, canEdit, initial, adjustments, libraryEnabled = false }: Props) {
   const [importing, setImporting] = useState(false)
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null)
   // Local item copy so inline rate edits can recompute rollups optimistically.
@@ -170,7 +172,7 @@ export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
         )}
       </div>
 
-      {canEdit && <LibraryPricingPanel projectId={projectId} />}
+      {canEdit && libraryEnabled && <LibraryPricingPanel projectId={projectId} />}
 
       {selectedBill ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

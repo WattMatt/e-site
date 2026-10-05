@@ -15,6 +15,8 @@ export interface ProjectBoq {
   sourceFilename: string | null
   importedAt: string
   totalExVat: number | null
+  /** Set when library rates were applied: this import must never feed the library. */
+  libraryPricedAt: string | null
   lines: (IngestLine & { boqItemId: string; origin: string | null; rateModel: string })[]
 }
 
@@ -33,7 +35,7 @@ async function all<T>(build: (a: number, b: number) => PromiseLike<{ data: T[] |
 export async function loadProjectBoq(service: AnyClient, projectId: string): Promise<ProjectBoq | null> {
   const db = service.schema('projects')
   const { data: imp, error } = await db.from('boq_imports')
-    .select('id, source_filename, imported_at, total_ex_vat').eq('project_id', projectId).eq('is_current', true).maybeSingle()
+    .select('id, source_filename, imported_at, total_ex_vat, library_priced_at').eq('project_id', projectId).eq('is_current', true).maybeSingle()
   if (error) throw new Error(error.message)
   if (!imp) return null
 
@@ -58,7 +60,7 @@ export async function loadProjectBoq(service: AnyClient, projectId: string): Pro
   }
   const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
   return {
-    importId: imp.id, sourceFilename: imp.source_filename ?? null, importedAt: imp.imported_at, totalExVat: num(imp.total_ex_vat),
+    importId: imp.id, sourceFilename: imp.source_filename ?? null, importedAt: imp.imported_at, totalExVat: num(imp.total_ex_vat), libraryPricedAt: imp.library_priced_at ?? null,
     lines: items.map(it => ({
       boqItemId: String(it.id), origin: (it.origin as string) ?? null, rateModel: String(it.rate_model),
       sheet: null, rowRef: `boq_item:${it.id}`, code: (it.code as string) ?? null, sectionPath: pathOf(String(it.section_id)),
