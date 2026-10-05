@@ -1648,7 +1648,8 @@ body {
   table.table-cards,
   table.table-cards tbody { display: block; width: 100%; }
   table.table-cards thead { display: none; }
-  table.table-cards tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--c-border); }
+  /* Inline row borders differ per table; one divider per card on phones. */
+  table.table-cards tr { display: block; padding: 10px 0; border-top: none !important; border-bottom: 1px solid var(--c-border) !important; }
   table.table-cards td {
     display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
     padding: 4px 16px !important; border: none !important;
@@ -1660,27 +1661,31 @@ body {
     font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--c-text-dim);
   }
-  table.table-cards td[data-primary] { display: block; text-align: left !important; font-size: 15px; font-weight: 600; padding-bottom: 6px !important; }
+  table.table-cards td[data-primary] { display: block; text-align: left !important; font-size: 15px !important; font-weight: 600; padding-bottom: 6px !important; }
   table.table-cards td[data-actions] { justify-content: flex-end; gap: 8px; padding-top: 8px !important; }
-  table.table-cards td[data-actions] > * { min-height: 44px; display: inline-flex; align-items: center; }
+  table.table-cards td[data-actions] :is(a, button) { min-height: 44px; display: inline-flex; align-items: center; padding-left: 10px; padding-right: 10px; }
+  table.table-cards td[data-actions]:empty { display: none; }
 
   /* 16 px text so iOS does not zoom the page when a field gets focus;
-     44 px controls so a gloved thumb can hit them. */
-  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=hidden]),
-  select,
-  textarea { font-size: 16px !important; }
-  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=hidden]),
-  select { min-height: 44px; }
+     44 px so a gloved thumb can hit it. Form fields only: :where() keeps the
+     selector weak, and cell editors (tables), toolbars, colour swatches and
+     anything marked .compact-field keep their compact size. */
+  :where(input:not([type=checkbox], [type=radio], [type=file], [type=range], [type=hidden], [type=color]), select, textarea):not(td *, th *, [role="toolbar"] *, .compact-field) {
+    font-size: 16px !important;
+  }
+  :where(input:not([type=checkbox], [type=radio], [type=file], [type=range], [type=hidden], [type=color]), select):not(td *, th *, [role="toolbar"] *, .compact-field) {
+    min-height: 44px;
+  }
   /* A native select sizes itself to its longest option; never wider than its column. */
   select { max-width: 100%; }
-  .btn-primary-amber, .filter-tab, .link-button { min-height: 44px; }
+  .btn-primary-amber, .filter-tab { min-height: 44px; }
   .minimal-legal-nav a { display: inline-flex; align-items: center; min-height: 44px; }
   .portal-header-brand { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
 
   /* Form actions stay on screen above the tab bar while the form scrolls. */
   .sticky-actions {
     position: sticky;
-    bottom: calc(64px + env(safe-area-inset-bottom));
+    bottom: calc(56px + env(safe-area-inset-bottom)); /* flush with the tab bar */
     z-index: 10;
     margin: 0 -16px;
     padding: 12px 16px;
@@ -1690,13 +1695,30 @@ body {
 }
 
 /* Layouts that need a desktop's width (e.g. the inspection capture form's
-   three fixed columns, ~900 px) stack on tablets beside the sidebar too. */
+   three fixed columns, ~900 px) stack on tablets beside the sidebar too.
+   Columns that were sticky rails must stop sticking once stacked, or they
+   pin over the content scrolling beneath them. */
 @media screen and (max-width: 1023.98px) {
   .stack-below-lg { grid-template-columns: minmax(0, 1fr) !important; }
+  .stack-below-lg > :is(nav, aside) { position: static !important; }
 }
 
-/* A small control (e.g. the 20 px photo-delete ×) keeps its quiet look but
-   gets a ≥44 px hit area on touch screens (roadmap §09(g)). */
-@media (pointer: coarse) {
-  .touch-hit::after { content: ''; position: absolute; inset: -12px; }
+/* Phones: keep a focused field clear of the sticky actions + tab bar. */
+@media screen and (max-width: 767.98px) {
+  html { scroll-padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
 }
+
+/* Photo source picker (components/ui/PhotoSourcePicker.tsx). */
+.photo-source-btn {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 16px;
+  border: 1px solid var(--c-border); border-radius: 8px;
+  background: var(--c-panel); color: var(--c-text);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.photo-source-btn[aria-disabled] { opacity: 0.5; cursor: not-allowed; }
+.photo-source-input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: inherit; }
+/* A mouse-driven screen has no rear camera to open; the library control covers it. */
+@media (pointer: fine) { .photo-take { display: none; } }
+

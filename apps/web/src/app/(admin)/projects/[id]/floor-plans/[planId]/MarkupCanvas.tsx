@@ -1852,6 +1852,7 @@ export function MarkupCanvas({
               </ToolbarButton>
               {pixelsPerMeter ? (
                 <select
+                  className="compact-field"
                   value={gridSpacingM}
                   onChange={(e) => setGridSpacingM(Number(e.target.value))}
                   title="Grid spacing (metres) — uses this drawing's calibration"

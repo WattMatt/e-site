@@ -51,8 +51,11 @@ describe('table-cards', () => {
     const body = src.slice(src.indexOf('table-cards'))
     const cells = [...body.matchAll(/<(td|Td)\b([^>]*)>/g)]
     expect(cells.length).toBeGreaterThan(0)
-    for (const [tag, , attrs] of cells) {
-      expect(/\bdata-label=|\bdata-primary\b|\bdata-actions\b|\blabel=|\bprimary\b|\bactions\b/.test(attrs), tag).toBe(true)
+    for (const [tag, kind, attrs] of cells) {
+      const ok = kind === 'td'
+        ? /(?:^|\s)data-(?:label=|primary(?=[\s/>]|$)|actions(?=[\s/>]|$))/.test(attrs)
+        : /(?:^|\s)(?:label="|primary(?=[\s/>]|$)|actions(?=[\s/>]|$))/.test(attrs)
+      expect(ok, tag).toBe(true)
     }
     expect(body).toMatch(/data-primary|\bprimary\b/)
   })
@@ -68,7 +71,7 @@ describe('other phone patterns', () => {
     for (const cls of ['stack-on-phone', 'sticky-actions']) {
       const used = files.some((f) => new RegExp(`className="[^"]*\\b${cls}\\b`).test(readFileSync(f, 'utf8')))
       expect(used, `${cls} used`).toBe(true)
-      expect(phoneCss, `${cls} defined`).toContain(`.${cls}`)
+      expect(phoneCss, `${cls} defined`).toMatch(new RegExp(`\\.${cls}\\s*\\{`))
     }
     expect(phoneCss).toMatch(/\.stack-on-phone\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important;/)
   })
@@ -76,40 +79,53 @@ describe('other phone patterns', () => {
   it('stack-below-lg (tablet-width stacking) is defined for every width up to 1024 px', () => {
     expect(files.some((f) => /className="[^"]*\bstack-below-lg\b/.test(readFileSync(f, 'utf8')))).toBe(true)
     expect(css).toMatch(/@media screen and \(max-width: 1023\.98px\)\s*\{\s*\.stack-below-lg\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important;/)
+    // Sticky rails stop sticking once stacked, or they pin over the content below them.
+    expect(css).toMatch(/\.stack-below-lg > :is\(nav, aside\)\s*\{\s*position:\s*static !important;/)
   })
 
   it('caps native selects at their column width on phones', () => {
     expect(phoneCss).toMatch(/select\s*\{\s*max-width:\s*100%;/)
   })
 
-  it('keeps form fields at 16 px on phones so iOS does not zoom on focus', () => {
-    expect(phoneCss).toMatch(/textarea\s*\{\s*font-size:\s*16px !important;/)
+  it('keeps form fields at 16 px on phones so iOS does not zoom on focus, but not cell editors or toolbars', () => {
+    const rule = phoneCss.match(/:where\(input[^{]*\{\s*font-size:\s*16px !important;/)?.[0] ?? ''
+    expect(rule).toContain('select')
+    expect(rule).toContain('textarea')
+    expect(rule).toMatch(/:not\(td \*, th \*, \[role="toolbar"\] \*, \.compact-field\)/)
+    expect(rule).toContain('[type=color]')
+  })
+
+  it('never puts a sticky action bar inside a .data-panel form (its overflow makes the bar stick to the form, not the screen)', () => {
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+      if (!/className="[^"]*\bsticky-actions\b/.test(src)) continue
+      expect(/<form[^>]*className="[^"]*\bdata-panel\b/.test(src), path.relative(SRC, f)).toBe(false)
+    }
   })
 
   it('panels scroll sideways on phones instead of clipping what does not fit', () => {
     expect(phoneCss).toMatch(/\.data-panel\s*\{\s*overflow-x:\s*auto;/)
   })
 
-  it('touch-hit enlarges the hit area on touch screens, and is only used on positioned controls', () => {
-    expect(css).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.touch-hit::after\s*\{[^}]*inset:\s*-12px/)
+  it('sizes signature canvases to their on-screen box (no fixed pixel width that CSS would scale)', () => {
     for (const f of files) {
       const src = readFileSync(f, 'utf8')
-      for (const m of src.matchAll(/className="touch-hit"/g)) {
-        // The element's own props (handlers contain '=>', so no tag-end search).
-        expect(src.slice(m.index, m.index! + 1500), path.relative(SRC, f)).toMatch(/position:\s*'absolute'/)
-      }
+      if (!src.includes('<SignatureCanvas')) continue
+      const props = src.slice(src.indexOf('canvasProps={{'), src.indexOf('canvasProps={{') + 300)
+      expect(props, path.relative(SRC, f)).not.toMatch(/^\s*width:\s*\d+,/m)
     }
   })
 
-  it('opens the rear camera directly on the three snag evidence inputs', () => {
+  it('every snag evidence input offers both the camera and the library (PhotoSourcePicker)', () => {
     for (const rel of [
       'app/(admin)/projects/[id]/snags/new/page.tsx',
       'app/(admin)/snags/[id]/SnagPhotoUploader.tsx',
       'app/(admin)/projects/[id]/snags/visits/[visitId]/VisitDetail.tsx',
     ]) {
       const src = readFileSync(path.join(SRC, rel), 'utf8')
-      const input = src.slice(src.indexOf('type="file"'), src.indexOf('type="file"') + 300)
-      expect(input, rel).toContain('capture="environment"')
+      expect(src, rel).toContain('<PhotoSourcePicker')
+      // No bare file input left beside it: camera-only would drop the library, library-only buries the camera.
+      expect(src, rel).not.toContain('type="file"')
     }
   })
 })

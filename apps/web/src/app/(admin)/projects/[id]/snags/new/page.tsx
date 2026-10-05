@@ -1,5 +1,6 @@
 'use client'
 
+import { PhotoSourcePicker, addPhotos } from '@/components/ui/PhotoSourcePicker'
 import { use, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
@@ -204,22 +205,7 @@ export default function NewSnagPage({ params }: Props) {
             )}
           </div>
           <div style={{ padding: '16px 18px' }}>
-            <label
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-                padding: '28px 18px', border: '1px dashed var(--c-border)', borderRadius: 8,
-                background: 'var(--c-base)', cursor: 'pointer', transition: 'border-color 0.15s',
-              }}
-            >
-              <input
-                type="file" accept="image/*" capture="environment" multiple style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
-                onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}
-              />
-              <span style={{ fontSize: 20 }} aria-hidden="true">📷</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
-                Click to select photos
-              </span>
-            </label>
+            <PhotoSourcePicker accept="image/*" onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
             {photoFiles.length > 0 && (
               <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoFiles.map((f, i) => (

@@ -151,12 +151,14 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
                     </span>
                   </td>
                   <td data-label="Template" style={{ padding: '10px 14px', color: 'var(--c-text-mid)' }}>
-                    {i.template?.name ?? '—'}
-                    {i.template?.deliverable_type && (
-                      <Badge variant={i.template.deliverable_type === 'coc' ? 'warning' : 'info'} className="ml-1">
-                        {i.template.deliverable_type.replace(/_/g, ' ')}
-                      </Badge>
-                    )}
+                    <span>
+                      {i.template?.name ?? '—'}
+                      {i.template?.deliverable_type && (
+                        <Badge variant={i.template.deliverable_type === 'coc' ? 'warning' : 'info'} className="ml-1">
+                          {i.template.deliverable_type.replace(/_/g, ' ')}
+                        </Badge>
+                      )}
+                    </span>
                   </td>
                   <td data-label="Status" style={{ padding: '10px 14px' }}>
                     <Badge variant={STATUS_VARIANT[i.status] ?? 'default'}>{i.status.replace(/_/g, ' ')}</Badge>
@@ -164,7 +166,7 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
                   <td data-label="CoC #" style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-mid)' }}>
                     {i.coc_number ?? '—'}
                   </td>
-                  <td data-label="Verifier" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--c-text-mid)', overflowWrap: 'anywhere' }}>
+                  <td data-label="Verifier" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--c-text-mid)' }}>
                     {i.verifier?.email ?? '—'}
                   </td>
                   <td data-label="Scheduled" style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>

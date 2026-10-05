@@ -74,7 +74,6 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
           {!readOnly && (
             <button
               type="button"
-              className="touch-hit"
               onClick={(e) => {
                 e.stopPropagation()
                 if (confirmDeleteId === p.id) {

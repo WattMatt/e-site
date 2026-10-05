@@ -123,7 +123,6 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
             {canEdit && (
               <button
                 type="button"
-                className="touch-hit"
                 onClick={() => onDelete(att)}
                 disabled={busy}
                 aria-label={armed === att.id ? `Confirm delete ${att.file_name}` : `Delete ${att.file_name}`}
