@@ -821,20 +821,22 @@ SELECT set_config('request.jwt.claims',
 SET LOCAL ROLE authenticated;
 
 DO $$
-DECLARE c record; v_theirs2 uuid; n int;
+DECLARE c record; v_theirs2 uuid; n int; v_path text;
 BEGIN
   SELECT * INTO c FROM _cv;
   SELECT id INTO v_theirs2 FROM _seed WHERE label = 'theirs2';
-  -- 22a. The precondition that makes this assertion able to fail: access TRUE
-  --      and role NULL. The day 00106 checks is_active, access reads FALSE and
-  --      this block stops exercising the NULL-role path — drop it then, do not
-  --      leave it passing for a new reason.
-  IF NOT public.user_has_project_access(c.project_id) THEN
-    RAISE EXCEPTION 'user_has_project_access() is FALSE for a deactivated member — 00106 now checks is_active and 22 no longer exercises the NULL-role path; drop it';
-  END IF;
+  -- 22a. Which platform state this block is exercising. Before 00197
+  --      (PR #185) user_has_project_access() ignores is_active, so a
+  --      deactivated member has access TRUE and role NULL and 22b/22c prove
+  --      the spine's fail-closed COALESCE. After 00197 access reads FALSE and
+  --      22b/22c prove the platform helper excludes them. Both states are
+  --      legitimate; a deactivated member with a NON-NULL effective role is not.
   IF public.user_effective_project_role(c.project_id, auth.uid()) IS NOT NULL THEN
-    RAISE EXCEPTION 'a deactivated member still has effective role % — 22 no longer exercises the NULL-role path', public.user_effective_project_role(c.project_id, auth.uid());
+    RAISE EXCEPTION 'a deactivated member still has effective role % — the fixture did not deactivate', public.user_effective_project_role(c.project_id, auth.uid());
   END IF;
+  v_path := CASE WHEN public.user_has_project_access(c.project_id)
+                 THEN 'access TRUE / role NULL (pre-00197): the spine COALESCE is the gate'
+                 ELSE 'access FALSE (00197 applied): the platform helper is the gate' END;
   -- 22b. A project-wide item they neither hold nor watch is invisible...
   IF EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_theirs2) THEN
     RAISE EXCEPTION 'a DEACTIVATED client_viewer can see a project-wide work item — a NULL effective role is being read as "not a client viewer"';
@@ -848,7 +850,7 @@ BEGIN
     RAISE EXCEPTION 'user_can_read_work_item() admits a DEACTIVATED client_viewer to a project-wide item';
   END IF;
 
-  RAISE NOTICE 'work-item-rls (deactivated client_viewer): 22 passed';
+  RAISE NOTICE 'work-item-rls (deactivated client_viewer): 22 passed — %', v_path;
 END $$;
 
 RESET ROLE;
