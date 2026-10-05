@@ -76,3 +76,7 @@ export * from './solar'
 // Tariff library core — canonical tariff model, validators, YoY diff and the
 // bill engine (docs/solar/02 §5, 03 §4). Pure; safe from the barrel.
 export * from './tariffs'
+
+// Rate library (E6) — BOQ line matcher, catalogue naming, rate statistics, CPI
+// escalation and the budget CSV. Pure; safe from the barrel.
+export * from './rate-library'
