@@ -19,6 +19,7 @@ import { z } from 'zod'
 import type { Database } from '@esite/db'
 import { rateLimit } from '@/lib/rate-limit'
 import { notifyDiaryEntryCreated } from '@/lib/diary-email'
+import { requireProjectAccess } from '@/lib/auth/require-project-access'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -83,6 +84,15 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
   if (memErr) return NextResponse.json({ error: 'Failed to verify membership' }, { status: 500 })
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  // Site scope: org membership is not enough — the caller must have access to
+  // the entry's project. Checked AS the caller (their JWT), not the service key.
+  const asCaller = createSupabaseClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+  const access = await requireProjectAccess(asCaller, entry.project_id)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
   // Reuse the web notify path (bell + full-entry email). Best-effort/never throws.
   await notifyDiaryEntryCreated({

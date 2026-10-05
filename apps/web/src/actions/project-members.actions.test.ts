@@ -4,6 +4,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const requireRoleMock = vi.fn()
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
+// Site scope gate: allow by default (vi.fn() returns undefined); a test overrides it to deny.
+const { projectAccessMock } = vi.hoisted(() => ({ projectAccessMock: vi.fn() }))
+vi.mock('@/lib/auth/require-project-access', () => ({
+  requireProjectAccess: async (...a: unknown[]) => (await projectAccessMock(...a)) ?? { ok: true },
+}))
 
 const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
@@ -291,6 +296,20 @@ describe('addProjectMember', () => {
     const result = await addProjectMember('p-1', 'u-1', 'contractor')
 
     expect(result).toEqual({ error: 'Forbidden' })
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses an org writer who has no access to this project (site scope)', async () => {
+    createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1' }))
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
+    projectAccessMock.mockResolvedValueOnce({ ok: false, status: 404, error: 'Project not found' })
+    const { addProjectMember } = await import('./project-members.actions')
+
+    const result = await addProjectMember('p-1', 'u-1', 'contractor')
+
+    expect(result).toEqual({ error: 'Project not found' })
+    expect(projectAccessMock).toHaveBeenCalledWith(expect.anything(), 'p-1')
+    expect(createServiceClientMock).not.toHaveBeenCalled()
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 

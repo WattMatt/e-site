@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
+import { requireProjectAccess } from '@/lib/auth/require-project-access'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,6 +93,8 @@ export async function listProjectMembers(
     ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'],
   )
   if (!guard.ok) return { error: guard.error }
+  const access = await requireProjectAccess(supabase, projectId)
+  if (!access.ok) return { error: access.error }
 
   // Fetch project_members rows. The RLS SELECT policy lets any org member read all
   // rows for a project they belong to, so this returns every member. We do NOT join
@@ -179,6 +182,8 @@ export async function addProjectMember(
 
   const guard = await requireRole(supabase, project.organisation_id, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+  const access = await requireProjectAccess(supabase, projectId)
+  if (!access.ok) return { error: access.error }
 
   const { data, error } = await (supabase as any)
     .schema('projects')
@@ -246,6 +251,8 @@ export async function updateProjectMemberRole(
 
   const guard = await requireRole(supabase, resolved.organisationId, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+  const access = await requireProjectAccess(supabase, resolved.projectId)
+  if (!access.ok) return { error: access.error }
 
   const { data, error } = await (supabase as any)
     .schema('projects')
@@ -301,6 +308,8 @@ export async function removeProjectMember(
 
   const guard = await requireRole(supabase, resolved.organisationId, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+  const access = await requireProjectAccess(supabase, resolved.projectId)
+  if (!access.ok) return { error: access.error }
 
   const { error } = await (supabase as any)
     .schema('projects')
@@ -333,6 +342,8 @@ export async function listAvailableOrgMembers(
 
   const guard = await requireRole(supabase, project.organisation_id, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+  const access = await requireProjectAccess(supabase, projectId)
+  if (!access.ok) return { error: access.error }
 
   // Fetch user_ids already in project_members for this project
   const { data: existingRows } = await (supabase as any)

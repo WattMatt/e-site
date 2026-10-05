@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Env must be set before route.ts evaluates its module-level consts. The import
 // is hoisted above plain statements, so set it inside vi.hoisted (runs first).
-const { getUserMock, notifyMock, rateLimitMock, entryResult, memResult } = vi.hoisted(() => {
+const { getUserMock, notifyMock, rateLimitMock, rpcMock, entryResult, memResult } = vi.hoisted(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://x.supabase.co'
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key'
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key'
@@ -11,6 +11,7 @@ const { getUserMock, notifyMock, rateLimitMock, entryResult, memResult } = vi.ho
     getUserMock: vi.fn(),
     notifyMock: vi.fn(),
     rateLimitMock: vi.fn(),
+    rpcMock: vi.fn(),
     entryResult: { value: { data: null as any, error: null as any } },
     memResult: { value: { data: null as any, error: null as any } },
   }
@@ -20,7 +21,7 @@ const { getUserMock, notifyMock, rateLimitMock, entryResult, memResult } = vi.ho
 // entry read (.schema('projects')) and the membership read (.from(...)).
 vi.mock('@supabase/supabase-js', () => ({
   createClient: (_url: string, key: string) => {
-    if (key === 'anon-key') return { auth: { getUser: getUserMock } }
+    if (key === 'anon-key') return { auth: { getUser: getUserMock }, rpc: rpcMock }
     const chain = (res: any): any => ({
       select: () => chain(res),
       eq: () => chain(res),
@@ -50,6 +51,7 @@ function reqWith(opts: { auth?: string | null; body?: unknown } = {}) {
 beforeEach(() => {
   getUserMock.mockReset(); notifyMock.mockReset(); rateLimitMock.mockReset()
   rateLimitMock.mockReturnValue(true)
+  rpcMock.mockReset(); rpcMock.mockResolvedValue({ data: true, error: null })
   getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null })
   entryResult.value = { data: { id: ENTRY_ID, project_id: 'p1', organisation_id: 'o1', created_by: 'u1' }, error: null }
   memResult.value = { data: { user_id: 'u1' }, error: null }
@@ -91,6 +93,14 @@ describe('POST /api/diary/notify', () => {
     memResult.value = { data: null, error: null }
     const res = await POST(reqWith())
     expect(res.status).toBe(403)
+    expect(notifyMock).not.toHaveBeenCalled()
+  })
+
+  it('404 when the caller is in the org but has no access to the entry project (site scope)', async () => {
+    rpcMock.mockResolvedValue({ data: false, error: null })
+    const res = await POST(reqWith())
+    expect(res.status).toBe(404)
+    expect(rpcMock).toHaveBeenCalledWith('user_has_project_access', { _project_id: 'p1' })
     expect(notifyMock).not.toHaveBeenCalled()
   })
 
