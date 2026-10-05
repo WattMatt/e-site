@@ -3,7 +3,7 @@
  *
  * Service-role client throughout, because there is no browser session. Every WRITE to the
  * inspection itself goes through a whatsapp.wa_inspection_* function, which acts as the person
- * under the inspections RLS (migration 00227); the direct table reads here are only of rows the
+ * under the inspections RLS (migration 00229); the direct table reads here are only of rows the
  * gate already let that person see, or of the service-only whatsapp.* tables.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
