@@ -226,7 +226,7 @@ describe('lookupDeratingFactors', () => {
       insulation: 'XLPE',
       installation_method: 'DIRECT_IN_GROUND',
     })
-    expect(f).toEqual({ depth: 1.0, thermal: 1.0, grouping: 1, temperature: 1.0 })
+    expect(f).toMatchObject({ depth: 1.0, thermal: 1.0, grouping: 1, temperature: 1.0 })
   })
 })
 

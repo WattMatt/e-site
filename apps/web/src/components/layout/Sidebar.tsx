@@ -99,7 +99,7 @@ export function projectNav(id: string) {
 }
 
 export const FOOTER_ITEMS = [
-  { href: '/cable-schedule/sans', label: 'SANS ref',     Icon: BookMarked, adminOnly: false },
+  { href: '/standards',           label: 'Standards',    Icon: BookMarked, adminOnly: false },
   { href: '/metrics',             label: 'Adoption',     Icon: BarChart3, adminOnly: true },
   { href: '/settings',            label: 'Settings',     Icon: Settings,  adminOnly: true },
 ] as const

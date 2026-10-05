@@ -78,3 +78,7 @@ pnpm-debug.log*
 
 # superpowers skill/brainstorm session state
 .superpowers/
+
+# Standards pipeline outputs carry licensed values — never commit them
+*standards-dataset*.json
+*sans-audit*
