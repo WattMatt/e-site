@@ -4,26 +4,15 @@ import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import type { OrgRole } from '@esite/shared'
-import {
-  FolderOpen, Camera, Inbox, Menu, ChevronRight, ArrowLeft,
-  BookOpen, AlertTriangle, FileText, ClipboardCheck, MessageSquare, LogOut,
-} from 'lucide-react'
+import { FolderOpen, Camera, Inbox, Menu, ChevronRight, ArrowLeft, BookOpen, LogOut } from 'lucide-react'
 import { BottomSheet } from './BottomSheet'
 import { navForRole, MARKETPLACE_ENABLED } from './Sidebar'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { NotificationList, UnreadBadge, useNotifications } from '@/components/ui/NotificationCentre'
-import { captureTargets, currentProjectId, type CaptureTarget } from '@/lib/mobile/shell'
-import { useActiveProjects, useProjectName, type ProjectRef } from '@/lib/mobile/use-projects'
+import { captureHref, currentProjectId } from '@/lib/mobile/shell'
+import { useActiveProjects, type ProjectRef } from '@/lib/mobile/use-projects'
 
 type SheetName = 'capture' | 'inbox' | 'more' | null
-
-const CAPTURE_ICON: Record<CaptureTarget['key'], typeof Camera> = {
-  diary: BookOpen,
-  snag: AlertTriangle,
-  form: FileText,
-  inspection: ClipboardCheck,
-  rfi: MessageSquare,
-}
 
 const LAST_PROJECT_KEY = 'esite.capture.lastProject'
 
@@ -41,8 +30,9 @@ interface MobileTabBarProps {
 
 /**
  * The phone shell's bottom navigation (shown below 768 px by CSS; the desktop
- * sidebar is hidden there). Projects is a link; Capture, Inbox and More open
- * bottom sheets so the user never leaves the page they are on to choose.
+ * sidebar is hidden there). Projects is a link. Capture goes to the current
+ * project's Capture page (E1 — it owns the role-aware action list); outside a
+ * project it first asks which project. Inbox and More open bottom sheets.
  */
 export function MobileTabBar(props: MobileTabBarProps) {
   return (
@@ -63,7 +53,8 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
   // A navigation (including one started from inside a sheet) closes the sheet.
   useEffect(() => { setSheet(null) }, [pathname, searchParams])
 
-  const projectsActive = sheet === null && (pathname === '/projects' || pathname.startsWith('/projects/') || pathname.startsWith('/rfis'))
+  const captureActive = sheet === null && /^\/projects\/[^/]+\/capture(\/|$)/.test(pathname)
+  const projectsActive = sheet === null && !captureActive && (pathname === '/projects' || pathname.startsWith('/projects/') || pathname.startsWith('/rfis'))
 
   return (
     <>
@@ -72,10 +63,17 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
           <FolderOpen size={22} aria-hidden="true" />
           <span>Projects</span>
         </Link>
-        <button type="button" className={`mobile-tab${sheet === 'capture' ? ' active' : ''}`} onClick={() => setSheet('capture')} aria-haspopup="dialog" aria-expanded={sheet === 'capture'}>
-          <Camera size={22} aria-hidden="true" />
-          <span>Capture</span>
-        </button>
+        {projectId ? (
+          <Link href={captureHref(projectId)} className={`mobile-tab${captureActive ? ' active' : ''}`} aria-current={captureActive ? 'page' : undefined} onClick={() => writeLastProject(projectId)}>
+            <Camera size={22} aria-hidden="true" />
+            <span>Capture</span>
+          </Link>
+        ) : (
+          <button type="button" className={`mobile-tab${sheet === 'capture' ? ' active' : ''}`} onClick={() => setSheet('capture')} aria-haspopup="dialog" aria-expanded={sheet === 'capture'}>
+            <Camera size={22} aria-hidden="true" />
+            <span>Capture</span>
+          </button>
+        )}
         <button
           type="button"
           className={`mobile-tab${sheet === 'inbox' ? ' active' : ''}`}
@@ -97,7 +95,7 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
       </nav>
 
       <BottomSheet open={sheet === 'capture'} onClose={close} title="Capture">
-        <CaptureSheetBody projectId={projectId} onNavigate={close} />
+        <ProjectPickerBody onNavigate={close} />
       </BottomSheet>
       <BottomSheet open={sheet === 'inbox'} onClose={close} title="Inbox">
         <NotificationList showTitle={false} onNavigate={close} />
@@ -110,48 +108,11 @@ function MobileTabBarInner({ role, tariffAdmin }: MobileTabBarProps) {
 }
 
 /**
- * Inside a project: the capture verbs for that project. Elsewhere: pick a
- * project first (the last one used is listed first), then the verbs.
+ * Capture outside a project: choose the project (the last one used first),
+ * then land on that project's Capture page.
  */
-function CaptureSheetBody({ projectId, onNavigate }: { projectId: string | null; onNavigate: () => void }) {
-  const [chosen, setChosen] = useState<string | null>(projectId)
-  const { projects, error } = useActiveProjects(chosen === null)
-  const chosenName = useProjectName(chosen)
-
-  useEffect(() => { if (chosen) writeLastProject(chosen) }, [chosen])
-
-  if (chosen) {
-    return (
-      <div>
-        <div className="sheet-context">
-          <span className="sheet-context-label">Project</span>
-          <span className="sheet-context-value">{chosenName ?? '…'}</span>
-          {!projectId && (
-            <button type="button" className="sheet-context-change" onClick={() => setChosen(null)}>
-              Change
-            </button>
-          )}
-        </div>
-        <ul className="sheet-list">
-          {captureTargets(chosen).map(t => {
-            const Icon = CAPTURE_ICON[t.key]
-            return (
-              <li key={t.key}>
-                <Link href={t.href} className="sheet-row" onClick={onNavigate}>
-                  <span className="sheet-row-icon"><Icon size={20} aria-hidden="true" /></span>
-                  <span className="sheet-row-text">
-                    <span className="sheet-row-label">{t.label}</span>
-                    <span className="sheet-row-hint">{t.hint}</span>
-                  </span>
-                  <ChevronRight size={18} aria-hidden="true" className="sheet-row-chevron" />
-                </Link>
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-    )
-  }
+function ProjectPickerBody({ onNavigate }: { onNavigate: () => void }) {
+  const { projects, error } = useActiveProjects(true)
 
   if (error) return <p className="sheet-empty">Could not load your projects. Check your connection and try again.</p>
   if (!projects) return <p className="sheet-empty">Loading projects…</p>
@@ -168,13 +129,17 @@ function CaptureSheetBody({ projectId, onNavigate }: { projectId: string | null;
       <ul className="sheet-list">
         {ordered.map(p => (
           <li key={p.id}>
-            <button type="button" className="sheet-row" onClick={() => setChosen(p.id)}>
+            <Link
+              href={captureHref(p.id)}
+              className="sheet-row"
+              onClick={() => { writeLastProject(p.id); onNavigate() }}
+            >
               <span className="sheet-row-text">
                 <span className="sheet-row-label">{p.name}</span>
                 {p.id === last && <span className="sheet-row-hint">Last used</span>}
               </span>
               <ChevronRight size={18} aria-hidden="true" className="sheet-row-chevron" />
-            </button>
+            </Link>
           </li>
         ))}
       </ul>

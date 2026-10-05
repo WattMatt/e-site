@@ -2,12 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { AddDiaryEntryForm } from './AddDiaryEntryForm'
 
-const { createActionMock, notifyActionMock, uploadMock, refreshMock, replaceMock } = vi.hoisted(() => ({
+const { createActionMock, notifyActionMock, uploadMock, refreshMock } = vi.hoisted(() => ({
   createActionMock: vi.fn(),
   notifyActionMock: vi.fn(),
   uploadMock: vi.fn(),
   refreshMock: vi.fn(),
-  replaceMock: vi.fn(),
 }))
 
 vi.mock('@/actions/diary.actions', () => ({
@@ -19,7 +18,7 @@ vi.mock('@/lib/diary-attachments', () => ({
   DIARY_ATTACHMENT_ACCEPT_DOC: 'application/pdf',
 }))
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({}) }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock, replace: replaceMock }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: refreshMock }) }))
 
 const props = { projectId: 'p1', orgId: 'o1', userId: 'u1' }
 
@@ -45,36 +44,6 @@ function attachFile(file: File) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('AddDiaryEntryForm', () => {
-  it('starts closed, and opens straight to the form when the Capture sheet links with defaultOpen', () => {
-    const { unmount } = render(<AddDiaryEntryForm {...props} />)
-    expect(document.querySelector('form')).toBeNull()
-    unmount()
-    render(<AddDiaryEntryForm {...props} defaultOpen />)
-    expect(document.querySelector('form')).not.toBeNull()
-    expect(screen.queryByText('+ Add Entry')).toBeNull()
-  })
-
-  it('opens when ?new=1 arrives on a diary page that is already showing (prop changes, component kept)', () => {
-    const { rerender } = render(<AddDiaryEntryForm {...props} />)
-    expect(document.querySelector('form')).toBeNull()
-    rerender(<AddDiaryEntryForm {...props} defaultOpen />)
-    expect(document.querySelector('form')).not.toBeNull()
-  })
-
-  it('drops ?new=1 on cancel and after a save, so the next Capture tap opens the form again', async () => {
-    render(<AddDiaryEntryForm {...props} defaultOpen />)
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(replaceMock).toHaveBeenCalledWith('/projects/p1/diary', { scroll: false })
-
-    replaceMock.mockClear()
-    createActionMock.mockResolvedValue({ entryId: 'e1' })
-    fireEvent.click(screen.getByText('+ Add Entry'))
-    typeProgress('Cable pulled.')
-    await submitForm()
-    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/projects/p1/diary', { scroll: false }))
-    expect(refreshMock).not.toHaveBeenCalled()
-  })
-
   it('creates via the server action and refreshes on success (no attachments)', async () => {
     createActionMock.mockResolvedValue({ entryId: 'e1' })
     open()
@@ -217,5 +186,83 @@ describe('AddDiaryEntryForm', () => {
 
     expect(uploadMock).toHaveBeenCalledTimes(1)
     expect(uploadMock.mock.calls[0][1].files).toHaveLength(1)
+  })
+})
+
+describe('AddDiaryEntryForm — arriving from Capture', () => {
+  it('stays collapsed behind "+ Add Entry" when opened normally', () => {
+    render(<AddDiaryEntryForm {...props} />)
+    expect(screen.getByText('+ Add Entry')).toBeTruthy()
+    expect(document.querySelector('form')).toBeNull()
+  })
+
+  it('initialMode="entry" opens the form straight away', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="entry" />)
+    expect(screen.queryByText('+ Add Entry')).toBeNull()
+    expect(document.querySelector('form#new-entry')).not.toBeNull()
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+  })
+
+  it('initialMode="photo" opens the form with the photo control leading', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    const form = document.querySelector('form#new-entry')!
+    expect(form).not.toBeNull()
+    const photo = screen.getByText('📷 Take or add photos')
+    const typeLabel = screen.getByText('Entry type')
+    // The photo control precedes the entry-type picker in document order.
+    expect(photo.compareDocumentPosition(typeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const input = photo.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input.accept).toBe('image/*')
+  })
+
+  it('a photo picked in photo mode is uploaded with the entry', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    uploadMock.mockResolvedValue(undefined)
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    const input = screen.getByText('📷 Take or add photos').querySelector('input') as HTMLInputElement
+    const file = new File(['x'], 'site.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [file] } })
+    typeProgress('Board MB1 installed.')
+    await submitForm()
+    expect(uploadMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ entryId: 'e1', files: [file] }),
+      expect.any(Function),
+    )
+  })
+})
+
+describe('AddDiaryEntryForm — Capture mode is one-shot', () => {
+  it('after a save, drops ?new= from the URL and the next "+ Add Entry" opens the ordinary layout', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    window.history.pushState(null, '', '/projects/p1/diary?new=photo&n=100#top')
+    const replace = vi.spyOn(window.history, 'replaceState')
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    typeProgress('Board MB1 installed.')
+    await submitForm()
+    await waitFor(() => expect(screen.getByText('+ Add Entry')).toBeTruthy())
+    expect(replace).toHaveBeenCalledWith(null, '', '/projects/p1/diary?n=100#top')
+    fireEvent.click(screen.getByText('+ Add Entry'))
+    expect(screen.queryByText('📷 Take or add photos')).toBeNull()
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+    replace.mockRestore()
+  })
+
+  it('cancel also ends Capture mode', () => {
+    render(<AddDiaryEntryForm {...props} initialMode="photo" />)
+    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.click(screen.getByText('+ Add Entry'))
+    expect(screen.getByText('📷 Photo')).toBeTruthy()
+  })
+
+  it('an ordinary open never rewrites the URL', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    const replace = vi.spyOn(window.history, 'replaceState')
+    open()
+    typeProgress('x')
+    await submitForm()
+    await waitFor(() => expect(screen.getByText('+ Add Entry')).toBeTruthy())
+    expect(replace).not.toHaveBeenCalled()
+    replace.mockRestore()
   })
 })

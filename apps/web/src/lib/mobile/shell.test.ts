@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { currentProjectId, captureTargets, orderForPhone, isActiveHref } from './shell'
+import { currentProjectId, captureHref, orderForPhone, isActiveHref } from './shell'
 import { projectNav } from '@/components/layout/Sidebar'
 
 describe('currentProjectId', () => {
@@ -20,28 +20,22 @@ describe('currentProjectId', () => {
   })
 })
 
-describe('captureTargets', () => {
-  it('scopes every target to the project', () => {
-    const t = captureTargets('p-1')
-    expect(t.map(x => x.key)).toEqual(['diary', 'snag', 'form', 'inspection', 'rfi'])
-    for (const x of t) expect(x.href).toContain('p-1')
-  })
-  it('opens the diary form directly and carries the project into the RFI form', () => {
-    const t = Object.fromEntries(captureTargets('p-1').map(x => [x.key, x.href]))
-    expect(t.diary).toBe('/projects/p-1/diary?new=1')
-    expect(t.rfi).toBe('/rfis/new?projectId=p-1')
+describe('captureHref', () => {
+  it("points at the project's own Capture page (E1 owns the action list)", () => {
+    expect(captureHref('p-1')).toBe('/projects/p-1/capture')
   })
   it('encodes an id so it cannot break out of the path', () => {
-    expect(captureTargets('a/b?c')[1].href).toBe('/projects/a%2Fb%3Fc/snags/new')
+    expect(captureHref('a/b?c')).toBe('/projects/a%2Fb%3Fc/capture')
   })
 })
 
 describe('orderForPhone', () => {
   it('puts the field sections of the REAL project nav first, then the rest in sidebar order', () => {
     const labels = orderForPhone(projectNav('x')).map(i => i.label)
-    expect(labels.slice(0, 8)).toEqual(['Overview', 'Snags', 'Site Diary', 'Forms', 'Inspections', 'Quality Control', 'RFIs', 'Floor Plans'])
-    const rest = projectNav('x').map(i => i.label).filter(l => !labels.slice(0, 8).includes(l))
-    expect(labels.slice(8)).toEqual(rest)
+    const field = ['Overview', 'Capture', 'Snags', 'Site Diary', 'Forms', 'Inspections', 'Quality Control', 'RFIs', 'Floor Plans']
+    expect(labels.slice(0, field.length)).toEqual(field)
+    const rest = projectNav('x').map(i => i.label).filter(l => !field.includes(l))
+    expect(labels.slice(field.length)).toEqual(rest)
   })
 })
 

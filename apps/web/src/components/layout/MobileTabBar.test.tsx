@@ -73,32 +73,34 @@ describe('MobileTabBar', () => {
     for (const name of ['Capture', 'Inbox', 'More']) expect(within(bar).getByRole('button', { name })).toBeTruthy()
   })
 
-  it('inside a project, Capture offers that project’s verbs without asking which project', async () => {
+  it("inside a project, Capture goes straight to that project's Capture page (E1 owns the actions)", () => {
     nav.pathname = '/projects/p1/snags'
     renderBar()
-    fireEvent.click(screen.getByRole('button', { name: 'Capture' }))
-    const sheet = screen.getByRole('dialog', { name: 'Capture' })
-    const hrefs = within(sheet).getAllByRole('link').map(a => a.getAttribute('href'))
-    expect(hrefs).toEqual([
-      '/projects/p1/diary?new=1',
-      '/projects/p1/snags/new',
-      '/projects/p1/forms/new',
-      '/projects/p1/inspections/new',
-      '/rfis/new?projectId=p1',
-    ])
-    await waitFor(() => expect(within(sheet).getByText('KINGSWALK')).toBeTruthy())
-    expect(within(sheet).queryByRole('button', { name: 'Change' })).toBeNull()
+    const bar = screen.getByRole('navigation', { name: 'Phone navigation' })
+    const capture = within(bar).getByRole('link', { name: 'Capture' })
+    expect(capture.getAttribute('href')).toBe('/projects/p1/capture')
+    expect(within(bar).queryByRole('button', { name: 'Capture' })).toBeNull()
   })
 
-  it('outside a project, Capture asks for the project first, then scopes the verbs to it', async () => {
+  it('marks Capture (not Projects) as the current tab on the Capture page', () => {
+    nav.pathname = '/projects/p1/capture'
+    renderBar()
+    const bar = screen.getByRole('navigation', { name: 'Phone navigation' })
+    expect(within(bar).getByRole('link', { name: 'Capture' }).getAttribute('aria-current')).toBe('page')
+    expect(within(bar).getByRole('link', { name: 'Projects' }).getAttribute('aria-current')).toBeNull()
+  })
+
+  it("outside a project, Capture asks which project, then links to that project's Capture page", async () => {
     renderBar()
     fireEvent.click(screen.getByRole('button', { name: 'Capture' }))
     const sheet = screen.getByRole('dialog', { name: 'Capture' })
-    fireEvent.click(await within(sheet).findByRole('button', { name: /ITONKA/ }))
-    expect(within(sheet).getAllByRole('link')[1].getAttribute('href')).toBe('/projects/p2/snags/new')
+    const itonka = await within(sheet).findByRole('link', { name: /ITONKA/ })
+    expect(itonka.getAttribute('href')).toBe('/projects/p2/capture')
+    fireEvent.click(itonka)
+    expect(screen.queryByRole('dialog')).toBeNull()
     // The choice is remembered and listed first next time.
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Change' }))
-    const rows = await within(sheet).findAllByRole('button', { name: /KINGSWALK|ITONKA/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Capture' }))
+    const rows = await within(screen.getByRole('dialog', { name: 'Capture' })).findAllByRole('link', { name: /KINGSWALK|ITONKA/ })
     expect(rows[0].textContent).toContain('ITONKA')
     expect(rows[0].textContent).toContain('Last used')
   })
