@@ -96,7 +96,7 @@ membership.
 | `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 
-> **Rate library (`/rates*`, migration 00227, E6).** Contractor rates are
+> **Rate library (`/rates*`, migration 00229, E6).** Contractor rates are
 > commercially confidential. The PM column here is the **org-level**
 > `project_manager` role: the gate is `public.rate_library_can_access(org)` —
 > an *active* `user_organisations` row with role owner/admin/project_manager —
