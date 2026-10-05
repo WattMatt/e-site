@@ -64,7 +64,8 @@ membership.
 | `/marketplace` | W³ | W³ | W³ | W³ | — | — | — |
 | `/marketplace/supplier/*` | — | — | — | — | — | W | — |
 | `/site` (site capture) | W | W | W | W | W | — | — |
-| `/cable-schedule/sans` | R | R | R | R | R | R | R |
+| `/standards` | R | R | R | R | R | R | R |
+| `/cable-schedule/sans` (redirects to `/standards`) | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
 | `/settings/solar` (includes the org's Solar schedule template, `solar.schedule_templates`; the Phase 6 **Proposal and report templates** card: terms, disclaimer, default validity — `saveSolarProposalTemplatesAction`; the Phase 7 handover checklist template) | W | W | — | — | — | — | — |
@@ -875,3 +876,13 @@ These are tracked outside this doc:
 - **`billing.subscriptions` is readable by every org member, at every role.** `subscriptions_select_org_member` (`00187`, renamed from `00007`'s misnamed `"Org admins can view subscription"`) qualifies on bare org membership, so any of the 27 WM members can read the org's tier, status, `amount_kobo` and `paystack_customer_code` via PostgREST — a client can see what their consulting engineer pays for its software. Left open deliberately, with the two cheap fixes both proven wrong on production first: (a) an admin-only qual breaks `PaymentStatusBanner.tsx:51-56` (the "Account paused — read-only mode" warning vanishes for the 12 contractors it is for) and `checkProjectQuota` (`project.actions.ts:44-56` falls to its `?? 'free'` default and caps the org at 1 project); (b) `REVOKE SELECT (amount_kobo, …) FROM authenticated` is a **complete no-op** — `authenticated` holds a table-level grant (`relacl authenticated=arwd`) and a column-level REVOKE cannot subtract from one; run in a rolled-back prod transaction, `has_column_privilege(…,'amount_kobo','SELECT')` was still `true` afterwards. The form that does bite (`REVOKE SELECT ON TABLE` then `GRANT SELECT (cols)`) then fails the **owner's own** billing page, because `billingService.getSubscription` issues `select('*')` — measured: `ERROR permission denied for table subscriptions`, while `select(tier,status)` succeeds. Closing it properly means narrowing `PaymentStatusBanner` and `checkProjectQuota` to a `SECURITY DEFINER` RPC (or the service client) and pinning `getSubscription` to an explicit column list, *then* adding the role predicate — application work in `packages/shared` and `apps/web/src/actions`, out of scope for the callback fix.
 - **Multi-org users.** `getOrgContext()` resolves the *oldest* membership, not a user-selected current org. Role checks for users in multiple orgs may apply against the wrong org. Out of scope until multi-org UX exists.
 - **Cells marked `?`.** `/settings/organisation` and `/settings/integrations` for `project_manager` — behaviour not yet verified end-to-end.
+
+### Standards reference (`/standards`, migration 00225)
+
+Every signed-in role can open the page. What it shows is decided by row security, not the route:
+the legacy cable tables (`provenance = 'transcribed'`) are readable by every signed-in user, because
+every org's cable calculator reads them; tables extracted from a licensed SANS PDF carry
+`visibility_org_id` and are readable only by active members of that org (owner decision D2 default:
+the WM org). `cable_schedule.ref_standards` is SELECT-only for `authenticated`; nothing in the app
+writes reference data — `scripts/standards/load.ts` does, through the Management API.
+

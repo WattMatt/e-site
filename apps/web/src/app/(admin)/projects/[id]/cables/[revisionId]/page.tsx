@@ -3,7 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import type { CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, COST_VIEW_ROLES } from '@esite/shared'
+import { projectService, COST_VIEW_ROLES, loadReferenceProvenance } from '@esite/shared'
 import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
@@ -136,6 +136,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   if (!revisionRow) notFound()
   const revision = revisionRow as RevisionRow
   const priorIssued = ((priorList ?? []) as Array<{ id: string; code: string }>)[0] ?? null
+
+  // Audit verdicts of the legacy SANS tables, cited in the rating tooltip.
+  const referenceProvenance = await loadReferenceProvenance(supabase as any)
 
   const [sourcesRes, boardsRes, suppliesRes, cablesRes] = await Promise.all([
     (supabase as any)
@@ -723,6 +726,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             lengthMode={lengthMode}
             canEdit={revision.status === 'DRAFT'}
             faultLevelKa={revision.fault_level_ka}
+            referenceProvenance={referenceProvenance}
           />
         )}
       </StructureSection>
