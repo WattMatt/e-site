@@ -88,11 +88,18 @@ export function createFormsStore(sb: Sb): FormsStore {
       return must(await wa().rpc('wa_inspection_add_photo', { p_user: userId, p_inspection: inspectionId, p_section: sectionId,
         p_field: fieldId, p_path: path, p_size: size, p_width: width, p_height: height }), 'add photo')
     },
-    async submit(userId, inspectionId) {
-      return must(await wa().rpc('wa_inspection_submit', { p_user: userId, p_inspection: inspectionId }), 'submit')
+    async submit(userId, inspectionId, sessionId) {
+      return must(await wa().rpc('wa_inspection_submit', { p_user: userId, p_inspection: inspectionId, p_session: sessionId }), 'submit')
+    },
+    async holdPhoto(sessionId, inboundId) {
+      return must(await wa().rpc('form_session_hold_photo', { p_session: sessionId, p_inbound: inboundId }), 'hold photo') ?? []
+    },
+    async releasePhotos(sessionId, inboundIds) {
+      if (inboundIds.length === 0) return
+      must(await wa().rpc('form_session_release_photos', { p_session: sessionId, p_inbound: inboundIds }), 'release photos')
     },
     async inspectionState(inspectionId) {
-      return must(await insp().from('inspections').select('status, submitted_via').eq('id', inspectionId).maybeSingle(), 'inspection state')
+      return must(await insp().from('inspections').select('status, submitted_via, submitted_session_id').eq('id', inspectionId).maybeSingle(), 'inspection state')
     },
     async profileName(userId) {
       const r = must(await sb.from('profiles').select('full_name').eq('id', userId).maybeSingle(), 'profile')

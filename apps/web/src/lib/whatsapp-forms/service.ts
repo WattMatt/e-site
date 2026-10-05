@@ -78,9 +78,14 @@ export interface FormsStore {
   upload(bucket: string, path: string, bytes: Uint8Array, mime: string): Promise<void>
   addPhoto(userId: string, inspectionId: string, sectionId: string, fieldId: string, path: string,
            size: number, width: number, height: number): Promise<{ code: string; message?: string }>
-  submit(userId: string, inspectionId: string): Promise<{ code: string; verifier_id?: string | null }>
-  /** Current status and submit channel, read with the service role (for retry recovery). */
-  inspectionState(inspectionId: string): Promise<{ status: string; submitted_via: string | null } | null>
+  /** wa_inspection_submit: also stamps inspections.submitted_session_id = sessionId in the same statement. */
+  submit(userId: string, inspectionId: string, sessionId: string): Promise<{ code: string; verifier_id?: string | null }>
+  /** Current status and which WhatsApp session (if any) moved it, read with the service role (retry recovery). */
+  inspectionState(inspectionId: string): Promise<{ status: string; submitted_via: string | null; submitted_session_id: string | null } | null>
+  /** Atomically append an inbound photo to the session's held list (no duplicates); returns the list. */
+  holdPhoto(sessionId: string, inboundId: string): Promise<string[]>
+  /** Atomically remove these ids from the held list (only the ones actually attached). */
+  releasePhotos(sessionId: string, inboundIds: string[]): Promise<void>
   profileName(userId: string): Promise<string | null>
 }
 
@@ -290,8 +295,7 @@ async function photo(b: Record<string, unknown>, deps: FormsDeps): Promise<Forms
   if (n === null && !caption && s.last_photo_item && isRecent(s.last_photo_at, deps.now())) n = s.last_photo_item
   const item = n === null ? undefined : items.find((i) => i.n === n)
   if (!item) {
-    const queued = [...new Set([...(s.pending_photo_inbound_ids ?? []), inboundId])]
-    await deps.store.updateSession(s.id, { pending_photo_inbound_ids: queued })
+    await deps.store.holdPhoto(s.id, inboundId)
     return reply('ok', [text(n === null ? REPLY.whichItem(items.length) : REPLY.noSuchItem(n, items.length))], s.id)
   }
   return attach(deps, s, item, inboundId, bytes)
@@ -310,15 +314,19 @@ async function itemChoice(b: Record<string, unknown>, deps: FormsDeps): Promise<
   const item = n === null ? undefined : items.find((i) => i.n === n)
   if (!item) return reply('ok', [text(REPLY.noSuchItem(n ?? 0, items.length))], s.id)
   let added = 0
+  const done: string[] = []
   let last: FormsReply = reply('not_an_image', [text(REPLY.notAnImage)])
   for (const inbound of waiting) {
     const bytes = await deps.store.download(STAGING_BUCKET, `inbound/${inbound}`)
-    if (!bytes) continue
+    if (!bytes) { done.push(inbound); continue }
     last = await attach(deps, s, item, inbound, bytes)
-    if (last.code !== 'ok') return last
+    if (last.code !== 'ok') break
+    done.push(inbound)
     added++
   }
-  await deps.store.updateSession(s.id, { pending_photo_inbound_ids: [] })
+  // Only what was handled leaves the queue; a photo held meanwhile by a concurrent message stays.
+  await deps.store.releasePhotos(s.id, done)
+  if (last.code !== 'ok' && added === 0) return last
   return added > 1 ? reply('ok', [text(REPLY.photosAdded(added, item.n, item.label))], s.id) : last
 }
 
@@ -332,13 +340,17 @@ async function submit(b: Record<string, unknown>, deps: FormsDeps): Promise<Form
   if (!liveSession(s, userId, deps.now())) return reply('no_session', [], null)
   const tpl = await deps.store.template(s.template_row_id)
   if (!tpl) return reply('no_session', [], null)
-  // Retry recovery: our own earlier attempt moved the inspection but its follow-up did not finish.
-  const state = await deps.store.inspectionState(s.inspection_id)
-  if (state?.status === 'awaiting_verification' && state.submitted_via === 'whatsapp') {
-    await deps.afterSubmit(s.id, { notifyVerifier: true })
-    return reply('ok', [text(REPLY.submitted(tpl.name, null))], null)
-  }
   const g = await deps.store.gate(userId, s.inspection_id)
+  // Retry recovery: THIS session's own earlier SUBMIT moved the inspection (stamped atomically by
+  // wa_inspection_submit) but its follow-up did not finish. Never another person's submit, and only
+  // while the person still has access (the gate's not_writable means visible but no longer open).
+  if (g.code === 'not_writable') {
+    const state = await deps.store.inspectionState(s.inspection_id)
+    if (state?.status === 'awaiting_verification' && state.submitted_session_id === s.id) {
+      await deps.afterSubmit(s.id, { notifyVerifier: true })
+      return reply('ok', [text(REPLY.submitted(g.label || tpl.name, null))], null)
+    }
+  }
   if (g.code !== 'ok') return gateRefusal(g)
   const label = g.label || tpl.name
   // A template that cannot be a Flow (tables, conditions, files) is completed on the web, signed in as the person.
@@ -353,7 +365,7 @@ async function submit(b: Record<string, unknown>, deps: FormsDeps): Promise<Form
   }
   if (!miss.complete) return reply('incomplete', [text([REPLY.incomplete, ...miss.lines, '', REPLY.againWhenDone].join('\n'))], s.id)
 
-  const r = await deps.store.submit(userId, s.inspection_id)
+  const r = await deps.store.submit(userId, s.inspection_id, s.id)
   if (r.code !== 'ok') return r.code === 'nothing_answered' || r.code === 'refused' ? reply(r.code, [text(REPLY.refused(r.code))]) : gateRefusal({ code: r.code })
   await deps.afterSubmit(s.id, { notifyVerifier: true })
   const verifier = r.verifier_id ? await deps.store.profileName(r.verifier_id) : null

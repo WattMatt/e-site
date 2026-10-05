@@ -199,9 +199,15 @@ describe('SUBMIT', () => {
     await processInbound(row({ type: 'interactive', payload: `fsubmit:${SESS}` }), deps())
     expect(forms.ops).toEqual([['submit', { user_id: USER, link_id: LINK, session_id: SESS }]])
   })
-  it('typed with no form open is ordinary text', async () => {
-    await processInbound(row({ text: 'submit' }), deps())
+  it('typed with no form open gets a plain answer, and is not filed anywhere', async () => {
+    const r = await processInbound(row({ text: 'submit' }), deps())
     expect(forms.ops).toEqual([])
+    expect(meta.sent.map((s) => s.body)).toEqual([FORMS.noOpenForm])
+    expect(r.reason).toBe('form_submit:no_session')
+  })
+  it('typed on a deployment without forms stays ordinary text', async () => {
+    await processInbound(row({ text: 'submit' }), deps(false))
+    expect(meta.sent.map((s) => s.body)).not.toContain(FORMS.noOpenForm)
   })
 })
 

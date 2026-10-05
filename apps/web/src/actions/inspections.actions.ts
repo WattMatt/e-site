@@ -526,7 +526,8 @@ export async function submitInspectionAction(
   const { data: moved, error } = await supabase
     .schema('inspections')
     .from('inspections')
-    .update({ status: 'awaiting_verification', completed_at: new Date().toISOString() })
+    // submitted_session_id is cleared: only a WhatsApp SUBMIT may claim the follow-up of a submit (E4).
+    .update({ status: 'awaiting_verification', completed_at: new Date().toISOString(), submitted_via: 'web', submitted_session_id: null })
     .eq('id', inspectionId)
     .in('status', ['in_progress', 're-inspect_required'])
     .select('id')

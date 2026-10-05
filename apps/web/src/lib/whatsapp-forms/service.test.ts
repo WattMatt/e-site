@@ -31,6 +31,7 @@ let gateCode: string
 let flowRow: { meta_flow_id: string; status: 'draft' | 'published'; flow_json_sha256: string } | null
 let staged: Record<string, Uint8Array>
 let submitted: string[]
+let submitSessions: Array<string | undefined>
 let afterSubmit: ReturnType<typeof vi.fn>
 let tokens: number
 
@@ -40,7 +41,7 @@ function session(over: Partial<Session> = {}): Session {
 }
 
 beforeEach(() => {
-  sessions = []; links = []; saved = []; photos = []; uploads = []; answers = []; signatures = []; submitted = []
+  sessions = []; links = []; saved = []; photos = []; uploads = []; answers = []; signatures = []; submitted = []; submitSessions = []
   gateCode = 'ok'
   flowRow = { meta_flow_id: 'F9', status: 'draft', flow_json_sha256: SHA }
   staged = { 'inbound/in-7': JPEG }
@@ -68,8 +69,10 @@ function deps(): FormsDeps {
     download: async (_b, path) => staged[path] ?? null,
     upload: async (bucket, path) => { uploads.push({ bucket, path }) },
     addPhoto: async (u, _i, section_id, field_id, path) => { photos.push({ section_id, field_id, path, user: u }); return { code: 'ok' } },
-    submit: async (_u, i) => { submitted.push(i); return { code: 'ok', verifier_id: 'v-1' } },
-    inspectionState: async () => ({ status: 'in_progress', submitted_via: null }),
+    submit: async (_u, i, sid) => { submitted.push(i); submitSessions.push(sid); return { code: 'ok', verifier_id: 'v-1' } },
+    inspectionState: async () => ({ status: 'in_progress', submitted_via: null, submitted_session_id: null }),
+    holdPhoto: async (sid, inbound) => { const s = sessions.find((x) => x.id === sid)!; if (!s.pending_photo_inbound_ids.includes(inbound)) s.pending_photo_inbound_ids = [...s.pending_photo_inbound_ids, inbound]; return s.pending_photo_inbound_ids },
+    releasePhotos: async (sid, ids) => { const s = sessions.find((x) => x.id === sid)!; s.pending_photo_inbound_ids = s.pending_photo_inbound_ids.filter((x) => !ids.includes(x)) },
     profileName: async () => 'Johan B',
   }
   return { store, now: () => NOW, appUrl: 'https://www.e-site.live', afterSubmit, newToken: () => `tok${++tokens}`, hash }
@@ -245,6 +248,7 @@ describe('submit', () => {
     const r = await submit()
     expect(r).toMatchObject({ code: 'ok', session_id: null })
     expect(submitted).toEqual([INSP])
+    expect(submitSessions).toEqual(['s-1'])
     expect(afterSubmit).toHaveBeenCalledWith('s-1', { notifyVerifier: true })
   })
   it('a submit the database refuses is reported, and nothing follows', async () => {
@@ -305,7 +309,7 @@ describe('review fixes', () => {
   it('M1: a submit whose follow-up failed is finished by the retry instead of being refused', async () => {
     sessions.push(session())
     const d = deps()
-    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'whatsapp' })
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'whatsapp', submitted_session_id: 's-1' })
     gateCode = 'not_writable'
     const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
     expect(r.code).toBe('ok')
@@ -313,10 +317,30 @@ describe('review fixes', () => {
     expect(submitted).toEqual([])
   })
 
+  it('N1: another person\'s WhatsApp submit is never claimed by this session', async () => {
+    sessions.push(session())
+    const d = deps()
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'whatsapp', submitted_session_id: 's-OTHER' })
+    gateCode = 'not_writable'
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).toBe('not_writable')
+    expect(afterSubmit).not.toHaveBeenCalled()
+  })
+
+  it('N1: a member removed since cannot finish even their own earlier submit', async () => {
+    sessions.push(session())
+    const d = deps()
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'whatsapp', submitted_session_id: 's-1' })
+    gateCode = 'no_access'
+    const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
+    expect(r.code).toBe('no_access')
+    expect(afterSubmit).not.toHaveBeenCalled()
+  })
+
   it('M1: but a submit someone else made on the web is not claimed', async () => {
     sessions.push(session())
     const d = deps()
-    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: null })
+    d.store.inspectionState = async () => ({ status: 'awaiting_verification', submitted_via: 'web', submitted_session_id: null })
     gateCode = 'not_writable'
     const r = await handleFormsOp('submit', { user_id: USER, session_id: 's-1' }, d)
     expect(r.code).toBe('not_writable')

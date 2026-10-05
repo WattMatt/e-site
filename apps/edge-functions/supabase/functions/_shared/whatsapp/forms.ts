@@ -154,7 +154,15 @@ export async function handleFormsContent(msg: InboundMessage, link: LinkRow, inb
     return run(deps as ProcessorDeps & { forms: FormsClient }, link, 'flow_reply',
                { inbound_id: inbound.id, response_json: msg.flowResponseJson })
   }
-  if (!deps.forms || !link.current_form_session_id) return null
+  if (!deps.forms) return null
+  if (!link.current_form_session_id) {
+    // SUBMIT with no form open: say so rather than filing the word as a note on a work item.
+    if (msg.type === 'text' && msg.text && isSubmitWord(msg.text)) {
+      await deps.meta.sendText(link.phone_e164, FORMS.noOpenForm)
+      return res('refused', 'form_submit:no_session', link.user_id)
+    }
+    return null
+  }
   // A "Post to project" the person just started owns their next photos and text.
   const post = link.pending_post as { started_at?: string } | null | undefined
   if (post?.started_at && isWithin(post.started_at, deps.now(), PENDING_POST_TTL_MS)) return null

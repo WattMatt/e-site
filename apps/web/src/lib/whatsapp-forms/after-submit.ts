@@ -1,15 +1,15 @@
 /**
  * What follows a submit of a WhatsApp-origin inspection (E4), whichever channel the submit
  * came through (the WhatsApp SUBMIT, or the web page reached by the signed link):
- *   1. render the PDF as the session's person and stage it at whatsapp-media/outbound/<session>.pdf
+ *   1. whatsapp.enqueue_form_submitted: the confirmation (with the PDF, sent a minute later) to the
+ *      person, the summary to the site's linked members; both re-checked at send time
+ *   2. notify the verifier in the app, when the submit did not already (the web action does)
+ *   3. render the PDF as the session's person and stage it at whatsapp-media/outbound/<session>.pdf
  *      (NOT filed in projects.reports: the 'inspection' report kind is open-read, so an uncertified
  *      PDF there would reach client viewers; certify files the official copy)
- *   2. mark the session submitted
- *   3. whatsapp.enqueue_form_submitted: the confirmation (with the PDF) to the person, the summary
- *      to the site's linked members; both re-checked at send time by whatsapp.form_receive_check
- *   4. notify the verifier in the app, when the submit did not already (the web action does)
- *   5. kick the worker
- * A PDF failure does not stop 2-5: the confirmation then goes without the attachment.
+ *   4. kick the worker
+ *   5. mark the session submitted (last, so a retried SUBMIT can finish an interrupted follow-up)
+ * A PDF failure does not stop 4-5: the confirmation then goes without the attachment.
  */
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -50,19 +50,10 @@ export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerif
     .select('id, user_id, inspection_id, status').eq('id', sessionId).maybeSingle()
   if (error || !s) throw new Error(`afterWhatsAppSubmit: session ${sessionId} not found`)
 
-  try {
-    const pdf = await d.render(s.inspection_id, s.user_id)
-    const up = await d.sb.storage.from(STAGING_BUCKET).upload(outboundPdfPath(sessionId), pdf,
-      { contentType: 'application/pdf', upsert: true })
-    if (up.error) throw new Error(up.error.message)
-  } catch (e) {
-    console.error('[whatsapp-forms] PDF for the confirmation failed; it will go without one', sessionId, e)
-  }
-
-  await d.sb.schema('whatsapp').from('form_sessions')
-    .update({ status: 'submitted', submitted_at: d.now().toISOString(), pending_photo_inbound_ids: [] }).eq('id', sessionId)
+  // Queue the messages and notify FIRST: they are cheap and idempotent, and a timeout in the PDF
+  // render below must not lose them. The confirmation row waits a minute (send_after) for the PDF.
   const { error: qErr } = await d.sb.schema('whatsapp').rpc('enqueue_form_submitted', { p_session: sessionId })
-  if (qErr) console.error('[whatsapp-forms] enqueue_form_submitted failed', sessionId, qErr.message)
+  if (qErr) throw new Error(`enqueue_form_submitted: ${qErr.message}`)
 
   if (opts.notifyVerifier) {
     const { data: insp } = await d.sb.schema('inspections').from('inspections')
@@ -79,7 +70,20 @@ export async function afterWhatsAppSubmit(sessionId: string, opts: { notifyVerif
       })
     }
   }
+
+  try {
+    const pdf = await d.render(s.inspection_id, s.user_id)
+    const up = await d.sb.storage.from(STAGING_BUCKET).upload(outboundPdfPath(sessionId), pdf,
+      { contentType: 'application/pdf', upsert: true })
+    if (up.error) throw new Error(up.error.message)
+  } catch (e) {
+    console.error('[whatsapp-forms] PDF for the confirmation failed; it will go without one', sessionId, e)
+  }
   await d.kick('form_submitted')
+
+  // Last: until this lands the session stays live, so a retried SUBMIT finishes the follow-up.
+  await d.sb.schema('whatsapp').from('form_sessions')
+    .update({ status: 'submitted', submitted_at: d.now().toISOString(), pending_photo_inbound_ids: [] }).eq('id', sessionId)
 }
 
 /**

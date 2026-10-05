@@ -77,7 +77,7 @@ INSERT INTO _r VALUES
   ('save_cv',      whatsapp.wa_inspection_save(current_setting('x.cv')::uuid, current_setting('x.cvi')::uuid,
                      '[{"section_id":"visual_structural_checks","field_id":"enclosure_integrity","value_bool":true,"pass_state":"pass"}]', NULL)),
   ('gate_foreign', whatsapp.wa_inspection_gate(current_setting('x.c')::uuid, current_setting('x.cvi')::uuid)),
-  ('submit_empty', whatsapp.wa_inspection_submit(current_setting('x.c')::uuid, current_setting('x.main')::uuid)),
+  ('submit_empty', whatsapp.wa_inspection_submit(current_setting('x.c')::uuid, current_setting('x.main')::uuid, NULL)),
   ('save_ok',      whatsapp.wa_inspection_save(current_setting('x.c')::uuid, current_setting('x.main')::uuid,
                      '[{"section_id":"visual_structural_checks","field_id":"enclosure_integrity","value_bool":true,"pass_state":"pass"},
                        {"section_id":"visual_structural_checks","field_id":"plinth_condition","value_bool":false,"pass_state":"fail","fail_reason":"Cracked"},
@@ -111,11 +111,15 @@ SELECT set_config('x.sess', (SELECT id::text FROM whatsapp.form_sessions WHERE t
 
 SET LOCAL ROLE service_role;
 INSERT INTO _r VALUES
-  ('submit_ok',    whatsapp.wa_inspection_submit(current_setting('x.c')::uuid, current_setting('x.main')::uuid)),
+  ('submit_ok',    whatsapp.wa_inspection_submit(current_setting('x.c')::uuid, current_setting('x.main')::uuid, current_setting('x.sess')::uuid)),
   ('save_after',   whatsapp.wa_inspection_save(current_setting('x.c')::uuid, current_setting('x.main')::uuid,
                      '[{"section_id":"visual_structural_checks","field_id":"perimeter_fence","value_bool":true,"pass_state":"pass"}]', NULL)),
   ('fanout',       to_jsonb(whatsapp.enqueue_form_submitted(current_setting('x.sess')::uuid))),
-  ('fanout_again', to_jsonb(whatsapp.enqueue_form_submitted(current_setting('x.sess')::uuid)));
+  ('fanout_again', to_jsonb(whatsapp.enqueue_form_submitted(current_setting('x.sess')::uuid))),
+  ('hold_1',  to_jsonb(whatsapp.form_session_hold_photo(current_setting('x.sess')::uuid, 'aaaaaaaa-0000-4000-8000-000000000001'))),
+  ('hold_2',  to_jsonb(whatsapp.form_session_hold_photo(current_setting('x.sess')::uuid, 'aaaaaaaa-0000-4000-8000-000000000002'))),
+  ('hold_dup', to_jsonb(whatsapp.form_session_hold_photo(current_setting('x.sess')::uuid, 'aaaaaaaa-0000-4000-8000-000000000001'))),
+  ('release', to_jsonb(whatsapp.form_session_release_photos(current_setting('x.sess')::uuid, ARRAY['aaaaaaaa-0000-4000-8000-000000000001']::uuid[])));
 RESET ROLE;
 
 -- 4a. A PROJECT-scoped client viewer whose org role is contractor: user_can_write_responses() only reads
@@ -168,7 +172,8 @@ SELECT * FROM (VALUES
   ('photo ok with via, uploader, size',      (SELECT count(*) = 1 FROM inspections.photos WHERE inspection_id = current_setting('x.main')::uuid
                                                 AND via = 'whatsapp' AND uploaded_by = current_setting('x.c')::uuid AND width_px = 1600)),
   ('submit ok',                              (SELECT v->>'code' FROM _r WHERE k = 'submit_ok') = 'ok'),
-  ('submit stamped status and channel',      (SELECT status = 'awaiting_verification' AND submitted_via = 'whatsapp' AND completed_at IS NOT NULL
+  ('submit stamped status, channel and session', (SELECT status = 'awaiting_verification' AND submitted_via = 'whatsapp' AND completed_at IS NOT NULL
+                                                AND submitted_session_id = current_setting('x.sess')::uuid
                                                 FROM inspections.inspections WHERE id = current_setting('x.main')::uuid)),
   ('no answers after submit',                (SELECT v->>'code' FROM _r WHERE k = 'save_after') = 'not_writable'),
   ('fan-out: confirm to C',                  EXISTS (SELECT 1 FROM whatsapp.outbox WHERE trigger = 'form_confirm' AND user_id = current_setting('x.c')::uuid
@@ -177,6 +182,11 @@ SELECT * FROM (VALUES
                                                 AND form_session_id = current_setting('x.sess')::uuid)),
   ('fan-out: no summary to the submitter',   NOT EXISTS (SELECT 1 FROM whatsapp.outbox WHERE trigger = 'form_submitted' AND user_id = current_setting('x.c')::uuid)),
   ('fan-out: no summary to a client viewer', NOT EXISTS (SELECT 1 FROM whatsapp.outbox WHERE trigger IN ('form_submitted', 'form_confirm') AND user_id = current_setting('x.cv')::uuid)),
+  ('the confirmation waits a minute for the PDF', (SELECT send_after > now() + interval '50 seconds' FROM whatsapp.outbox
+                                                WHERE trigger = 'form_confirm' AND form_session_id = current_setting('x.sess')::uuid)),
+  ('held photos append in order, without duplicates', (SELECT v = '["aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002"]'::jsonb FROM _r WHERE k = 'hold_dup')),
+  ('release removes only what was attached',  (SELECT v = '["aaaaaaaa-0000-4000-8000-000000000002"]'::jsonb FROM _r WHERE k = 'release')),
+  ('authenticated cannot hold photos',        NOT has_function_privilege('authenticated', 'whatsapp.form_session_hold_photo(uuid,uuid)', 'EXECUTE')),
   ('fan-out is idempotent',                  (SELECT v::int = 0 FROM _r WHERE k = 'fanout_again') AND (SELECT v::int >= 2 FROM _r WHERE k = 'fanout')),
   ('project-scoped client viewer: gate refuses', (SELECT v->>'code' FROM _r WHERE k = 'gate_pcv') = 'no_access'),
   ('project-scoped client viewer: nothing listed', (SELECT v = '[]'::jsonb FROM _r WHERE k = 'list_pcv')),

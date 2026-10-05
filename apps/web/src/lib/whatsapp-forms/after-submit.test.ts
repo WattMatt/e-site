@@ -44,13 +44,14 @@ beforeEach(() => {
 })
 
 describe('afterWhatsAppSubmit', () => {
-  it('stages the PDF, closes the session, queues the messages, notifies the verifier and kicks the worker, in that order', async () => {
+  it('queues the messages and notifies before the slow PDF, and closes the session last', async () => {
     await afterWhatsAppSubmit('s-1', { notifyVerifier: true }, deps())
-    expect(log[0]).toBe('render')
-    expect(log[1]).toBe(`upload whatsapp-media ${outboundPdfPath('s-1')}`)
-    expect(log[2]).toMatch(/^update form_sessions .*"status":"submitted"/)
-    expect(log[3]).toBe('rpc enqueue_form_submitted {"p_session":"s-1"}')
-    expect(log.slice(4)).toEqual(['notify', 'kick'])
+    expect(log[0]).toBe('rpc enqueue_form_submitted {"p_session":"s-1"}')
+    expect(log[1]).toBe('notify')
+    expect(log[2]).toBe('render')
+    expect(log[3]).toBe(`upload whatsapp-media ${outboundPdfPath('s-1')}`)
+    expect(log[4]).toBe('kick')
+    expect(log[5]).toMatch(/^update form_sessions .*"status":"submitted"/)
   })
   it('does not notify the verifier twice when the web submit already did', async () => {
     await afterWhatsAppSubmit('s-1', { notifyVerifier: false }, deps())

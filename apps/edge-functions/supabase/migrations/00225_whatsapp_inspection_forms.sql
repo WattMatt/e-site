@@ -40,7 +40,10 @@
 -- function: whatsapp.wa_my_inspections(uuid,uuid)
 -- function: whatsapp.wa_inspection_save(uuid,uuid,jsonb,uuid)
 -- function: whatsapp.wa_inspection_add_photo(uuid,uuid,text,text,text,bigint,integer,integer)
--- function: whatsapp.wa_inspection_submit(uuid,uuid)
+-- function: whatsapp.wa_inspection_submit(uuid,uuid,uuid)
+-- function: whatsapp.form_session_hold_photo(uuid,uuid)
+-- function: whatsapp.form_session_release_photos(uuid,uuid[])
+-- column: inspections.inspections.submitted_session_id
 -- function: whatsapp.enqueue_form_submitted(uuid)
 -- function: whatsapp.form_receive_check(uuid)
 -- constraint: outbox_trigger_check ON whatsapp.outbox
@@ -153,6 +156,9 @@ INSERT INTO whatsapp.templates (name, category, status) VALUES ('esite_form_subm
 ALTER TABLE inspections.responses   ADD COLUMN via text CHECK (via IN ('web', 'mobile', 'whatsapp'));
 ALTER TABLE inspections.photos      ADD COLUMN via text CHECK (via IN ('web', 'mobile', 'whatsapp'));
 ALTER TABLE inspections.inspections ADD COLUMN submitted_via text CHECK (submitted_via IN ('web', 'mobile', 'whatsapp'));
+-- The WhatsApp session whose SUBMIT moved the inspection, stamped in the same statement. A retry may
+-- finish that submit's follow-up only when it is the same session (never someone else's submit).
+ALTER TABLE inspections.inspections ADD COLUMN submitted_session_id uuid REFERENCES whatsapp.form_sessions(id) ON DELETE SET NULL;
 
 -- ── 6. Grants: the new tables are service-role only ──────────────────────────
 ALTER TABLE whatsapp.org_settings  ENABLE ROW LEVEL SECURITY;
@@ -276,7 +282,7 @@ END $$;
 
 -- Completeness (required answers, photos, signatures) is checked by the web app with the shared
 -- engine BEFORE this is called; this function owns the status move and its race guard.
-CREATE OR REPLACE FUNCTION whatsapp.wa_inspection_submit(p_user uuid, p_inspection uuid)
+CREATE OR REPLACE FUNCTION whatsapp.wa_inspection_submit(p_user uuid, p_inspection uuid, p_session uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_gate jsonb; v_verifier uuid;
 BEGIN
@@ -286,7 +292,7 @@ BEGIN
   IF v_gate->>'status' = 'assigned' THEN RETURN jsonb_build_object('code', 'nothing_answered'); END IF;
   BEGIN
     UPDATE inspections.inspections
-       SET status = 'awaiting_verification', completed_at = now(), submitted_via = 'whatsapp'
+       SET status = 'awaiting_verification', completed_at = now(), submitted_via = 'whatsapp', submitted_session_id = p_session
      WHERE id = p_inspection AND status IN ('in_progress', 're-inspect_required')
     RETURNING verifier_id INTO v_verifier;
     IF NOT FOUND THEN RETURN jsonb_build_object('code', 'not_writable'); END IF;
@@ -301,18 +307,18 @@ ALTER FUNCTION whatsapp.wa_inspection_gate(uuid,uuid) OWNER TO whatsapp_actor;
 ALTER FUNCTION whatsapp.wa_my_inspections(uuid,uuid) OWNER TO whatsapp_actor;
 ALTER FUNCTION whatsapp.wa_inspection_save(uuid,uuid,jsonb,uuid) OWNER TO whatsapp_actor;
 ALTER FUNCTION whatsapp.wa_inspection_add_photo(uuid,uuid,text,text,text,bigint,integer,integer) OWNER TO whatsapp_actor;
-ALTER FUNCTION whatsapp.wa_inspection_submit(uuid,uuid) OWNER TO whatsapp_actor;
+ALTER FUNCTION whatsapp.wa_inspection_submit(uuid,uuid,uuid) OWNER TO whatsapp_actor;
 REVOKE ALL ON FUNCTION whatsapp._inspection_gate(uuid) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION whatsapp.wa_inspection_gate(uuid,uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION whatsapp.wa_my_inspections(uuid,uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION whatsapp.wa_inspection_save(uuid,uuid,jsonb,uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION whatsapp.wa_inspection_add_photo(uuid,uuid,text,text,text,bigint,integer,integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION whatsapp.wa_inspection_submit(uuid,uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION whatsapp.wa_inspection_submit(uuid,uuid,uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_inspection_gate(uuid,uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_my_inspections(uuid,uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_inspection_save(uuid,uuid,jsonb,uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.wa_inspection_add_photo(uuid,uuid,text,text,text,bigint,integer,integer) TO service_role;
-GRANT EXECUTE ON FUNCTION whatsapp.wa_inspection_submit(uuid,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.wa_inspection_submit(uuid,uuid,uuid) TO service_role;
 
 -- ── 9. Fan-out after a submit, and the send-time re-check ────────────────────
 -- Recipients of the summary: active project members with an active org row, an active WhatsApp
@@ -327,9 +333,10 @@ BEGIN
    WHERE s.id = p_session;
   IF NOT FOUND OR NOT whatsapp.forms_enabled(v.organisation_id) THEN RETURN 0; END IF;
 
-  INSERT INTO whatsapp.outbox (user_id, link_id, trigger, idempotency_key, payload, form_session_id)
+  -- The confirmation carries the PDF, which the web app renders AFTER queueing: give it a minute.
+  INSERT INTO whatsapp.outbox (user_id, link_id, trigger, idempotency_key, payload, form_session_id, send_after)
   SELECT v.user_id, l.id, 'form_confirm', 'form_confirm:' || v.id,
-         jsonb_build_object('inspection_id', v.inspection_id, 'project_id', v.project_id), v.id
+         jsonb_build_object('inspection_id', v.inspection_id, 'project_id', v.project_id), v.id, now() + interval '60 seconds'
     FROM whatsapp.phone_links l WHERE l.user_id = v.user_id AND l.status = 'active'
   ON CONFLICT (idempotency_key) DO NOTHING;
   GET DIAGNOSTICS n1 = ROW_COUNT;
@@ -382,5 +389,34 @@ REVOKE ALL ON FUNCTION whatsapp.form_receive_check(uuid) FROM anon;
 REVOKE ALL ON FUNCTION whatsapp.form_receive_check(uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION whatsapp.enqueue_form_submitted(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION whatsapp.form_receive_check(uuid) TO service_role;
+
+-- ── 10. Held photos: append and release atomically (album photos arrive concurrently) ─
+CREATE OR REPLACE FUNCTION whatsapp.form_session_hold_photo(p_session uuid, p_inbound uuid)
+RETURNS uuid[] LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
+  UPDATE whatsapp.form_sessions
+     SET pending_photo_inbound_ids = CASE WHEN p_inbound = ANY (pending_photo_inbound_ids)
+                                          THEN pending_photo_inbound_ids
+                                          ELSE array_append(pending_photo_inbound_ids, p_inbound) END
+   WHERE id = p_session
+  RETURNING pending_photo_inbound_ids
+$$;
+
+CREATE OR REPLACE FUNCTION whatsapp.form_session_release_photos(p_session uuid, p_inbound uuid[])
+RETURNS uuid[] LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
+  UPDATE whatsapp.form_sessions
+     SET pending_photo_inbound_ids = ARRAY(SELECT x FROM unnest(pending_photo_inbound_ids) WITH ORDINALITY AS u(x, n)
+                                           WHERE NOT (x = ANY (p_inbound)) ORDER BY n)
+   WHERE id = p_session
+  RETURNING pending_photo_inbound_ids
+$$;
+
+REVOKE ALL ON FUNCTION whatsapp.form_session_hold_photo(uuid,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION whatsapp.form_session_hold_photo(uuid,uuid) FROM anon;
+REVOKE ALL ON FUNCTION whatsapp.form_session_hold_photo(uuid,uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION whatsapp.form_session_release_photos(uuid,uuid[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION whatsapp.form_session_release_photos(uuid,uuid[]) FROM anon;
+REVOKE ALL ON FUNCTION whatsapp.form_session_release_photos(uuid,uuid[]) FROM authenticated;
+GRANT EXECUTE ON FUNCTION whatsapp.form_session_hold_photo(uuid,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION whatsapp.form_session_release_photos(uuid,uuid[]) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
