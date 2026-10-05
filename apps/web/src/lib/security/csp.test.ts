@@ -33,4 +33,11 @@ describe('buildContentSecurityPolicy — frame-src guards document preview', () 
     expect(directive(policy, 'object-src')).toContain("'none'")
     expect(directive(policy, 'base-uri')).toContain("'self'")
   })
+
+  it('lets the tariff map run MapLibre: blob workers and the OpenFreeMap tile host, nothing wider', () => {
+    const policy = buildContentSecurityPolicy({ dev: false })
+    expect(directive(policy, 'worker-src')).toBe("worker-src 'self' blob:")
+    expect(directive(policy, 'connect-src')).toContain('https://tiles.openfreemap.org')
+    expect(directive(policy, 'connect-src')).not.toContain('*.openfreemap.org')
+  })
 })

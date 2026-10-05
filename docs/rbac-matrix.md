@@ -234,6 +234,24 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 >
 > `cloud-sync-project`'s `isAnnotated()` treats a drawing with a Solar schematic, meter card or supply line as annotated (00215), so a newer Dropbox file is never auto-adopted under it. **Deploy the edge function only after 00215 is applied** (an owner step) — before, the three lookups error and fail closed (every drawing reads as annotated, which silently disables auto-adopt platform-wide).
 
+## Tariffs explorer (`apps/web/src/app/(admin)/tariffs/*`, E7, 2026-10-05)
+
+Owner decision D1 (2026-10-05): the **published** library is open to every signed-in organisation, not only Solar subscribers. `00224` replaced 00210's `caller_has_any_solar_org()` read gate with `public.caller_can_read_tariff_library()` (platform tariff admin, or active in any org). Drafts (`ingesting`, `in_review`) stay admin-only; `ingest_run`, `ingest_job`, `due_year_alert`, `error_report` reads are unchanged. Client viewers never reach these pages (the `(admin)` layout bounces them to `/portal`), although RLS would let an active client viewer read the published library over PostgREST — it is public NERSA data. Every read goes through the caller's session; there is no app-level role list.
+
+| Route | Any active org member (owner … supplier) | Platform tariff admin | Signed out / no active membership |
+|---|---|---|---|
+| `/tariffs` (alias-aware search) | R | R | → `/login` / empty-state sentence |
+| `/tariffs/[licenseeId]?fy=` (published / superseded years) | R | R | 404 (RLS returns no licensee) |
+| `/tariffs/[licenseeId]/[tariffId]` (cited charges, YoY, TOU visuals, holiday rules) | R | R | 404 |
+| `/tariffs/compare?t=` (2–4 tariffs, priced in the browser) | R | R | — |
+| `/tariffs/map` (area of supply) | R **when `TARIFF_MAP_ENABLED=1`**, else 404 | same | 404 |
+| `GET /api/tariffs/municipalities` (MDB boundaries) | 200 when the flag is on, else 404 | same | 401 |
+
+| Action | Gate | DB layer that decides |
+|---|---|---|
+| `getTariffSourceUrlAction` (`tariff-explorer.actions.ts`) | signed in | reads `source_document` through the caller (00224 policy), then signs a 10-minute URL with the service client |
+| `listPublishedTariffsAction` | signed in | `tariff_year` (published only) + `tariff`, both under 00224 RLS |
+
 ## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
 
 Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
@@ -246,6 +264,7 @@ Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210),
 | `/admin/tariffs/years`, `/years/[yearId]` (review queue, checks, publish), `/years/[yearId]/diff`, `/years/[yearId]/sseg` | W (draft years); R (published / superseded) | 404 |
 | `/admin/tariffs/calendars` (TOU calendars, holiday treatment) | W | 404 |
 | `/admin/tariffs/reports` (reported tariff errors) | W | 404 |
+| `/admin/tariffs/cycle` (E7: due years per regime, ready / blocked / unchecked years, review queue, publish history, diff links) | R | 404 |
 
 | Action / route | Gate | DB layer that decides |
 |---|---|---|

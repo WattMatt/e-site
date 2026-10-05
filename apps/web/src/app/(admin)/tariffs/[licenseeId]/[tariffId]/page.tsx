@@ -88,7 +88,7 @@ export default async function TariffDetailPage({ params }: { params: Promise<{ l
           <CardHeader><span className="data-panel-title">Time of use</span></CardHeader>
           <CardBody>
             {!calendar
-              ? <p style={{ fontSize: 13, margin: 0 }}>No TOU calendar is loaded for {licensee.name} or Eskom yet, so the hours cannot be shown.</p>
+              ? <p style={{ fontSize: 13, margin: 0 }}>No TOU calendar is loaded for {licensee.name}{licensee.kind === 'eskom' ? '' : ' or Eskom'} yet, so the hours cannot be shown.</p>
               : (
                 <div style={{ display: 'grid', gap: 20 }}>
                   <p style={{ fontSize: 12, margin: 0, color: 'var(--c-text-mid)' }}>
