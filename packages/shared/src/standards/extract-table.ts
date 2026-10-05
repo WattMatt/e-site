@@ -252,7 +252,7 @@ export function extractTable(pages: PdfPage[], spec: TableSpec): ExtractedTable 
   const keyless: Array<{ col: string; value: number | null; printed: string }> = []
   const conditions = new Map<string, ExtractedCondition>()
   const subRows = new Set<string>()
-  let lastKey: string | null = null
+  let lastKey: string | null // reset at the start of every page segment
 
   for (const [segIdx, { page, from }] of segments.entries()) {
     const pagePrinted = printedPage(page, offset)
