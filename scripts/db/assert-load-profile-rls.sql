@@ -41,6 +41,9 @@ BEGIN
     FROM projects.project_members pm JOIN projects.projects p ON p.id = pm.project_id
    WHERE pm.role = 'contractor' AND pm.is_active
      AND public.user_effective_project_role(pm.project_id, pm.user_id) = 'contractor'
+     -- a project with no real load profile yet: the probe inserts one (UNIQUE project_id)
+     AND NOT EXISTS (SELECT 1 FROM projects.load_profiles lp WHERE lp.project_id = pm.project_id)
+     AND EXISTS (SELECT 1 FROM public.user_organisations a WHERE a.organisation_id = p.organisation_id AND a.is_active AND a.role IN ('owner', 'admin'))
    LIMIT 1;
   IF v_contractor IS NULL THEN RAISE EXCEPTION 'no contractor fixture'; END IF;
 

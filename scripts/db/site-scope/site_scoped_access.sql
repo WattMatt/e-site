@@ -16,6 +16,7 @@
 -- function: public.site_project_of_jbcc_letter(uuid)
 -- function: public.site_project_of_node(uuid)
 -- function: public.site_project_of_node_order(uuid)
+-- function: public.site_project_of_tenant_document(uuid)
 -- function: public.site_project_of_work_item(uuid)
 -- function: public.site_project_of_boq_import(uuid)
 -- function: public.site_project_of_boq_section(uuid)
@@ -36,6 +37,7 @@
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_jbcc_letter(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_node(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_node_order(uuid)', 'EXECUTE'))
+-- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_tenant_document(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_work_item(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_boq_import(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_boq_section(uuid)', 'EXECUTE'))
@@ -208,6 +210,11 @@ CREATE OR REPLACE FUNCTION public.site_project_of_node_order(p_id uuid)
 AS $f$ SELECT project_id FROM structure.node_orders WHERE id = p_id $f$;
 REVOKE ALL ON FUNCTION public.site_project_of_node_order(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.site_project_of_node_order(uuid) TO authenticated, service_role;
+CREATE OR REPLACE FUNCTION public.site_project_of_tenant_document(p_id uuid)
+ RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$ SELECT public.site_project_of_node(node_id) FROM structure.tenant_documents WHERE id = p_id $f$;
+REVOKE ALL ON FUNCTION public.site_project_of_tenant_document(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_project_of_tenant_document(uuid) TO authenticated, service_role;
 CREATE OR REPLACE FUNCTION public.site_project_of_work_item(p_id uuid)
  RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
 AS $f$ SELECT project_id FROM projects.work_items WHERE id = p_id $f$;
@@ -491,8 +498,8 @@ CREATE POLICY site_scope ON structure.tenant_documents AS RESTRICTIVE FOR ALL
   WITH CHECK (public.user_has_project_access(public.site_project_of_node(node_id)));
 DROP POLICY IF EXISTS site_scope ON structure.tenant_document_revisions;
 CREATE POLICY site_scope ON structure.tenant_document_revisions AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(public.site_project_of_node(node_id)))
-  WITH CHECK (public.user_has_project_access(public.site_project_of_node(node_id)));
+  USING (public.user_has_project_access(public.site_project_of_tenant_document(tenant_document_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tenant_document(tenant_document_id)));
 DROP POLICY IF EXISTS site_scope ON structure.tenant_units;
 CREATE POLICY site_scope ON structure.tenant_units AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_node(node_id)))
@@ -684,12 +691,17 @@ CREATE POLICY site_scope ON projects.tender_estimate_lines AS RESTRICTIVE FOR AL
 
 DROP POLICY IF EXISTS site_scope ON projects.projects;
 CREATE POLICY site_scope ON projects.projects AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(id))
+  USING (
+    public.user_has_project_access(id)
+    OR EXISTS (SELECT 1 FROM public.user_organisations uo
+               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid() AND uo.is_active
+                 AND (uo.role IN ('owner', 'admin') OR (uo.role = 'project_manager' AND projects.created_by = auth.uid())))
+  )
   WITH CHECK (
     public.user_has_project_access(id)
     OR EXISTS (SELECT 1 FROM public.user_organisations uo
-               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid()
-                 AND uo.is_active AND uo.role IN ('owner', 'admin', 'project_manager'))
+               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid() AND uo.is_active
+                 AND (uo.role IN ('owner', 'admin') OR (uo.role = 'project_manager' AND projects.created_by = auth.uid())))
   );
 CREATE OR REPLACE FUNCTION public.user_can_see_profile(p_target uuid)
  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER

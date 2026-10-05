@@ -39,16 +39,27 @@ AS $function$
 $function$;
 `
 
-/** projects.projects: read/update/delete need site access; INSERT keeps the existing org-role rule (the new row is not visible to the lookup yet). */
+/**
+ * projects.projects. The access lookup cannot see a row inserted by the same
+ * statement, and INSERT ... RETURNING re-reads the new row under USING, so the
+ * policy also decides from the row's own columns: org owner/admin of its
+ * organisation (same meaning as clause b), or an org project manager on a
+ * project they created. Measured: without this an admin could not create a project.
+ */
 export const PROJECTS_SQL = `
 DROP POLICY IF EXISTS site_scope ON projects.projects;
 CREATE POLICY site_scope ON projects.projects AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(id))
+  USING (
+    public.user_has_project_access(id)
+    OR EXISTS (SELECT 1 FROM public.user_organisations uo
+               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid() AND uo.is_active
+                 AND (uo.role IN ('owner', 'admin') OR (uo.role = 'project_manager' AND projects.created_by = auth.uid())))
+  )
   WITH CHECK (
     public.user_has_project_access(id)
     OR EXISTS (SELECT 1 FROM public.user_organisations uo
-               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid()
-                 AND uo.is_active AND uo.role IN ('owner', 'admin', 'project_manager'))
+               WHERE uo.organisation_id = projects.organisation_id AND uo.user_id = auth.uid() AND uo.is_active
+                 AND (uo.role IN ('owner', 'admin') OR (uo.role = 'project_manager' AND projects.created_by = auth.uid())))
   );
 `
 
