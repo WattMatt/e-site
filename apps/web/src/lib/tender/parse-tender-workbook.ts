@@ -56,10 +56,11 @@ function readSheet(ws: ExcelJS.Worksheet): { rows: Aoa; text: string[][] } {
     for (let c = 1; c <= width; c++) {
       const cell = row.getCell(c)
       vals.push(coerce(cell.value))
-      let t = ''
+      let t: string
       try {
         t = (cell.text ?? '').trim()
       } catch {
+        // ExcelJS throws on some exotic formula cells; fall back to no display text.
         t = ''
       }
       txt.push(t)
