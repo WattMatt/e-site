@@ -1,7 +1,7 @@
--- BEHAVIOURAL assertions for 00225_tariff_explorer, run as real roles against
+-- BEHAVIOURAL assertions for 00228_tariff_explorer, run as real roles against
 -- the live library (no tariff fixtures: the point is what a caller can read).
 --   RED first:  scripts/db/dry-run-migration.sh <noop.sql> scripts/db/assert-tariff-explorer.sql
---   GREEN:      scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00225_tariff_explorer.sql scripts/db/assert-tariff-explorer.sql
+--   GREEN:      scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00228_tariff_explorer.sql scripts/db/assert-tariff-explorer.sql
 -- Fixtures (two throwaway users, one throwaway org) are minted inside the
 -- transaction and rolled back.
 --

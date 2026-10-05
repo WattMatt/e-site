@@ -1,4 +1,4 @@
--- 00225_tariff_explorer.sql
+-- 00228_tariff_explorer.sql
 --
 -- E7 (2026-10-05): the tariff explorer, TOU visuals and area-of-supply map.
 -- Spec: docs/superpowers/specs/2026-10-05-tariff-explorer-design.md.

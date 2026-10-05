@@ -236,7 +236,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 
 ## Tariffs explorer (`apps/web/src/app/(admin)/tariffs/*`, E7, 2026-10-05)
 
-Owner decision D1 (2026-10-05): the **published** library is open to every signed-in organisation, not only Solar subscribers. `00225` replaced 00210's `caller_has_any_solar_org()` read gate with `public.caller_can_read_tariff_library()` (platform tariff admin, or active in any org). Drafts (`ingesting`, `in_review`) stay admin-only; `ingest_run`, `ingest_job`, `due_year_alert`, `error_report` reads are unchanged. Client viewers never reach these pages (the `(admin)` layout bounces them to `/portal`), although RLS would let an active client viewer read the published library over PostgREST — it is public NERSA data. Every read goes through the caller's session; there is no app-level role list.
+Owner decision D1 (2026-10-05): the **published** library is open to every signed-in organisation, not only Solar subscribers. `00228` replaced 00210's `caller_has_any_solar_org()` read gate with `public.caller_can_read_tariff_library()` (platform tariff admin, or active in any org). Drafts (`ingesting`, `in_review`) stay admin-only; `ingest_run`, `ingest_job`, `due_year_alert`, `error_report` reads are unchanged. Client viewers never reach these pages (the `(admin)` layout bounces them to `/portal`), although RLS would let an active client viewer read the published library over PostgREST — it is public NERSA data. Every read goes through the caller's session; there is no app-level role list.
 
 | Route | Any active org member (owner … supplier) | Platform tariff admin | Signed out / no active membership |
 |---|---|---|---|
@@ -249,8 +249,8 @@ Owner decision D1 (2026-10-05): the **published** library is open to every signe
 
 | Action | Gate | DB layer that decides |
 |---|---|---|
-| `getTariffSourceUrlAction` (`tariff-explorer.actions.ts`) | signed in | reads `source_document` through the caller (00225 policy), then signs a 10-minute URL with the service client |
-| `listPublishedTariffsAction` | signed in | `tariff_year` (published only) + `tariff`, both under 00225 RLS |
+| `getTariffSourceUrlAction` (`tariff-explorer.actions.ts`) | signed in | reads `source_document` through the caller (00228 policy), then signs a 10-minute URL with the service client |
+| `listPublishedTariffsAction` | signed in | `tariff_year` (published only) + `tariff`, both under 00228 RLS |
 
 ## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
 

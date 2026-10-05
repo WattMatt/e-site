@@ -67,7 +67,7 @@ Also outstanding: 9 `network_capacity` charges and Coega's "Free Basic Electrici
 
 ## 7. TOU calendars and holidays
 
-- Eskom's hours come from the *Schedule of standard prices* (2026/27: Figure 2, p56; seasons p4; holidays p12). They were seeded by `00225` for both Eskom licensees, valid from 1 April / 1 July 2025 with no end date. **When Eskom changes its hours, add a new calendar row with a `valid_from`, do not edit the old one** — studies priced earlier keep their hours.
+- Eskom's hours come from the *Schedule of standard prices* (2026/27: Figure 2, p56; seasons p4; holidays p12). They were seeded by `00228` for both Eskom licensees, valid from 1 April / 1 July 2025 with no end date. **When Eskom changes its hours, add a new calendar row with a `valid_from`, do not edit the old one** — studies priced earlier keep their hours.
 - Holidays: `tariffs.holiday_treatment` holds one row per holiday per tariff family (WEPS, Megaflex, Megaflex Gen, Municflex, Miniflex). The 2026/27 table runs to 30 June 2027: **add the 2027/28 rows from the new schedule before 1 July 2027.** Homeflex, Ruraflex, Ruraflex Gen and Nightsave Rural bill a holiday as its own weekday and need no rows. The Solar engine does not read `holiday_treatment` yet (it bills every Eskom holiday as its weekday).
 - Municipalities publish seasons, not hours: the explorer shows Eskom's hours for them, labelled as assumed. Add a municipal calendar in `/admin/tariffs/calendars` only when the licensee publishes its own hours.
 

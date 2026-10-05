@@ -1,7 +1,7 @@
 'use server'
 /**
  * Tariff explorer actions (E7). Any signed-in user may call them; what they
- * return is decided by RLS on the caller's session (00225: the published
+ * return is decided by RLS on the caller's session (00228: the published
  * library is open to every active org member, drafts stay admin-only).
  */
 import { createClient, createServiceClient } from '@/lib/supabase/server'

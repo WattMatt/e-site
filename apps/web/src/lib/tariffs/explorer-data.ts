@@ -1,7 +1,7 @@
 import 'server-only'
 /**
  * Tariff explorer reads (E7). Everything goes through the CALLER's session:
- * 00225 lets every active org member read the published library, and keeps
+ * 00228 lets every active org member read the published library, and keeps
  * drafts admin-only, so RLS — not this file — decides what a caller sees.
  * A failed read logs the table and code (never the message) and returns a
  * state the page turns into a sentence.

@@ -24,7 +24,7 @@
 
 Out of scope: municipal calendars (each needs its own published hours or an admin decision to assume Eskom's), the six remaining RfDs (logged in the runbook), the Solar `noCalendar` fallback.
 
-## 3. Data and access — migration `00225` (number re-checked at merge)
+## 3. Data and access — migration `00228` (number re-checked at merge)
 
 - `public.caller_can_read_tariff_library()` — SECURITY DEFINER, `search_path = ''`: tariff admin, or active in any organisation. REVOKE from PUBLIC and anon.
 - The seven reference/year SELECT policies are dropped and re-created **under the same names**, PERMISSIVE, on the new helper. `tariff_year_select` keeps the published/superseded restriction for non-admins. `tariff`, `charge`, `loss_factor`, `sseg_rule` already inherit through `EXISTS` on their parent and are unchanged. Writes are unchanged. 00210's `@verify` block names these policies only by name and kind, so it stays green.
