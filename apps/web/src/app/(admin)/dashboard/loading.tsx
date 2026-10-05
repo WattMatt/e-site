@@ -18,7 +18,7 @@ export default function DashboardLoading() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16, marginTop: 16 }}>
+      <div className="stack-on-phone" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16, marginTop: 16 }}>
         {Array.from({ length: 2 }).map((_, i) => (
           <div key={i} className="data-panel">
             <div className="data-panel-header">

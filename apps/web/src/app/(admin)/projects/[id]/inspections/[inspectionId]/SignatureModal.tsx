@@ -129,9 +129,11 @@ export default function SignatureModal({
         >
           <SignatureCanvas
             ref={ref}
+            // No fixed width/height: react-signature-canvas then sizes the
+            // canvas to its on-screen box × devicePixelRatio. A fixed 520 px
+            // canvas CSS-scaled into a narrower modal put every stroke away
+            // from the finger on a phone.
             canvasProps={{
-              width: 520,
-              height: 200,
               style: { width: '100%', height: 200, display: 'block' },
             }}
           />
