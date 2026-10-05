@@ -54,7 +54,7 @@ BEGIN
     INSERT INTO _r VALUES ('extracted_without_standard_REFUSED', true);
   END;
 
-  -- topic + conditions: required of extracted tables since 00236 (this file needs 00236 applied).
+  -- topic + conditions: required of extracted tables since 00232 (this file needs 00232 applied).
   INSERT INTO cable_schedule.sans_tables (code, title, standard, columns, provenance, standard_id, clause, visibility_org_id, topic, conditions)
   VALUES ('ZZ_PROBE_T', 'probe', 'SANS 10142-1:2021', '[]'::jsonb, 'extracted', v_std, 'Table 6.13', c_wm_org, 'derating', '[]'::jsonb)
   RETURNING id INTO v_tbl;
