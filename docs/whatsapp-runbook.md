@@ -182,7 +182,7 @@ The schema can stay in place: it is inert while every `notify_whatsapp` is false
 
 See plan Task 25. Stage 1: WM staff on one project. Stage 2: one live project with invited foremen. Success measure: a snag assigned to a foreman is closed with a close-out photo over WhatsApp, leaves the PM's waiting list, and nobody chases it in a site group.
 
-## 13. Inspection forms over WhatsApp (E4, migration `00225`)
+## 13. Inspection forms over WhatsApp (E4, migration `00229`)
 
 Members fill in an inspection from WhatsApp: a Flow for the questions, photos in chat captioned with an item number, SUBMIT; a signed web link for the signature (or for the whole form when the template cannot be a Flow). Design: `docs/superpowers/specs/2026-10-05-whatsapp-inspection-flows-design.md`.
 
