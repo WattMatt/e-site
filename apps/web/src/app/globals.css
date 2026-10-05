@@ -110,6 +110,10 @@
   --f-display:       var(--font-display, 'Fraunces'), 'EB Garamond', Georgia, serif;
   --f-body-jbcc:     'Mona Sans Variable', 'Mona Sans', system-ui, sans-serif;
   --f-mono-display:  var(--font-mono-display, 'IBM Plex Mono'), ui-monospace, SFMono-Regular, monospace;
+  /* TOU periods: one ordinal hue, peak most salient (dataviz validator: PASS on light and dark) */
+  --tou-off-peak:    #5598e7;
+  --tou-standard:    #9ec5f4;
+  --tou-peak:        #cde2fb;
 }
 
 /* ============================================================
@@ -160,6 +164,9 @@
   --c-red-dim-rgb:   rgba(181,54,42,.10);
   --c-red-bright:    #C0392B;
   --c-text-muted:    #6B6456;
+  --tou-off-peak:    #86b6ef;
+  --tou-standard:    #2a78d6;
+  --tou-peak:        #104281;
 }
 
 @media (prefers-color-scheme: light) {
@@ -202,6 +209,9 @@
     --c-red-dim-rgb:   rgba(181,54,42,.10);
     --c-red-bright:    #C0392B;
     --c-text-muted:    #6B6456;
+    --tou-off-peak:    #86b6ef;
+    --tou-standard:    #2a78d6;
+    --tou-peak:        #104281;
   }
 }
 
@@ -1630,6 +1640,19 @@ body {
   .std-index { position: static; max-height: none; }
   .std-table-wrap { display: none; }
   .std-cards { display: block; }
+}
+
+/* ─── Safe areas (installed app, viewport-fit=cover) ─────────────
+   viewport-fit=cover lets the page reach the screen edges, so every
+   layout keeps itself clear of the notch (landscape) and the home
+   indicator. In portrait in a browser tab these are all 0. */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.sidebar { padding-bottom: env(safe-area-inset-bottom); }
+@media screen and (min-width: 768px) {
+  .sticky-save-bar { bottom: calc(16px + env(safe-area-inset-bottom)) !important; }
 }
 
 

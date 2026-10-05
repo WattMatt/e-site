@@ -1,0 +1,13 @@
+# Tender BOQ — slice A plan (model + import)
+
+Spec: `docs/superpowers/specs/2026-10-05-tender-boq-portal-design.md`. TDD per task; every guard shown red first.
+
+1. **Types + fixtures** — `apps/web/src/lib/tender/types.ts`; `__fixtures__/build-workbooks.ts` builds the MVL layout (Summary + Bill No 1–4, numeric codes, S/I sub-items, contingency) and a WM layout (lettered codes, PS rows, RATE ONLY rows) with ExcelJS, including formula cells with cached results.
+2. **Parser** — `parse-tender-workbook.ts`: header detection, column map, row classification (heading/item/note/total), child-code heading rule, rate-cell guess, summary extraction. Tests assert every kind on both fixtures, plus: an unknown sheet is reported, never silently dropped; a priced row without a code is reported.
+3. **Reconciler** — `reconcile-tender.ts`: exact-cent per sheet, per summary line, grand total; arithmetic-error list. Tests include a one-cent drift that must fail (mutation: switch to 0.5 % tolerance → the test goes red).
+4. **Diff** — `diff-tender-boqs.ts`: added/removed/changed by sheet + code. Tests: identical → empty; changed qty, renamed description, removed row, added row.
+5. **Persist mapping** — `to-rows.ts`: parsed → insert rows (sort order, heading path, column letters). Test: round-trips every fixture item; no item lost.
+6. **Migration** — `00226_tender_boq.sql` (number re-checked at apply): `tenders`, `tender_boq_items`, `tender_estimate_lines`, `tender_requirements`, org-binding trigger, per-verb RLS (owner/admin/PM), private `tender-files` bucket with no client policies, `@verify` block. Assertions `scripts/db/assert-tender-boq-roles.sql`: owner sees + writes; contractor, client viewer and a non-member see 0 rows and cannot insert; a wrong `organisation_id` is overwritten by the trigger. Run red (no-op migration) then green.
+7. **Server actions** — `tender.actions.ts`: list, create (+ signed upload URL), import (download from storage, parse, reconcile, diff, persist in one call), set cell type (draft only), delete draft. Role gate `ORG_WRITE_ROLES` via `requireEffectiveRole`. Tests mock the clients and assert the gate is checked before any write.
+8. **UI** — `projects/[id]/tenders` list + new + `[tenderId]` review (reconciliation, diff, grid with cell-type select). Sidebar link hidden for non-write roles. `docs/rbac-matrix.md` rows.
+9. **Verify** — web/shared/db suites, type-check, lint, `next build`; review subagent; PR; merge; deploy workflow applies the migration; verifier green; production deployment = merge commit; unauthenticated GET of the new route redirects to login.

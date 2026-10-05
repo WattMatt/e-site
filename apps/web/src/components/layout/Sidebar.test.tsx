@@ -50,3 +50,13 @@ describe('Sidebar — site capture is project-scoped', () => {
     expect(screen.getByRole('link', { name: 'Capture' }).getAttribute('aria-current')).toBe('page')
   })
 })
+
+describe('Sidebar — Tariffs link (E7)', () => {
+  it('every org role sees the public tariff explorer, admin or not', () => {
+    for (const role of ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier'] as const) {
+      const { unmount } = render(<Sidebar role={role} />)
+      expect(screen.getByRole('link', { name: 'Tariffs' }).getAttribute('href')).toBe('/tariffs')
+      unmount()
+    }
+  })
+})

@@ -3,13 +3,14 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { OWNER_ADMIN, type OrgRole } from '@esite/shared'
-import {
+import { OWNER_ADMIN, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
+import { Gavel,
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
   ShieldCheck, FileText, BarChart3, Sun, Camera,
+  Receipt,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
 import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
@@ -69,6 +70,7 @@ export const GLOBAL_NAV = [
   { href: '/dashboard',   label: 'Dashboard',   Icon: LayoutGrid },
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
   { href: '/solar',       label: 'Solar portfolio', Icon: Sun },
+  { href: '/tariffs',     label: 'Tariffs',     Icon: Receipt },
   { href: '/inspections/templates', label: 'Inspection Templates', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
 ] as const
@@ -94,6 +96,7 @@ export function projectNav(id: string) {
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/jbcc`,         label: 'JBCC',        Icon: ScrollText,    exact: false },
     { href: `/projects/${id}/forms`,        label: 'Forms',       Icon: FileText,      exact: false },
+    { href: `/projects/${id}/tenders`,      label: 'Tenders',     Icon: Gavel,         exact: false },
     { href: `/projects/${id}/settings`,     label: 'Settings',    Icon: Settings,      exact: false },
   ]
 }
@@ -173,6 +176,8 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
 
             {projectNav(projectId)
               .filter(({ href }) => mvVisible || !href.includes('/medium-voltage'))
+              // Tenders are owner/admin/PM only (the page redirects everyone else).
+              .filter(({ href }) => !href.endsWith('/tenders') || (role !== null && ORG_WRITE_ROLES.includes(role)))
               .map(({ href, label, Icon, exact }) => {
               const basePath = href.split('?')[0]
               const active = exact

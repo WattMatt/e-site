@@ -50,6 +50,7 @@ membership.
 | `/projects/[id]/forms` (site forms list) | W | W | W | W | W | W | R¹⁰ |
 | `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
 | `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
+| `/projects/[id]/tenders` and `/projects/[id]/tenders/[tenderId]` (tender BOQ import + review; `requireEffectiveRole(ORG_WRITE_ROLES)`, RLS 00226) | W | W | W | — | — | — | — |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/cables/[revisionId]/measure` (the cable-route tool: worklist, sheet canvas and run — `?supply=` `?sheet=` `?page=`) | W | W | W | → schedule | → schedule | → schedule | → schedule |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
@@ -234,6 +235,24 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 >
 > `cloud-sync-project`'s `isAnnotated()` treats a drawing with a Solar schematic, meter card or supply line as annotated (00215), so a newer Dropbox file is never auto-adopted under it. **Deploy the edge function only after 00215 is applied** (an owner step) — before, the three lookups error and fail closed (every drawing reads as annotated, which silently disables auto-adopt platform-wide).
 
+## Tariffs explorer (`apps/web/src/app/(admin)/tariffs/*`, E7, 2026-10-05)
+
+Owner decision D1 (2026-10-05): the **published** library is open to every signed-in organisation, not only Solar subscribers. `00228` replaced 00210's `caller_has_any_solar_org()` read gate with `public.caller_can_read_tariff_library()` (platform tariff admin, or active in any org). Drafts (`ingesting`, `in_review`) stay admin-only; `ingest_run`, `ingest_job`, `due_year_alert`, `error_report` reads are unchanged. Client viewers never reach these pages (the `(admin)` layout bounces them to `/portal`), although RLS would let an active client viewer read the published library over PostgREST — it is public NERSA data. Every read goes through the caller's session; there is no app-level role list.
+
+| Route | Any active org member (owner … supplier) | Platform tariff admin | Signed out / no active membership |
+|---|---|---|---|
+| `/tariffs` (alias-aware search) | R | R | → `/login` / empty-state sentence |
+| `/tariffs/[licenseeId]?fy=` (published / superseded years) | R | R | 404 (RLS returns no licensee) |
+| `/tariffs/[licenseeId]/[tariffId]` (cited charges, YoY, TOU visuals, holiday rules) | R | R | 404 |
+| `/tariffs/compare?t=` (2–4 tariffs, priced in the browser) | R | R | — |
+| `/tariffs/map` (area of supply) | R **when `TARIFF_MAP_ENABLED=1`**, else 404 | same | 404 |
+| `GET /api/tariffs/municipalities` (MDB boundaries) | 200 when the flag is on, else 404 | same | 401 |
+
+| Action | Gate | DB layer that decides |
+|---|---|---|
+| `getTariffSourceUrlAction` (`tariff-explorer.actions.ts`) | signed in | reads `source_document` through the caller (00228 policy), then signs a 10-minute URL with the service client |
+| `listPublishedTariffsAction` | signed in | `tariff_year` (published only) + `tariff`, both under 00228 RLS |
+
 ## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
 
 Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
@@ -246,6 +265,7 @@ Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210),
 | `/admin/tariffs/years`, `/years/[yearId]` (review queue, checks, publish), `/years/[yearId]/diff`, `/years/[yearId]/sseg` | W (draft years); R (published / superseded) | 404 |
 | `/admin/tariffs/calendars` (TOU calendars, holiday treatment) | W | 404 |
 | `/admin/tariffs/reports` (reported tariff errors) | W | 404 |
+| `/admin/tariffs/cycle` (E7: due years per regime, ready / blocked / unchecked years, review queue, publish history, diff links) | R | 404 |
 
 | Action / route | Gate | DB layer that decides |
 |---|---|---|
@@ -796,6 +816,15 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 > **Acting on WhatsApp is acting as the user.** Every WhatsApp action runs through a `whatsapp.wa_*` function owned by the `whatsapp_actor` role (NOLOGIN, no BYPASSRLS, member of `authenticated`) after setting the user's JWT claims, so the table's real RLS policies and the work-item transition guard judge it — there is no parallel rule set (migration `00222`; proven by `scripts/db/assert-whatsapp-actor.sql` including a re-own-to-`postgres` mutation). **Edge functions:** `whatsapp-webhook` is deployed `--no-verify-jwt` and authenticates Meta by the `X-Hub-Signature-256` HMAC only; `whatsapp-worker` is gateway-verified + `requireServiceRole`.
 >
 > **Project channel (sub-project 2, migration `00223`).** Over WhatsApp a member can list their projects (`wa_my_projects`: projects where they hold an effective role), list open items (`wa_project_items`: RLS `work_items_select`), re-open a card (`wa_item_card`), and post to the project as a **diary entry** (`wa_post_diary`: the diary INSERT policy — org member, not a client viewer, project not payment-paused) or a **triage issue** (`wa_post_issue`: `work_items_insert` + `work_items_insert_gate`, i.e. `task.write_roles` = owner/admin/PM/contractor; assignee = triage owner, gatekeeper = creator). A client viewer is never offered Post, and the database refuses them regardless. WhatsApp diary posts do **not** send the diary email (it is sent by the web action, not a trigger).
+
+### Tenders (`tender.actions.ts`, E5 slice A, migration `00226`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `listTendersAction` / `createTenderAction` / `getTenderDetailAction` | W | W | W | — | — | — | — |
+| `getTenderUploadUrlAction` / `importTenderAction` / `setRateCellTypeAction` / `deleteTenderAction` (draft only) | W | W | W | — | — | — | — |
+
+> Every tender table (`projects.tenders`, `tender_boq_items`, `tender_estimate_lines`, `tender_requirements`) is readable **only** by the project's owner/admin/project manager (`user_effective_project_role`), not by every project member: a contractor on site must not see a tender being prepared, and nobody outside WM may ever read `tender_estimate_lines` (WM's internal estimate). Proven by `scripts/db/assert-tender-boq-roles.sql` (29 assertions, impersonating real production users; mutation-tested). Once a tender leaves `draft` its BOQ, estimate and requirements are frozen by trigger. The `tender-files` bucket has no client storage policies; the server mints signed upload/download URLs after the role check. Import runs through `projects.tender_replace_boq` (SECURITY DEFINER with one `user_can_manage_tender` gate up front, measured 268 ms for 3,000 rows vs 5.3 s as invoker against the 8 s `authenticated` statement timeout); stored workbook paths must sit inside `org/project/tender/`. Status only moves forward; an issued tender's import is frozen and needs every fixed sum priced. Slice B adds the tenderer read path.
 
 ## Public / unauthenticated
 

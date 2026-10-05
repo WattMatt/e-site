@@ -1,0 +1,108 @@
+{
+  "_method": "TOU hours were read from the coloured 24h wheel diagrams (they are images; neither book states the hours in text). Each wheel was rendered at 300 dpi (pdftoppm) and pixel-sampled per hour segment per ring (outer=weekday, middle=Saturday, inner=Sunday). Segment boundaries fall at multiples of 15 deg with '24' at top and clock labels on the boundaries, so segment k = [k:00,(k+1):00). All four Figure-2 wheels (2025/26 schedule p8, 2025/26 booklet p47, 2026/27 schedule p56, 2026/27 booklet p45) sampled byte-identical. Page numbers are PDF page indices; printed page labels given where they differ.",
+  "sources": [
+    {"url": "https://www.eskom.co.za/distribution/wp-content/uploads/2026/03/20260226-Schedule-of-standard-prices-for-01-April-2026-Public-1.pdf", "file": "20260226-Schedule-of-standard-prices-for-01-April-2026-Public-1.pdf", "sha256": "915a93b2d71a453855e76a3ffe2223826f9f63a89bb542d58f92249f52c4d675", "bytes": 7208097, "pages": 57, "financial_year": "2026/27", "title": "Schedule of standard prices for Eskom tariffs 1 April 2026 (non-local authority) / 1 July 2026 (local authority)"},
+    {"url": "https://www.eskom.co.za/distribution/wp-content/uploads/2026/07/Eskom-Tariff-booklet_Final.pdf", "file": "Eskom-Tariff-booklet_Final.pdf", "sha256": "eef82b077d7df4dd7b157ce757e2e56368170cec3bb69614fd81042451a1be84", "bytes": 4125094, "pages": 57, "financial_year": "2026/27", "title": "Tariffs and Charges Booklet 2026/2027 (printed page = PDF page + 1)"},
+    {"url": "https://www.eskom.co.za/distribution/wp-content/uploads/2025/05/20250424-Schedule-of-standard-prices-for-01-April-2025-ver2.pdf", "file": "20250424-Schedule-of-standard-prices-for-01-April-2025-ver2.pdf", "sha256": "7002019eb38a57db0711f52d85d4e6cfafeef6e18106e85f0b72c0f6b4c857eb", "bytes": 7686142, "pages": 49, "financial_year": "2025/26"},
+    {"url": "https://www.eskom.co.za/distribution/wp-content/uploads/2025/07/Tariff-booklet2.pdf", "file": "Tariff-booklet2.pdf", "sha256": "f4e1e8a11f734931a0ab10d442c683c2f2c4395c84feeb7d0501c89cf5d73123", "bytes": 1108728, "pages": 59, "financial_year": "2025/26", "title": "Tariffs and Charges Booklet 2025/2026"}
+  ],
+  "seasons": {
+    "high": [6, 7, 8],
+    "low": [9, 10, 11, 12, 1, 2, 3, 4, 5],
+    "definition": "High-demand season 1 June - 31 August; low-demand season 1 September - 31 May",
+    "page": 4,
+    "page_source": "2026/27 schedule p4 (also 2026/27 booklet PDF p8 = printed Page 9; 2025/26 schedule p3; 2025/26 booklet p9)"
+  },
+  "calendars": [
+    {
+      "applies_to": ["WEPS", "Megaflex", "Megaflex Gen", "Municflex", "Miniflex", "Homeflex", "Transflex", "Ruraflex", "Ruraflex Gen"],
+      "financial_year": "2026/27",
+      "page": 56,
+      "page_source": "2026/27 schedule p56 (para 48, Figure 2); 2026/27 booklet PDF p45 = printed Page 46 (Appendix A, title omits Transflex). Identical in 2025/26 schedule p8 and 2025/26 booklet p47.",
+      "windows": [
+        {"season": "high", "day_type": "weekday", "start": "00:00", "end": "06:00", "period": "off_peak"},
+        {"season": "high", "day_type": "weekday", "start": "06:00", "end": "08:00", "period": "peak"},
+        {"season": "high", "day_type": "weekday", "start": "08:00", "end": "17:00", "period": "standard"},
+        {"season": "high", "day_type": "weekday", "start": "17:00", "end": "20:00", "period": "peak"},
+        {"season": "high", "day_type": "weekday", "start": "20:00", "end": "22:00", "period": "standard"},
+        {"season": "high", "day_type": "weekday", "start": "22:00", "end": "24:00", "period": "off_peak"},
+        {"season": "high", "day_type": "saturday", "start": "00:00", "end": "07:00", "period": "off_peak"},
+        {"season": "high", "day_type": "saturday", "start": "07:00", "end": "12:00", "period": "standard"},
+        {"season": "high", "day_type": "saturday", "start": "12:00", "end": "17:00", "period": "off_peak"},
+        {"season": "high", "day_type": "saturday", "start": "17:00", "end": "19:00", "period": "standard"},
+        {"season": "high", "day_type": "saturday", "start": "19:00", "end": "24:00", "period": "off_peak"},
+        {"season": "high", "day_type": "sunday", "start": "00:00", "end": "17:00", "period": "off_peak"},
+        {"season": "high", "day_type": "sunday", "start": "17:00", "end": "19:00", "period": "standard"},
+        {"season": "high", "day_type": "sunday", "start": "19:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "weekday", "start": "00:00", "end": "06:00", "period": "off_peak"},
+        {"season": "low", "day_type": "weekday", "start": "06:00", "end": "07:00", "period": "standard"},
+        {"season": "low", "day_type": "weekday", "start": "07:00", "end": "09:00", "period": "peak"},
+        {"season": "low", "day_type": "weekday", "start": "09:00", "end": "18:00", "period": "standard"},
+        {"season": "low", "day_type": "weekday", "start": "18:00", "end": "21:00", "period": "peak"},
+        {"season": "low", "day_type": "weekday", "start": "21:00", "end": "22:00", "period": "standard"},
+        {"season": "low", "day_type": "weekday", "start": "22:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "saturday", "start": "00:00", "end": "07:00", "period": "off_peak"},
+        {"season": "low", "day_type": "saturday", "start": "07:00", "end": "12:00", "period": "standard"},
+        {"season": "low", "day_type": "saturday", "start": "12:00", "end": "18:00", "period": "off_peak"},
+        {"season": "low", "day_type": "saturday", "start": "18:00", "end": "20:00", "period": "standard"},
+        {"season": "low", "day_type": "saturday", "start": "20:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "sunday", "start": "00:00", "end": "18:00", "period": "off_peak"},
+        {"season": "low", "day_type": "sunday", "start": "18:00", "end": "20:00", "period": "standard"},
+        {"season": "low", "day_type": "sunday", "start": "20:00", "end": "24:00", "period": "off_peak"}
+      ]
+    },
+    {
+      "applies_to": ["Nightsave Urban", "Nightsave Rural"],
+      "financial_year": "2026/27",
+      "page": 56,
+      "page_source": "2026/27 schedule p56 (Figure 1); 2026/27 booklet PDF p45. Single wheel, no seasonal split in the TOU hours (rates still seasonal). Peak/off-peak only.",
+      "windows": [
+        {"season": "high", "day_type": "weekday", "start": "00:00", "end": "06:00", "period": "off_peak"},
+        {"season": "high", "day_type": "weekday", "start": "06:00", "end": "22:00", "period": "peak"},
+        {"season": "high", "day_type": "weekday", "start": "22:00", "end": "24:00", "period": "off_peak"},
+        {"season": "high", "day_type": "saturday", "start": "00:00", "end": "24:00", "period": "off_peak"},
+        {"season": "high", "day_type": "sunday", "start": "00:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "weekday", "start": "00:00", "end": "06:00", "period": "off_peak"},
+        {"season": "low", "day_type": "weekday", "start": "06:00", "end": "22:00", "period": "peak"},
+        {"season": "low", "day_type": "weekday", "start": "22:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "saturday", "start": "00:00", "end": "24:00", "period": "off_peak"},
+        {"season": "low", "day_type": "sunday", "start": "00:00", "end": "24:00", "period": "off_peak"}
+      ]
+    }
+  ],
+  "holidays": {
+    "page": 12,
+    "page_source": "2026/27 schedule p12 (para 9); 2026/27 booklet PDF p50 = printed Page 51 (Appendix D). Period covered: 1 April 2026 to 30 June 2027.",
+    "rules": {
+      "WEPS, Megaflex, Megaflex Gen, Municflex, Miniflex": "New Year's Day, Good Friday, Family Day, Christmas Day, Day of Goodwill always Sunday; every other public holiday Saturday unless it falls on a Sunday (then Sunday).",
+      "Nightsave Urban": "every public holiday treated as Sunday.",
+      "Nightsave Rural, Homeflex, Ruraflex, Ruraflex Gen": "public holidays treated as the actual day of the week (no special treatment).",
+      "unlisted holidays": "an unexpectedly announced public holiday not in the table is treated as the day of the week on which it falls.",
+      "not mentioned": "Transflex appears in the Figure 2 TOU list (schedule p56) but in neither holiday rule."
+    },
+    "treated_as_column": "Megaflex, Municflex, Miniflex, WEPS, Megaflex Gen (Nightsave Urban column is Sunday for every row)",
+    "rows": [
+      {"date": "2026-04-03", "holiday": "Good Friday", "actual_day": "friday", "treated_as": "sunday", "note": ""},
+      {"date": "2026-04-06", "holiday": "Family Day", "actual_day": "monday", "treated_as": "sunday", "note": ""},
+      {"date": "2026-04-27", "holiday": "Freedom Day", "actual_day": "monday", "treated_as": "saturday", "note": "2025/26 schedule p11 and 2025/26 booklet p52 list this same date as SUNDAY; 2026/27 books say SATURDAY (consistent with the stated rule). 2026/27 books govern from 1 April 2026."},
+      {"date": "2026-05-01", "holiday": "Workers Day", "actual_day": "friday", "treated_as": "saturday", "note": ""},
+      {"date": "2026-06-16", "holiday": "Youth Day", "actual_day": "tuesday", "treated_as": "saturday", "note": "high-demand season"},
+      {"date": "2026-08-09", "holiday": "National Women's Day", "actual_day": "sunday", "treated_as": "sunday", "note": ""},
+      {"date": "2026-08-10", "holiday": "Public Holiday", "actual_day": "monday", "treated_as": "saturday", "note": "substitute day for Women's Day; high-demand season"},
+      {"date": "2026-09-24", "holiday": "Heritage Day", "actual_day": "thursday", "treated_as": "saturday", "note": ""},
+      {"date": "2026-12-16", "holiday": "Day of Reconciliation", "actual_day": "wednesday", "treated_as": "saturday", "note": ""},
+      {"date": "2026-12-25", "holiday": "Christmas Day", "actual_day": "friday", "treated_as": "sunday", "note": ""},
+      {"date": "2026-12-26", "holiday": "Day of Goodwill", "actual_day": "saturday", "treated_as": "sunday", "note": ""},
+      {"date": "2027-01-01", "holiday": "New Year's Day", "actual_day": "friday", "treated_as": "sunday", "note": ""},
+      {"date": "2027-03-21", "holiday": "Human Rights Day", "actual_day": "sunday", "treated_as": "sunday", "note": ""},
+      {"date": "2027-03-22", "holiday": "Public Holiday", "actual_day": "monday", "treated_as": "saturday", "note": "substitute day for Human Rights Day"},
+      {"date": "2027-03-26", "holiday": "Good Friday", "actual_day": "friday", "treated_as": "sunday", "note": ""},
+      {"date": "2027-03-29", "holiday": "Family Day", "actual_day": "monday", "treated_as": "sunday", "note": ""},
+      {"date": "2027-04-27", "holiday": "Freedom Day", "actual_day": "tuesday", "treated_as": "saturday", "note": ""},
+      {"date": "2027-05-01", "holiday": "Worker's Day", "actual_day": "saturday", "treated_as": "saturday", "note": ""},
+      {"date": "2027-06-16", "holiday": "Youth Day", "actual_day": "wednesday", "treated_as": "saturday", "note": "high-demand season"}
+    ],
+    "season_dependence": "None: the table and rules do not vary by season; variation is by tariff only."
+  },
+  "changes_2025_to_2026": "None found. The restructured TOU hours were already in force in the 2025/26 books (2025/26 schedule p8 and 2025/26 booklet p47 carry the note that evening peak rose from 2 h to 3 h, morning peak fell from 3 h to 2 h, and a new 2-hour Sunday-evening standard period was added). The 2026/27 booklet (PDF p45) repeats that note; the 2026/27 schedule (p56) drops the note but its Figure 2 is pixel-identical in hours to all three other wheels. Pre-2025 hours were not read from any downloaded PDF and are not stated here. Only holiday-table difference for the overlap: 27 April 2026 Freedom Day = Sunday (2025/26 books) vs Saturday (2026/27 books)."
+}
