@@ -213,6 +213,12 @@ It stays off until **all** of these are true. Steps marked **[owner]** configure
 4. **[owner] Switches.** `/settings/whatsapp` → *Inspection forms over WhatsApp (this organisation)*; the platform *Sending enabled* switch; per project, *Integrations* → WhatsApp notifications (needed only for the summary to the site).
 5. **[owner] POPIA §72.** Answers, photos and the PDF pass through Meta's servers outside South Africa. **Cost** (from 1 Oct 2026): in-window replies USD 0.0095 after 1,000 free per number per month; each summary is a utility template at USD 0.0095 per recipient.
 
+**Behaviour worth knowing before switching on:**
+- *Albums.* WhatsApp puts a caption only on the first photo of an album, so uncaptioned photos sent within 30 minutes of a numbered one go to the same item, and the reply names the item. To put one elsewhere, send it again with its own number.
+- *Summary before template approval.* While `esite_form_submitted` is not `approved` in `whatsapp.templates`, summaries are dropped (`suppressed`, `template_not_approved`), not queued: a batch of week-old summaries arriving on approval would mislead more than help. The submitter's confirmation is a free-form reply and does not need the template.
+- *Confirmation timing.* The confirmation with the PDF goes about a minute after SUBMIT (it waits for the PDF to be rendered).
+- *Channel columns are hints.* `inspections.responses.via`, `photos.via` and `inspections.submitted_via` are set by the WhatsApp path and the web submit, but `authenticated` can write those tables, so do not use them as evidence.
+
 Smoke after enabling, with a linked test number on a project with a writable inspection: MENU → *Inspections* → pick → complete the Flow → send a photo captioned `10` → SUBMIT → open the signed link → sign → Submit. Check: `inspections.responses.via = 'whatsapp'`, a `whatsapp.form_sessions` row `submitted`, `whatsapp.outbox` rows `form_confirm` (sent, a document) and `form_submitted`.
 
 Rollback: switch the org off in `/settings/whatsapp` (stops new forms at once; queued summaries are suppressed by `form_receive_check`), or unset `WHATSAPP_INTERNAL_SECRET`.
