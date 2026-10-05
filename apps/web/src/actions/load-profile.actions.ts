@@ -2,7 +2,7 @@
 /**
  * Load profile tab (E8). Every action gates itself on the caller's EFFECTIVE project role
  * (requireEffectiveRole — a result object, checked with `.ok`), then writes through the caller's
- * session so 00231's RLS is the second gate. Not Solar-gated (E8-D1).
+ * session so 00232's RLS is the second gate. Not Solar-gated (E8-D1).
  */
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'

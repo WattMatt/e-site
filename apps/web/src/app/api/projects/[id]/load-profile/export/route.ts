@@ -1,7 +1,7 @@
 /**
  * GET /api/projects/[id]/load-profile/export?format=xlsx|pdf
  * Gate: LOAD_PROFILE_READ_ROLES on the project (effective role). Reads through the caller's session,
- * so 00231's RLS is the second gate; tariffs come from published years only (tariff-source).
+ * so 00232's RLS is the second gate; tariffs come from published years only (tariff-source).
  */
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'

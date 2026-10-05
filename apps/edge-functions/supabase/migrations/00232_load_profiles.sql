@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00231: project load profiles (E8 — the Load profile tab)
+-- Migration 00232: project load profiles (E8 — the Load profile tab)
 -- ---------------------------------------------------------------------------
 -- Number claimed at MERGE time: re-check the ledger, origin/main and every open
 -- PR's migration filenames immediately before merging, and renumber if the head

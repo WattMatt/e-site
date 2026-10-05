@@ -1,6 +1,6 @@
 /**
  * Who may see and change a project's load profile (docs/rbac-matrix.md "Load profile").
- * Mirrors migration 00231's policies: read = every effective project role except client_viewer;
+ * Mirrors migration 00232's policies: read = every effective project role except client_viewer;
  * write = owner / admin / project_manager. Not gated by the Solar subscription (owner decision E8-D1).
  */
 import { ORG_WRITE_ROLES, SNAG_FIELD_ROLES, type OrgRole } from '@esite/shared'
@@ -18,7 +18,7 @@ export const LOAD_PROFILE_MAX_BYTES = 50 * 1024 * 1024
  */
 export const MAX_PROFILE_SLOTS = 1_000_000
 
-/** {project_id}/{sha256}.{ext} — the shape 00231's storage policies parse. */
+/** {project_id}/{sha256}.{ext} — the shape 00232's storage policies parse. */
 export function loadProfileFilePath(projectId: string, sha256: string, fileName: string): string | null {
   const ext = fileName.match(LOAD_PROFILE_UPLOAD_RE)?.[1]?.toLowerCase()
   if (!ext || !/^[0-9a-f]{64}$/.test(sha256)) return null
