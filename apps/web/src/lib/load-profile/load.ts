@@ -1,6 +1,6 @@
 import 'server-only'
 /**
- * Reads a project's load profile through the CALLER's session (00224 RLS) and composes the view.
+ * Reads a project's load profile through the CALLER's session (00225 RLS) and composes the view.
  * Tariffs come from tariff-source (service client, published years only).
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
