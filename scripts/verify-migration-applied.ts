@@ -25,22 +25,36 @@
  * migration file — the wrapper is what makes "it only ever SELECTs" a property
  * of the tool rather than a property of the files it happens to read today.
  *
- * ONE PREDICATE PER REQUEST, and therefore per transaction — see the warning on
- * runDirectives. has_table_privilege / has_function_privilege RAISE on an
- * object that does not exist rather than returning false, which is exactly the
- * situation this tool exists for. Batched into one transaction the first raise
- * aborts it and every later directive returns "current transaction is aborted",
- * masking the real per-directive results.
+ * ONE REQUEST PER MIGRATION, falling back to one per directive. Each
+ * migration's directives go out as a single SELECT returning one row per
+ * directive (runDirectivesBatched). If that statement RAISES —
+ * has_table_privilege / has_function_privilege raise on an object that does not
+ * exist, which is exactly the situation this tool exists for — it re-runs one
+ * predicate per transaction, so the raise is pinned to its directive instead of
+ * aborting every answer behind "current transaction is aborted".
  *
- * Exit 0 = every directive returned true. Exit 1 = anything else.
+ * RETRIES. 429, 5xx and network failures are retried with backoff + jitter,
+ * honouring Retry-After (mgmt-query.ts). Run 37289583207 reported 543 ✗ lines
+ * that were all `Management API 429` while two other deploys verified at once;
+ * none was a false predicate. If the API still refuses after the retry budget,
+ * the run stops and reports an INFRASTRUCTURE error — the predicates were not
+ * evaluated, so it must read neither as ✓ nor as ✗.
+ *
+ * Exit 0 = every directive returned true. Exit 1 = a predicate failed (or a
+ * block was malformed, or nothing was checked). Exit 2 = the Management API
+ * could not be asked and no predicate had failed before it; re-run the workflow.
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import {
   parseVerifyBlock,
-  runDirectives,
+  runDirectivesBatched,
 } from '../packages/shared/src/lib/migrations/verify-header.ts'
+import {
+  createReadOnlyMgmtQuery,
+  isInfrastructureError,
+} from '../packages/shared/src/lib/migrations/mgmt-query.ts'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF ?? 'cbskbnvvgcybmfikxgky'
@@ -55,28 +69,17 @@ function pat(): string {
     : raw
 }
 
-/**
- * Posts one statement and returns its rows.
- *
- * The READ ONLY wrapper is applied here rather than at the call sites so no
- * future caller can route around it. The endpoint returns the last
- * result-producing statement's rows, so the trailing COMMIT does not swallow
- * the SELECT — the same behaviour scripts/db/smoke-test-project-settings.sh
- * relies on for its trailing ROLLBACK.
- */
-async function query(sql: string): Promise<Array<Record<string, unknown>>> {
-  const res = await fetch(`https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${pat()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: `BEGIN READ ONLY;\n${sql};\nCOMMIT;` }),
-  })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`Management API ${res.status}: ${text.slice(0, 300)}`)
-  const parsed = JSON.parse(text)
-  // A 200 can still carry an error object rather than a row array.
-  if (!Array.isArray(parsed)) throw new Error(`Unexpected response: ${text.slice(0, 300)}`)
-  return parsed
-}
+// The READ ONLY wrapper, the retry policy and the infrastructure/predicate
+// split all live in createReadOnlyMgmtQuery, so no call site can route around
+// them. Retries are logged so a slow run explains itself in the CI log.
+const query = createReadOnlyMgmtQuery({
+  projectRef: PROJECT_REF,
+  token: pat,
+  fetch: globalThis.fetch,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  onRetry: ({ attempt, status, delayMs }) =>
+    console.warn(`  … Management API ${status ?? 'unreachable'}; retry ${attempt} in ${(delayMs / 1000).toFixed(1)}s`),
+})
 
 const argv = process.argv.slice(2)
 const argOf = (flag: string) => {
@@ -96,50 +99,69 @@ const files = readdirSync(MIGRATIONS)
 
 let failed = 0
 let checked = 0
+let current = '(the ledger read)'
 
-const ledger = await query(
-  'SELECT version FROM supabase_migrations.schema_migrations ORDER BY version',
-)
-const applied = new Set(ledger.map((r) => String(r.version)))
+try {
+  const ledger = await query(
+    'SELECT version FROM supabase_migrations.schema_migrations ORDER BY version',
+  )
+  const applied = new Set(ledger.map((r) => String(r.version)))
 
-for (const file of files) {
-  const sql = readFileSync(join(MIGRATIONS, file), 'utf8')
-  let directives
-  try {
-    directives = parseVerifyBlock(sql)
-  } catch (e) {
-    // A malformed block is a FAILURE, not a skip. A block nobody can parse
-    // claims exactly as much as no block at all, and must not pass CI.
-    console.error(`✗ ${file}: malformed @verify block — ${e instanceof Error ? e.message : e}`)
-    failed += 1
-    continue
-  }
-  if (directives === null) continue // pre-programme migration; no block, nothing claimed
-
-  checked += 1
-  const version = file.slice(0, 5)
-
-  // THE check. `supabase db push` keys on the version PREFIX: a number already
-  // in the ledger makes it print "Remote database is up to date", exit 0 and
-  // skip the file. A green workflow proves nothing; this line does.
-  if (!applied.has(version)) {
-    console.error(
-      `✗ ${file}: version ${version} is NOT in supabase_migrations.schema_migrations — db push skipped it`,
-    )
-    failed += 1
-    continue
-  }
-
-  const { passed, failures, skipped } = await runDirectives(directives, query)
-  if (failures.length === 0) {
-    const note = skipped.length ? ` (${skipped.length} behaviour: line(s) for a human)` : ''
-    console.log(`✓ ${file} — ${passed} directive(s) verified${note}`)
-  } else {
-    for (const f of failures) {
-      console.error(`✗ ${file}:${f.directive.line}  ${f.directive.raw.trim()}\n    ${f.reason}`)
+  for (const file of files) {
+    const sql = readFileSync(join(MIGRATIONS, file), 'utf8')
+    let directives
+    try {
+      directives = parseVerifyBlock(sql)
+    } catch (e) {
+      // A malformed block is a FAILURE, not a skip. A block nobody can parse
+      // claims exactly as much as no block at all, and must not pass CI.
+      console.error(`✗ ${file}: malformed @verify block — ${e instanceof Error ? e.message : e}`)
+      failed += 1
+      continue
     }
-    failed += failures.length
+    if (directives === null) continue // pre-programme migration; no block, nothing claimed
+
+    checked += 1
+    current = file
+    const version = file.slice(0, 5)
+
+    // THE check. `supabase db push` keys on the version PREFIX: a number already
+    // in the ledger makes it print "Remote database is up to date", exit 0 and
+    // skip the file. A green workflow proves nothing; this line does.
+    if (!applied.has(version)) {
+      console.error(
+        `✗ ${file}: version ${version} is NOT in supabase_migrations.schema_migrations — db push skipped it`,
+      )
+      failed += 1
+      continue
+    }
+
+    const { passed, failures, skipped } = await runDirectivesBatched(directives, query)
+    if (failures.length === 0) {
+      const note = skipped.length ? ` (${skipped.length} behaviour: line(s) for a human)` : ''
+      console.log(`✓ ${file} — ${passed} directive(s) verified${note}`)
+    } else {
+      for (const f of failures) {
+        console.error(`✗ ${file}:${f.directive.line}  ${f.directive.raw.trim()}\n    ${f.reason}`)
+      }
+      failed += failures.length
+    }
   }
+} catch (e) {
+  if (!isInfrastructureError(e)) throw e
+  // Not a ✗: nothing was evaluated from here on. Reporting it as N predicate
+  // failures is what made run 37289583207 look like 543 broken migrations.
+  console.error(
+    `\n⚠ INFRASTRUCTURE ERROR while verifying ${current} — the Management API could not be asked.\n` +
+      `  ${e.message}\n` +
+      `  This is NOT a predicate failure: the remaining directives were never evaluated.\n` +
+      `  So far: ${Math.max(0, checked - 1)} migration(s) fully checked, ${failed} predicate failure(s).\n` +
+      (e.status === 401 || e.status === 403
+        ? `  Check SUPABASE_ACCESS_TOKEN (repo secret) / the "Supabase CLI" keychain entry.`
+        : `  Re-run the workflow (or: node --experimental-strip-types scripts/verify-migration-applied.ts) once the API recovers.`),
+  )
+  // A predicate that already failed is still a real failure: it outranks the outage.
+  process.exit(failed > 0 ? 1 : 2)
 }
 
 // Order matters: report the failures that happened before the "nothing was

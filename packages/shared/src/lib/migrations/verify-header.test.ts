@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import {
   parseVerifyBlock, buildPredicate, runDirectives, isCheckable, type VerifyDirective,
+  buildBatchPredicate, runDirectivesBatched,
 } from './verify-header'
+import { createReadOnlyMgmtQuery, ManagementApiUnavailableError } from './mgmt-query'
 
 const SQL = `
   -- =============================================================================
@@ -675,5 +677,151 @@ describe('the absent-object fixture', () => {
     ])
     expect(r.failures).toHaveLength(1)
     expect(r.failures[0].directive.raw).toContain('this_table_does_not_exist_and_never_will')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Batching. Run 37289583207 spent ~18 minutes making one Management API call
+// per directive (543 of them) and was throttled into a wall of false reds.
+// One call per MIGRATION is the fix — but only if a false predicate still goes
+// red, against the right directive, and a raise still isolates to its directive.
+// ---------------------------------------------------------------------------
+
+/** Answers a batch the way Postgres would: one {i, ok} row per branch. */
+function answerBatch(sql: string, decide: (branch: string) => unknown) {
+  return sql.split('\nUNION ALL\n').map((branch) => {
+    const i = Number(/^SELECT (\d+) AS i,/.exec(branch)![1])
+    return { i, ok: decide(branch) }
+  })
+}
+
+describe('buildBatchPredicate', () => {
+  it('builds ONE statement with one indexed branch per checkable directive, each predicate verbatim', () => {
+    const a = at({ kind: 'table', schema: 'public', name: 'a' })
+    const b = at({ kind: 'cron', jobname: 'b' })
+    const sql = buildBatchPredicate([a, b])!
+    expect(sql.split('\nUNION ALL\n')).toHaveLength(2)
+    expect(sql).toContain(`SELECT 0 AS i, b0.ok FROM (\n${buildPredicate(a)}\n) AS b0`)
+    expect(sql).toContain(`SELECT 1 AS i, b1.ok FROM (\n${buildPredicate(b)}\n) AS b1`)
+  })
+
+  it('returns null when there is nothing a database can answer', () => {
+    expect(buildBatchPredicate([at({ kind: 'behaviour', description: 'x' })])).toBeNull()
+  })
+})
+
+describe('runDirectivesBatched', () => {
+  const tbl = (name: string) => at({ kind: 'table', schema: 'public', name })
+  const three = [tbl('t_one'), tbl('t_two'), tbl('t_three')]
+
+  it('asks the database ONCE for a whole migration', async () => {
+    let calls = 0
+    const r = await runDirectivesBatched(three, async (s) => { calls += 1; return answerBatch(s, () => true) })
+    expect(calls).toBe(1)
+    expect(r.passed).toBe(3)
+    expect(r.failures).toEqual([])
+  })
+
+  // The semantics this must not lose: a false predicate still fails, and it is
+  // attributed to ITS directive, not to its neighbour.
+  it('FAILS exactly the directive whose predicate is false', async () => {
+    const r = await runDirectivesBatched(three, async (s) =>
+      answerBatch(s, (branch) => !branch.includes("'public.t_two'")))
+    expect(r.passed).toBe(2)
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0].directive).toBe(three[1])
+    expect(r.failures[0].reason).toMatch(/returned false/)
+  })
+
+  it('FAILS a null, the same as the per-directive path', async () => {
+    const r = await runDirectivesBatched(three, async (s) =>
+      answerBatch(s, (branch) => (branch.includes("'public.t_three'") ? null : true)))
+    expect(r.failures.map((f) => f.directive)).toEqual([three[2]])
+    expect(r.failures[0].reason).toMatch(/got null/)
+  })
+
+  // has_*_privilege RAISES on an absent object, which aborts the whole batch.
+  // Falling back to one transaction per directive is what keeps the real
+  // per-directive answer instead of one "transaction is aborted" for all.
+  it('falls back to one query per directive when the batch raises, isolating the raise', async () => {
+    let calls = 0
+    const r = await runDirectivesBatched(three, async (s) => {
+      calls += 1
+      if (s.includes('UNION ALL') || s.includes("'public.t_two'")) {
+        throw new Error('Management API 400: relation "public.t_two" does not exist')
+      }
+      return [{ ok: true }]
+    })
+    expect(calls).toBe(1 + 3)
+    expect(r.passed).toBe(2)
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0].directive).toBe(three[1])
+    expect(r.failures[0].reason).toMatch(/does not exist/)
+  })
+
+  it('falls back when the batch answer is not exactly one row per directive', async () => {
+    let calls = 0
+    const r = await runDirectivesBatched(three, async (s) => {
+      calls += 1
+      if (s.includes('UNION ALL')) return [{ i: 0, ok: true }] // two rows missing
+      return [{ ok: true }]
+    })
+    expect(calls).toBe(4)
+    expect(r.passed).toBe(3)
+  })
+
+  it('never puts a behaviour directive in the batch, and never counts it as passed', async () => {
+    const prose = at({ kind: 'behaviour', description: 'owner INSERT -> allowed' })
+    const r = await runDirectivesBatched([three[0], prose, three[1]], async (s) => {
+      expect(s).not.toContain('owner INSERT')
+      return answerBatch(s, () => true)
+    })
+    expect(r.passed).toBe(2)
+    expect(r.skipped).toEqual([prose])
+  })
+
+  // A throttled API has not answered the question. It must NOT be recorded as
+  // a ✗ directive — and must not be retried one directive at a time either,
+  // which is how one 429 becomes 543.
+  it('re-throws an infrastructure error from the batch instead of falling back', async () => {
+    let calls = 0
+    const err = await runDirectivesBatched(three, async () => {
+      calls += 1
+      throw new ManagementApiUnavailableError('Management API 429 after 8 attempts', 429, 8)
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(ManagementApiUnavailableError)
+    expect(calls).toBe(1)
+  })
+
+  it('re-throws an infrastructure error from the per-directive path too', async () => {
+    const err = await runDirectives([three[0]], async () => {
+      throw new ManagementApiUnavailableError('Management API 429 after 8 attempts', 429, 8)
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(ManagementApiUnavailableError)
+  })
+
+  // End to end through the real query client against a fake API that throttles
+  // first and then answers — the shape of run 37289583207 with a retry in place.
+  it('survives a 429 then 200 from the Management API, and still fails a false predicate', async () => {
+    const throttleThen = (answer: (branch: string) => unknown) => {
+      let n = 0
+      return (async (_url: string, init: RequestInit) => {
+        n += 1
+        if (n === 1) return new Response('{"message":"ThrottlerException: Too Many Requests"}', { status: 429 })
+        const sent = JSON.parse(String(init.body)).query as string
+        const inner = sent.replace(/^BEGIN READ ONLY;\n/, '').replace(/;\nCOMMIT;$/, '')
+        return new Response(JSON.stringify(answerBatch(inner, answer)), { status: 200 })
+      }) as unknown as typeof fetch
+    }
+    const client = (f: typeof fetch) => createReadOnlyMgmtQuery({
+      projectRef: 'ref', token: () => 't', fetch: f, sleep: async () => {}, random: () => 0,
+    })
+
+    const green = await runDirectivesBatched(three, client(throttleThen(() => true)))
+    expect(green.passed).toBe(3)
+    expect(green.failures).toEqual([])
+
+    const red = await runDirectivesBatched(three, client(throttleThen((b) => !b.includes("'public.t_one'"))))
+    expect(red.failures.map((f) => f.directive)).toEqual([three[0]])
   })
 })
