@@ -6,6 +6,8 @@ import type { Template, Response as InspectionResponse, Section, SubSection, Fie
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { useRouter } from 'next/navigation'
+import { useArmedConfirm } from '@/lib/solar/useArmedConfirm'
 import { upsertResponseAction, submitInspectionAction } from '@/actions/inspections.actions'
 import FieldRenderer from './FieldRenderer'
 import CertifyModal from './CertifyModal'
@@ -44,6 +46,11 @@ export default function CaptureForm({
   const [activeSection, setActiveSection] = useState<string>(template.sections[0]?.section_id ?? '')
   const [savingFields, setSavingFields] = useState<Set<string>>(new Set())
   const [showCertify, setShowCertify] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  // Two-step inline confirm, not window.confirm: Safari can suppress native dialogs,
+  // which made Submit do nothing (seen on production, 2026-10-06).
+  const submitConfirm = useArmedConfirm()
+  const router = useRouter()
   const debouncers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const isPreview = mode === 'preview'
@@ -176,9 +183,19 @@ export default function CaptureForm({
       setTimeout(() => el?.classList.remove('ring-required'), 2500)
       return
     }
-    if (!confirm('Submit inspection for verification?')) return
     if (!projectId) return
-    await submitInspectionAction(inspectionId, projectId)
+    if (!submitConfirm.armed) {
+      submitConfirm.arm()
+      return
+    }
+    submitConfirm.disarm()
+    setSubmitting(true)
+    try {
+      await submitInspectionAction(inspectionId, projectId)
+      router.refresh()
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const section = template.sections.find((s) => s.section_id === activeSection)
@@ -389,10 +406,16 @@ export default function CaptureForm({
         {!isPreview && !isCertifiedOrAbandoned && !isVerifier && (
           <Button
             onClick={onSubmit}
-            disabled={status === 'awaiting_verification'}
+            disabled={status === 'awaiting_verification' || submitting}
             style={{ width: '100%' }}
           >
-            {status === 'awaiting_verification' ? 'Awaiting verification' : 'Submit for verification'}
+            {status === 'awaiting_verification'
+              ? 'Awaiting verification'
+              : submitting
+                ? 'Submitting…'
+                : submitConfirm.armed
+                  ? 'Tap again to submit'
+                  : 'Submit for verification'}
           </Button>
         )}
 

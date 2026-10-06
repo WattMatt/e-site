@@ -10,6 +10,7 @@ import {
 import type { RendererProps } from '../FieldRenderer'
 import FieldRenderer from '../FieldRenderer'
 import { deleteRepeatingGroupEntryAction } from '@/actions/inspections.actions'
+import { useArmedConfirm } from '@/lib/solar/useArmedConfirm'
 
 // Renders a repeating_group: a list of collapsible entry blocks, each one
 // hosting the group's sub-fields. Sub-fields are persisted as sibling
@@ -55,7 +56,6 @@ export default function RepeatingGroupField(p: RendererProps) {
   }
 
   const removeEntry = async (idx: number) => {
-    if (!confirm(`Remove entry ${idx + 1}?`)) return
     setDeletingIdx(idx)
     setError(null)
     try {
@@ -187,6 +187,9 @@ function EntryBlock({
   parentProps,
 }: EntryBlockProps) {
   const label = computeEntryLabel(groupField, index, subFields, findResponse)
+  // Two-step inline confirm (first press arms, second removes): window.confirm can be
+  // suppressed by Safari, which made Remove do nothing.
+  const removeConfirm = useArmedConfirm()
   return (
     <div
       style={{
@@ -215,10 +218,15 @@ function EntryBlock({
             type="button"
             onClick={(e) => {
               e.stopPropagation()
+              if (!removeConfirm.armed) {
+                removeConfirm.arm()
+                return
+              }
+              removeConfirm.disarm()
               onRemove()
             }}
             disabled={removing}
-            title="Remove entry"
+            title={removeConfirm.armed ? `Press again to remove entry ${index + 1}` : 'Remove entry'}
             style={{
               background: 'transparent',
               border: 'none',
@@ -229,7 +237,7 @@ function EntryBlock({
               padding: '2px 6px',
             }}
           >
-            {removing ? '…' : '×'}
+            {removing ? '…' : removeConfirm.armed ? 'Remove?' : '×'}
           </button>
         )}
       </div>

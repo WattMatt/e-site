@@ -21,7 +21,7 @@ vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificati
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/reports/file-inspection-report', () => ({ generateAndFileInspectionReport: fileReportMock }))
 
-import { certifyInspectionAction } from './inspections-certify.actions'
+import { certifyInspectionAction, sendBackForReinspectionAction } from './inspections-certify.actions'
 
 const TEMPLATE = {
   sections: [
@@ -83,7 +83,7 @@ describe('certifyInspectionAction', () => {
     const { client, update, rpc } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: false }] })
     createClientMock.mockResolvedValue(client)
 
-    await expect(certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).rejects.toThrow(/Send it back/)
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/Send it back/) })
     expect(rpc).not.toHaveBeenCalled()
     expect(update).not.toHaveBeenCalled()
   })
@@ -92,7 +92,7 @@ describe('certifyInspectionAction', () => {
     const { client, update } = makeClient({ responses: [] })
     createClientMock.mockResolvedValue(client)
 
-    await expect(certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).rejects.toThrow(/Send it back/)
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/Send it back/) })
     expect(update).not.toHaveBeenCalled()
   })
 
@@ -103,9 +103,7 @@ describe('certifyInspectionAction', () => {
     })
     createClientMock.mockResolvedValue(client)
 
-    await expect(certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).rejects.toThrow(
-      'Only the assigned verifier can certify this inspection.',
-    )
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: 'Only the assigned verifier can certify this inspection.' })
     expect(rpc).toHaveBeenCalledWith('certification_blockers', { _inspection_id: 'i-1', _coc_number: null })
     expect(update).not.toHaveBeenCalled()
   })
@@ -121,7 +119,7 @@ describe('certifyInspectionAction', () => {
 
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: 'ignored' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'conditional_pass', coc_number: null })
-    expect(issued).toBe('INS-KW-2026-0001')
+    expect(issued).toEqual({ ok: true, value: 'INS-KW-2026-0001' })
   })
 
   it('sends the typed number, trimmed, for a CoC', async () => {
@@ -135,13 +133,31 @@ describe('certifyInspectionAction', () => {
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: '  ECB-77 ' })
     expect(rpc).toHaveBeenCalledWith('certification_blockers', { _inspection_id: 'i-1', _coc_number: 'ECB-77' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'pass', coc_number: 'ECB-77' })
-    expect(issued).toBe('ECB-77')
+    expect(issued).toEqual({ ok: true, value: 'ECB-77' })
   })
 
   it('says so when nothing was certified (the inspection moved on)', async () => {
     const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }], issued: null })
     createClientMock.mockResolvedValue(client)
 
-    await expect(certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).rejects.toThrow(/Nothing was certified/)
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/Nothing was certified/) })
+  })
+  it('never throws: an unexpected failure comes back as a refusal the dialog can show', async () => {
+    createClientMock.mockRejectedValue(new Error('connection reset'))
+
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: 'connection reset' })
+  })
+})
+
+describe('sendBackForReinspectionAction', () => {
+  it('returns the refusal as data when the note is blank, without writing', async () => {
+    const { client, update } = makeClient({ responses: [] })
+    createClientMock.mockResolvedValue(client)
+
+    expect(await sendBackForReinspectionAction({ inspectionId: 'i-1', projectId: 'p-1', notes: '   ' })).toEqual({
+      ok: false,
+      error: 'Re-inspection notes are required',
+    })
+    expect(update).not.toHaveBeenCalled()
   })
 })
