@@ -297,8 +297,11 @@ BEGIN
   RESET ROLE;
 END $$;
 
--- Site scope (00238): an org-level project manager who is NOT a member of the
--- tender's project sees none of its tenders, invitations or participants.
+-- Site scope (00238). The probe is the one person ONLY site_scope stops: an
+-- active project_members PM whose organisation membership is INACTIVE.
+-- user_effective_project_role (so user_can_manage_tender, and every permissive
+-- policy) still admits them; user_has_project_access does not. A fixture row
+-- proves the first half, so these checks cannot pass vacuously.
 DO $$
 DECLARE
   v_project uuid; v_org uuid; v_t uuid; v_pm uuid := gen_random_uuid(); v_bidder uuid := gen_random_uuid(); v_inv uuid; v_n int;
@@ -308,17 +311,19 @@ BEGIN
   INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
   VALUES (v_pm, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-pm@example.invalid', '', now(), now(), now(), '{}', '{}'),
          (v_bidder, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-bidder@example.invalid', '', now(), now(), now(), '{}', '{}');
-  INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES (v_pm, v_org, 'project_manager', TRUE);
+  INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES (v_pm, v_org, 'contractor', FALSE);
+  INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES (v_project, v_pm, v_org, 'project_manager', TRUE);
   INSERT INTO projects.tenders (project_id, organisation_id, package, title, imported_at)
   VALUES (v_project, v_org, 'Site scope', 'Probe', now()) RETURNING id INTO v_t;
   UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_t;
   INSERT INTO projects.tender_invitations (tender_id, company_name, email, status, accepted_at, accepted_by)
   VALUES (v_t, 'Site Bidder', 'probe-site-bidder@example.invalid', 'accepted', now(), v_bidder) RETURNING id INTO v_inv;
   INSERT INTO projects.tender_participants (tender_id, invitation_id, user_id, company_name) VALUES (v_t, v_inv, v_bidder, 'Site Bidder');
-  IF EXISTS (SELECT 1 FROM projects.project_members WHERE user_id = v_pm) THEN RAISE EXCEPTION 'probe PM is a member'; END IF;
 
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('site_scope_fixture_probe_passes_manage_but_not_site',
+    projects.user_can_manage_tender(v_t) AND NOT public.user_has_project_access(v_project));
   SELECT count(*) INTO v_n FROM projects.tender_invitations WHERE tender_id = v_t;
   INSERT INTO _r VALUES ('site_scope_org_pm_off_site_sees_no_invitations', v_n = 0);
   SELECT count(*) INTO v_n FROM projects.tender_participants WHERE tender_id = v_t;
@@ -338,8 +343,9 @@ BEGIN
 END $$;
 
 SELECT * FROM (VALUES
-  ('site scope: an org PM off this site sees no invitations',       (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_invitations')),
-  ('site scope: an org PM off this site sees no participants',      (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_participants')),
+  ('fixture: the probe passes user_can_manage_tender but not site access', (SELECT v FROM _r WHERE k='site_scope_fixture_probe_passes_manage_but_not_site')),
+  ('site scope: a PM whose org membership lapsed sees no invitations', (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_invitations')),
+  ('site scope: a PM whose org membership lapsed sees no participants', (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_participants')),
   ('site scope: a bidder still reads their own participant row',    (SELECT v FROM _r WHERE k='site_scope_bidder_still_reads_own_participant_row')),
   ('site scope: a bidder still updates their own profile',          (SELECT v FROM _r WHERE k='site_scope_bidder_still_updates_own_profile')),
   ('site scope: a bidder reads no invitation rows',                 (SELECT v FROM _r WHERE k='site_scope_bidder_reads_no_invitation_rows')),
