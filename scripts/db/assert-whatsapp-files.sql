@@ -1,6 +1,6 @@
 -- assert-whatsapp-files.sql — WhatsApp drawings/documents/reports act as the person (sub-projects 3 + 4).
 --   scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql scripts/db/assert-whatsapp-files.sql                        (red)
---   scripts/db/dry-run-migration.sh scripts/db/whatsapp-files/whatsapp_files_reports.sql scripts/db/assert-whatsapp-files.sql (green)
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00240_whatsapp_files_reports.sql scripts/db/assert-whatsapp-files.sql (green)
 -- Fixtures are real production rows picked by query; nothing persists (rolled back by the harness).
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;
 GRANT ALL ON _r TO service_role;

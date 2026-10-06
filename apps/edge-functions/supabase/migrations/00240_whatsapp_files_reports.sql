@@ -1,4 +1,4 @@
--- whatsapp_files_reports.sql — WhatsApp sub-projects 3 + 4: drawings, documents and reports on request.
+-- 00240_whatsapp_files_reports.sql — WhatsApp sub-projects 3 + 4: drawings, documents and reports on request.
 -- (Numbered at apply time; spec docs/superpowers/specs/2026-10-06-whatsapp-files-reports-design.md.)
 --
 -- Every wa_* function is owned by whatsapp_actor (member of authenticated, NO bypassrls) and acts as the
