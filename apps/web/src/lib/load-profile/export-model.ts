@@ -54,6 +54,7 @@ export function buildExportModel(v: LoadProfileView, generatedAt: Date): ExportM
   const notes = [
     `Reference year ${year}: every source is aligned to ${year}'s weekdays and public holidays (29 February dropped), power factor ${v.settings.powerFactor}.`,
     `NMD rule: ${a.nmd.rule}.`,
+    ...(v.compositionNote ? [v.compositionNote] : []),
     a.md ? `Maximum demand comes from the measured interval data (${a.md.basis.replace(/_/g, ' ')}); the hourly profile peak is never used as maximum demand.` : 'No measured interval data: there is no measured maximum demand.',
   ]
   if (v.cost?.ok) {
@@ -106,9 +107,9 @@ export function buildExportModel(v: LoadProfileView, generatedAt: Date): ExportM
   const ldc: Table = { title: 'Load duration curve', header: ['% of hours exceeded', 'kW'], rows: a.ldc.map((p) => [p.pct, r(p.kw)]) }
   const sources: Table = {
     title: 'Sources and data quality',
-    header: ['Source', 'Kind', 'Included', 'File', 'Format', 'Column', 'Interval min', 'Conversion', 'Coverage %', 'Gaps', 'Longest gap min', 'Spikes', 'Negatives', 'Duplicates', 'Hours filled', 'Annual kWh', 'Status'],
+    header: ['Source', 'Kind', 'Role', 'Added to profile', 'Included', 'File', 'Format', 'Column', 'Interval min', 'Conversion', 'Coverage %', 'Gaps', 'Longest gap min', 'Spikes', 'Negatives', 'Duplicates', 'Hours filled', 'Annual kWh', 'Status'],
     rows: v.sources.map((s) => [
-      s.label, s.kind, s.included ? 'yes' : 'no', s.fileName, s.format, s.column ?? s.detail, s.intervalMin, s.conversion,
+      s.label, s.kind, s.role, s.counted ? 'yes' : 'no', s.included ? 'yes' : 'no', s.fileName, s.format, s.column ?? s.detail, s.intervalMin, s.conversion,
       s.quality ? r(s.quality.coveragePct, 1) : null, s.quality?.gapRuns ?? null, s.quality?.longestGapMin ?? null, s.quality?.spikes ?? null,
       s.quality?.negatives ?? null, s.quality ? s.quality.exactDuplicates + s.quality.conflictingDuplicates : null,
       s.filled ? s.filled.gapShort + s.filled.gapDayType + s.filled.ownShape : null, s.annualKwh == null ? null : r(s.annualKwh, 0),

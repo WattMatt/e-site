@@ -19,12 +19,12 @@ const { LoadProfileClient } = await import('./LoadProfileClient')
 const base: LoadProfileView = {
   projectId: '11111111-2222-3333-4444-555555555555', projectName: 'Mall', canEdit: true, profileId: null,
   settings: { referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tariffId: null }, sources: [],
-  tenants: { count: 3, withArea: 2, totalAreaM2: 450 }, analysis: null, cost: null,
+  tenants: { count: 3, withArea: 2, totalAreaM2: 450 }, analysis: null, cost: null, compositionNote: null,
 }
 const meter: SourceRow = {
   id: 'm', kind: 'meter', label: 'Bulk meter', included: true, file_name: 'bulk.csv', format: 'B', source_column: 'P (per kW)', kva_column: null,
   interval_min: 60, first_ts_end: new Date(Date.UTC(2025, 0, 1) - 7_200_000 + 3_600_000).toISOString(),
-  values: Array(8760).fill(10), quality: Array(8760).fill(0), kva_values: null, conversion: 'kW as recorded (average over 60 min)', quality_report: null, params: null,
+  values: Array(8760).fill(10), quality: Array(8760).fill(0), kva_values: null, conversion: 'kW as recorded (average over 60 min)', quality_report: null, params: null, role: 'tenant', solar_meter_id: null,
 }
 const flat: TouCalendar = {
   highSeasonMonths: [6, 7, 8], holidayTreatedAs: 'sunday', source: 'published',

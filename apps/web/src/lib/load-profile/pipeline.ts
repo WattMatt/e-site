@@ -7,7 +7,7 @@ import 'server-only'
  * commit re-parses and re-plans before anything is written.
  */
 import { isUsable, parseMeterFile, parseMeterWorkbook, sha256Hex, type MeterParseOutcome, type ParseOptions, type SeriesOutcome } from '@esite/shared/meter-data'
-import { importQuality, planImport, toStoredChannel, type ImportPlan } from '@esite/shared/load-profile'
+import { importQuality, planImport, toStoredChannel, type ImportPlan, type LoadRole } from '@esite/shared/load-profile'
 import { parseLoadProfileFilePath } from './access'
 
 export type Downloader = (path: string) => Promise<Uint8Array | null>
@@ -59,12 +59,13 @@ export async function parseStoredFile(input: { download: Downloader; projectId: 
   }
 }
 
-export interface ChannelSelection { column: string; label: string; withKva: boolean }
+export interface ChannelSelection { column: string; label: string; withKva: boolean; role: LoadRole }
 
 /** One row for projects.load_profile_sources (kind 'meter'); parents are bound by trigger. */
 export interface MeterSourceRow {
   kind: 'meter'
   label: string
+  role: LoadRole
   file_path: string
   file_name: string
   file_sha256: string
@@ -131,6 +132,7 @@ export async function buildMeterRows(input: {
     rows.push({
       kind: 'meter',
       label,
+      role: sel.role,
       file_path: input.path,
       file_name: input.fileName,
       file_sha256: f.sha256,

@@ -34,7 +34,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
   )
 }
 
-export function OutputsPanel({ view }: { view: LoadProfileView }) {
+export function OutputsPanel({ view, costHint }: { view: LoadProfileView; costHint?: string }) {
   const a = view.analysis!
   const c = view.cost
   const tou = Boolean(c?.ok && c.touSplit)
@@ -128,7 +128,7 @@ export function OutputsPanel({ view }: { view: LoadProfileView }) {
           </ul>
         )}
         {c && !c.ok && <p role="alert" style={{ color: 'var(--c-red)', fontSize: 13 }}>{c.error}</p>}
-        {!c && <p style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>Choose a tariff under Settings to split the energy by time-of-use period and cost it.</p>}
+        {!c && <p style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{costHint ?? 'Choose a tariff under Settings to split the energy by time-of-use period and cost it.'}</p>}
       </div>
     </div>
   )

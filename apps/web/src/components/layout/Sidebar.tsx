@@ -71,6 +71,7 @@ export const GLOBAL_NAV = [
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
   { href: '/solar',       label: 'Solar portfolio', Icon: Sun },
   { href: '/tariffs',     label: 'Tariffs',     Icon: Receipt },
+  { href: '/load-profiles', label: 'Load profiles', Icon: Activity },
   { href: '/inspections/templates', label: 'Inspection Templates', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
   // Contractor rates are commercially confidential: owner/admin/PM only (rate_* RLS + requireRolePage).

@@ -24,7 +24,7 @@ vi.mock('@/lib/load-profile/pipeline', () => ({ buildMeterRows: (...a: unknown[]
 
 const A = await import('./load-profile.actions')
 const { MAX_PROFILE_SLOTS } = await import('@/lib/load-profile/access')
-const input = { path: `${P}/${SHA}.csv`, fileName: 'm.csv', sheet: null, selections: [{ column: 'P', label: 'Bulk', withKva: false }] }
+const input = { path: `${P}/${SHA}.csv`, fileName: 'm.csv', sheet: null, selections: [{ column: 'P', label: 'Bulk', withKva: false, role: 'tenant' as const }] }
 const writes = () => fake.calls.filter((c) => c.op !== 'select')
 
 beforeEach(() => {
@@ -64,7 +64,7 @@ describe('commitLoadProfileFileAction', () => {
     expect(writes()).toEqual([])
   })
   it('names the field that failed validation', async () => {
-    expect(await A.commitLoadProfileFileAction(P, { ...input, selections: [{ column: 'P', label: 'x'.repeat(201), withKva: false }] }))
+    expect(await A.commitLoadProfileFileAction(P, { ...input, selections: [{ column: 'P', label: 'x'.repeat(201), withKva: false, role: 'tenant' as const }] }))
       .toEqual({ error: 'A label can be at most 200 characters.' })
   })
 })

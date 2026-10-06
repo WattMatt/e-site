@@ -12,6 +12,7 @@ import { LOAD_PROFILE_BUCKET, LOAD_PROFILE_READ_ROLES, LOAD_PROFILE_WRITE_ROLES,
 import { buildMeterRows, parseStoredFile, type ChannelSelection, type ParseResult } from '@/lib/load-profile/pipeline'
 import { listPublishedLicensees, listPublishedTariffs, loadCostingTariff, type PublishedLicensee, type PublishedTariffOption } from '@/lib/load-profile/tariff-source'
 import type { AnyClient } from '@/lib/load-profile/load'
+import { LOAD_ROLES, roleOfKind, type MeterKind } from '@esite/shared/load-profile'
 
 type Err = { error: string }
 const GENERIC = 'Something went wrong. Try again.'
@@ -63,6 +64,7 @@ const SelectionSchema = z.object({
   column: z.string().min(1).max(200),
   label: z.string().max(200, 'A label can be at most 200 characters.'),
   withKva: z.boolean(),
+  role: z.enum(LOAD_ROLES),
 })
 const CommitSchema = z.object({
   path: z.string().min(1).max(300),
@@ -129,15 +131,17 @@ export async function addSyntheticSourceAction(projectId: string, input: Synthet
   if ('error' in g) return g
   const profileId = await ensureProfile(g.supabase, projectId)
   if (typeof profileId !== 'string') return profileId
-  const { error } = await g.supabase.schema('projects').from('load_profile_sources').insert({ profile_id: profileId, ...parsed.data })
+  // An estimate of the tenants stands in for them; an ADMD block is new load on top (roles.ts).
+  const role = parsed.data.kind === 'admd' ? 'addition' : 'tenant'
+  const { error } = await g.supabase.schema('projects').from('load_profile_sources').insert({ profile_id: profileId, ...parsed.data, role })
   if (error) return { error: GENERIC }
   revalidatePath(pagePath(projectId))
   return { ok: true }
 }
 
-const UpdateSchema = z.object({ included: z.boolean().optional(), label: z.string().trim().min(1).max(200).optional() })
+const UpdateSchema = z.object({ included: z.boolean().optional(), label: z.string().trim().min(1).max(200).optional(), role: z.enum(LOAD_ROLES).optional() })
 
-export async function updateLoadProfileSourceAction(projectId: string, sourceId: string, patch: { included?: boolean; label?: string }): Promise<{ ok: true } | Err> {
+export async function updateLoadProfileSourceAction(projectId: string, sourceId: string, patch: { included?: boolean; label?: string; role?: (typeof LOAD_ROLES)[number] }): Promise<{ ok: true } | Err> {
   const parsed = UpdateSchema.safeParse(patch)
   if (!parsed.success || !uuid.safeParse(sourceId).success) return { error: 'Check the values.' }
   const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
@@ -212,4 +216,73 @@ export async function listPublishedTariffsAction(projectId: string, licenseeId: 
   } catch {
     return { error: GENERIC }
   }
+}
+
+// ── Solar library meters ─────────────────────────────────────────────────────
+
+export interface LibraryMeterOption { id: string; label: string; kind: string; siteLabel: string | null; shopNo: string | null; inThisProject: boolean }
+
+/**
+ * Meters of the org's Solar library: those whose files were imported for THIS project first, then any
+ * matching `q` (label or site). Read through the caller's session, so Solar RLS decides what is listed.
+ */
+export async function listLibraryMetersAction(projectId: string, q = ''): Promise<{ ok: true; meters: LibraryMeterOption[] } | Err> {
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
+  if ('error' in g) return g
+  const solar = g.supabase.schema('solar')
+  // Fully imported files only: a file that failed part-way leaves a meter that must not be offered.
+  const { data: files } = await solar.from('meter_files').select('id').eq('project_id', projectId).eq('status', 'accepted').limit(2000)
+  const fileIds = ((files ?? []) as Array<{ id: string }>).map((f) => f.id)
+  const here = new Set<string>()
+  for (let i = 0; i < fileIds.length; i += 150) {
+    const { data } = await solar.from('meter_series_hashes').select('meter_id').in('file_id', fileIds.slice(i, i + 150))
+    for (const r of (data ?? []) as Array<{ meter_id: string }>) here.add(r.meter_id)
+  }
+  const cols = 'id, label, kind, site_label, shop_no'
+  const ownRows: Array<Record<string, unknown>> = []
+  const hereIds = [...here]
+  for (let i = 0; i < hereIds.length; i += 150) {
+    const { data } = await solar.from('meters').select(cols).in('id', hereIds.slice(i, i + 150))
+    ownRows.push(...((data ?? []) as Array<Record<string, unknown>>))
+  }
+  const own = { data: ownRows }
+  const term = q.trim().replace(/[%,()]/g, ' ').slice(0, 60)
+  const found = term ? await solar.from('meters').select(cols).or(`label.ilike.%${term}%,site_label.ilike.%${term}%`).neq('kind', 'water').order('site_label').order('label').limit(200) : { data: [] }
+  const seen = new Set<string>()
+  const meters: LibraryMeterOption[] = []
+  for (const m of [...((own.data ?? []) as Array<Record<string, unknown>>), ...((found.data ?? []) as Array<Record<string, unknown>>)]) {
+    const id = String(m.id)
+    if (seen.has(id)) continue
+    seen.add(id)
+    meters.push({ id, label: String(m.label), kind: String(m.kind), siteLabel: (m.site_label as string | null) ?? null, shopNo: (m.shop_no as string | null) ?? null, inThisProject: here.has(id) })
+  }
+  meters.sort((a, b) => Number(b.inThisProject) - Number(a.inThisProject) || (a.siteLabel ?? '').localeCompare(b.siteLabel ?? '') || a.label.localeCompare(b.label))
+  return { ok: true, meters }
+}
+
+/** Reference library meters from this project's profile; the role defaults from the meter's kind. */
+export async function addLibraryMetersAction(projectId: string, meterIds: string[]): Promise<{ ok: true; added: number } | Err> {
+  const ids = [...new Set(meterIds)]
+  if (ids.length === 0 || ids.length > 150 || !ids.every((id) => uuid.safeParse(id).success)) return { error: 'Choose between 1 and 150 meters.' }
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
+  if ('error' in g) return g
+  const { data: meters, error } = await g.supabase.schema('solar').from('meters').select('id, label, kind, site_label').in('id', ids)
+  if (error) return { error: GENERIC }
+  const visible = (meters ?? []) as Array<{ id: string; label: string; kind: MeterKind; site_label: string | null }>
+  if (visible.length !== ids.length) return { error: 'Some of those meters are not in your organisation\'s Solar library.' }
+  const profileId = await ensureProfile(g.supabase, projectId)
+  if (typeof profileId !== 'string') return profileId
+  const t = () => g.supabase.schema('projects').from('load_profile_sources')
+  const { data: held } = await t().select('solar_meter_id').eq('profile_id', profileId).in('solar_meter_id', ids)
+  const already = new Set(((held ?? []) as Array<{ solar_meter_id: string }>).map((h) => h.solar_meter_id))
+  const rows = visible.filter((m) => !already.has(m.id)).map((m) => ({
+    profile_id: profileId, kind: 'library_meter', solar_meter_id: m.id, role: roleOfKind(m.kind),
+    label: `${m.site_label ? `${m.site_label} · ` : ''}${m.label}`.slice(0, 200),
+  }))
+  if (rows.length) {
+    const { error: e } = await t().insert(rows)
+    if (e) return { error: GENERIC }
+  }
+  revalidatePath(pagePath(projectId))
+  return { ok: true, added: rows.length }
 }

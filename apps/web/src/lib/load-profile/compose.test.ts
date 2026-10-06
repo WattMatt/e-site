@@ -9,12 +9,12 @@ function constantMeter(id: string, included = true): SourceRow {
   return {
     id, kind: 'meter', label: `meter ${id}`, included, file_name: 'm.csv', format: 'B', source_column: 'P (per kW)', kva_column: null,
     interval_min: 60, first_ts_end: new Date(first).toISOString(), values: Array(8760).fill(10), quality: Array(8760).fill(0),
-    kva_values: null, conversion: 'kW as recorded', quality_report: null, params: null,
+    kva_values: null, conversion: 'kW as recorded', quality_report: null, params: null, role: 'tenant', solar_meter_id: null,
   }
 }
 const synthetic = (id: string, kind: 'admd' | 'tenant_schedule', params: Record<string, unknown>): SourceRow => ({
   id, kind, label: id, included: true, file_name: null, format: null, source_column: null, kva_column: null, interval_min: null,
-  first_ts_end: null, values: null, quality: null, kva_values: null, conversion: null, quality_report: null, params,
+  first_ts_end: null, values: null, quality: null, kva_values: null, conversion: null, quality_report: null, params, role: kind === 'admd' ? 'addition' : 'tenant', solar_meter_id: null,
 })
 const flat: TouCalendar = {
   highSeasonMonths: [6, 7, 8], holidayTreatedAs: 'sunday', source: 'published',
@@ -126,5 +126,31 @@ describe('composeView', () => {
     const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], sources: [constantMeter('a')], costing: { tariffId: 't', tariff, calendar: flat, calendarAssumedEskom: false, label: 'Flat' } })
     if (!v.cost?.ok) throw new Error('expected a cost')
     expect(v.cost.demandNote).toMatch(/billed at no less than 10.53 kVA/)
+  })
+
+  it('roles: with a bulk meter the tenants are NOT added again; check meters are shown, never summed', () => {
+    const bulk = { ...constantMeter('bulk'), role: 'bulk' as const, values: Array(8760).fill(50) }
+    const t1 = { ...constantMeter('t1'), role: 'tenant' as const }
+    const chk = { ...constantMeter('chk'), role: 'check' as const, values: Array(8760).fill(50) }
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [t1, bulk, chk] })
+    expect(v.analysis!.kpis.annualKwh).toBeCloseTo(50 * 8760, 6) // the bulk alone, not 50 + 10 + 50
+    expect(v.sources.map((x) => x.counted)).toEqual([false, true, false])
+    expect(v.compositionNote).toMatch(/bulk meter; 1 tenant source is inside the bulk supply/)
+    const noBulk = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [t1, { ...constantMeter('t2'), role: 'tenant' as const }] })
+    expect(noBulk.analysis!.kpis.annualKwh).toBeCloseTo(2 * 87_600, 6)
+  })
+
+  it('a Solar library meter is a measured source read from the library', () => {
+    const lib = synthetic('lib', 'admd', {})
+    const row = { ...lib, kind: 'library_meter' as const, params: null, role: 'bulk' as const, solar_meter_id: 'm1' }
+    const first = Date.UTC(2025, 0, 1) - 7_200_000 + 3_600_000
+    const kw = Array.from({ length: 8760 }, (_, i) => ({ tsEnd: first + i * 3_600_000, value: 20, quality: 0 as never }))
+    const v = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [row],
+      library: new Map([['m1', { label: 'BULK', kind: 'bulk', siteLabel: 'KURUMAN MALL', intervalMin: 60, kw, kva: null }]]) })
+    expect(v.sources[0]).toMatchObject({ status: 'ok', counted: true, detail: 'KURUMAN MALL · bulk · 60 min', annualKwh: 20 * 8760 })
+    expect(v.analysis!.md!.peak.kva).toBeCloseTo(20 / 0.95, 9)
+    const missing = composeView({ referenceYear: 2025, powerFactor: 0.95, nmdKva: null, tenants: [], costing: null, sources: [row] })
+    expect(missing.sources[0]).toMatchObject({ status: 'error', error: expect.stringMatching(/could not be read/) })
+    expect(missing.analysis).toBeNull()
   })
 })
