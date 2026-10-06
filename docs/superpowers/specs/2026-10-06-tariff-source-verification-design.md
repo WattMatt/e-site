@@ -38,8 +38,8 @@ A value is never typed from memory. A corrected value counts only when the verif
 | Charge from a PDF | an **independent** reader (pdf.js text items with x/y positions) reads the cited page | the label text is on the page; the value, written the way the source writes it (decimal comma or point, printed decimals), is on the same row as the label; and that token's x-position falls under the column header the decision approves ("Recommended", "Approved …", "2026/27 Recommended Tariff") |
 | Tariff identity | same readers | the tariff's name (and code, for Eskom) appears in the cited sheet or on the cited page, not only in a contents list |
 | Unit | same readers | the printed unit token matches the stored unit, or no unit is printed and the charge is `unit_inferred` (shown per R3) |
-| Eskom TOU windows | the stored schedule PDF, p56 Figure 2, re-rendered by the verifier (`pdftoppm`, 300 dpi) | sampling each hour's segment colour on the wheel gives the stored period for every hour of every season × day type; any hour whose colour is not clearly one period's → `unresolved` (two-person confirmation against the page image) |
-| Eskom holiday rows | the stored schedule PDF, p12 | each date, name and "Saturday/Sunday" treatment is printed in the table |
+| Eskom TOU windows | the stored schedule PDF, p56 Figure 2 (the hours are drawn as coloured wheels, not printed as text) | recorded `unresolved` by the verifier, then **two different tariff admins** confirm each season × day type against the rendered page image in `/admin/tariffs/years/[id]`. Automated colour sampling of the wheel is a later improvement, once the wheel geometry is measured and tested; until then no machine reading is presented as proof. |
+| Eskom holiday rows | the stored schedule PDF, p12 | recorded `unresolved`, then two different tariff admins confirm each row against the page (an automated text check is added once p12's printed layout is captured in a tested fixture) |
 
 A check that cannot settle a value (image-only page, two candidate columns) records **`unresolved`**, never a pass.
 
@@ -63,7 +63,7 @@ A check that cannot settle a value (image-only page, two candidate columns) reco
 - Write: service role only (the verifier). Read: same as the subject (00228 helper).
 - `tariffs.subject_verified(kind, id)`: true only when the latest row is `match` (or two-person confirmed) **and** its fingerprint equals the subject's current values.
 - **Publish gate:** the year guard refuses `in_review → published` unless every charge, tariff and (for Eskom) calendar row in the year is verified.
-- **Read gate (R5):** the explorer's reads go through a view `tariffs.verified_charge` / `verified_tariff`; a tariff is listed only when it and all its charges are verified. Solar keeps reading the base tables (out of scope; recorded as an owner decision to take).
+- **Read gate (R5):** the explorer's reads go through a view `tariffs.verified_charge` / `verified_tariff`; a tariff is listed only when it and all its charges are verified. Solar reads the base tables but refuses unverified charges unless a placeholder is entered (§8).
 
 ## 5. The verifier
 
@@ -87,6 +87,16 @@ Turning the read gate on before step 1 completes would blank the explorer; the o
 - The independence contract test fails if `verify/` imports parser code.
 - SQL assertions (impersonated roles): a client cannot write `source_verification`; the publish gate refuses a year with one unverified charge; the read views hide a tariff with one failing charge.
 
-## 8. Out of scope here
+## 8. Solar (owner decision, 2026-10-06): refuse, with an explicit placeholder
 
-Project 2 (fixing what fails, the 25 mis-named tariffs), project 3 (page redesign; it will read the verified views and show "Matches source · <date>"), project 4 (coverage), Solar's use of unverified values (owner decision), advertising wording (owner/legal).
+Solar studies price against the same library. **A study whose pinned tariff has any charge that is not verified refuses to price.** The refusal names each unverified charge (its source label, the source document and page/cell) and offers one way forward: **enter a placeholder**.
+
+- A placeholder uses the existing project override (`solar.tariff_overrides` / `tariff_override_charges`, 00214): the unverified charge is copied into the study's override and the person must type the value and a reason. The row records `edited_by` / `edited_at` (existing columns).
+- A copied value that nobody touched does **not** count: the pricing guard requires, for every override charge whose `base_charge_id` is not verified, that it was explicitly confirmed as a placeholder (`edited_by` set and `reason` non-blank). Otherwise the study still refuses.
+- Placeholders are carried into every output: the Tariff tab, case runs, Financials and proposal/report PDFs label them "Placeholder entered by <name> on <date> — not verified against the NERSA-approved source", next to the value.
+- When the library charge later verifies, the study shows that the verified value is now available and offers to replace the placeholder; it never changes silently (a pinned study's figures stay reproducible).
+- Enforced in the pricing resolver (`resolveStudyPricing` / case-run tariff loader) and pinned by tests; the readiness check lists unverified charges as a blocking item.
+
+## 9. Out of scope here
+
+Project 2 (fixing what fails, the 25 mis-named tariffs), project 3 (page redesign; it will read the verified views and show "Matches source · <date>"), project 4 (coverage), advertising wording (owner/legal).
