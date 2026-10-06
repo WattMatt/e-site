@@ -850,6 +850,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `saveLoadProfileSettingsAction` (reference year, PF, NMD, tariff) | W | W | W | — | — | — | — |
 | `listPublishedLicenseesAction` · `listPublishedTariffsAction` (tariff pickers) | R | R | R | — | — | — | — |
 | `listLibraryMetersAction` · `addLibraryMetersAction` (Solar library meters as sources; Solar RLS decides which meters are visible) | W | W | W | — | — | — | — |
+| `refreshTenantBenchmarksAction` · `setTenantEstimateBasisAction` (tenant-schedule estimate from the library's measured stores of each brand, per m²; reads Solar library meters through the caller's session) | W | W | W | — | — | — | — |
 | `GET /api/projects/[id]/load-profile/export?format=xlsx\|pdf` | R | R | R | R | R | R | — |
 | `GET /api/load-profiles/[site]/export?format=xlsx\|pdf` (workspace site profile) | R | R | R | R | R | — | — |
 

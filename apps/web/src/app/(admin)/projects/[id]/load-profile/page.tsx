@@ -11,7 +11,8 @@ import { LoadProfileClient } from './_components/LoadProfileClient'
 
 export const dynamic = 'force-dynamic'
 /** Parsing a large meter export in a server action runs inside this page's function. */
-export const maxDuration = 60
+// 120: "Refresh from the library" reads every tenant brand's measured stores (benchmarks.ts).
+export const maxDuration = 120
 
 const ARCHETYPES = [
   { code: 'retail', name: 'Retail (09:00-18:00 Mon-Sat)' },

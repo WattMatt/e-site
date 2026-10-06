@@ -34,6 +34,27 @@ export interface SourceView {
   role: LoadRole
   /** true when this source is part of the profile's sum (its role and the bulk rule allow it) */
   counted: boolean
+  /** tenant_schedule only: how each tenant was estimated (measured stores of its brand per m², or generic). */
+  tenantEstimate?: TenantEstimateView | null
+}
+
+export interface BenchmarkRangeView { median: number; low: number; high: number }
+export interface TenantEstimateView {
+  basis: 'measured' | 'generic'
+  computedAt: string | null
+  lines: Array<{ label: string; areaM2: number; basis: 'benchmark' | 'generic'; brand: string | null; annualKwh: number; peakKw: number }>
+  /** The brands the tenants were matched to: the stores behind each, and the ones left out. */
+  brands: Array<{
+    key: string
+    label: string
+    n: number
+    kwhPerM2: BenchmarkRangeView
+    peakWPerM2: BenchmarkRangeView
+    stores: Array<{ site: string; label: string; areaM2: number; kwhPerM2: number; peakWPerM2: number }>
+    excluded: Array<{ site: string; label: string; reason: string }>
+  }>
+  /** Tenant brands the library has no qualifying store for (they use the generic figures). */
+  unmatched: string[]
 }
 
 export interface MdMonthView { month: string; kva: number; kw: number | null; at: string | null; source: string }

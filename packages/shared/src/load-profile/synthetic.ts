@@ -4,7 +4,7 @@
  * N consumers × after-diversity maximum demand, shaped by an archetype so its peak hour equals
  * N × ADMD × PF (ADMD already carries the diversity of N consumers, so no further factor applies).
  */
-import { CATEGORY_ARCHETYPE, DEFAULT_DENSITY_W_PER_M2, expandArchetype, getArchetype, type ArchetypeCode } from '../services/solar/load/archetypes'
+import { CATEGORY_ARCHETYPE, DEFAULT_DENSITY_W_PER_M2, expandArchetype, getArchetype, type ArchetypeCode, type ArchetypeShapeDef } from '../services/solar/load/archetypes'
 import { HOURS_PER_YEAR } from '../services/solar/load/calendar'
 import { buildS3 } from '../services/solar/load/site-series'
 import { synthesiseTenant } from '../services/solar/load/synthesis'
@@ -17,8 +17,22 @@ export interface TenantSynthInput {
   archetype?: ArchetypeCode | null
   densityWPerM2?: number | null
   boDate?: string | null
+  /** The tenant's own name, for matching a measured benchmark (benchmark.ts benchmarkKey). */
+  matchName?: string | null
+  /** A measured benchmark of the tenant's brand (benchmark.ts): replaces the generic shape and density. */
+  benchmark?: { key?: string; shape: ArchetypeShapeDef; densityWPerM2: number } | null
 }
-export interface TenantSynthLine { label: string; archetype: ArchetypeCode; densityWPerM2: number; areaM2: number; annualKwh: number; peakKw: number }
+export interface TenantSynthLine {
+  label: string
+  archetype: ArchetypeCode
+  densityWPerM2: number
+  areaM2: number
+  annualKwh: number
+  peakKw: number
+  /** 'benchmark' = measured stores of the brand per m²; 'generic' = category density × archetype. */
+  basis: 'benchmark' | 'generic'
+  benchmarkKey: string | null
+}
 export interface TenantScheduleResult { series: Float64Array; lines: TenantSynthLine[]; skipped: Array<{ label: string; reason: string }> }
 
 const sum = (a: Float64Array) => a.reduce((s, v) => s + v, 0)
@@ -31,6 +45,12 @@ export function tenantScheduleSeries(tenants: TenantSynthInput[], referenceYear:
     if (!s) shapes.set(code, (s = expandArchetype(getArchetype(code), referenceYear)))
     return s
   }
+  const measured = new Map<ArchetypeShapeDef, Float64Array>()
+  const measuredOf = (shape: ArchetypeShapeDef) => {
+    let s = measured.get(shape)
+    if (!s) measured.set(shape, (s = expandArchetype(shape, referenceYear)))
+    return s
+  }
   const lines: TenantSynthLine[] = []
   const skipped: TenantScheduleResult['skipped'] = []
   const synths: Float64Array[] = []
@@ -38,10 +58,12 @@ export function tenantScheduleSeries(tenants: TenantSynthInput[], referenceYear:
     if (!(t.areaM2 && t.areaM2 > 0)) { skipped.push({ label: t.label, reason: 'no shop area' }); continue }
     const category: ShopCategory = t.category ?? 'other'
     const archetype = t.archetype ?? CATEGORY_ARCHETYPE[category]
-    const densityWPerM2 = t.densityWPerM2 ?? DEFAULT_DENSITY_W_PER_M2[category]
-    const s = synthesiseTenant({ areaM2: t.areaM2, densityWPerM2, shape: shapeOf(archetype), boDate: t.boDate ?? null }, referenceYear)
+    const b = t.benchmark && t.benchmark.densityWPerM2 > 0 ? t.benchmark : null
+    const densityWPerM2 = b ? b.densityWPerM2 : (t.densityWPerM2 ?? DEFAULT_DENSITY_W_PER_M2[category])
+    const shape = b ? measuredOf(b.shape) : shapeOf(archetype)
+    const s = synthesiseTenant({ areaM2: t.areaM2, densityWPerM2, shape, boDate: t.boDate ?? null }, referenceYear)
     synths.push(s)
-    lines.push({ label: t.label, archetype, densityWPerM2, areaM2: t.areaM2, annualKwh: sum(s), peakKw: max(s) })
+    lines.push({ label: t.label, archetype, densityWPerM2, areaM2: t.areaM2, annualKwh: sum(s), peakKw: max(s), basis: b ? 'benchmark' : 'generic', benchmarkKey: b?.key ?? null })
   }
   const series = synths.length ? buildS3({ synths, commonAreaPct: opts.commonAreaPct }) : new Float64Array(HOURS_PER_YEAR)
   return { series, lines, skipped }

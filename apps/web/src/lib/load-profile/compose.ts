@@ -10,7 +10,8 @@ import {
 } from '@esite/shared/load-profile'
 import type { Reading } from '@esite/shared/meter-data'
 import type { Tariff, TouCalendar } from '@esite/shared'
-import type { AnalysisView, CostView, SourceKind, SourceView } from './view-types'
+import type { AnalysisView, CostView, SourceKind, SourceView, TenantEstimateView } from './view-types'
+import { applyBenchmarks, basisOf, storedBenchmarks } from './benchmark-store'
 
 type ArchetypeCode = 'retail' | 'fast_food' | 'restaurant' | 'supermarket' | 'office_bank' | 'gym' | 'anchor_24h' | 'vacant'
 
@@ -59,6 +60,24 @@ export interface ComposeInput {
 
 /** Seasonal / TOU tariffs need the supplier's TOU calendar (tariffs.tou_calendar); production held none on 2026-10-05. */
 export const NO_CALENDAR = 'This supplier has no time-of-use calendar loaded yet, so a seasonal or time-of-use tariff cannot be costed. A tariff administrator adds it under Admin, Tariffs, Calendars.'
+
+function tenantEstimateView(basis: TenantEstimateView['basis'], stored: ReturnType<typeof storedBenchmarks>, lines: ReturnType<typeof tenantScheduleSeries>['lines']): TenantEstimateView {
+  const used = new Set(lines.map((l) => l.benchmarkKey).filter((k): k is string => Boolean(k)))
+  return {
+    basis,
+    computedAt: stored?.computedAt ?? null,
+    lines: lines.map((l) => ({ label: l.label, areaM2: l.areaM2, basis: l.basis, brand: l.benchmarkKey ? (stored?.byKey[l.benchmarkKey]?.label ?? l.benchmarkKey) : null, annualKwh: Math.round(l.annualKwh), peakKw: Math.round(l.peakKw * 10) / 10 })),
+    brands: stored ? [...used].sort().map((key) => {
+      const b = stored.byKey[key]
+      return {
+        key, label: b.label, n: b.n, kwhPerM2: b.kwhPerM2, peakWPerM2: b.peakWPerM2,
+        stores: b.stores.map((x) => ({ site: x.site, label: x.label, areaM2: x.areaM2, kwhPerM2: x.kwhPerM2, peakWPerM2: x.peakWPerM2 })),
+        excluded: (stored.excluded[key] ?? []).map((x) => ({ site: x.site, label: x.label, reason: x.reason })),
+      }
+    }) : [],
+    unmatched: stored?.unmatched ?? [],
+  }
+}
 
 const round = (v: number, dp = 3) => Math.round(v * 10 ** dp) / 10 ** dp
 const sum = (a: ArrayLike<number>) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s }
@@ -151,8 +170,12 @@ export function composeView(input: ComposeInput): { sources: SourceView[]; analy
         v.intervalMin = lib.intervalMin
         b = measuredBuild(v, lib.kw, lib.kva, lib.intervalMin)
       } else if (r.kind === 'tenant_schedule') {
-        const t = tenantScheduleSeries(input.tenants, referenceYear, { commonAreaPct: num(r.params?.commonAreaPct, 0) })
-        v.detail = `${t.lines.length} tenant${t.lines.length === 1 ? '' : 's'} synthesised${t.skipped.length ? `, ${t.skipped.length} without an area skipped` : ''}; common area +${num(r.params?.commonAreaPct, 0)} %`
+        const basis = basisOf(r.params)
+        const stored = basis === 'measured' ? storedBenchmarks(r.params) : null
+        const t = tenantScheduleSeries(applyBenchmarks(input.tenants, stored, referenceYear), referenceYear, { commonAreaPct: num(r.params?.commonAreaPct, 0) })
+        const fromStores = t.lines.filter((l) => l.basis === 'benchmark').length
+        v.detail = `${t.lines.length} tenant${t.lines.length === 1 ? '' : 's'} estimated${basis === 'measured' ? ` (${fromStores} from measured stores of their brand, ${t.lines.length - fromStores} from generic figures)` : ' from generic figures'}${t.skipped.length ? `, ${t.skipped.length} without an area skipped` : ''}; common area +${num(r.params?.commonAreaPct, 0)} %`
+        v.tenantEstimate = tenantEstimateView(basis, stored, t.lines)
         v.annualKwh = sum(t.series)
         v.peakKw = max(t.series)
         if (t.lines.length === 0) throw new Error('No tenant in the schedule has a shop area')
