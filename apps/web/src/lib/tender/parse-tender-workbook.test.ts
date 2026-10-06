@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTenderWorkbook } from './parse-tender-workbook'
+import { parseTenderWorkbook, toNumber } from './parse-tender-workbook'
 import { toItemRows } from './to-rows'
 import { buildMvlWorkbook, buildWmWorkbook, MVL_BILL_TOTALS, MVL_SUBTOTAL, MVL_VAT, MVL_TOTAL } from './__fixtures__/workbooks'
 import type { ParsedTenderWorkbook } from './types'
@@ -428,5 +428,18 @@ describe('parseTenderWorkbook — total wording in the ITEM column', () => {
     })
     const p = await parseTenderWorkbook(buf)
     expect(p.sheets[0].rows[0]).toMatchObject({ kind: 'item', code: 'AB' })
+describe('toNumber (text cells in a workbook)', () => {
+  it('reads an en-ZA decimal comma as cents, never as a thousands separator', () => {
+    expect(toNumber('12,50')).toBe(12.5)
+    expect(toNumber('1 000,50')).toBe(1000.5)
+    expect(toNumber('1.000,50')).toBe(1000.5)
+    expect(toNumber('R 2 450,5')).toBe(2450.5)
+  })
+  it('keeps reading English grouping as before', () => {
+    expect(toNumber('1,500')).toBe(1500)
+    expect(toNumber('1,000.50')).toBe(1000.5)
+    expect(toNumber('12.5')).toBe(12.5)
+    expect(toNumber(42)).toBe(42)
+    expect(toNumber('RATE ONLY')).toBeNull()
   })
 })

@@ -10,6 +10,8 @@ import { listInvitationsAction } from '@/actions/tender-invite.actions'
 import { tenderInvitesEnabled } from '@/lib/tender/gate'
 import { IssuePanel } from '../_components/IssuePanel'
 import { InvitationsPanel } from '../_components/InvitationsPanel'
+import { getTenderManagementAction } from '@/actions/tender-manage.actions'
+import { ClarificationsPanel, RequirementsPanel, SubmissionsPanel } from '../_components/ManagePanels'
 import { ImportPanel } from '../_components/ImportPanel'
 import { ReconciliationView } from '../_components/ReconciliationView'
 import { BoqGrid } from '../_components/BoqGrid'
@@ -34,6 +36,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const isDraft = tender.status === 'draft'
   const invRes = await listInvitationsAction(tenderId)
   const invitations = 'data' in invRes ? invRes.data : []
+  const manRes = await getTenderManagementAction(tenderId)
+  const manage = 'data' in manRes ? manRes.data : null
+  const sealed = tender.status === 'issued' && !!tender.closing_at && new Date(tender.closing_at) > new Date()
   const itemCount = items.filter((i) => i.kind === 'item').length
 
   return (
@@ -59,6 +64,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       {isDraft && <ImportPanel tenderId={tender.id} hasImport={!!tender.imported_at} />}
 
       {isDraft && tender.imported_at && <IssuePanel tenderId={tender.id} closingAt={tender.closing_at} />}
+
+      {manage && <RequirementsPanel tenderId={tender.id} requirements={manage.requirements} editable={isDraft} />}
+
+      {manage && !isDraft && <SubmissionsPanel submissions={manage.submissions} publishedAddenda={manage.publishedAddenda} sealed={sealed} />}
+
+      {manage && !isDraft && <ClarificationsPanel tenderId={tender.id} clarifications={manage.clarifications} canPublishAddendum={sealed} />}
 
       {(isDraft || tender.status === 'issued') && (
         <InvitationsPanel

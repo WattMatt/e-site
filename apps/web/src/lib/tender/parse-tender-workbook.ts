@@ -90,7 +90,12 @@ function readSheet(ws: ExcelJS.Worksheet): { rows: Aoa; text: string[][] } {
 export function toNumber(v: Cell): number | null {
   if (v == null) return null
   if (typeof v === 'number') return Number.isFinite(v) ? v : null
-  const s = v.replace(/[\s,]/g, '').replace(/^R/i, '')
+  let s = v.replace(/\s/g, '').replace(/^R/i, '')
+  // An en-ZA decimal comma ("12,50", "1.000,50"): a comma followed by one or two
+  // digits at the end can only be cents. Anything else keeps English grouping,
+  // so "1,500" is still 1500.
+  const zaDecimal = /^(-?[\d.]*\d),(\d{1,2})$/.exec(s)
+  s = zaDecimal ? `${zaDecimal[1].replace(/\./g, '')}.${zaDecimal[2]}` : s.replace(/,/g, '')
   if (s === '' || !/^-?\d*\.?\d+(e-?\d+)?$/i.test(s)) return null
   const n = Number(s)
   return Number.isFinite(n) ? n : null
