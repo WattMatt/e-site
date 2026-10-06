@@ -1,7 +1,7 @@
--- Behaviour assertions for 00239 (load-profile source roles + Solar library meters), in a
+-- Behaviour assertions for 00242 (load-profile source roles + Solar library meters), in a
 -- rolled-back transaction against production:
 --
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00239_load_profile_roles_library.sql scripts/db/assert-load-profile-roles.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00242_load_profile_roles_library.sql scripts/db/assert-load-profile-roles.sql
 --
 -- Red first against a no-op (role / solar_meter_id do not exist), then green.
 

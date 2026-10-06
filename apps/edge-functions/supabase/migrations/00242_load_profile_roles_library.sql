@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00239: load-profile source roles + Solar library meters as sources
+-- Migration 00242: load-profile source roles + Solar library meters as sources
 -- ---------------------------------------------------------------------------
 -- Number claimed at MERGE time: re-check the ledger, origin/main and every open
 -- PR's migration filenames immediately before merging, and renumber if needed.
