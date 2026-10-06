@@ -917,7 +917,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `GET /api/tenders/[tenderId]/adjudication` (Excel; `gateTender`) | R | R | R | — | — | — | — | — |
 | `closeTenderAction` (issued → closed, only after the closing time) / `markAdjudicatedAction` (closed → adjudicated) | W | W | W | — | — | — | — | — |
 
-> Bids are read through the caller's own session, so the sealed policies of `00233` are the real gate: nothing is shown until `tender_seal_lifted` (closing passed, tender neither draft nor cancelled) **and** the caller passes `projects.user_can_open_tender` (today the same owner/admin/PM set as `user_can_manage_tender`; the single place to narrow it when the owner decides who at WM may open tenders). Adjudication also waits for the tender to be **closed**, and compares submitted bids only. Every read pages past PostgREST's `max_rows`; a submitted bid with a missing rate is refused, never ranked.
+> Bids are read through the caller's own session, so the sealed policies of `00244` are the real gate: nothing is shown until `tender_seal_lifted` (closing passed, tender neither draft nor cancelled) **and** the caller passes `projects.user_can_open_tender` (today the same owner/admin/PM set as `user_can_manage_tender`; the single place to narrow it when the owner decides who at WM may open tenders). Adjudication also waits for the tender to be **closed**, and compares submitted bids only. Every read pages past PostgREST's `max_rows`; a submitted bid with a missing rate is refused, never ranked.
 
 ## Public / unauthenticated
 
