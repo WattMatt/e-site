@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { Charge, Tariff } from '@esite/shared'
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
@@ -30,7 +30,7 @@ const sel = [
 describe('CompareClient', () => {
   it('prices the default profile on each tariff, cheapest first', () => {
     render(<CompareClient selected={sel} licensees={[]} year={2026} />)
-    const rows = screen.getAllByRole('row').slice(1)
+    const rows = within(screen.getByRole('region', { name: 'Results' })).getAllByRole('listitem')
     // TOU: 10,000 kWh x (0.2 x R5 + 0.5 x R2.50 + 0.3 x R1) = R25,500/month -> R306,000/year.
     expect(rows[0].textContent).toContain('Muni · TOU')
     expect(rows[0].textContent).toContain('R306,000.00')
@@ -38,11 +38,37 @@ describe('CompareClient', () => {
     // Flat: 10,000 x R3 = R30,000/month -> R360,000/year.
     expect(rows[1].textContent).toContain('R360,000.00')
     expect(rows[1].textContent).toContain('Everything priced')
+    expect(rows[0].textContent).toContain('Cheapest')
+    // 360,000 - 306,000 = 54,000, 17.6 % of 306,000.
+    expect(rows[1].textContent).toContain('+R54,000.00 (17.6 %) more')
+  })
+  it('a tariff with unpriced demand charges cannot be crowned cheapest: it is a minimum, listed last', () => {
+    // Cheap energy plus a demand charge the default profile (no MD) cannot price.
+    const demand = T('Demand', [
+      ch({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 10 }),
+      ch({ component: 'network_demand', unit: 'R_per_kVA_month', amountExclVat: 50, demandBasis: 'actual_md' }),
+    ], 'flat')
+    render(<CompareClient selected={[...sel, { id: 'd', label: 'Muni · Demand (2026/27)', tariff: demand, highSeasonMonths: [6, 7, 8], seasonsAssumed: false }]} licensees={[]} year={2026} />)
+    const rows = within(screen.getByRole('region', { name: 'Results' })).getAllByRole('listitem')
+    expect(rows.map((x) => x.textContent?.includes('Muni · Demand'))).toEqual([false, false, true])
+    expect(rows[0].textContent).toContain('Cheapest')
+    expect(rows[2].textContent).toContain('at least R12,000.00')
+    expect(rows[2].textContent).not.toContain('Cheapest')
+    expect(rows[2].textContent).not.toContain('more')
+    expect(screen.getByText(/1 tariff could not be priced in full/)).toBeDefined()
+  })
+  it('a preset fills the whole profile', () => {
+    render(<CompareClient selected={sel} licensees={[]} year={2026} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Industrial' }))
+    expect((screen.getByLabelText('Energy per month') as HTMLInputElement).value).toBe('250000')
+    expect((screen.getByLabelText('Maximum demand') as HTMLInputElement).value).toBe('800')
+    expect(screen.getByRole('button', { name: 'Industrial' }).getAttribute('aria-pressed')).toBe('true')
   })
   it('refuses shares that do not add up and prices nothing', () => {
     render(<CompareClient selected={sel} licensees={[]} year={2026} />)
     fireEvent.change(screen.getByLabelText('Peak share'), { target: { value: '60' } })
     expect(screen.getByRole('alert').textContent).toContain('must add up to 100 %')
+    expect(screen.getByText('Shares total 140 %')).toBeDefined()
     expect(screen.queryByText('R306,000.00')).toBeNull()
   })
 })
