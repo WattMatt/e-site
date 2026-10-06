@@ -119,5 +119,5 @@ in place (in_review → ingesting is legal).
   Kokstad) still merge under the parent header; multi-line "Basic Charge (R/month)" rows are not read
   (Kouga); Modimolle and Greater Letaba now carry 1 tariff each, with the unread tables flagged for
   review, instead of one false tariff carrying everything.
-- **Database (00236).** `replaces_year_id` + state `replaced`; one draft and one live row per
+- **Database (00240).** `replaces_year_id` + state `replaced`; one draft and one live row per
   (licensee, FY). Loader: `--correct-published`.

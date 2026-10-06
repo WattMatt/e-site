@@ -6,7 +6,7 @@
  * A published or superseded year is never changed. With `correctPublished` (and
  * only then) the file is read again even if it was ingested before, and each
  * live year it covers gets a correction draft that names it (replaces_year_id);
- * publishing that draft replaces the live year (00236, tariffs.tariff_year_guard).
+ * publishing that draft replaces the live year (00240, tariffs.tariff_year_guard).
  */
 import { previousFinancialYear } from '../financial-year'
 import { validateTariffYear, type TariffIssue } from '../validators'

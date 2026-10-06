@@ -1,5 +1,5 @@
--- BEHAVIOURAL assertions for 00236_tariff_year_correction, run as real roles.
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00236_tariff_year_correction.sql \
+-- BEHAVIOURAL assertions for 00240_tariff_year_correction, run as real roles.
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00240_tariff_year_correction.sql \
 --       scripts/db/assert-tariff-year-correction.sql                                   (GREEN)
 --   RED first: the same with an empty migration file (no correction path exists).
 -- Fixtures are minted inside the transaction and rolled back.
