@@ -83,7 +83,7 @@ const rowIds = (i: number) => ((meta.sent[i].extra as { rows: Array<{ id: string
 describe('the Inspections menu row', () => {
   it('appears when the member has a writable inspection on the current project', async () => {
     await processInbound(row({ text: 'menu' }), deps())
-    expect(rowIds(0)).toEqual(['menu:mine', 'menu:project', 'menu:post', 'menu:forms', 'menu:switch'])
+    expect(rowIds(0)).toEqual(['menu:mine', 'menu:project', 'menu:post', 'menu:forms', 'menu:files', 'menu:reports', 'menu:switch'])
     expect(store.calls).toContainEqual(['wa_my_inspections', { p_user: USER, p_project: KW }])
   })
   it('is absent when the database lists none (flag off, no access, nothing open)', async () => {

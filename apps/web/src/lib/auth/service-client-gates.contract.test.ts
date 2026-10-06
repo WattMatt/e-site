@@ -44,6 +44,7 @@ const DECLARED: Record<string, string> = {
   'app/(admin)/projects/[id]/settings/general/page.tsx': 'org name only, after requireRole',
   'app/(admin)/projects/[id]/settings/members/page.tsx': 'org owner only, after requireRole',
   'app/api/internal/whatsapp/forms/route.ts': 'HMAC-signed internal call; acts as the linked user',
+  'app/api/internal/whatsapp/reports/route.ts': 'HMAC-signed internal call; gate in lib/whatsapp-reports/cable-schedule.ts (getExportPolicy for the named user)',
   'app/api/paystack/callback/route.ts': 'billing', 'app/api/paystack/mv-subscribe/route.ts': 'billing',
   'app/api/paystack/subaccount/route.ts': 'supplier billing', 'app/api/paystack/webhook/route.ts': 'HMAC webhook',
   'app/api/webhooks/resend/route.ts': 'svix webhook', 'app/api/notifications/dispatch/route.ts': 'bearer; notifications only',

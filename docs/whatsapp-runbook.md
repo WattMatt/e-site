@@ -222,3 +222,11 @@ It stays off until **all** of these are true. Steps marked **[owner]** configure
 Smoke after enabling, with a linked test number on a project with a writable inspection: MENU → *Inspections* → pick → complete the Flow → send a photo captioned `10` → SUBMIT → open the signed link → sign → Submit. Check: `inspections.responses.via = 'whatsapp'`, a `whatsapp.form_sessions` row `submitted`, `whatsapp.outbox` rows `form_confirm` (sent, a document) and `form_submitted`.
 
 Rollback: switch the org off in `/settings/whatsapp` (stops new forms at once; queued summaries are suppressed by `form_receive_check`), or unset `WHATSAPP_INTERNAL_SECRET`.
+
+## 14. Drawings, documents and reports (sub-projects 3 + 4)
+
+- **Menu rows:** *Drawings & documents* and *Reports & schedules*, both for the current project. Spec: `docs/superpowers/specs/2026-10-06-whatsapp-files-reports-design.md`.
+- **Files:** `whatsapp.wa_project_files` / `wa_file` / `wa_project_reports` / `wa_report` act as the person (site scope applies). The edge downloads from `drawings`, `project-documents` or `reports` only after an ok, and sends via `uploadMedia` + `sendDocument`.
+- **Cable schedule:** built by the web app at `POST /api/internal/whatsapp/reports`. It needs `WHATSAPP_INTERNAL_SECRET` on both sides, the same as forms; without it the row is simply not offered.
+- **Debug:** `whatsapp.inbound.outcome_reason` records `files_recent`, `files_search`, `files_no_match`, `file_sent`, `file_gone`, `report_sent`, `cable_sent`, `cable_no_access`, `cable_none` and `cable_off`.
+
