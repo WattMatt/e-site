@@ -63,7 +63,11 @@ describe.skipIf(!DIR)('real source books', () => {
   // The 33 municipal 2026/27 RfDs the City Power reader parsed were loaded to production from it. The
   // column reader (rfd-columns.ts) must never change what they produce: digests taken on the commit
   // before it (scripts/tariffs/rfd-coverage.ts --digests) must still match.
-  it('parses the 33 already-loaded 2026/27 RfDs exactly as before the column reader', () => {
+  // Re-pinned 2026-10-05, deliberately: 26 of the 33 were misread (a decision paragraph, TOC line or
+  // section heading taken as a tariff header; headers on pages pdftotext indents not seen), and each
+  // new output was reviewed against its PDF before its digest changed (docs/superpowers/specs/
+  // 2026-10-05-rfd-city-power-reader-misattribution.md). The other 7 are unchanged.
+  it('parses the 33 already-loaded 2026/27 RfDs exactly as pinned', () => {
     const digests = JSON.parse(readFileSync(new URL('../__fixtures__/rfd-2026-27/city-power-reader.digests.json', import.meta.url), 'utf8')) as { file: string; sha256: string; digest: string }[]
     expect(digests).toHaveLength(33)
     for (const d of digests) {
@@ -79,6 +83,8 @@ describe.skipIf(!DIR)('real source books', () => {
   // Every 2026/27 RfD that yielded a tariff before the extended pass (164: the 33 above plus the
   // column reader's 131; all loaded to production). Digests taken on main at 84677997 with
   // scripts/tariffs/rfd-coverage.ts --digests. The extended pass must never change any of them.
+  // Re-pinned 2026-10-05 for the same 26 files plus Kgatelopele (its opex table was read as a tariff
+  // named after a paragraph); the other 137 are unchanged.
   // The 6 files only the extended pass reads are pinned too, so a later change to them is deliberate:
   // those digests fix today's output, right or wrong, and any change to them needs a hand review
   // against the PDFs before the new digest is committed.

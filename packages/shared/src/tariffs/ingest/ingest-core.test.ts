@@ -111,6 +111,55 @@ describe('runIngest', () => {
     expect(store2.state.writes.filter((w) => w.startsWith('year:') || w.startsWith('tariffs:'))).toEqual([])
   })
 
+  it('corrects a published year only when asked: a draft that names it, even for a file already ingested', async () => {
+    const store = createMemoryTariffStore({ licensees: [{ name: 'City Power', kind: 'municipal', aliases: ['CITY POWER'] }] })
+    await runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: false })
+    const first = [...store.state.years.values()][0]
+    first.state = 'published'   // as the admin's publish would leave it
+
+    const plain = await runIngest(plan([draft({ tariffs: [cp(250)] })]), store, { apply: true, createMissingLicensees: false })
+    expect(plain.status).toBe('already_ingested')
+
+    const r = await runIngest(plan([draft({ tariffs: [cp(250)] })]), store, { apply: true, createMissingLicensees: false, correctPublished: true })
+    expect(r.status).toBe('applied')
+    expect(r.years[0].action).toBe('create_correction')
+    const correction = [...store.state.years.values()].find((y) => y.id !== first.id)!
+    expect(correction).toMatchObject({ financialYear: '2026/27', state: 'in_review', replacesYearId: first.id })
+    expect(store.state.tariffsByYear.get(correction.id)?.[0].charges[0].amountExclVat).toBe(250)
+    // The published year is untouched; publishing the correction replaces it (database guard).
+    expect(first.state).toBe('published')
+    expect(store.state.tariffsByYear.get(first.id)?.[0].charges[0].amountExclVat).toBe(247.76)
+
+    // Running the correction again reloads the same draft, never a second one.
+    const again = await runIngest(plan([draft({ tariffs: [cp(251)] })]), store, { apply: true, createMissingLicensees: false, correctPublished: true })
+    expect(again.years[0]).toMatchObject({ action: 'replace_correction_draft', yearId: correction.id })
+    expect([...store.state.years.values()]).toHaveLength(2)
+    expect(store.state.tariffsByYear.get(correction.id)?.[0].charges[0].amountExclVat).toBe(251)
+  })
+
+  it('a draft year (not live) is replaced as before, with or without the correction flag', async () => {
+    const store = createMemoryTariffStore({
+      licensees: [{ name: 'City Power', kind: 'municipal', aliases: ['CITY POWER'] }],
+      years: [{ licensee: 'City Power', financialYear: '2026/27', state: 'in_review', tariffs: [cp(1)] }],
+    })
+    const r = await runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: false, correctPublished: true })
+    expect(r.years[0].action).toBe('replace_draft')
+    expect([...store.state.years.values()]).toHaveLength(1)
+  })
+
+  it('the memory store refuses what the database refuses: a plain second draft for a live year', async () => {
+    const store = createMemoryTariffStore({
+      licensees: [{ name: 'City Power', kind: 'municipal', aliases: ['CITY POWER'] }],
+      years: [{ licensee: 'City Power', financialYear: '2026/27', state: 'published', tariffs: [cp(1)] }],
+    })
+    const lic = [...store.state.licensees.keys()][0]
+    const meta = { licenseeId: lic, financialYear: '2026/27', effectiveFrom: '2026-07-01', effectiveTo: '2027-06-30', approvedIncreasePct: null, sourceDocumentId: 'd' }
+    await expect(store.insertYear(meta)).rejects.toThrow(/already published/)
+    const live = [...store.state.years.values()][0]
+    await store.insertYear(meta, live.id)
+    await expect(store.insertYear(meta, live.id)).rejects.toThrow(/tariff_year_one_correction|tariff_year_one_draft_per_fy/)
+  })
+
   it('marks the run failed on error and lets a retry reuse the document', async () => {
     const store = createMemoryTariffStore(undefined, { failOnce: 'insertTariffs' })
     await expect(runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: true })).rejects.toThrow(/insertTariffs/)

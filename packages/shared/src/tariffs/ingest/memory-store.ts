@@ -6,7 +6,7 @@ export interface MemoryState {
   runs: Map<string, { id: string; sourceDocumentId: string; parser: ParserName; status: string; error: string | null }>
   licensees: Map<string, { id: string; name: string; kind: LicenseeKind }>
   aliases: Map<string, string>
-  years: Map<string, YearMeta & { id: string; state: YearState; validationBlocking?: number | null }>
+  years: Map<string, YearMeta & { id: string; state: YearState; validationBlocking?: number | null; replacesYearId?: string | null }>
   tariffsByYear: Map<string, (Tariff & { id: string })[]>
   links: { tariffId: string; exportTariffId: string }[]
   lossFactors: { yearId: string; factor: LossFactor }[]
@@ -20,6 +20,9 @@ export interface MemorySeed {
   licensees?: { name: string; kind: LicenseeKind; aliases: string[] }[]
   years?: { licensee: string; financialYear: string; state: YearState; tariffs: Tariff[] }[]
 }
+
+const LIVE: ReadonlySet<YearState> = new Set<YearState>(['published', 'superseded'])
+const DRAFT: ReadonlySet<YearState> = new Set<YearState>(['ingesting', 'in_review'])
 
 export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: keyof TariffStore } = {}): TariffStore & { state: MemoryState } {
   let n = 0
@@ -70,8 +73,13 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
       return lid
     },
     async findYear(licenseeId, financialYear) {
-      const y = [...state.years.values()].find((x) => x.licenseeId === licenseeId && x.financialYear === financialYear)
-      return y ? { id: y.id, state: y.state } : null
+      const rows = [...state.years.values()].filter((x) => x.licenseeId === licenseeId && x.financialYear === financialYear && x.state !== 'replaced')
+      const y = rows.find((x) => LIVE.has(x.state)) ?? rows[0]
+      return y ? { id: y.id, state: y.state, replacesYearId: y.replacesYearId ?? null } : null
+    },
+    async findCorrectionDraft(yearId) {
+      const y = [...state.years.values()].find((x) => x.replacesYearId === yearId && DRAFT.has(x.state))
+      return y ? { id: y.id, state: y.state, replacesYearId: yearId } : null
     },
     async loadYearTariffs(yearId) {
       return state.tariffsByYear.get(yearId) ?? []
@@ -99,10 +107,21 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
       if (run) Object.assign(run, { status: patch.status, error: patch.error })
       state.writes.push(`run-finish:${rid}`)
     },
-    async insertYear(meta) {
+    async insertYear(meta, replacesYearId) {
       maybeFail('insertYear')
+      // Mirror of 00241: tariff_year_guard's correction rules and the three unique indexes, so tests
+      // fail where production would.
+      const same = [...state.years.values()].filter((x) => x.licenseeId === meta.licenseeId && x.financialYear === meta.financialYear)
+      if (replacesYearId) {
+        const target = state.years.get(replacesYearId)
+        if (!target || !same.includes(target) || !LIVE.has(target.state)) throw new Error('tariff_year insert: a correction names a published or superseded year of the same licensee and financial year')
+        if ([...state.years.values()].some((x) => x.replacesYearId === replacesYearId)) throw new Error('duplicate key value violates unique constraint "tariff_year_one_correction"')
+      } else if (same.some((x) => LIVE.has(x.state))) {
+        throw new Error(`tariff_year insert: ${meta.financialYear} is already published for this licensee; load a correction that names it (replaces_year_id)`)
+      }
+      if (same.some((x) => DRAFT.has(x.state))) throw new Error('duplicate key value violates unique constraint "tariff_year_one_draft_per_fy"')
       const yid = id('year')
-      state.years.set(yid, { ...meta, id: yid, state: 'ingesting' })
+      state.years.set(yid, { ...meta, id: yid, state: 'ingesting', replacesYearId: replacesYearId ?? null })
       state.writes.push(`year:${yid}`)
       return yid
     },

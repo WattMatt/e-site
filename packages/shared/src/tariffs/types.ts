@@ -56,7 +56,7 @@ export type ExtractionMethod = (typeof EXTRACTION_METHODS)[number]
 export const LICENSEE_KINDS = ['eskom', 'municipal', 'metro', 'private', 'development_agency', 'industrial_private'] as const
 export type LicenseeKind = (typeof LICENSEE_KINDS)[number]
 
-export const YEAR_STATES = ['ingesting', 'in_review', 'published', 'superseded'] as const
+export const YEAR_STATES = ['ingesting', 'in_review', 'published', 'superseded', 'replaced'] as const
 export type YearState = (typeof YEAR_STATES)[number]
 
 export const CREDITING = ['net_billing_tou', 'net_billing_flat', 'none'] as const

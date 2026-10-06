@@ -36,7 +36,7 @@ describe('tariff labels', () => {
       [YEAR_STATES, TARIFF_YEAR_STATE_LABELS], [CREDITING, SSEG_CREDITING_LABELS], [CARRY_FORWARD, SSEG_CARRY_FORWARD_LABELS],
       [CAP_RULES, SSEG_CAP_RULE_LABELS], [SOURCE_DOCUMENT_KINDS, SOURCE_DOCUMENT_KIND_LABELS], [SOURCE_DOCUMENT_STATUSES, SOURCE_DOCUMENT_STATUS_LABELS],
       [['queued', 'running', 'succeeded', 'failed'], INGEST_JOB_STATUS_LABELS], [['open', 'resolved', 'rejected'], ERROR_REPORT_STATUS_LABELS],
-      [['create', 'replace_draft', 'skip_published', 'skip_unknown_licensee', 'skip_duplicate_licensee'], INGEST_YEAR_ACTION_LABELS],
+      [['create', 'replace_draft', 'create_correction', 'replace_correction_draft', 'skip_published', 'skip_unknown_licensee', 'skip_duplicate_licensee'], INGEST_YEAR_ACTION_LABELS],
       [['block', 'review', 'warn'], TARIFF_CHECK_SEVERITY_LABELS], [LICENSEE_KINDS, LICENSEE_KIND_LABELS],
     ]
     for (const [tokens, labels] of cases) {

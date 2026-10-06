@@ -1,0 +1,114 @@
+                       Decision and Reasons for Decision (RfD)
+
+In the matter regarding the
+
+Municipal Tariff Application for the 2026/27 Financial Year
+
+By
+
+City Power (Johannesburg) (Pty) Ltd
+___________________________________________________________________
+
+                                     THE DECISION
+
+
+
+1. At its meeting held on 11 May 2026, the Regulator Executive Committee (REC)
+   considered City Power’s tariff application. Based on the facts and evidence
+   presented, the REC approved the tariff increases for the 2026/27 financial year, as
+   set out in the tariff analysis section of this document.
+
+2. Based on the available information and the analysis performed, the REC decided:
+
+     a) to approve the tariffs that are based on the cost of supply (COS) study, as
+        recommended in the tariff analysis section, for implementation by the licensee
+        with effect from 1 July 2026;
+     b) to note the COS study submitted by the licensee;
+     c) that the licensee must submit a report accounting for all the costs identified in
+        its COS study to enable the National Energy Regulator of South Africa to
+        perform its independent verification or audit process by 31 January 2027; and
+     d) that the licensee must submit a quarterly smart efficiency plan with improvement
+        measures identified for reducing high energy losses and submit it by
+        30 September 2026.
+
+____________________________________________________________________
+
+
+
+
+                                                                              Page 1 of 41
+                                                                                                                                                Page 27 of 41
+8.   TARIFF ANALYSIS
+
+                                              2026/27                                      2026/27
+                               2025/26        propose    2026/27        2026/27           Recomme
+ 1. Residential Prepaid Low
+                               Approved       d%         proposed       Recommended           nded
+                               Tariffs        increase   Tariffs        tariffs            increase Analysis and Key Findings
+                                                                                                    The Residential Prepaid Low tariff
+                                    249,86       9,01%        272,37             272,37      9,01% category reflects increases ranging
+ Block 1 (0-350kWh)
+                                                                                                    from 9.01% for Blocks 1 and 2 to
+                                    305,64       9,01%        333,18             333,18      9,01% 11.51% for Block 3 consumption above
+ Block 2 (350-500kWh)                                                                               500 kWh. The higher increase on the
+                                                                                                    upper consumption block strengthens
+                                                                                                    the inclining block tariff structure and
+                                                                                                    promotes energy efficiency while
+                                                                                                    protecting low-consumption
+                                                                                                    households. The recommended tariffs
+                                                                                                    are aligned with the proposed tariffs,
+                                                                                                    indicating that the tariff adjustments
+                                                                                                    were found to be reasonable and cost
+                                    370,42     11,51%          413,06            413,06     11,51%
+ Block 3 (>500Wh)                                                                                   reflective.
+
+                                              2026/27                                      2026/27
+                               2025/26        propose    2026/27        2026/27           Recomme
+ 2. Residential Prepaid High
+                               Approved       d%         proposed       Recommended           nded
+                               Tariffs        increase   Tariffs        tariffs            increase Analysis and Key Findings
+                                                                                                    The Residential Prepaid High tariff
+                                     266,45      9,01%         290,46            290,46      9,01% category reflects a uniform increase of
+ Block 1 (0-350kWh)                                                                                 9.01% across all energy blocks, while
+                                                                                                    the service charge remains unchanged
+                                     305,64      9,01%         333,18            333,18      9,01% at R70.00/month. The capacity charge
+ Block 2 (350-500kWh)                                                                               increased by 7.69%, which is below the
+                                     348,26      9,01%         379,64            379,64      9,01% average tariff adjustment. The
+ Block 3 (>500Wh)                                                                                   structure supports cost recovery while
+
+
+
+
+                                                                                                                       Page 28 of 41
+                                                                                                      limiting the impact on fixed monthly
+                                         70,00      0,00%          70,00             70,00      0,00% charges. The tariff design remains
+Service Charge (R/month)
+                                                                                                      consistent with cost-reflective
+                                        130,00      7,69%         140,00            140,00      7,69% principles.
+Capacity Charge (R/month)
+
+                                                 2026/27                                      2026/27
+                                  2025/26        propose    2026/27        2026/27           Recomme
+3. Residential Single Phase 60A
+                                  Approved       d%         proposed       Recommended           nded
+                                  Tariffs        increase   Tariffs        tariffs            increase Analysis and Key Findings
+
+                                        264,44      9,01%         288,27            288,27      9,01%
+Block 1 (0-500kWh)
+
+                                        303,48      9,01%         330,82            330,82      9,01%
+Block 2 (501-1000kWh)
+                                                                                                      The Residential Single Phase 60A tariff
+                                        325,87      9,01%         355,23            355,23      9,01% category reflects a uniform increase of
+Block 3 (1001-2000kWh)                                                                                9.01% across all consumption blocks,
+                                        343,81      9,01%         374,79            374,79      9,01% while both the service charge and
+Block 4 (2001-3000kWh)                                                                                capacity charge remain unchanged.
+                                                                                                      The absence of increases in fixed
+                                        360,69      9,01%         393,19            393,19      9,01%
+Block 5 (>3000kWh)                                                                                    charges reduces the financial burden
+                                                                                                      on customers while still allowing for
+                                        235,79      0,00%         235,79            235,79      0,00% recovery through energy charges. The
+Service Charge (R/month)                                                                              tariff structure maintains affordability
+                                        694,58      0,00%         694,58            694,58      0,00% for residential consumers with
+Capacity Charge (R/month)                                                                             moderate to high consumption levels.
+
