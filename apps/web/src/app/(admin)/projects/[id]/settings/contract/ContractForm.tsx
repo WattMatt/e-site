@@ -35,13 +35,18 @@ const CONTRACT_TYPE_OPTIONS = [
 
 const contractFormSchema = z.object({
   // From projects.projects:
-  contractValue: z.number().nonnegative().nullable(),
+  // An emptied <input type="number" valueAsNumber> yields NaN; that means
+  // "no contract value", so save NULL rather than fail "received nan".
+  contractValue: z.preprocess(
+    (v) => (typeof v === 'number' && Number.isNaN(v) ? null : v),
+    z.number().nonnegative().nullable(),
+  ),
   currency: z.string().max(8).nullable(),
   // From project_settings:
   contractType: z.enum(['jbcc_pba', 'jbcc_mwa', 'nec3', 'nec4', 'fidic_red', 'custom', 'none']),
   contractSignedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')).nullable(),
   practicalCompletionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')).nullable(),
-  retentionPct: z.number().min(0).max(100),
+  retentionPct: z.number({ invalid_type_error: 'Enter a retention % (0 if none)' }).min(0).max(100),
 })
 
 type ContractFormValues = z.infer<typeof contractFormSchema>
