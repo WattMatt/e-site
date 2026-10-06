@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import posthog from 'posthog-js'
+import { posthogClientOptions } from '@/lib/analytics/posthog-client-options'
 
 const PH_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY
 
@@ -27,14 +28,7 @@ function PageViewTracker() {
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!PH_KEY || initialized) return
-    posthog.init(PH_KEY, {
-      api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://eu.posthog.com',
-      capture_pageview: false,
-      capture_pageleave: true,
-      autocapture: false,
-      persistence: 'localStorage+cookie',
-      session_recording: { maskAllInputs: true },
-    })
+    posthog.init(PH_KEY, posthogClientOptions)
     initialized = true
   }, [])
 
@@ -52,10 +46,4 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 export function trackEvent(event: string, props?: Record<string, unknown>) {
   if (!PH_KEY || typeof window === 'undefined') return
   posthog.capture(event, props)
-}
-
-/** Identify authenticated user in PostHog */
-export function identifyUser(userId: string, traits?: Record<string, unknown>) {
-  if (!PH_KEY || typeof window === 'undefined') return
-  posthog.identify(userId, traits)
 }

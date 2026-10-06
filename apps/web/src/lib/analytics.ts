@@ -4,18 +4,20 @@
  * Funnel: signup → first COC upload → first marketplace order
  *
  * Server-side events use the PostHog Node library (posthog-node).
- * Client-side events use the posthog-js snippet initialised in PostHogProvider.
+ * Client-side events use posthog-js, initialised in components/providers/AnalyticsProvider.tsx
+ * with lib/analytics/posthog-client-options.ts.
  *
  * Usage:
  *   // Server action / route handler
  *   import { trackServer } from '@/lib/analytics'
  *   await trackServer(userId, 'coc_uploaded', { org_id, site_id })
  *
- *   // Client component (via PostHog React hook)
- *   import { usePostHog } from 'posthog-js/react'
- *   const ph = usePostHog()
- *   ph.capture('marketplace_order_placed', { supplier_id, amount })
+ *   // Client component
+ *   import { trackEvent } from '@/components/providers/AnalyticsProvider'
+ *   trackEvent('marketplace_order_placed', { supplier_id, amount })
  */
+
+import { posthogHosts } from './analytics/posthog-hosts'
 
 // ─── Funnel event names (single source of truth) ─────────────────────────────
 
@@ -67,7 +69,8 @@ async function getPostHogNode() {
   try {
     const { PostHog } = await import('posthog-node')
     _posthogNode = new PostHog(key, {
-      host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',
+      // Same region as the browser client: the project is in the EU (see posthog-hosts.ts).
+      host: posthogHosts.apiHost,
       flushAt: 20,
       flushInterval: 10_000,
     })
@@ -105,24 +108,4 @@ export async function identifyServer(
   const ph = await getPostHogNode()
   if (!ph) return
   ph.identify({ distinctId: userId, properties: traits })
-}
-
-// ─── Client-side PostHog provider setup ──────────────────────────────────────
-
-/**
- * Config object consumed by PostHogProvider in layout.tsx.
- * Client components call `usePostHog()` from 'posthog-js/react'.
- */
-export const posthogConfig = {
-  key: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? '',
-  host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',
-  options: {
-    capture_pageview: false,       // manual pageview via usePathname() effect
-    capture_pageleave: true,
-    autocapture: false,            // explicit events only — avoids PII leakage
-    persistence: 'localStorage+cookie' as const,
-    session_recording: {
-      maskAllInputs: true,         // never record passwords / form data
-    },
-  },
 }
