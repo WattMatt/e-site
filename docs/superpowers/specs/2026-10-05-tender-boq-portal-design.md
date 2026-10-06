@@ -23,7 +23,7 @@ Run WM's tender process in E-Site. WM imports its tender BOQ workbook, invites c
 
 **UI:** project sidebar gains **Tenders** (owner/admin/PM). List → New tender (package, title, revision, closing time, upload workbook, optional internal estimate) → review page with reconciliation report, structural diff, and the item grid with a cell-type selector.
 
-## Slice B — invite + onboard (migration `00230`)
+## Slice B — invite + onboard (migration `00243`)
 
 - **Tables:** `tender_invitations` (company, contact, lower-cased email, phone, status prepared|sent|accepted|declined|revoked, SHA-256 of the link token, expiry) and `tender_participants` (one per accepted invitation: the auth user and the company profile: CIPC number, VAT, CIDB grade, B-BBEE level, contact, phone).
 - **Status machine** lives in `00226` (`tenders_status_guard`); slice B adds `issueTenderAction` (draft → issued with a future closing time; the database refuses it without an imported BOQ and an amount on every fixed sum).

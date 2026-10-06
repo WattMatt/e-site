@@ -12,7 +12,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { DEFAULT_ACCENT_COLOR, escapeHtml, filterSuppressed, renderBrandedEmail } from '@esite/shared'
 import { gateTender, tenderInvitesEnabled, tenderPrefix, type AnyClient } from '@/lib/tender/gate'
 import { hashInvitationToken, invitationExpiry, newInvitationToken } from '@/lib/tender/invitation'
@@ -158,8 +158,10 @@ export async function prepareInvitationsAction(
 }
 
 async function gateInvitation(invitationId: string) {
-  const svc = createServiceClient() as AnyClient
-  const { data: inv } = await svc
+  // Read AS THE CALLER (row security + site_scope), never the service key first:
+  // an invitation on a tender the caller may not manage reads as not found.
+  const supabase = (await createClient()) as AnyClient
+  const { data: inv } = await supabase
     .schema('projects')
     .from('tender_invitations')
     .select('id, tender_id, status, email, company_name')

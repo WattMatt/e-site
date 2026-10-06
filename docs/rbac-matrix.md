@@ -883,7 +883,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > Every tender table (`projects.tenders`, `tender_boq_items`, `tender_estimate_lines`, `tender_requirements`) is readable **only** by the project's owner/admin/project manager (`user_effective_project_role`), not by every project member: a contractor on site must not see a tender being prepared, and nobody outside WM may ever read `tender_estimate_lines` (WM's internal estimate). Proven by `scripts/db/assert-tender-boq-roles.sql` (29 assertions, impersonating real production users; mutation-tested). Once a tender leaves `draft` its BOQ, estimate and requirements are frozen by trigger. The `tender-files` bucket has no client storage policies; the server mints signed upload/download URLs after the role check. Import runs through `projects.tender_replace_boq` (SECURITY DEFINER with one `user_can_manage_tender` gate up front, measured 268 ms for 3,000 rows vs 5.3 s as invoker against the 8 s `authenticated` statement timeout); stored workbook paths must sit inside `org/project/tender/`. Status only moves forward; an issued tender's import is frozen and needs every fixed sum priced. Slice B adds the tenderer read path.
 
-### Tender invitations and the tenderer portal (`tender-invite.actions.ts`, `tender-portal.actions.ts`, E5 slice B, migration `00230`)
+### Tender invitations and the tenderer portal (`tender-invite.actions.ts`, `tender-portal.actions.ts`, E5 slice B, migration `00243`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer | tenderer¹ |
 |---|---|---|---|---|---|---|---|---|

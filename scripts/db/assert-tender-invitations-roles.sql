@@ -1,7 +1,7 @@
--- BEHAVIOURAL assertions for 00230 (tender invitations + the tenderer read path),
+-- BEHAVIOURAL assertions for 00243 (tender invitations + the tenderer read path),
 -- run as real production roles in a rolled-back transaction:
 --
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00230_tender_invitations.sql scripts/db/assert-tender-invitations-roles.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00243_tender_invitations.sql scripts/db/assert-tender-invitations-roles.sql
 --
 -- What slice B must guarantee:
 --   * a bidder has NO row policy on tenders or the BOQ tables; everything they
@@ -297,7 +297,52 @@ BEGIN
   RESET ROLE;
 END $$;
 
+-- Site scope (00238): an org-level project manager who is NOT a member of the
+-- tender's project sees none of its tenders, invitations or participants.
+DO $$
+DECLARE
+  v_project uuid; v_org uuid; v_t uuid; v_pm uuid := gen_random_uuid(); v_bidder uuid := gen_random_uuid(); v_inv uuid; v_n int;
+BEGIN
+  SELECT pm.project_id INTO v_project FROM projects.project_members pm WHERE pm.role = 'contractor' AND pm.is_active LIMIT 1;
+  SELECT organisation_id INTO v_org FROM projects.projects WHERE id = v_project;
+  INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  VALUES (v_pm, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-pm@example.invalid', '', now(), now(), now(), '{}', '{}'),
+         (v_bidder, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-bidder@example.invalid', '', now(), now(), now(), '{}', '{}');
+  INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES (v_pm, v_org, 'project_manager', TRUE);
+  INSERT INTO projects.tenders (project_id, organisation_id, package, title, imported_at)
+  VALUES (v_project, v_org, 'Site scope', 'Probe', now()) RETURNING id INTO v_t;
+  UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_t;
+  INSERT INTO projects.tender_invitations (tender_id, company_name, email, status, accepted_at, accepted_by)
+  VALUES (v_t, 'Site Bidder', 'probe-site-bidder@example.invalid', 'accepted', now(), v_bidder) RETURNING id INTO v_inv;
+  INSERT INTO projects.tender_participants (tender_id, invitation_id, user_id, company_name) VALUES (v_t, v_inv, v_bidder, 'Site Bidder');
+  IF EXISTS (SELECT 1 FROM projects.project_members WHERE user_id = v_pm) THEN RAISE EXCEPTION 'probe PM is a member'; END IF;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.tender_invitations WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_org_pm_off_site_sees_no_invitations', v_n = 0);
+  SELECT count(*) INTO v_n FROM projects.tender_participants WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_org_pm_off_site_sees_no_participants', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_bidder::text, 'role', 'authenticated', 'amr', json_build_array(json_build_object('method','otp','timestamp',1)))::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.tender_participants WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_bidder_still_reads_own_participant_row', v_n = 1);
+  UPDATE projects.tender_participants SET contact_name = 'Site Bidder Contact' WHERE tender_id = v_t;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('site_scope_bidder_still_updates_own_profile', v_n = 1);
+  SELECT count(*) INTO v_n FROM projects.tender_invitations WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_bidder_reads_no_invitation_rows', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+END $$;
+
 SELECT * FROM (VALUES
+  ('site scope: an org PM off this site sees no invitations',       (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_invitations')),
+  ('site scope: an org PM off this site sees no participants',      (SELECT v FROM _r WHERE k='site_scope_org_pm_off_site_sees_no_participants')),
+  ('site scope: a bidder still reads their own participant row',    (SELECT v FROM _r WHERE k='site_scope_bidder_still_reads_own_participant_row')),
+  ('site scope: a bidder still updates their own profile',          (SELECT v FROM _r WHERE k='site_scope_bidder_still_updates_own_profile')),
+  ('site scope: a bidder reads no invitation rows',                 (SELECT v FROM _r WHERE k='site_scope_bidder_reads_no_invitation_rows')),
   ('admin prepares invitations',                                    (SELECT v FROM _r WHERE k='admin_prepares_invitations')),
   ('an upper-case email is refused',                                (SELECT v FROM _r WHERE k='uppercase_email_REFUSED')),
   ('one live invitation per email per tender',                      (SELECT v FROM _r WHERE k='duplicate_live_email_REFUSED')),

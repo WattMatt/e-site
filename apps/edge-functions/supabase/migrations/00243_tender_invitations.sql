@@ -1,4 +1,4 @@
--- 00230_tender_invitations.sql
+-- 00243_tender_invitations.sql
 -- E5 slice B: invitations, tender-scoped participants, and the tenderer read path.
 --
 -- A tenderer is an auth user with NO organisation membership. Nothing in 00226
@@ -170,6 +170,22 @@ CREATE POLICY tender_participants_update_own ON projects.tender_participants FOR
   USING (user_id = auth.uid() AND projects.session_proves_email())
   WITH CHECK (user_id = auth.uid() AND projects.session_proves_email());
 
+-- Site scope (00238). Every tender row follows the caller's access to the
+-- tender's project (org owner/admin: every site; everyone else: sites they are
+-- an active member of). A tenderer is never a project member, so the
+-- participants table carries a second arm for the participant's OWN row in an
+-- email-proved session; without it every bidder would lose their own profile.
+-- The permissive policies above still decide which rows anyone sees.
+-- scripts/db/assert-site-scope-coverage.sql requires a policy by this name.
+CREATE POLICY site_scope ON projects.tender_invitations AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)));
+CREATE POLICY site_scope ON projects.tender_participants AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id))
+         OR (user_id = auth.uid() AND projects.session_proves_email()))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id))
+              OR (user_id = auth.uid() AND projects.session_proves_email()));
+
 REVOKE ALL ON projects.tender_invitations, projects.tender_participants FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON projects.tender_invitations TO authenticated;
 -- The schema's default privileges grant every verb to authenticated; a
@@ -336,6 +352,9 @@ NOTIFY pgrst, 'reload schema';
 -- policy: tender_participants_select ON projects.tender_participants
 -- policy: tender_participants_update_own ON projects.tender_participants
 -- policy: tender_invitations_select ON projects.tender_invitations
+-- policy: site_scope ON projects.tender_invitations RESTRICTIVE
+-- policy: site_scope ON projects.tender_participants RESTRICTIVE
+-- sql: (SELECT qual LIKE '%user_has_project_access%' AND qual LIKE '%session_proves_email%' FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'tender_participants' AND policyname = 'site_scope')
 -- grant_absent: anon SELECT ON projects.tender_invitations
 -- grant_absent: anon EXECUTE ON projects.tender_portal_items(uuid)
 -- grant_absent: authenticated INSERT ON projects.tender_participants

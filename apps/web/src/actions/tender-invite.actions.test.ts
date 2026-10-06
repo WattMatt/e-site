@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const { gateMock, svcMock, revalidateMock } = vi.hoisted(() => ({
+const { gateMock, svcMock, cookieMock, revalidateMock } = vi.hoisted(() => ({
   gateMock: vi.fn(),
   svcMock: vi.fn(),
+  cookieMock: vi.fn(),
   revalidateMock: vi.fn(),
 }))
 vi.mock('@/lib/tender/gate', () => ({
@@ -10,7 +11,7 @@ vi.mock('@/lib/tender/gate', () => ({
   tenderPrefix: (t: { organisation_id: string; project_id: string; id: string }) => `${t.organisation_id}/${t.project_id}/${t.id}/`,
   tenderInvitesEnabled: () => process.env.TENDER_INVITES_ENABLED === 'true',
 }))
-vi.mock('@/lib/supabase/server', () => ({ createServiceClient: svcMock, createClient: vi.fn() }))
+vi.mock('@/lib/supabase/server', () => ({ createServiceClient: svcMock, createClient: cookieMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidateMock }))
 
 import { prepareInvitationsAction, sendTenderInvitationsAction, issueTenderAction, revokeInvitationAction } from './tender-invite.actions'
@@ -109,12 +110,14 @@ describe('sendTenderInvitationsAction', () => {
 describe('revokeInvitationAction', () => {
   it('clears the token hash so the link stops working', async () => {
     const rec = recorder(() => ({}))
-    svcMock.mockReturnValue({
+    // The invitation is read AS THE CALLER (row security + site_scope), never with the service key.
+    cookieMock.mockResolvedValue({
       schema: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { id: 'i1', tender_id: 't1', status: 'prepared', email: 'a@x.example', company_name: 'A' } }) }) }) }) }),
     })
     gateMock.mockResolvedValue({ ok: true, supabase: rec.client, tender: TENDER })
     await revokeInvitationAction('i1')
     expect(rec.updates[0].payload).toEqual({ status: 'revoked', token_hash: null })
+    expect(svcMock).not.toHaveBeenCalled()
     expect(rec.updates[0].filters).toMatchObject({ id: 'i1', tender_id: 't1' })
   })
 })
@@ -135,7 +138,8 @@ describe('readTenderListAction', () => {
 describe('revokeInvitationAction (status scope)', () => {
   it('only touches a live invitation', async () => {
     const rec = recorder(() => ({}))
-    svcMock.mockReturnValue({
+    // The invitation is read AS THE CALLER (row security + site_scope), never with the service key.
+    cookieMock.mockResolvedValue({
       schema: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { id: 'i1', tender_id: 't1', status: 'sent', email: 'a@x.example', company_name: 'A' } }) }) }) }) }),
     })
     gateMock.mockResolvedValue({ ok: true, supabase: rec.client, tender: TENDER })

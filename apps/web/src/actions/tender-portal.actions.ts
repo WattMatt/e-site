@@ -3,7 +3,7 @@
 /**
  * The tenderer side (E5 slice B). A tenderer is an auth user with no
  * organisation; everything they read comes through the column-limited
- * projects.tender_portal_* functions (00230), and the only row they write is
+ * projects.tender_portal_* functions (00243), and the only row they write is
  * their own participant profile.
  *
  * Accepting never creates a session from the invitation link. The link holder
