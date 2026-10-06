@@ -71,6 +71,11 @@ export function createProcessorStore(sb: Sb): ProcessorStore & { claimInbound(li
     async call(fn, args) {
       return must(await wa(sb).rpc(fn, args), fn)
     },
+    async download(bucket, path) {
+      const { data, error } = await sb.storage.from(bucket).download(path)
+      if (error || !data) throw new Error(`download ${bucket}: ${error?.message ?? 'no data'}`)
+      return new Uint8Array(await data.arrayBuffer())
+    },
     async upload(bucket, path, bytes, mime) {
       const { error } = await sb.storage.from(bucket).upload(path, bytes, { contentType: mime, upsert: false })
       if (error && !/exists|duplicate/i.test(error.message)) throw new Error(`upload: ${error.message}`)

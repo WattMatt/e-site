@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { Lock, Check } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { checkProjectQuota } from '@/actions/project.actions'
-import { PLANS, type PlanTier } from '@esite/shared'
+import { PLANS, ORG_WRITE_ROLES, type OrgRole, type PlanTier } from '@esite/shared'
 import { NewProjectForm } from './NewProjectForm'
 
 export const metadata: Metadata = { title: 'New Project' }
@@ -16,7 +16,7 @@ export default async function NewProjectPage() {
 
   const { data: membership } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .limit(1)
@@ -26,6 +26,8 @@ export default async function NewProjectPage() {
     // Onboarding flow handles this; safety net.
     redirect('/onboarding')
   }
+  // Only owner/admin/PM create projects; everyone else is site-scoped (00238).
+  if (!ORG_WRITE_ROLES.includes(membership.role as OrgRole)) redirect('/projects')
 
   // Pre-flight tier-limit check. Same logic the server action enforces —
   // showing the paywall up front spares the user from filling out a form

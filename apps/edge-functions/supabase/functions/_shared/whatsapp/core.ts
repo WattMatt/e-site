@@ -83,8 +83,11 @@ export type Payload =
   | { kind: 'post'; choice: 'diary' | 'issue'; postId: string }
   | { kind: 'insp'; inspectionId: string }
   | { kind: 'fsubmit'; sessionId: string }
+  | { kind: 'file'; fileKind: 'p' | 'd'; id: string }
+  | { kind: 'rep'; reportId: string }
+  | { kind: 'cab'; projectId: string }
 
-export type MenuRow = 'mine' | 'project' | 'post' | 'switch' | 'forms'
+export type MenuRow = 'mine' | 'project' | 'post' | 'switch' | 'forms' | 'files' | 'reports'
 
 export function encodePayload(p: Payload): string {
   switch (p.kind) {
@@ -108,10 +111,16 @@ export function encodePayload(p: Payload): string {
       return `insp:${p.inspectionId}`
     case 'fsubmit':
       return `fsubmit:${p.sessionId}`
+    case 'file':
+      return `file:${p.fileKind}:${p.id}`
+    case 'rep':
+      return `rep:${p.reportId}`
+    case 'cab':
+      return `cab:${p.projectId}`
   }
 }
 
-const MENU_ROWS = new Set(['mine', 'project', 'post', 'switch', 'forms'])
+const MENU_ROWS = new Set(['mine', 'project', 'post', 'switch', 'forms', 'files', 'reports'])
 
 export function decodePayload(s: string | null | undefined): Payload | null {
   if (typeof s !== 'string') return null
@@ -124,6 +133,8 @@ export function decodePayload(s: string | null | undefined): Payload | null {
     if (kind === 'proj') return { kind, projectId: v }
     if (kind === 'insp') return { kind, inspectionId: v }
     if (kind === 'fsubmit') return { kind, sessionId: v }
+    if (kind === 'rep') return { kind, reportId: v }
+    if (kind === 'cab') return { kind, projectId: v }
     return null
   }
   if (parts.length === 3) {
@@ -132,6 +143,7 @@ export function decodePayload(s: string | null | undefined): Payload | null {
     if (kind === 'optin' && (mid === 'yes' || mid === 'no')) return { kind, answer: mid, linkId: id }
     if (kind === 'wrong' && (mid === 'note' || mid === 'attachment')) return { kind, target: mid, id }
     if (kind === 'post' && (mid === 'diary' || mid === 'issue')) return { kind, choice: mid, postId: id }
+    if (kind === 'file' && (mid === 'p' || mid === 'd')) return { kind, fileKind: mid, id }
   }
   return null
 }
@@ -217,6 +229,8 @@ export function doneRouteFor(itemType: string, origin: string): DoneRoute {
 }
 
 export const PENDING_POST_TTL_MS = 30 * 60 * 1000
+/** After "Drawings & documents" is chosen, the next free text is a file search for this long. */
+export const FILE_SEARCH_TTL_MS = 10 * 60 * 1000
 const MENU_WORDS = new Set(['MENU', 'HI', 'HELLO', 'HEY', 'HELP', 'START'])
 
 export function isMenuWord(text: string): boolean {
