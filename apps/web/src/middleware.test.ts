@@ -467,3 +467,42 @@ describe('middleware — matcher lets the installable-PWA files through (E2)', (
     (p) => { expect(runs(p)).toBe(true) },
   )
 })
+
+describe('middleware — tenderer portal (E5 slice B)', () => {
+  it('lets an anonymous visitor open an invitation link', async () => {
+    expect(await run('/tender/invite/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ')).toBe(state.supabaseResponse)
+    expect(await run('/tender/login')).toBe(state.supabaseResponse)
+  })
+
+  it('sends an anonymous visitor on a tender page to the tenderer sign-in with ?next', async () => {
+    const url = locationOf(await run('/tender/0b9c5f7e-1111-4222-8333-944445555666'))
+    expect(url.pathname).toBe('/tender/login')
+    expect(url.searchParams.get('next')).toBe('/tender/0b9c5f7e-1111-4222-8333-944445555666')
+  })
+
+  it('lets a signed-in tenderer with NO organisation use the portal (no onboarding redirect)', async () => {
+    state.user = CONFIRMED
+    state.orgCount = 0
+    expect(await run('/tender')).toBe(state.supabaseResponse)
+    expect(await run('/tender/0b9c5f7e-1111-4222-8333-944445555666')).toBe(state.supabaseResponse)
+  })
+
+  it('does not bounce a signed-in user off an invitation link', async () => {
+    state.user = CONFIRMED
+    state.orgCount = 1
+    expect(await run('/tender/invite/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ')).toBe(state.supabaseResponse)
+  })
+
+  it('still sends an organisation-less user elsewhere in the app to onboarding', async () => {
+    state.user = CONFIRMED
+    state.orgCount = 0
+    expect(locationOf(await run('/dashboard')).pathname).toBe('/onboarding')
+    expect(locationOf(await run('/tenders')).pathname).toBe('/onboarding')
+    expect(locationOf(await run('/projects/x/tenders')).pathname).toBe('/onboarding')
+  })
+
+  it('does not open a neighbouring path to anonymous visitors', async () => {
+    expect(locationOf(await run('/tenders')).pathname).toBe('/login')
+    expect(locationOf(await run('/tender-admin')).pathname).toBe('/login')
+  })
+})

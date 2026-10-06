@@ -23,8 +23,18 @@ Run WM's tender process in E-Site. WM imports its tender BOQ workbook, invites c
 
 **UI:** project sidebar gains **Tenders** (owner/admin/PM). List → New tender (package, title, revision, closing time, upload workbook, optional internal estimate) → review page with reconciliation report, structural diff, and the item grid with a cell-type selector.
 
-## Slices B–D (outline; each gets its own spec section before code)
-- **B:** tender list import from `SUB-CONTRACTORS TENDER LIST.xlsx`; `tender_invitations` (hashed single-use token, expiry); tenderer company profile (registration, VAT, CIDB grade, B-BBEE level); tender-scoped account by magic link; tenderer reads only their own invitation's tender and issued documents. Sending email is behind a flag that ships OFF.
+## Slice B — invite + onboard (migration `00230`)
+
+- **Tables:** `tender_invitations` (company, contact, lower-cased email, phone, status prepared|sent|accepted|declined|revoked, SHA-256 of the link token, expiry) and `tender_participants` (one per accepted invitation: the auth user and the company profile: CIPC number, VAT, CIDB grade, B-BBEE level, contact, phone).
+- **Status machine** lives in `00226` (`tenders_status_guard`); slice B adds `issueTenderAction` (draft → issued with a future closing time; the database refuses it without an imported BOQ and an amount on every fixed sum).
+- **Tenderer reads:** no row policy on any `00226` table. `projects.tender_portal_summary / _items / _requirements / _my_tenders` are SECURITY DEFINER functions returning only the columns a bidder may see, for a tender they accepted, once it is issued. A row policy on `projects.tenders` would expose every column, including the reconciliation jsonb with WM's estimate totals.
+- **Accepting:** the link carries 32 random bytes; only the hash is stored and looked up. The link never creates a session: opening it only offers to email a sign-in link to the invited address. Signed in as that address, the bidder accepts through `projects.tender_accept` (one transaction: lock, re-check address, status, expiry and that the tender is open; refuse anyone who manages the tender; insert the participant; close the invitation). An invitation's address and company cannot change after creation.
+- **Email-proved sessions:** production runs with `mailer_autoconfirm` on, so a password account for any address is confirmed without mailbox proof. Every bidder action (accept, portal reads, own participant row, and slice C's submissions) requires a session established by an emailed link or code (`amr` otp/magiclink/recovery/invite) via `projects.session_proves_email()`.
+- **Middleware:** `/tender/invite/` and `/tender/login` are public; the rest of `/tender` needs a session, sends signed-out visitors to `/tender/login`, and is exempt from the no-organisation → `/onboarding` redirect.
+- **Tender list:** `parseTenderList` reads `SUB-CONTRACTORS TENDER LIST.xlsx` (trade sheets with continuation-row contacts, the per-project TENDER LIST sheet), extracting and validating addresses and reporting unusable rows. The upload is deleted after reading.
+- **Owner-only:** `sendTenderInvitationsAction` refuses unless `TENDER_INVITES_ENABLED=true` (shipped unset). Prepared links can be copied once for an internal test; nothing is emailed.
+
+## Slices C–D (outline; each gets its own spec section before code)
 - **C:** `tender_submissions` + `tender_submission_lines`; web grid and Excel round-trip that refuses a workbook whose locked cells changed; server recomputes arithmetic; compliance engine blocks submit; clarifications/addenda with acknowledgement. **Sealed bid:** submission prices are unreadable by any WM role until `closing_at` passes, enforced in RLS and proven by assertions that fail without it.
 - **D:** after closing, comparison grid per item and section against the internal estimate, outlier flags, arithmetic-error report, document checklist per bidder, export in WM's adjudication workbook shape.
 
