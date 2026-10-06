@@ -109,7 +109,7 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
     },
     async insertYear(meta, replacesYearId) {
       maybeFail('insertYear')
-      // Mirror of 00240: tariff_year_guard's correction rules and the three unique indexes, so tests
+      // Mirror of 00241: tariff_year_guard's correction rules and the three unique indexes, so tests
       // fail where production would.
       const same = [...state.years.values()].filter((x) => x.licenseeId === meta.licenseeId && x.financialYear === meta.financialYear)
       if (replacesYearId) {

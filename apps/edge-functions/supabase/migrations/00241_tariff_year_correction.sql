@@ -1,12 +1,13 @@
 -- ---------------------------------------------------------------------------
--- Migration 00240: a published tariff year can be corrected.
+-- Migration 00241: a published tariff year can be corrected.
 -- ---------------------------------------------------------------------------
 -- ⚠ NUMBER: claim it at APPLY time. Immediately before applying, re-check
 -- THREE places: the ledger max(version), origin/main's migration filenames and
 -- every OPEN PR's migration filenames. Written as 00232; renumbered to 00236
 -- after another session applied 00232 (standards_topics_conditions) while
 -- #255 was open, and 00233-00235 were claimed by open PRs; then to 00240
--- after 00234-00238 applied (00239 claimed by #262). If 00240 is taken,
+-- after 00234-00238 applied (00239 claimed by #262); then to 00241 after
+-- another session applied 00240 (whatsapp_files_reports). If 00241 is taken,
 -- renumber this file and the references to it.
 --
 -- WHY. 00210 says "corrections are a new version through review", but its

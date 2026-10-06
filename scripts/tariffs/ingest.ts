@@ -8,7 +8,7 @@
  *     [--licensee "CITY POWER"] [--url <source url>] [--create-licensees] [--correct-published] [--apply] [--json]
  *
  * --correct-published: read the file again even if it was ingested, and give each
- * PUBLISHED or superseded year it covers a correction draft (00240). Nothing live
+ * PUBLISHED or superseded year it covers a correction draft (00241). Nothing live
  * changes until a platform admin publishes the correction, which replaces the year.
  *
  * With NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY set, a dry run
