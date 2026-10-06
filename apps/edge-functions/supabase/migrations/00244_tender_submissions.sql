@@ -1,4 +1,4 @@
--- 00233_tender_submissions.sql
+-- 00244_tender_submissions.sql
 -- E5 slice C: priced submissions, documents, declarations, clarifications and
 -- addenda — SEALED until the closing time.
 --
@@ -6,7 +6,7 @@
 --   * A bidder reads only their own submission, and changes it only through
 --     the definer functions below (plus their own declarations and document
 --     removals under row security), only while the tender is issued and before
---     closing_at, and only in a session proved by an emailed link (00230).
+--     closing_at, and only in a session proved by an emailed link (00243).
 --   * Owner/admin/PM can see THAT a company has submitted (status, time) at
 --     any time. The PRICES (tender_submission_lines) and the DOCUMENTS
 --     (tender_submission_documents) of SUBMITTED bids become readable to them
@@ -27,7 +27,7 @@ ALTER TABLE projects.tender_requirements
 
 -- The caller's participant row on a tender (NULL when not a participant, or
 -- when the session was not established by an emailed link or code: see
--- projects.session_proves_email in 00230). Every bidder path below goes
+-- projects.session_proves_email in 00243). Every bidder path below goes
 -- through this, so a password session on a bidder's address can neither read
 -- nor write a submission.
 CREATE FUNCTION projects.tender_my_participant_id(p_tender_id uuid) RETURNS uuid
@@ -548,6 +548,34 @@ CREATE POLICY tender_addendum_acks_select ON projects.tender_addendum_acks FOR S
   USING (EXISTS (SELECT 1 FROM projects.tender_clarifications c
                   WHERE c.id = clarification_id AND projects.user_can_manage_tender(c.tender_id)));
 
+-- Site scope (00238). Every row follows the caller's access to the tender's
+-- project. The tables a tenderer touches directly (their submission, its lines
+-- and documents, and the questions they ask) carry a second arm for a
+-- participant of that tender, because a tenderer is never a project member.
+-- RESTRICTIVE policies only narrow, so neither arm can open what the
+-- permissive policies above (and the seal) do not: WM still reads prices only
+-- after closing, and a participant still reads only their own submission.
+-- scripts/db/assert-site-scope-coverage.sql requires a policy by this name.
+CREATE FUNCTION public.site_project_of_tender_clarification(p_id uuid) RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$ SELECT public.site_project_of_tender(tender_id) FROM projects.tender_clarifications WHERE id = p_id $f$;
+
+CREATE POLICY site_scope ON projects.tender_submissions AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+CREATE POLICY site_scope ON projects.tender_submission_lines AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+CREATE POLICY site_scope ON projects.tender_submission_documents AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+CREATE POLICY site_scope ON projects.tender_clarifications AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+CREATE POLICY site_scope ON projects.tender_addendum_acks AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_tender_clarification(clarification_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender_clarification(clarification_id)));
+
 -- ── 8. Grants: lines and documents are written only through the functions ──
 REVOKE ALL ON projects.tender_submissions, projects.tender_submission_lines, projects.tender_submission_documents,
               projects.tender_clarifications, projects.tender_addendum_acks FROM anon, authenticated;
@@ -565,6 +593,8 @@ GRANT ALL ON projects.tender_submissions, projects.tender_submission_lines, proj
 -- Explicit statements (not a DO loop): the static anon-EXECUTE guard reads migration text.
 REVOKE ALL ON FUNCTION projects.tender_my_participant_id(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION projects.tender_my_participant_id(uuid) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.site_project_of_tender_clarification(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_project_of_tender_clarification(uuid) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION projects.user_can_open_tender(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION projects.user_can_open_tender(uuid) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION projects.tender_is_open(uuid) FROM PUBLIC, anon;
@@ -616,6 +646,13 @@ NOTIFY pgrst, 'reload schema';
 -- function: projects.tender_is_open(uuid)
 -- function: projects.tender_seal_lifted(uuid)
 -- function: projects.user_can_open_tender(uuid)
+-- function: public.site_project_of_tender_clarification(uuid)
+-- policy: site_scope ON projects.tender_submissions RESTRICTIVE
+-- policy: site_scope ON projects.tender_submission_lines RESTRICTIVE
+-- policy: site_scope ON projects.tender_submission_documents RESTRICTIVE
+-- policy: site_scope ON projects.tender_clarifications RESTRICTIVE
+-- policy: site_scope ON projects.tender_addendum_acks RESTRICTIVE
+-- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_tender_clarification(uuid)', 'EXECUTE'))
 -- function: projects.tender_submission_to_draft(uuid)
 -- function: projects.tender_submission_lines_compute()
 -- function: projects.tender_submission_changed()
@@ -652,7 +689,7 @@ NOTIFY pgrst, 'reload schema';
 -- sql: (SELECT bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_class WHERE oid IN ('projects.tender_submissions'::regclass, 'projects.tender_submission_lines'::regclass, 'projects.tender_submission_documents'::regclass, 'projects.tender_clarifications'::regclass, 'projects.tender_addendum_acks'::regclass))
 -- sql: (SELECT qual LIKE '%tender_seal_lifted%' AND qual LIKE '%submitted%' FROM pg_policies WHERE schemaname = 'projects' AND policyname = 'tender_submission_lines_select')
 -- sql: (SELECT qual LIKE '%tender_seal_lifted%' AND qual LIKE '%submitted%' FROM pg_policies WHERE schemaname = 'projects' AND policyname = 'tender_submission_documents_select')
--- sql: (SELECT count(*) = 1 FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'tender_submission_lines')
+-- sql: (SELECT count(*) = 1 FROM pg_policies WHERE schemaname = 'projects' AND tablename = 'tender_submission_lines' AND policyname <> 'site_scope')
 -- sql: (SELECT NOT has_table_privilege('authenticated', 'projects.tender_submission_lines', 'INSERT') AND NOT has_table_privilege('authenticated', 'projects.tender_submission_lines', 'UPDATE') AND NOT has_table_privilege('authenticated', 'projects.tender_submission_documents', 'INSERT'))
 -- sql: (SELECT NOT has_column_privilege('authenticated', 'projects.tender_submission_lines', 'rate', 'UPDATE') AND NOT has_column_privilege('authenticated', 'projects.tender_submission_documents', 'size_bytes', 'INSERT'))
 -- sql: (SELECT NOT has_column_privilege('authenticated', 'projects.tender_submissions', 'status', 'UPDATE') AND NOT has_column_privilege('authenticated', 'projects.tender_submissions', 'submitted_at', 'UPDATE'))

@@ -4,7 +4,7 @@
  * Bidder pricing, documents, declarations, questions and submission (E5 slice C).
  *
  * Every read and write runs through the bidder's OWN session: prices, documents
- * and acknowledgements are written only by the 00233 definer functions (one
+ * and acknowledgements are written only by the 00244 definer functions (one
  * gate each: an open tender, the caller's own submission, an email-proved
  * session), and reads go through row security or the column-limited portal
  * functions. The service client is used only for storage — signed upload URLs

@@ -1,9 +1,9 @@
--- BEHAVIOURAL assertions for 00233 (sealed submissions), as real production
--- roles in a rolled-back transaction. Until slice B (00230) is applied, run the
+-- BEHAVIOURAL assertions for 00244 (sealed submissions), as real production
+-- roles in a rolled-back transaction. Until slice B (00243) is applied, run the
 -- two together:
 --
---   cat apps/edge-functions/supabase/migrations/00230_tender_invitations.sql \
---       apps/edge-functions/supabase/migrations/00233_tender_submissions.sql > /tmp/bc.sql
+--   cat apps/edge-functions/supabase/migrations/00243_tender_invitations.sql \
+--       apps/edge-functions/supabase/migrations/00244_tender_submissions.sql > /tmp/bc.sql
 --   scripts/db/dry-run-migration.sh /tmp/bc.sql scripts/db/assert-tender-sealed-bids.sql
 --
 -- THE rule: no WM user (owner, admin, project manager) can read a bidder's
@@ -497,7 +497,51 @@ BEGIN
   INSERT INTO _r VALUES ('no_bids_tender_can_be_extended', v_ok AND (SELECT closing_at > now() FROM projects.tenders WHERE id = v_t));
 END $$;
 
+-- Site scope (00238): an org-level project manager who is NOT a member of the
+-- tender's project sees no submission, clarification or acknowledgement, even
+-- after closing.
+DO $$
+DECLARE
+  v_project uuid; v_org uuid; v_t uuid; v_pm uuid := gen_random_uuid(); v_bidder uuid := gen_random_uuid();
+  v_inv uuid; v_part uuid; v_sub uuid; v_add uuid; v_n int;
+BEGIN
+  SELECT pm.project_id INTO v_project FROM projects.project_members pm WHERE pm.role = 'contractor' AND pm.is_active LIMIT 1;
+  SELECT organisation_id INTO v_org FROM projects.projects WHERE id = v_project;
+  INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  VALUES (v_pm, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-pm2@example.invalid', '', now(), now(), now(), '{}', '{}'),
+         (v_bidder, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'probe-site-bidder2@example.invalid', '', now(), now(), now(), '{}', '{}');
+  INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES (v_pm, v_org, 'project_manager', TRUE);
+  INSERT INTO projects.tenders (project_id, organisation_id, package, title, imported_at) VALUES (v_project, v_org, 'Site scope', 'Probe C', now()) RETURNING id INTO v_t;
+  INSERT INTO projects.tender_boq_items (tender_id, sort_order, sheet_name, row_number, kind, bill_code, code, description, unit, quantity, rate_cell_type, fixed_amount, rate_column, amount_column)
+  VALUES (v_t, 0, 'Bill No 1', 5, 'item', '1', '1.1', 'Cable', 'm', 10, 'priced', NULL, 'F', 'G');
+  UPDATE projects.tenders SET status = 'issued', closing_at = now() + interval '7 days' WHERE id = v_t;
+  INSERT INTO projects.tender_invitations (tender_id, company_name, email, status, accepted_at, accepted_by)
+  VALUES (v_t, 'Site Bidder', 'probe-site-bidder2@example.invalid', 'accepted', now(), v_bidder) RETURNING id INTO v_inv;
+  INSERT INTO projects.tender_participants (tender_id, invitation_id, user_id, company_name) VALUES (v_t, v_inv, v_bidder, 'Site Bidder') RETURNING id INTO v_part;
+  INSERT INTO projects.tender_submissions (tender_id, participant_id) VALUES (v_t, v_part) RETURNING id INTO v_sub;
+  INSERT INTO projects.tender_clarifications (tender_id, kind, title, body, published_at) VALUES (v_t, 'addendum', 'A1', 'Text', now()) RETURNING id INTO v_add;
+  INSERT INTO projects.tender_addendum_acks (clarification_id, participant_id) VALUES (v_add, v_part);
+  SET LOCAL session_replication_role = replica;
+  UPDATE projects.tenders SET closing_at = now() - interval '1 second', status = 'closed' WHERE id = v_t;
+  UPDATE projects.tender_submissions SET status = 'submitted', submitted_at = now() WHERE id = v_sub;
+  SET LOCAL session_replication_role = origin;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.tender_submissions WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_off_site_pm_no_submissions', v_n = 0);
+  SELECT count(*) INTO v_n FROM projects.tender_clarifications WHERE tender_id = v_t;
+  INSERT INTO _r VALUES ('site_scope_off_site_pm_no_clarifications', v_n = 0);
+  SELECT count(*) INTO v_n FROM projects.tender_addendum_acks WHERE clarification_id = v_add;
+  INSERT INTO _r VALUES ('site_scope_off_site_pm_no_acks', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+END $$;
+
 SELECT * FROM (VALUES
+  ('site scope: an org PM off this site sees no submission',          (SELECT v FROM _r WHERE k='site_scope_off_site_pm_no_submissions')),
+  ('site scope: an org PM off this site sees no clarification',       (SELECT v FROM _r WHERE k='site_scope_off_site_pm_no_clarifications')),
+  ('site scope: an org PM off this site sees no acknowledgement',     (SELECT v FROM _r WHERE k='site_scope_off_site_pm_no_acks')),
   ('bidder creates their own submission (through the lock function)', (SELECT v FROM _r WHERE k='bidder_creates_own_submission')),
   ('bidder cannot insert a submission row directly',              (SELECT v FROM _r WHERE k='bidder_cannot_insert_submissions_directly')),
   ('tender_save_rates writes the bidder''s lines',               (SELECT v FROM _r WHERE k='save_rates_writes_two_lines')),
