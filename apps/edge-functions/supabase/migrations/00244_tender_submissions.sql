@@ -550,8 +550,10 @@ CREATE POLICY tender_addendum_acks_select ON projects.tender_addendum_acks FOR S
 
 -- Site scope (00238). Every row follows the caller's access to the tender's
 -- project. The tables a tenderer touches directly (their submission, its lines
--- and documents, and the questions they ask) carry a second arm for a
--- participant of that tender, because a tenderer is never a project member.
+-- and documents, and the questions they ask) carry a second arm for the
+-- participant's OWN rows (never another bidder's), because a tenderer is never
+-- a project member. The arm matches the permissive bidder arm exactly, so even
+-- a participant who is also a lapsed project PM cannot read a rival's prices.
 -- RESTRICTIVE policies only narrow, so neither arm can open what the
 -- permissive policies above (and the seal) do not: WM still reads prices only
 -- after closing, and a participant still reads only their own submission.
@@ -561,17 +563,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO '
 AS $f$ SELECT public.site_project_of_tender(tender_id) FROM projects.tender_clarifications WHERE id = p_id $f$;
 
 CREATE POLICY site_scope ON projects.tender_submissions AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
-  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR participant_id = projects.tender_my_participant_id(tender_id))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR participant_id = projects.tender_my_participant_id(tender_id));
 CREATE POLICY site_scope ON projects.tender_submission_lines AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
-  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id))
+         OR EXISTS (SELECT 1 FROM projects.tender_submissions s
+                     WHERE s.id = submission_id AND s.participant_id = projects.tender_my_participant_id(tender_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id))
+         OR EXISTS (SELECT 1 FROM projects.tender_submissions s
+                     WHERE s.id = submission_id AND s.participant_id = projects.tender_my_participant_id(tender_id)));
 CREATE POLICY site_scope ON projects.tender_submission_documents AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
-  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id))
+         OR EXISTS (SELECT 1 FROM projects.tender_submissions s
+                     WHERE s.id = submission_id AND s.participant_id = projects.tender_my_participant_id(tender_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id))
+         OR EXISTS (SELECT 1 FROM projects.tender_submissions s
+                     WHERE s.id = submission_id AND s.participant_id = projects.tender_my_participant_id(tender_id)));
 CREATE POLICY site_scope ON projects.tender_clarifications AS RESTRICTIVE FOR ALL
-  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL)
-  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR projects.tender_my_participant_id(tender_id) IS NOT NULL);
+  USING (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR participant_id = projects.tender_my_participant_id(tender_id))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_tender(tender_id)) OR participant_id = projects.tender_my_participant_id(tender_id));
 CREATE POLICY site_scope ON projects.tender_addendum_acks AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_tender_clarification(clarification_id)))
   WITH CHECK (public.user_has_project_access(public.site_project_of_tender_clarification(clarification_id)));

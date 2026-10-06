@@ -428,6 +428,9 @@ describe('parseTenderWorkbook — total wording in the ITEM column', () => {
     })
     const p = await parseTenderWorkbook(buf)
     expect(p.sheets[0].rows[0]).toMatchObject({ kind: 'item', code: 'AB' })
+  })
+})
+
 describe('toNumber (text cells in a workbook)', () => {
   it('reads an en-ZA decimal comma as cents, never as a thousands separator', () => {
     expect(toNumber('12,50')).toBe(12.5)
