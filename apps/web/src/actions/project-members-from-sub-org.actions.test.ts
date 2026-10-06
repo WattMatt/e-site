@@ -15,6 +15,11 @@ const getOrgContextMock = vi.fn(() =>
 )
 
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
+// Site scope gate: allow by default (vi.fn() returns undefined); a test overrides it to deny.
+const { projectAccessMock } = vi.hoisted(() => ({ projectAccessMock: vi.fn() }))
+vi.mock('@/lib/auth/require-project-access', () => ({
+  requireProjectAccess: async (...a: unknown[]) => (await projectAccessMock(...a)) ?? { ok: true },
+}))
 vi.mock('@/lib/supabase/server', () => ({
   createClient: createClientMock,
   createServiceClient: createServiceClientMock,

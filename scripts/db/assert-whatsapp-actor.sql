@@ -103,5 +103,5 @@ SELECT * FROM (VALUES
   ('author redacts within the window',          (SELECT v->>'code' FROM _r WHERE k = 'redact_by_c') = 'ok'),
   ('redaction keeps the row and empties the body',
      (SELECT redacted_at IS NOT NULL AND body = '' FROM projects.work_item_notes WHERE id = current_setting('x.note')::uuid)),
-  ('a removed member is refused',               (SELECT v->>'code' FROM _r WHERE k = 'note_after_removal') IN ('no_access', 'refused'))
+  ('a removed member is refused (site scope: the item is no longer even visible)', (SELECT v->>'code' FROM _r WHERE k = 'note_after_removal') IN ('no_access', 'refused', 'not_found'))
 ) AS t("check", ok);

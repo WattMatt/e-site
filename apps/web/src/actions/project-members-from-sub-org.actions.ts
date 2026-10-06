@@ -16,6 +16,7 @@ import { z } from 'zod'
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
+import { requireProjectAccess } from '@/lib/auth/require-project-access'
 import { getOrgContext } from '@/lib/auth-org'
 import { sendSiteAssignmentEmail, resolveInviteContext } from '@/lib/invite-email'
 import { ORG_WRITE_ROLES } from '@esite/shared'
@@ -67,6 +68,8 @@ export async function addProjectMembersFromSubOrg(
 
   const guard = await requireRole(supabase, projectOrgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
+  const access = await requireProjectAccess(supabase, projectId)
+  if (!access.ok) return { ok: false, error: access.error }
 
   // Confirm subOrg belongs to projectOrg (WM admin owns Bob's Building).
   const { data: subOrg } = await (supabase as any)

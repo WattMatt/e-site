@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { requireProjectAccess } from '@/lib/auth/require-project-access'
 import { requireRoleAPI } from '@/lib/auth/require-role'
 import { COST_VIEW_ROLES } from '@esite/shared'
 import { parseBoqXlsx } from '@/lib/boq/parse-boq-xlsx'
@@ -27,6 +28,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: projectId } = await params
+
+  // Site scope FIRST, as the caller: nothing is read with the service key for a
+  // project they cannot access (another client's site is not even confirmed).
+  const supabase = await createClient()
+  const access = await requireProjectAccess(supabase, projectId)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
   // Resolve the project's organisation (service client — no RLS dependency).
   const service = createServiceClient()

@@ -69,15 +69,16 @@ function bust(projectId: string, tenderId?: string) {
 async function gateTender(
   tenderId: string,
 ): Promise<{ ok: true; supabase: AnyClient; tender: { id: string; project_id: string; organisation_id: string; status: string } } | { ok: false; error: string }> {
-  const svc = createServiceClient() as AnyClient
-  const { data: t } = await svc
+  // Read AS THE CALLER (RLS: tenders_select + site_scope), never the service key
+  // first: a tender on a site they cannot access reads as not found.
+  const supabase = (await createClient()) as AnyClient
+  const { data: t } = await supabase
     .schema('projects')
     .from('tenders')
     .select('id, project_id, organisation_id, status')
     .eq('id', tenderId)
     .maybeSingle()
   if (!t) return { ok: false, error: 'Tender not found' }
-  const supabase = (await createClient()) as AnyClient
   const guard = await requireEffectiveRole(supabase, t.project_id, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
   return { ok: true, supabase, tender: t }
