@@ -90,13 +90,18 @@ export async function createProjectAction(
 
   const { data: membership, error: memErr } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .limit(1)
     .single()
   if (memErr || !membership) return { error: 'No active organisation membership' }
   const orgId = membership.organisation_id
+  // Only owner/admin/PM may create projects (projects RLS + site_scope, 00238).
+  // Refuse here with a sentence instead of letting the insert fail on RLS.
+  if (!ORG_WRITE_ROLES.includes(membership.role as OrgRole)) {
+    return { error: 'Only an owner, admin or project manager can create projects.' }
+  }
 
   // Tier-limit gate (canonical enforcement).
   const gate = await checkProjectQuota(orgId)
