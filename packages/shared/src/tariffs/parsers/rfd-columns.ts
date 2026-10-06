@@ -811,6 +811,19 @@ function unitsBlockOf(label: string, draft: TariffDraft): RegExpExecArray | null
 }
 
 /** Extended: a tariff code in brackets on a name line: "(E009)", "( E006 & E011 )". */
+/** The fixed section titles of a NERSA Reasons for Decision. */
+const RFD_SECTION_TITLE = /^(?:introduction|legal and regulatory framework|financial and technical performance|determination of\b.*|conclusion\b.*|public participation|stakeholder consultations?|(?:the )?objectors and other intervening parties|tariff (?:category )?analysis|confidentiality)\s*:?$/i
+
+/**
+ * A document section ("7. THE OBJECTORS AND OTHER INTERVENING PARTIES") or a numbered paragraph
+ * ("4.5.1.14. Depreciation amounted to R7,2 million in the 2024/25 financial year. The": a sentence
+ * ends inside it).
+ */
+function isSectionOrParagraph(heading: string): boolean {
+  const t = heading.replace(HEADING_NUMBER, '').trim()
+  return RFD_SECTION_TITLE.test(t) || /\.\s+[A-Z]/.test(t)
+}
+
 const CODED_NAME = /\(\s*[A-Z]{1,2}\d{3}\b[^)]*\)/
 
 const GENERIC_NAME = /^(?:tariff\s*names?|tariff\s*blocks?|tariffs?|description|tariff description|charges?|units?)$/i
@@ -1046,9 +1059,10 @@ function parseColumns(text: string, opts: { fileSha256: string }): ParsedRfd {
       continue
     }
 
-    // Name: the header's first column, else the nearest heading above it.
+    // Name: the header's first column, else the nearest heading above it — unless that heading is a
+    // document section or a paragraph, which names no tariff; the table is then left unnamed for review.
     let name = tariffName(h.nameParts)
-    if (name === '' && lastHeading && h.start - lastHeading.idx <= 8) name = tariffName([lastHeading.text])
+    if (name === '' && lastHeading && h.start - lastHeading.idx <= 8 && !isSectionOrParagraph(lastHeading.text)) name = tariffName([lastHeading.text])
     const headerLine = lines[h.start]
 
     // Body: to the next header, table caption or section heading. A numbered heading

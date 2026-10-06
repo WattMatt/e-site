@@ -20,6 +20,12 @@ export const OTP_MAX_ATTEMPTS = 5
 export const OTP_MAX_SENDS_PER_HOUR = 3
 export const SAST_OFFSET_MINUTES = 120
 export const OPEN_ITEMS_LIST_MAX = 10
+/** A WhatsApp inspection-form session (the Flow token) lives this long. */
+export const FORM_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+/** A photo without an item number goes to the open form only within this long of the last form activity. */
+export const FORM_ACTIVITY_WINDOW_MS = 30 * 60 * 1000
+/** Meta delivers chat images up to 5 MB; anything larger is refused rather than stored. */
+export const FORM_PHOTO_MAX_BYTES = 5 * 1024 * 1024
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -70,11 +76,18 @@ export type Payload =
   | { kind: 'optin'; answer: 'yes' | 'no'; linkId: string }
   | { kind: 'wrong'; target: 'note' | 'attachment'; id: string }
   | { kind: 'pick'; itemId: string }
-  | { kind: 'menu'; row: 'mine' | 'project' | 'post' | 'switch' }
+  | { kind: 'menu'; row: MenuRow }
   | { kind: 'proj'; projectId: string }
   | { kind: 'item'; itemId: string }
   | { kind: 'open'; itemId: string }
   | { kind: 'post'; choice: 'diary' | 'issue'; postId: string }
+  | { kind: 'insp'; inspectionId: string }
+  | { kind: 'fsubmit'; sessionId: string }
+  | { kind: 'file'; fileKind: 'p' | 'd'; id: string }
+  | { kind: 'rep'; reportId: string }
+  | { kind: 'cab'; projectId: string }
+
+export type MenuRow = 'mine' | 'project' | 'post' | 'switch' | 'forms' | 'files' | 'reports'
 
 export function encodePayload(p: Payload): string {
   switch (p.kind) {
@@ -94,20 +107,34 @@ export function encodePayload(p: Payload): string {
       return `wrong:${p.target}:${p.id}`
     case 'post':
       return `post:${p.choice}:${p.postId}`
+    case 'insp':
+      return `insp:${p.inspectionId}`
+    case 'fsubmit':
+      return `fsubmit:${p.sessionId}`
+    case 'file':
+      return `file:${p.fileKind}:${p.id}`
+    case 'rep':
+      return `rep:${p.reportId}`
+    case 'cab':
+      return `cab:${p.projectId}`
   }
 }
 
-const MENU_ROWS = new Set(['mine', 'project', 'post', 'switch'])
+const MENU_ROWS = new Set(['mine', 'project', 'post', 'switch', 'forms', 'files', 'reports'])
 
 export function decodePayload(s: string | null | undefined): Payload | null {
   if (typeof s !== 'string') return null
   const parts = s.split(':')
   if (parts.length === 2) {
     const [kind, v] = parts
-    if (kind === 'menu') return MENU_ROWS.has(v) ? { kind, row: v as 'mine' | 'project' | 'post' | 'switch' } : null
+    if (kind === 'menu') return MENU_ROWS.has(v) ? { kind, row: v as MenuRow } : null
     if (!UUID.test(v)) return null
     if (kind === 'ack' || kind === 'done' || kind === 'pick' || kind === 'item' || kind === 'open') return { kind, itemId: v }
     if (kind === 'proj') return { kind, projectId: v }
+    if (kind === 'insp') return { kind, inspectionId: v }
+    if (kind === 'fsubmit') return { kind, sessionId: v }
+    if (kind === 'rep') return { kind, reportId: v }
+    if (kind === 'cab') return { kind, projectId: v }
     return null
   }
   if (parts.length === 3) {
@@ -116,8 +143,14 @@ export function decodePayload(s: string | null | undefined): Payload | null {
     if (kind === 'optin' && (mid === 'yes' || mid === 'no')) return { kind, answer: mid, linkId: id }
     if (kind === 'wrong' && (mid === 'note' || mid === 'attachment')) return { kind, target: mid, id }
     if (kind === 'post' && (mid === 'diary' || mid === 'issue')) return { kind, choice: mid, postId: id }
+    if (kind === 'file' && (mid === 'p' || mid === 'd')) return { kind, fileKind: mid, id }
   }
   return null
+}
+
+/** "SUBMIT" typed in any case, with trailing punctuation. */
+export function isSubmitWord(text: string): boolean {
+  return /^submit[.!]*$/i.test((text ?? '').trim())
 }
 
 export function isWithin(sinceIso: string | null | undefined, now: Date, ms: number): boolean {
@@ -196,6 +229,8 @@ export function doneRouteFor(itemType: string, origin: string): DoneRoute {
 }
 
 export const PENDING_POST_TTL_MS = 30 * 60 * 1000
+/** After "Drawings & documents" is chosen, the next free text is a file search for this long. */
+export const FILE_SEARCH_TTL_MS = 10 * 60 * 1000
 const MENU_WORDS = new Set(['MENU', 'HI', 'HELLO', 'HEY', 'HELP', 'START'])
 
 export function isMenuWord(text: string): boolean {
@@ -237,4 +272,40 @@ export function linkCodeMessage(code: string): string {
 export function parseLinkCode(text: string): string | null {
   const m = /^\s*LINK\s*(\d{6})\s*$/i.exec(text ?? '')
   return m ? m[1] : null
+}
+
+/** "10", "item 10", "#10", "no. 10" -> 10. Anything ambiguous -> null. 1..999. */
+export function parseItemRef(text: string): number | null {
+  const m = String(text ?? '').trim().match(/^(?:item\s*|no\.?\s*|#\s*)?(\d{1,3})\.?$/i)
+  if (!m) return null
+  const n = Number(m[1])
+  return n >= 1 ? n : null
+}
+
+// ── edge -> web internal calls ─────────────────────────────────────────────
+// HMAC-SHA256 over `${t}.${body}` with WHATSAPP_INTERNAL_SECRET, sent as `t=<unix>,v1=<hex>`.
+// Uses globalThis.crypto.subtle, present in Deno and in Node 20+.
+export const INTERNAL_SIGNATURE_SKEW_S = 300
+
+async function hmacHex(secret: string, msg: string): Promise<string> {
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(msg)))
+  return Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function signInternal(secret: string, unixSeconds: number, body: string): Promise<string> {
+  return `t=${unixSeconds},v1=${await hmacHex(secret, `${unixSeconds}.${body}`)}`
+}
+
+export async function verifyInternal(secret: string, header: string | null | undefined, body: string, nowSeconds: number): Promise<boolean> {
+  if (!secret || typeof header !== 'string') return false
+  const m = /^t=(\d{9,12}),v1=([0-9a-f]{64})$/.exec(header.trim())
+  if (!m) return false
+  const t = Number(m[1])
+  if (!Number.isFinite(t) || Math.abs(nowSeconds - t) > INTERNAL_SIGNATURE_SKEW_S) return false
+  const want = await hmacHex(secret, `${t}.${body}`)
+  let diff = 0
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ m[2].charCodeAt(i)
+  return diff === 0
 }

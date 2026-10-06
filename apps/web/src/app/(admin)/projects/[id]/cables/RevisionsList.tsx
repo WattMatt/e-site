@@ -73,7 +73,8 @@ export function RevisionsList({
         <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
       <div className="data-panel" style={{ overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        {/* table-cards: below 768 px each revision becomes a labelled card (globals.css). */}
+        <table className="table-cards" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
               <Th>Revision</Th>
@@ -98,7 +99,7 @@ export function RevisionsList({
                   cursor: 'pointer',
                 }}
               >
-                <Td mono>
+                <Td mono primary>
                   <Link
                     href={`/projects/${projectId}/cables/${r.id}`}
                     style={{ color: 'var(--c-amber)', fontWeight: 600, textDecoration: 'none' }}
@@ -107,13 +108,13 @@ export function RevisionsList({
                     {r.code}
                   </Link>
                 </Td>
-                <Td>
+                <Td label="Status">
                   <span className={`badge ${STATUS_TONE[r.status]}`}>{r.status}</span>
                 </Td>
-                <Td>{r.description ?? '—'}</Td>
-                <Td mono>{fmtDate(r.created_at)}</Td>
-                <Td mono>{fmtDate(r.issued_at)}</Td>
-                <Td align="right">
+                <Td label="Description">{r.description ?? '—'}</Td>
+                <Td mono label="Created">{fmtDate(r.created_at)}</Td>
+                <Td mono label="Issued">{fmtDate(r.issued_at)}</Td>
+                <Td align="right" actions>
                   <div style={{ display: 'inline-flex', gap: 4 }}>
                     {r.status === 'DRAFT' && (
                       <>
@@ -187,14 +188,21 @@ function Th({ children, align }: { children?: React.ReactNode; align?: 'left' | 
 }
 
 function Td({
-  children, align, mono,
+  children, align, mono, label, primary, actions,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right'
   mono?: boolean
+  /** Shown before the value when the row renders as a phone card. */
+  label?: string
+  primary?: boolean
+  actions?: boolean
 }) {
   return (
     <td
+      data-label={label}
+      data-primary={primary || undefined}
+      data-actions={actions || undefined}
       style={{
         textAlign: align ?? 'left',
         padding: '10px 12px',

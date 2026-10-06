@@ -27,7 +27,12 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: createClientMock,
   createServiceClient: createServiceClientMock,
 }))
-vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
+// requireEffectiveRole stays REAL: the assignment gate is the effective project role, read
+// through the client's rpc('user_effective_project_role'), which the stubs below answer.
+vi.mock('@/lib/auth/require-role', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/require-role')>()),
+  requireRole: requireRoleMock,
+}))
 vi.mock('@/lib/features', () => ({ requireFeature: requireFeatureMock }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
@@ -133,17 +138,23 @@ describe('listProjectMembersAction — name resolution', () => {
 // ─── update-action client stub ──────────────────────────────────────────────
 function makeUpdateClient({
   role,
+  orgRole = role,
   previousAssignee,
   updateError = null,
 }: {
+  /** The caller's EFFECTIVE project role (user_effective_project_role). */
   role: string
+  /** The caller's ORG role, which must no longer decide anything here. */
+  orgRole?: string
   previousAssignee: string | null
   updateError?: { message: string } | null
 }) {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'caller-id' } } }) },
-    // requirePmOrAbove → from('user_organisations').select('role')...single()
-    from: () => ({ select: () => qb({ data: { role }, error: null }) }),
+    rpc: vi.fn((fn: string) =>
+      Promise.resolve(fn === 'user_effective_project_role' ? { data: role, error: null } : { data: null, error: null }),
+    ),
+    from: () => ({ select: () => qb({ data: { role: orgRole }, error: null }) }),
     // schema('inspections').from('inspections') → select (current) + update
     schema: () => ({
       from: () => ({
@@ -169,6 +180,15 @@ describe('updateInspectionAssignmentAction', () => {
     await expect(
       updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' }),
     ).rejects.toThrow(/Forbidden/)
+  })
+
+  it('admits a member promoted to project_manager on the project, whatever their org role', async () => {
+    const client = makeUpdateClient({ role: 'project_manager', orgRole: 'contractor', previousAssignee: null })
+    createClientMock.mockResolvedValue(client)
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })
+    expect(client.rpc).toHaveBeenCalledWith('user_effective_project_role', { p_project_id: 'p-1', p_user_id: 'caller-id' })
   })
 
   it('updates and notifies the new inspector when the assignee changes', async () => {

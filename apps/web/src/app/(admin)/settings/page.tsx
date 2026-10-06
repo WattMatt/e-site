@@ -158,7 +158,8 @@ export default async function SettingsPage() {
           </div>
         )}
 
-        {/* Billing */}
+        {/* Billing — /settings/billing is requireRolePage(OWNER_ADMIN); a link that bounces is worse than none. */}
+        {isAdmin && (
         <div className="data-panel">
           <div className="data-panel-header">
             <span className="data-panel-title">Billing &amp; plans</span>
@@ -180,6 +181,7 @@ export default async function SettingsPage() {
             </Link>
           </div>
         </div>
+        )}
 
         {/* Solar defaults — owners/admins only (the page itself is requireRolePage(OWNER_ADMIN)); hidden, not disabled */}
         {isAdmin && (

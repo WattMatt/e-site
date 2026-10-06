@@ -285,7 +285,7 @@ export function NewFormForm({
 
       {error && <p className="form-error">{error}</p>}
 
-      <div className="form-actions">
+      <div className="form-actions sticky-actions">
         <Link href={`/projects/${projectId}/forms`} className="btn">
           Cancel
         </Link>

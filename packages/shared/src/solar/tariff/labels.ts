@@ -111,6 +111,7 @@ export const TARIFF_YEAR_STATE_LABELS: Record<YearState, string> = {
   in_review: 'In review',
   published: 'Published',
   superseded: 'Superseded',
+  replaced: 'Replaced by a correction',
 }
 
 export const SSEG_CREDITING_LABELS: Record<Crediting, string> = {
@@ -160,6 +161,8 @@ export const ERROR_REPORT_STATUS_LABELS: Record<'open' | 'resolved' | 'rejected'
 export const INGEST_YEAR_ACTION_LABELS: Record<YearAction, string> = {
   create: 'Creates a new draft',
   replace_draft: 'Replaces the draft',
+  create_correction: 'Creates a correction of the published year',
+  replace_correction_draft: 'Replaces the correction draft',
   skip_published: 'Skipped: already published',
   skip_unknown_licensee: 'Skipped: licensee not in the registry',
   skip_duplicate_licensee: 'Skipped: licensee appears twice',

@@ -99,7 +99,7 @@ export default async function ProjectDetailPage({ params }: Props) {
 
       {/* Two-column: details + recent snags */}
       <div
-        className="animate-fadeup animate-fadeup-2"
+        className="stack-on-phone animate-fadeup animate-fadeup-2"
         style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, marginBottom: 16 }}
       >
         {/* Project details */}

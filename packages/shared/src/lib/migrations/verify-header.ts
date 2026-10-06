@@ -511,8 +511,96 @@ export async function runDirectives(directives: VerifyDirective[], query: QueryF
       if (ok === true) passed += 1
       else failures.push({ directive, reason: `predicate returned false (got ${JSON.stringify(ok)})` })
     } catch (e) {
+      // A throttled or unreachable API has not answered the question. Recording
+      // it as this directive's failure is how one burst of 429s became 543 ✗
+      // lines in run 37289583207 — so it propagates to the caller instead.
+      if (isInfrastructureError(e)) throw e
       failures.push({ directive, reason: e instanceof Error ? e.message : String(e) })
     }
   }
   return { passed, failures, skipped }
+}
+
+/**
+ * Same brand check as mgmt-query.ts's isInfrastructureError. Duplicated rather
+ * than imported because this module has no imports: the CLI loads it with
+ * `node --experimental-strip-types`, which needs a `.ts` specifier that the
+ * package's tsc build refuses.
+ */
+function isInfrastructureError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { infrastructure?: unknown }).infrastructure === true
+}
+
+/**
+ * ONE statement answering every checkable directive: one `(i, ok)` row per
+ * directive, `i` being its position among the checkable ones. Each branch is
+ * buildPredicate's statement verbatim, wrapped as a derived table, so the batch
+ * asserts exactly what the per-directive path asserts.
+ *
+ * One SELECT, not several statements: the Management API returns only the LAST
+ * result set of a multi-statement call, so `stmt1; stmt2;` would silently drop
+ * every answer but one. Null when nothing is checkable.
+ */
+export function buildBatchPredicate(directives: VerifyDirective[]): string | null {
+  const branches = directives
+    .map(buildPredicate)
+    .filter((s): s is string => s !== null)
+    .map((s, i) => `SELECT ${i} AS i, b${i}.ok FROM (\n${s}\n) AS b${i}`)
+  return branches.length ? branches.join('\nUNION ALL\n') : null
+}
+
+/**
+ * runDirectives in ONE Management API call per migration instead of one per
+ * directive (~10x fewer calls; run 37289583207 made 543 and was throttled).
+ *
+ * The batch decides only the clean case: it returned exactly one row for every
+ * directive. Then a false or NULL `ok` fails THAT directive, exactly as before.
+ * In every other case the batch is discarded and runDirectives runs one
+ * transaction per directive:
+ *   - the batch RAISED — has_*_privilege raises on an absent object, which is
+ *     the situation this tool exists for, and one raise aborts the whole
+ *     statement; per-directive isolates it to the directive that raised;
+ *   - the batch answered in an unexpected shape (a missing, repeated or
+ *     unknown `i`), e.g. a `sql:` payload whose type will not UNION.
+ * An infrastructure error is re-thrown, never retried directive by directive.
+ */
+export async function runDirectivesBatched(
+  directives: VerifyDirective[],
+  query: QueryFn,
+): Promise<RunResult & { batched: boolean }> {
+  const checkable = directives.filter(isCheckable)
+  const skipped = directives.filter((d) => !isCheckable(d))
+  const sql = buildBatchPredicate(checkable)
+  if (sql === null) return { passed: 0, failures: [], skipped, batched: false }
+  if (checkable.length === 1) return { ...(await runDirectives(directives, query)), batched: false }
+
+  let rows: Array<Record<string, unknown>>
+  try {
+    rows = await query(sql)
+  } catch (e) {
+    if (isInfrastructureError(e)) throw e
+    return { ...(await runDirectives(directives, query)), batched: false }
+  }
+
+  const okByIndex = new Map<number, unknown>()
+  let wellFormed = Array.isArray(rows) && rows.length === checkable.length
+  for (const row of wellFormed ? rows : []) {
+    const i = Number(row.i)
+    if (!Number.isInteger(i) || i < 0 || i >= checkable.length || okByIndex.has(i) || !('ok' in row)) {
+      wellFormed = false
+      break
+    }
+    okByIndex.set(i, row.ok)
+  }
+  if (!wellFormed) return { ...(await runDirectives(directives, query)), batched: false }
+
+  const failures: DirectiveFailure[] = []
+  let passed = 0
+  checkable.forEach((directive, i) => {
+    const ok = okByIndex.get(i)
+    // Strict === true, as in runDirectives: a NULL is not a true.
+    if (ok === true) passed += 1
+    else failures.push({ directive, reason: `predicate returned false (got ${JSON.stringify(ok)})` })
+  })
+  return { passed, failures, skipped, batched: true }
 }

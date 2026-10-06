@@ -1,0 +1,229 @@
+{
+  "name": "Miniature Substation Pre-FAT and Post-FAT",
+  "version": "1.1",
+  "branding": {
+    "cover_page": {
+      "title": "Miniature Substation Pre-FAT and Post-FAT",
+      "subtitle": "",
+      "company_name": "Watson Mattheus"
+    },
+    "accent_color": "#7B1FA2"
+  },
+  "sections": [
+    {
+      "title": "PRE FAT INSPECTION - ELECTRICAL DETAILS",
+      "fields": [
+        {
+          "type": "text",
+          "label": "LV Transformer Spec: Rating (KVA), Voltage",
+          "field_id": "lv_transformer_spec",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Tap setting",
+          "field_id": "tap_setting",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "HV Spec; Rating (KVA), Voltage",
+          "field_id": "hv_spec",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Busbar sizing and spacing",
+          "field_id": "busbar_sizing",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Main LV Breaker (Type/Rating)",
+          "field_id": "main_lv_breaker",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Main LV Breaker Settings",
+          "field_id": "main_lv_breaker_settings",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Main LV Breaker meter",
+          "field_id": "main_lv_breaker_meter",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Main meter CT ratio",
+          "field_id": "main_meter_ct_ratio",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Sub Breaker (Type/Rating)",
+          "field_id": "sub_breaker",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Sub Breaker Settings",
+          "field_id": "sub_breaker_settings",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Sub Breaker meter",
+          "field_id": "sub_breaker_meter",
+          "required": true
+        },
+        {
+          "type": "text",
+          "label": "Sub Breaker CT ratio",
+          "field_id": "sub_breaker_ct_ratio",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "All cable lug crimping and heat shrink",
+          "field_id": "cable_lug_crimping",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Busbar & Connection Torque (Visual)",
+          "field_id": "busbar_connection_torque",
+          "required": true
+        }
+      ],
+      "section_id": "electrical_details"
+    },
+    {
+      "title": "PRE FAT INSPECTION - VISUAL",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "Enclosure type and IP rating as per spec",
+          "field_id": "enclosure_type_ip",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Enclosure Physical",
+          "field_id": "enclosure_physical",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Cable Entries",
+          "field_id": "cable_entries",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Ventilation louvers",
+          "field_id": "ventilation_louvers",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Locking Mechanisms & Door Hinges",
+          "field_id": "locking_mechanisms",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Breather",
+          "field_id": "breather",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Oil level Indicator",
+          "field_id": "oil_level_indicator",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Drain Tap",
+          "field_id": "drain_tap",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Temp probe access",
+          "field_id": "temp_probe_access",
+          "required": true
+        }
+      ],
+      "section_id": "visual"
+    },
+    {
+      "title": "PRE FAT INSPECTION - SAFETY",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "HV Earthing",
+          "field_id": "hv_earthing",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "LV Earthing",
+          "field_id": "lv_earthing",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "LV Danger and warning signs",
+          "field_id": "lv_danger_warnings",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "HV Danger and warning signs",
+          "field_id": "hv_danger_warnings",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "HV Earth fault protection indicator",
+          "field_id": "hv_earth_fault_indicator",
+          "required": true
+        }
+      ],
+      "section_id": "safety"
+    },
+    {
+      "title": "FINAL FAT INSPECTION - COVERS",
+      "fields": [
+        {
+          "type": "pass_fail",
+          "label": "Main LV Breaker (per specs)",
+          "field_id": "main_lv_breaker_cover",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "Sub breakers",
+          "field_id": "sub_breakers_cover",
+          "required": true
+        },
+        {
+          "type": "pass_fail",
+          "label": "HV covers",
+          "field_id": "hv_covers",
+          "required": true
+        }
+      ],
+      "section_id": "final_fat_covers"
+    }
+  ],
+  "template_id": "mini-sub-pre-post-fat",
+  "deliverable_type": "factory_test",
+  "applies_to_node_types": [
+    "any"
+  ]
+}

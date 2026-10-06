@@ -3,13 +3,14 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { OWNER_ADMIN, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
+import { COST_VIEW_ROLES, OWNER_ADMIN, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
 import { Gavel,
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
-  ShieldCheck, FileText, BarChart3, Sun, Camera,
+  ShieldCheck, FileText, BarChart3, Sun, Camera, Calculator,
+  Receipt, Activity,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
 import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
@@ -69,8 +70,12 @@ export const GLOBAL_NAV = [
   { href: '/dashboard',   label: 'Dashboard',   Icon: LayoutGrid },
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
   { href: '/solar',       label: 'Solar portfolio', Icon: Sun },
+  { href: '/tariffs',     label: 'Tariffs',     Icon: Receipt },
+  { href: '/load-profiles', label: 'Load profiles', Icon: Activity },
   { href: '/inspections/templates', label: 'Inspection Templates', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
+  // Contractor rates are commercially confidential: owner/admin/PM only (rate_* RLS + requireRolePage).
+  { href: '/rates',       label: 'Rate library', Icon: Calculator },
 ] as const
 
 export function projectNav(id: string) {
@@ -87,6 +92,7 @@ export function projectNav(id: string) {
     { href: `/projects/${id}/cables`,              label: 'Cables',             Icon: Cable,         exact: false },
     { href: `/projects/${id}/medium-voltage`,      label: 'Medium Voltage',     Icon: Zap,           exact: false },
     { href: `/projects/${id}/solar`,               label: 'Solar',              Icon: Sun,           exact: false },
+    { href: `/projects/${id}/load-profile`,        label: 'Load profile',       Icon: Activity,      exact: false },
     { href: `/projects/${id}/generator-cost-recovery`, label: 'Generator Cost-Recovery', Icon: Zap, exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
@@ -114,9 +120,11 @@ export const FOOTER_ITEMS = [
  */
 export function navForRole(role: OrgRole | null) {
   const isAdmin = role !== null && OWNER_ADMIN.includes(role)
-  const globalNav = isAdmin
-    ? GLOBAL_NAV
-    : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
+  // Contractor rates are commercially confidential: owner/admin/PM only
+  // (the /rates pages and the rate_* RLS enforce it; this hides the link).
+  const canSeeRates = role !== null && COST_VIEW_ROLES.includes(role)
+  const globalNav = GLOBAL_NAV.filter(item =>
+    (item.href !== '/inspections/templates' || isAdmin) && (item.href !== '/rates' || canSeeRates))
   const footerItems = isAdmin ? FOOTER_ITEMS : FOOTER_ITEMS.filter(item => !item.adminOnly)
   return { globalNav, footerItems }
 }

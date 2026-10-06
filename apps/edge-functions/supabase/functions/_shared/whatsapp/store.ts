@@ -11,16 +11,19 @@ import { classifyMetaError } from './meta-client.ts'
 type Sb = any
 const wa = (sb: Sb) => sb.schema('whatsapp')
 const LIVE = ['active', 'pending_optin']
+const WINDOW_CLOSED = 131047
 
-function must<T>(r: { data: T; error: { message: string } | null }, what: string): T {
+// deno-lint-ignore no-explicit-any
+function must(r: { data: any; error: { message: string } | null }, what: string): any {
   if (r.error) throw new Error(`${what}: ${r.error.message}`)
   return r.data
 }
 
 export async function storeInbound(sb: Sb, messages: InboundMessage[]): Promise<void> {
   if (messages.length === 0) return
-  const rows = messages.map((m) => ({
-    meta_message_id: m.id, from_e164: fromMetaWaId(m.from) ?? `+${m.from}`, raw: m, kind: m.type, context_message_id: m.contextId,
+  const rows = messages.map(({ metaRaw, ...m }) => ({
+    meta_message_id: m.id, from_e164: fromMetaWaId(m.from) ?? `+${m.from}`, raw: m, meta_raw: metaRaw ?? null,
+    kind: m.type, context_message_id: m.contextId,
   }))
   must(await wa(sb).from('inbound').upsert(rows, { onConflict: 'meta_message_id', ignoreDuplicates: true }), 'store inbound')
 }
@@ -33,7 +36,8 @@ export async function applyStatuses(sb: Sb, statuses: StatusUpdate[]): Promise<v
     if (!cur) continue
     if (s.status === 'failed') {
       must(await wa(sb).from('outbox').update({ status: 'failed', error_code: s.errorCode, error_text: s.errorTitle, updated_at: new Date().toISOString() }).eq('id', cur.id), 'status failed')
-      if (s.errorCode !== null && classifyMetaError(s.errorCode, 200) === 'recipient') {
+      // 131047 = the 24-hour window had closed: that message is lost, the number is fine.
+      if (s.errorCode !== null && s.errorCode !== WINDOW_CLOSED && classifyMetaError(s.errorCode, 200) === 'recipient') {
         must(await wa(sb).from('phone_links').update({ status: 'undeliverable', undeliverable_reason: `${s.errorCode} ${s.errorTitle ?? ''}`.trim() })
           .eq('user_id', cur.user_id).eq('status', 'active'), 'mark undeliverable')
       }
@@ -66,6 +70,11 @@ export function createProcessorStore(sb: Sb): ProcessorStore & { claimInbound(li
     },
     async call(fn, args) {
       return must(await wa(sb).rpc(fn, args), fn)
+    },
+    async download(bucket, path) {
+      const { data, error } = await sb.storage.from(bucket).download(path)
+      if (error || !data) throw new Error(`download ${bucket}: ${error?.message ?? 'no data'}`)
+      return new Uint8Array(await data.arrayBuffer())
     },
     async upload(bucket, path, bytes, mime) {
       const { error } = await sb.storage.from(bucket).upload(path, bytes, { contentType: mime, upsert: false })
@@ -131,6 +140,34 @@ export function createWorkerStore(sb: Sb): WorkerStore {
     },
     async markLinkUndeliverable(linkId, reason) {
       must(await wa(sb).from('phone_links').update({ status: 'undeliverable', undeliverable_reason: reason }).eq('id', linkId), 'undeliverable')
+    },
+    async formReceiveCheck(outboxId) {
+      return must(await wa(sb).rpc('form_receive_check', { p_outbox: outboxId }), 'form receive check') ?? 'gone'
+    },
+    async formSummary(sessionId) {
+      const s = must(await wa(sb).from('form_sessions').select('user_id, inspection_id').eq('id', sessionId).maybeSingle(), 'form session')
+      if (!s) return null
+      const i = must(await sb.schema('inspections').from('inspections').select('target_label, template_id, project_id, verifier_id')
+        .eq('id', s.inspection_id).maybeSingle(), 'form inspection')
+      if (!i) return null
+      const [t, p, people] = await Promise.all([
+        sb.schema('inspections').from('templates').select('name').eq('id', i.template_id).maybeSingle(),
+        sb.schema('projects').from('projects').select('name').eq('id', i.project_id).maybeSingle(),
+        sb.from('profiles').select('id, full_name').in('id', [s.user_id, i.verifier_id].filter(Boolean)),
+      ])
+      const name = (id: string | null) => (must(people, 'form people') ?? []).find((x: { id: string }) => x.id === id)?.full_name ?? null
+      const templateName = must(t, 'form template')?.name ?? 'Inspection'
+      return { label: i.target_label || templateName, templateName, projectName: must(p, 'form project')?.name ?? 'the project',
+        submitterName: name(s.user_id) ?? 'A team member', verifierName: name(i.verifier_id) }
+    },
+    async templateApproved(name) {
+      const r = must(await wa(sb).from('templates').select('status').eq('name', name).maybeSingle(), 'template status')
+      return r?.status === 'approved'
+    },
+    async outboundPdf(sessionId) {
+      const { data, error } = await sb.storage.from('whatsapp-media').download(`outbound/${sessionId}.pdf`)
+      if (error || !data) return null
+      return new Uint8Array(await data.arrayBuffer())
     },
     async recordPolicyError(text) {
       console.error('whatsapp policy error:', text)

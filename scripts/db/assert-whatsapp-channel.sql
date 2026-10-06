@@ -36,6 +36,8 @@ WITH ins AS (INSERT INTO projects.work_items (organisation_id, project_id, item_
 SELECT set_config('x.pmitem', (SELECT id::text FROM ins), true);
 -- The triage owner is linked and KINGSWALK has WhatsApp on, so a raised issue must enqueue their card.
 UPDATE projects.project_settings SET notify_whatsapp = true WHERE project_id = current_setting('x.kw')::uuid;
+-- The triage owner may have a REAL live link now (phone_links_live_user_uidx); park it for this rolled-back transaction.
+DELETE FROM whatsapp.phone_links WHERE user_id = current_setting('x.triage')::uuid;
 INSERT INTO whatsapp.phone_links (user_id, phone_e164, status, verified_at, consent_at, consent_text_version)
 VALUES (current_setting('x.triage')::uuid, '+27000000009', 'active', now(), now(), 'test');
 

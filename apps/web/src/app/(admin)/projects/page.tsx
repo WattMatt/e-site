@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
+import { projectService, formatDate, formatZAR, COST_VIEW_ROLES, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
 import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
 
@@ -87,6 +87,9 @@ export default async function ProjectsPage() {
     }
   }
 
+  // Only owner/admin/PM create projects (site-scoped access, 00238).
+  const canCreateProject = [...orgRoleByOrgId.values()].some((r) => ORG_WRITE_ROLES.includes(r as OrgRole))
+
   return (
     <div className="animate-fadeup">
       <div className="page-header">
@@ -94,7 +97,7 @@ export default async function ProjectsPage() {
           <h1 className="page-title">Projects</h1>
           <p className="page-subtitle">{projects.length} project{projects.length !== 1 ? 's' : ''}</p>
         </div>
-        <Link href="/projects/new" className="btn-primary-amber">+ New Project</Link>
+        {canCreateProject && <Link href="/projects/new" className="btn-primary-amber">+ New Project</Link>}
       </div>
 
       {projects.length === 0 ? (

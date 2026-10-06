@@ -599,3 +599,17 @@ describe('extended pass: refuses to guess', () => {
     expect(r.issues.map((i) => i.message).join(' ')).toContain('do not pair by season')
   })
 })
+
+describe('a table with no name of its own is never named after a document section or a paragraph', () => {
+  const read = (name: string) => parseRfdColumns(readFileSync(new URL(`../__fixtures__/rfd-2026-27/${name}.excerpt.txt`, import.meta.url), 'utf8'), { fileSha256: 'x' })
+  it('Bela-Bela: the first tariff table is not "THE OBJECTORS AND OTHER INTERVENING PARTIES"; it is left unnamed for review', () => {
+    const p = read('bela-bela')
+    expect(p.tariffs.map((t) => t.name)).not.toContain('THE OBJECTORS AND OTHER INTERVENING PARTIES')
+    expect(p.tariffs.map((t) => t.name)).toContain('General Tariffs: Government')
+    expect(p.issues.map((i) => i.code)).toContain('rfd_table_skipped')
+  })
+  it('Kgatelopele: the opex cost-driver table under "4.5.1.10. Depreciation amounted to …" is not a tariff (was a R3.52 million service charge)', () => {
+    const p = read('kgatelopele-opex')
+    expect(p.tariffs).toEqual([])
+  })
+})

@@ -128,7 +128,8 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
             </div>
           </CardBody>
         ) : (
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+          // table-cards: below 768 px each row becomes a labelled card (globals.css).
+          <table className="table-cards" style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--c-border)', color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em' }}>
                 <th style={{ textAlign: 'left', padding: '10px 14px' }}>TARGET</th>
@@ -143,33 +144,35 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
             <tbody>
               {items.map((i) => (
                 <tr key={i.id} style={{ borderBottom: '1px solid var(--c-border)' }}>
-                  <td style={{ padding: '10px 14px', color: 'var(--c-text)' }}>
+                  <td data-primary style={{ padding: '10px 14px', color: 'var(--c-text)' }}>
                     {i.target_label}{' '}
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                       ({i.target_node_type})
                     </span>
                   </td>
-                  <td style={{ padding: '10px 14px', color: 'var(--c-text-mid)' }}>
-                    {i.template?.name ?? '—'}
-                    {i.template?.deliverable_type && (
-                      <Badge variant={i.template.deliverable_type === 'coc' ? 'warning' : 'info'} className="ml-1">
-                        {i.template.deliverable_type.replace(/_/g, ' ')}
-                      </Badge>
-                    )}
+                  <td data-label="Template" style={{ padding: '10px 14px', color: 'var(--c-text-mid)' }}>
+                    <span>
+                      {i.template?.name ?? '—'}
+                      {i.template?.deliverable_type && (
+                        <Badge variant={i.template.deliverable_type === 'coc' ? 'warning' : 'info'} className="ml-1">
+                          {i.template.deliverable_type.replace(/_/g, ' ')}
+                        </Badge>
+                      )}
+                    </span>
                   </td>
-                  <td style={{ padding: '10px 14px' }}>
+                  <td data-label="Status" style={{ padding: '10px 14px' }}>
                     <Badge variant={STATUS_VARIANT[i.status] ?? 'default'}>{i.status.replace(/_/g, ' ')}</Badge>
                   </td>
-                  <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-mid)' }}>
+                  <td data-label="CoC #" style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-mid)' }}>
                     {i.coc_number ?? '—'}
                   </td>
-                  <td style={{ padding: '10px 14px', fontSize: 11, color: 'var(--c-text-mid)' }}>
+                  <td data-label="Verifier" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--c-text-mid)' }}>
                     {i.verifier?.email ?? '—'}
                   </td>
-                  <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                  <td data-label="Scheduled" style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {i.scheduled_at ? new Date(i.scheduled_at).toLocaleDateString() : '—'}
                   </td>
-                  <td style={{ padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td data-actions style={{ padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <Link
                       href={`/projects/${projectId}/inspections/${i.id}`}
                       style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}

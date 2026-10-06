@@ -1,0 +1,666 @@
+{
+  "version": "7.3",
+  "screens": [
+    {
+      "id": "SECTION_A",
+      "title": "Visual & Structural Checks",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s0_f0",
+            "label": "Enclosure integrity",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s0_f0_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "Dropdown",
+            "name": "s0_f1",
+            "label": "Corrosion level",
+            "required": true,
+            "data-source": [
+              {
+                "id": "none",
+                "title": "None"
+              },
+              {
+                "id": "light",
+                "title": "Light"
+              },
+              {
+                "id": "moderate",
+                "title": "Moderate"
+              },
+              {
+                "id": "severe",
+                "title": "Severe"
+              }
+            ]
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s0_f2",
+            "label": "Plinth condition",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s0_f2_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s0_f3",
+            "label": "Perimeter fence",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s0_f3_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s0_f4",
+            "label": "Signage SANS-compliant",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s0_f4_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "SECTION_B"
+              },
+              "payload": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SECTION_B",
+      "title": "Electrical, Functional & Ther…",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s1_f0",
+            "label": "Switchgear operation",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s1_f0_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s1_f1",
+            "label": "Interlocks",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s1_f1_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s1_f2",
+            "label": "HV/LV separation",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s1_f2_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s1_f3",
+            "label": "Bushing condition",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s1_f3_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "TextBody",
+            "text": "Maximum winding temperature (°C)"
+          },
+          {
+            "type": "TextInput",
+            "name": "s1_f5",
+            "label": "Maximum winding tem…",
+            "required": true,
+            "input-type": "number"
+          },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "SECTION_C"
+              },
+              "payload": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SECTION_C",
+      "title": "Service & Maintenance History",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "DatePicker",
+            "name": "s2_f0",
+            "label": "Last service date",
+            "required": true
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s2_f2",
+            "label": "Oil sample taken",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s2_f2_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "TextInput",
+            "name": "s2_f3",
+            "label": "Tap-changer position",
+            "required": true,
+            "input-type": "number"
+          },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "SECTION_D"
+              },
+              "payload": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SECTION_D",
+      "title": "Documentation & Compliance",
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s3_f0",
+            "label": "SLD availability",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s3_f0_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "TextBody",
+            "text": "SLD availability — notes"
+          },
+          {
+            "type": "TextArea",
+            "name": "s3_f1",
+            "label": "SLD availability —…",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s3_f2",
+            "label": "COC records on file",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s3_f2_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "TextArea",
+            "name": "s3_f3",
+            "label": "COC records — notes",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s3_f4",
+            "label": "Warning labels in place",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s3_f4_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "TextBody",
+            "text": "Warning labels — notes"
+          },
+          {
+            "type": "TextArea",
+            "name": "s3_f5",
+            "label": "Warning labels — no…",
+            "required": false
+          },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "SECTION_E"
+              },
+              "payload": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "SECTION_E",
+      "title": "Critical Safety Checks",
+      "terminal": true,
+      "success": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextBody",
+            "text": "Earth-pit resistance (Ω)"
+          },
+          {
+            "type": "TextInput",
+            "name": "s4_f0",
+            "label": "Earth-pit resistanc…",
+            "required": true,
+            "input-type": "number"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s4_f1",
+            "label": "Bonding to all metalwork",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s4_f1_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s4_f2",
+            "label": "Fence earthed",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s4_f2_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s4_f3",
+            "label": "Lightning protection",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s4_f3_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "s4_f4",
+            "label": "Fire extinguisher in date",
+            "required": true,
+            "data-source": [
+              {
+                "id": "pass",
+                "title": "Pass"
+              },
+              {
+                "id": "fail",
+                "title": "Fail"
+              },
+              {
+                "id": "na",
+                "title": "N/A"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "s4_f4_r",
+            "label": "Reason if Fail",
+            "input-type": "text",
+            "required": false
+          },
+          {
+            "type": "Footer",
+            "label": "Save answers",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "s0_f0": "${screen.SECTION_A.form.s0_f0}",
+                "s0_f0_r": "${screen.SECTION_A.form.s0_f0_r}",
+                "s0_f1": "${screen.SECTION_A.form.s0_f1}",
+                "s0_f2": "${screen.SECTION_A.form.s0_f2}",
+                "s0_f2_r": "${screen.SECTION_A.form.s0_f2_r}",
+                "s0_f3": "${screen.SECTION_A.form.s0_f3}",
+                "s0_f3_r": "${screen.SECTION_A.form.s0_f3_r}",
+                "s0_f4": "${screen.SECTION_A.form.s0_f4}",
+                "s0_f4_r": "${screen.SECTION_A.form.s0_f4_r}",
+                "s1_f0": "${screen.SECTION_B.form.s1_f0}",
+                "s1_f0_r": "${screen.SECTION_B.form.s1_f0_r}",
+                "s1_f1": "${screen.SECTION_B.form.s1_f1}",
+                "s1_f1_r": "${screen.SECTION_B.form.s1_f1_r}",
+                "s1_f2": "${screen.SECTION_B.form.s1_f2}",
+                "s1_f2_r": "${screen.SECTION_B.form.s1_f2_r}",
+                "s1_f3": "${screen.SECTION_B.form.s1_f3}",
+                "s1_f3_r": "${screen.SECTION_B.form.s1_f3_r}",
+                "s1_f5": "${screen.SECTION_B.form.s1_f5}",
+                "s2_f0": "${screen.SECTION_C.form.s2_f0}",
+                "s2_f2": "${screen.SECTION_C.form.s2_f2}",
+                "s2_f2_r": "${screen.SECTION_C.form.s2_f2_r}",
+                "s2_f3": "${screen.SECTION_C.form.s2_f3}",
+                "s3_f0": "${screen.SECTION_D.form.s3_f0}",
+                "s3_f0_r": "${screen.SECTION_D.form.s3_f0_r}",
+                "s3_f1": "${screen.SECTION_D.form.s3_f1}",
+                "s3_f2": "${screen.SECTION_D.form.s3_f2}",
+                "s3_f2_r": "${screen.SECTION_D.form.s3_f2_r}",
+                "s3_f3": "${screen.SECTION_D.form.s3_f3}",
+                "s3_f4": "${screen.SECTION_D.form.s3_f4}",
+                "s3_f4_r": "${screen.SECTION_D.form.s3_f4_r}",
+                "s3_f5": "${screen.SECTION_D.form.s3_f5}",
+                "s4_f0": "${screen.SECTION_E.form.s4_f0}",
+                "s4_f1": "${screen.SECTION_E.form.s4_f1}",
+                "s4_f1_r": "${screen.SECTION_E.form.s4_f1_r}",
+                "s4_f2": "${screen.SECTION_E.form.s4_f2}",
+                "s4_f2_r": "${screen.SECTION_E.form.s4_f2_r}",
+                "s4_f3": "${screen.SECTION_E.form.s4_f3}",
+                "s4_f3_r": "${screen.SECTION_E.form.s4_f3_r}",
+                "s4_f4": "${screen.SECTION_E.form.s4_f4}",
+                "s4_f4_r": "${screen.SECTION_E.form.s4_f4_r}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

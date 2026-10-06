@@ -31,7 +31,7 @@ import { join, resolve } from 'node:path'
 const WEB_SRC = resolve(__dirname, '../..') // apps/web/src
 
 /** Helpers in lib/auth/require-role.ts that resolve to a result object. */
-const OBJECT_RESULT_HELPERS = ['requireEffectiveRole', 'requireRoleForRevision']
+const OBJECT_RESULT_HELPERS = ['requireEffectiveRole', 'requireRoleForRevision', 'requireProjectAccess']
 
 /**
  * Block comments go entirely (replaced by their own newlines so reported line

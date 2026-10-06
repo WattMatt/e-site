@@ -25,6 +25,8 @@ const PUBLIC_PATHS = [
   '/signup',
   '/reset-password',
   '/auth/callback',
+  // Signed WhatsApp links (E4): GET shows a Continue button, the POST consumes the token.
+  '/auth/wa-link/',
   '/share',
   '/account-deleted',
   '/inspection',
@@ -92,7 +94,9 @@ const SELF_AUTH_PATHS = ['/api/notifications/dispatch', '/api/diary/notify']
 // since it shipped. Paystack is not in live mode yet, so nothing is broken
 // today — but finding this during the KYC smoke test would cost a round trip
 // with a payment provider.
-const SIGNED_WEBHOOK_PATHS = ['/api/webhooks/resend', '/api/paystack/webhook']
+// /api/internal/whatsapp/forms is called by the WhatsApp edge functions, signed with
+// WHATSAPP_INTERNAL_SECRET (E4).
+const SIGNED_WEBHOOK_PATHS = ['/api/webhooks/resend', '/api/paystack/webhook', '/api/internal/whatsapp/forms', '/api/internal/whatsapp/reports']
 
 // Endpoints that are public by design and carry their own unguessable bearer
 // in the request itself. /api/unsubscribe is the RFC 8058 one-click target:

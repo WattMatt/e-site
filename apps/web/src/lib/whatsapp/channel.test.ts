@@ -75,7 +75,7 @@ describe('menu and projects', () => {
     await processInbound(row({ text: 'Kingswalk' }), deps())
     expect(store.patches[0]).toMatchObject({ current_project_id: KW })
     const menu = meta.sent.find((s) => s.kind === 'list')!
-    expect((menu.extra as Array<{ id: string }>).map((r) => r.id)).toEqual(['menu:mine', 'menu:project', 'menu:post', 'menu:switch'])
+    expect((menu.extra as Array<{ id: string }>).map((r) => r.id)).toEqual(['menu:mine', 'menu:project', 'menu:post', 'menu:files', 'menu:reports', 'menu:switch'])
   })
   it('a partial name is confirmed, never switched silently', async () => {
     rpc.wa_my_projects = [...projects, { id: POST, name: 'FAERIE GLEN EXT', role: 'contractor' }]
@@ -86,7 +86,7 @@ describe('menu and projects', () => {
   it('a client viewer\'s menu has no Post row', async () => {
     current = link({ current_project_id: FG })
     await processInbound(row({ text: 'menu' }), deps())
-    expect(ids(0)).toEqual(['menu:mine', 'menu:project', 'menu:switch'])
+    expect(ids(0)).toEqual(['menu:mine', 'menu:project', 'menu:files', 'menu:reports', 'menu:switch'])
   })
   it('picking a project from the list switches to it', async () => {
     await processInbound(row({ type: 'interactive', payload: `proj:${KW}` }), deps())

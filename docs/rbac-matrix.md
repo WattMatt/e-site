@@ -4,6 +4,18 @@ The contract for "who can see/do what" across E-Site. **Every new route or
 API endpoint must be added here in the same PR that introduces it.** If a
 cell is wrong, the gate is wrong — file a bug.
 
+> **Site scope (2026-10, migration `00238_site_scoped_access`).** Org **owner** and
+> **admin** see every project in their organisation. Every other role —
+> including an org-level `project_manager` — sees and writes only the projects
+> they are an active member of (`projects.project_members`). A route row below
+> that grants a role access means *on the projects that role can reach*.
+> Enforced by a RESTRICTIVE `site_scope` policy on every site table (generated
+> from `packages/db/src/site-scope/manifest.ts`), `site_scope_objects` on
+> storage, and `requireProjectAccess` before any service-key read
+> (`service-client-gates.contract.test.ts`). Exempt by design: the rate
+> library, billing, org settings, marketplace (IN DEV) and WhatsApp internals.
+> An org PM keeps project *creation* (and sees a project they created).
+
 The codebase has 7 org-level roles, defined in
 [`packages/shared/src/types/index.ts`](../packages/shared/src/types/index.ts).
 A user can hold different roles in different organisations (multi-tenancy),
@@ -39,6 +51,7 @@ membership.
 |---|---|---|---|---|---|---|---|
 | `/dashboard` | W | W | W | W | W | W | R |
 | `/projects` (list) | W | W | W | W | R | — | R |
+| `/projects/new` + `createProjectAction` (and the *+ New Project* buttons on `/dashboard`, `/projects`) | ✓ | ✓ | ✓ | → | → | → | → |
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
 | `/projects/[id]/capture` (the single in-project Capture menu — diary entry, snag, site form, inspection, photo; added 2026-10-05). Each tile is shown only to the roles its target already admits (`lib/capture/capture-actions.ts`, pinned by a contract test that reads the targets): snag follows `SNAG_FIELD_ROLES`, site form `FORMS_FIELD_ROLES`, diary/photo the diary row's write set. The inspection tile needs an ORG role of owner/admin/PM in the project's org (the gate `createInspectionAction` applies) and links to `/inspections/unlock` when the org has not unlocked inspections. A caller with no project role sees an explanation instead of tiles | W | W | W | W (no inspection) | W (snag, site form) | W (snag, site form) | → `/portal` |
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
@@ -58,6 +71,8 @@ membership.
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/tenant-schedule` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/load-profile` (E8; **not** Solar-gated) | W | W | W | R | R | R | — |
+| `/load-profiles` · `/load-profiles/[site]` (workspace: the org's Solar meter library by site; read-only; Solar RLS decides which meters are visible) | R | R | R | R | R | — | — |
 | `/projects/[id]/floor-plans` | W | W | W | W | R | — | R |
 | `/projects/[id]/handover` | W | W | W | R | R | — | R |
 | `/projects/[id]/inspections` | W² | W² | W² | R² | W² | — | R² |
@@ -78,6 +93,11 @@ membership.
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
 | `/metrics` | R | R | — | — | — | — | — |
+| `/rates` (Rate library — org-wide contractor rates, CPI-escalated statistics) | R | R | R | — | — | — | — |
+| `/rates/[itemId]` (item statistics, trend, observations; **Retract** adds a void row) | W | W | W | — | — | — | — |
+| `/rates/review` (review queue: confirm / assign / new item / not a rate / AI suggest) | W | W | W | — | — | — | — |
+| `/rates/sources` (priced documents + reconciliation) | R | R | R | — | — | — | — |
+| `GET /api/rates/export` (budget CSV, median or P75) | R | R | R | — | — | — | — |
 | `/settings/account` (WhatsApp panel — own number only) | W | W | W | W | W | W | W |
 | `/settings/whatsapp` | W | W | → | → | → | → | → |
 | `/projects/[id]/items/[ref]` | R | R | R | R | R | R | R⁽ʷᵃ⁾ |
@@ -89,6 +109,21 @@ membership.
 | `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+
+> **Rate library (`/rates*`, migration 00231, E6).** Contractor rates are
+> commercially confidential. The PM column here is the **org-level**
+> `project_manager` role: the gate is `public.rate_library_can_access(org)` —
+> an *active* `user_organisations` row with role owner/admin/project_manager —
+> in every `rate_*` RLS policy, plus `requireRolePage(COST_VIEW_ROLES)` /
+> `requireRoleAPI(COST_VIEW_ROLES)`. A project-scoped promotion does **not**
+> reach it (a contractor promoted to PM on one project sees nothing; proven in
+> `scripts/db/assert-rate-library-roles.sql`). Pages and the export read through
+> the caller's own session, so RLS is exercised on every render. Every view and
+> export writes `public.rate_library_access_log`, readable by owner/admin only.
+> Observations are immutable for everyone, `postgres` included; a correction is
+> a new row. **Price from library** and **Add this BOQ to the rate library** sit
+> on `/projects/[id]/settings/rates` and follow that row (`COST_VIEW_ROLES` on
+> the project) *and* require the project to belong to the caller's org.
 
 > `/metrics` (labelled "Adoption" in the sidebar) renders
 > `public.platform_metrics_weekly` and is gated twice:
@@ -235,6 +270,24 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 >
 > `cloud-sync-project`'s `isAnnotated()` treats a drawing with a Solar schematic, meter card or supply line as annotated (00215), so a newer Dropbox file is never auto-adopted under it. **Deploy the edge function only after 00215 is applied** (an owner step) — before, the three lookups error and fail closed (every drawing reads as annotated, which silently disables auto-adopt platform-wide).
 
+## Tariffs explorer (`apps/web/src/app/(admin)/tariffs/*`, E7, 2026-10-05)
+
+Owner decision D1 (2026-10-05): the **published** library is open to every signed-in organisation, not only Solar subscribers. `00228` replaced 00210's `caller_has_any_solar_org()` read gate with `public.caller_can_read_tariff_library()` (platform tariff admin, or active in any org). Drafts (`ingesting`, `in_review`) stay admin-only; `ingest_run`, `ingest_job`, `due_year_alert`, `error_report` reads are unchanged. Client viewers never reach these pages (the `(admin)` layout bounces them to `/portal`), although RLS would let an active client viewer read the published library over PostgREST — it is public NERSA data. Every read goes through the caller's session; there is no app-level role list.
+
+| Route | Any active org member (owner … supplier) | Platform tariff admin | Signed out / no active membership |
+|---|---|---|---|
+| `/tariffs` (alias-aware search) | R | R | → `/login` / empty-state sentence |
+| `/tariffs/[licenseeId]?fy=` (published / superseded years) | R | R | 404 (RLS returns no licensee) |
+| `/tariffs/[licenseeId]/[tariffId]` (cited charges, YoY, TOU visuals, holiday rules) | R | R | 404 |
+| `/tariffs/compare?t=` (2–4 tariffs, priced in the browser) | R | R | — |
+| `/tariffs/map` (area of supply) | R **when `TARIFF_MAP_ENABLED=1`**, else 404 | same | 404 |
+| `GET /api/tariffs/municipalities` (MDB boundaries) | 200 when the flag is on, else 404 | same | 401 |
+
+| Action | Gate | DB layer that decides |
+|---|---|---|
+| `getTariffSourceUrlAction` (`tariff-explorer.actions.ts`) | signed in | reads `source_document` through the caller (00228 policy), then signs a 10-minute URL with the service client |
+| `listPublishedTariffsAction` | signed in | `tariff_year` (published only) + `tariff`, both under 00228 RLS |
+
 ## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
 
 Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
@@ -247,6 +300,7 @@ Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00210),
 | `/admin/tariffs/years`, `/years/[yearId]` (review queue, checks, publish), `/years/[yearId]/diff`, `/years/[yearId]/sseg` | W (draft years); R (published / superseded) | 404 |
 | `/admin/tariffs/calendars` (TOU calendars, holiday treatment) | W | 404 |
 | `/admin/tariffs/reports` (reported tariff errors) | W | 404 |
+| `/admin/tariffs/cycle` (E7: due years per regime, ready / blocked / unchecked years, review queue, publish history, diff links) | R | 404 |
 
 | Action / route | Gate | DB layer that decides |
 |---|---|---|
@@ -343,6 +397,9 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/projects/[id]/solar/roof-sources/satellite` | W | W | W | — | — | — | — |¹⁷
 | `POST /api/webhooks/resend` | n/a — public webhook, Svix/standardwebhooks HMAC-SHA256 over the raw body; writes only as service_role; bypassed in `middleware.ts` by exact path |
 | `POST /api/paystack/webhook` | n/a — public webhook, HMAC-SHA512 over the raw body; was never listed here and was 307'd to `/login` until `SIGNED_WEBHOOK_PATHS` |
+| `POST /api/internal/whatsapp/forms` | n/a — called only by the `whatsapp-webhook` / `whatsapp-worker` edge functions; HMAC-SHA256 over the raw body with `WHATSAPP_INTERNAL_SECRET` (`t=<unix>,v1=<hex>`, 5-minute skew; no secret = every call `401`); in `SIGNED_WEBHOOK_PATHS`. Every inspection read or write it makes is judged per call by `whatsapp.wa_inspection_*` acting as the person (see *Inspection forms over WhatsApp* below) |
+| `POST /api/internal/whatsapp/reports` | n/a — called only by the `whatsapp-webhook` / `whatsapp-worker` edge functions, signed exactly like `/forms` (in `SIGNED_WEBHOOK_PATHS`). Op `cable_schedule` builds the current revision's PDF for the NAMED user, gated by `getExportPolicy` (`user_effective_project_role(project, user)`: owner/admin/PM full, site roles cost-redacted, no effective role refused; site-scoped since `00238`) |
+| `/auth/wa-link/[token]` (page + server action) | n/a — a signed WhatsApp link (E4). Public path (`PUBLIC_PATHS`); GET only renders a Continue button. The POST consumes a 32-byte single-use token (stored as SHA-256 in `whatsapp.form_links`, 15 minutes), re-checks the person's effective project role (refused when none or `client_viewer`), mints a session for that person (`generateLink` + `verifyOtp` server-side) and redirects only to `/projects/<uuid>/inspections/<uuid>`. Logged as an `auth_events` login with method `whatsapp_link`; the MFA gate still applies |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
@@ -784,6 +841,22 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 >
 > **`work_item_events` has no write policy at all**, and `INSERT`/`UPDATE`/`DELETE` are revoked from `authenticated`. It is written solely by a `SECURITY DEFINER` append trigger, so the assignment and status history cannot be forged by the person it incriminates.
 
+### Load profile (`load-profile.actions.ts`, `GET /api/projects/[id]/load-profile/export`)
+
+| Action / endpoint | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `parseLoadProfileFileAction` · `commitLoadProfileFileAction` | W | W | W | — | — | — | — |
+| `addSyntheticSourceAction` · `updateLoadProfileSourceAction` · `deleteLoadProfileSourceAction` | W | W | W | — | — | — | — |
+| `saveLoadProfileSettingsAction` (reference year, PF, NMD, tariff) | W | W | W | — | — | — | — |
+| `listPublishedLicenseesAction` · `listPublishedTariffsAction` (tariff pickers) | R | R | R | — | — | — | — |
+| `listLibraryMetersAction` · `addLibraryMetersAction` (Solar library meters as sources; Solar RLS decides which meters are visible) | W | W | W | — | — | — | — |
+| `GET /api/projects/[id]/load-profile/export?format=xlsx\|pdf` | R | R | R | R | R | R | — |
+| `GET /api/load-profiles/[site]/export?format=xlsx\|pdf` (workspace site profile) | R | R | R | R | R | — | — |
+
+> **Added 2026-10-05 (E8 follow-up).** The meter-archive sites are entries on the workspace Load profiles page, not projects (owner decision). Gate: `ARCHIVE_READ_ROLES` (`lib/load-profile/access.ts`) on the caller's ORG role via `requireRolePage` / `requireRoleAPI`; every read goes through the caller's session, so Solar's RLS is the second gate and an org without a Solar library lists no sites. Supplier and client_viewer are excluded: the library holds every tenant's consumption. No cost here: costing needs a tariff choice, which belongs to a project's Load profile tab.
+
+> **Added 2026-10-05 (E8, migration `00230`).** A project-level tool for every plan (owner decision E8-D1), deliberately NOT behind the Solar subscription. Read = `SNAG_FIELD_ROLES` (every effective project role except `client_viewer`); write = `ORG_WRITE_ROLES`. Every action and the export route gate on `requireEffectiveRole` and then write/read through the caller's session, so `00230`'s policies are the second gate: one PERMISSIVE policy per verb carrying the whole role condition (no RESTRICTIVE `FOR ALL`, the `00205`/`00206` trap), parents bound by trigger, impersonation-tested by `scripts/db/assert-load-profile-rls.sql` (24 rows, two mutations red). Raw uploads go straight to the private `load-profile-files` bucket at `{project_id}/{sha256}.{ext}`; the server downloads with the caller's session, checks the bytes hash to the path, and re-parses — the browser's parse is never trusted. **Tariffs** are read through the caller's session: the library's own RLS is the gate (ADR-007, PR #239 opens the published library to every signed-in org; until it is applied only Solar orgs and tariff admins read it, and the tab says the tariff is not available). `lib/load-profile/tariff-source.ts` additionally narrows every query to `tariff_year.state = 'published'`. The tariff pickers are offered to the write roles only — readers see the chosen tariff's bill, not the catalogue.
+
 ### WhatsApp (`whatsapp-link.actions.ts`, `whatsapp-invite.actions.ts`, `whatsapp-admin.actions.ts`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
@@ -791,10 +864,13 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `requestWhatsAppCodeAction` / `confirmWhatsAppCodeAction` / `removeWhatsAppLinkAction` / `setWhatsAppQuietHoursAction` (own number only) | W | W | W | W | W | W | W |
 | `inviteWhatsAppExternalAction` / `resendWhatsAppOptInAction` (per project, `requireEffectiveRole(ORG_WRITE_ROLES)`) | W | W | W | — | — | — | — |
 | `setWhatsAppSendingAction` / `setWhatsAppAlertEmailAction` | W | W | — | — | — | — | — |
+| `setWhatsAppFormsEnabledAction` (E4; the caller's OWN organisation only, `whatsapp.org_settings`) | W | W | — | — | — | — | — |
 
 > ⁽ʷᵃ⁾ The item page and `/wa/[itemId]` read through the caller's RLS (`work_items_select`): a `client_viewer` sees only items they are assigned, gatekeep or watch; anything else is a 404 / redirect to `/dashboard`, indistinguishable from a missing item.
 >
 > **Acting on WhatsApp is acting as the user.** Every WhatsApp action runs through a `whatsapp.wa_*` function owned by the `whatsapp_actor` role (NOLOGIN, no BYPASSRLS, member of `authenticated`) after setting the user's JWT claims, so the table's real RLS policies and the work-item transition guard judge it — there is no parallel rule set (migration `00222`; proven by `scripts/db/assert-whatsapp-actor.sql` including a re-own-to-`postgres` mutation). **Edge functions:** `whatsapp-webhook` is deployed `--no-verify-jwt` and authenticates Meta by the `X-Hub-Signature-256` HMAC only; `whatsapp-worker` is gateway-verified + `requireServiceRole`.
+>
+> **Inspection forms over WhatsApp (E4, migration `00229`), off by default.** Offered only when the person's org has `whatsapp.org_settings.forms_enabled` (default `false`) and the platform `sending_enabled` is on. Listing, saving answers, adding photos and submitting go through `wa_inspection_gate` / `wa_my_inspections` / `wa_inspection_save` / `wa_inspection_add_photo` / `wa_inspection_submit`, owned by `whatsapp_actor`: the inspection is read under RLS (`inspections_select_members` → `user_has_project_access`, so an inactive project member gets `not_found`), then the org flag, then a **non-client-viewer effective project role** (needed because `inspections.user_can_write_responses` reads only the org role), then `user_can_write_responses`. Proven by `scripts/db/assert-whatsapp-inspections.sql` (45 checks, incl. a project-scoped client viewer, a forged submit marker, and mutations of the role check and the marker guard). Photo paths are pinned to `<project>/<inspection>/…`. A WhatsApp-origin PDF is sent to the submitter only and never filed in `projects.reports` (the `inspection` kind is open-read and the inspection is not certified yet). The summary after a submit goes to active, non-client-viewer project members with an active link on a project with `notify_whatsapp`, re-checked at send time by `form_receive_check`.
 >
 > **Project channel (sub-project 2, migration `00223`).** Over WhatsApp a member can list their projects (`wa_my_projects`: projects where they hold an effective role), list open items (`wa_project_items`: RLS `work_items_select`), re-open a card (`wa_item_card`), and post to the project as a **diary entry** (`wa_post_diary`: the diary INSERT policy — org member, not a client viewer, project not payment-paused) or a **triage issue** (`wa_post_issue`: `work_items_insert` + `work_items_insert_gate`, i.e. `task.write_roles` = owner/admin/PM/contractor; assignee = triage owner, gatekeeper = creator). A client viewer is never offered Post, and the database refuses them regardless. WhatsApp diary posts do **not** send the diary email (it is sent by the web action, not a trigger).
 

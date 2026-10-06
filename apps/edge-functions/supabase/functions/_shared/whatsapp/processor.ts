@@ -12,6 +12,8 @@ import type { MetaClient } from './meta-client.ts'
 import type { InboundMessage } from './parse.ts'
 import { expireStalePost, handleChannelContent, handleChannelPayload, pickPrefixRows } from './channel.ts'
 import { LINK_REPLIES, linkByInboundCode, type PendingOtpLink } from './link-code.ts'
+import { handleFormsContent, handleFormsPayload, type FormsClient } from './forms.ts'
+import { handleFilesContent, handleFilesPayload, type ReportsClient } from './files.ts'
 
 export interface LinkRow {
   id: string
@@ -29,6 +31,9 @@ export interface LinkRow {
   current_project_id?: string | null
   current_project_at?: string | null
   pending_post?: unknown
+  current_form_session_id?: string | null
+  pending_search_at?: string | null
+  current_form_session_at?: string | null
 }
 
 export interface ItemInfo {
@@ -71,6 +76,8 @@ export interface ProcessorStore {
   itemInfo(itemId: string): Promise<ItemInfo | null>
   call(fn: string, args: Record<string, unknown>): Promise<Rpc>
   upload(bucket: string, path: string, bytes: Uint8Array, mime: string): Promise<void>
+  /** Service-key read of one storage object; only called after a wa_* lookup answered ok. */
+  download(bucket: string, path: string): Promise<Uint8Array>
   /** True if we already told this unknown number "not linked" in the last 24 h; otherwise records now and returns false. */
   unknownSenderRecentlyAnswered(e164: string, now: Date): Promise<boolean>
   inboundById(id: string): Promise<InboundRow | null>
@@ -85,6 +92,10 @@ export interface ProcessorDeps {
   meta: MetaClient
   now: () => Date
   appUrl: string
+  /** The web app's inspection-form service (E4). Absent: forms are off on this deployment. */
+  forms?: FormsClient
+  /** The web app's report service (sub-project 4). Absent: no on-demand cable schedule. */
+  reports?: ReportsClient
 }
 
 export const REPLIES = {
@@ -279,6 +290,10 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
   if (notice) await meta.sendText(from, notice)
 
   if (payload) {
+    const form = await handleFormsPayload(payload, link, inbound, deps)
+    if (form) return form
+    const file = await handleFilesPayload(payload, link, inbound, deps)
+    if (file) return file
     const handled = await handleChannelPayload(payload, link, inbound, deps)
     if (handled) return handled
   }
@@ -309,6 +324,16 @@ export async function processInbound(inbound: InboundRow, deps: ProcessorDeps): 
     await store.markInbound(held.id, { outcome: heldResult.outcome, outcome_reason: `picked:${heldResult.reason}`,
       resolved_user_id: link.user_id, resolved_item_id: payload.itemId, processed_at: nowIso })
     return result('applied', 'picked', link.user_id, payload.itemId)
+  }
+
+  if (!payload) {
+    const form = await handleFormsContent(msg, link, inbound, deps)
+    if (form) return form
+  }
+
+  if (!payload) {
+    const search = await handleFilesContent(msg, link, inbound, deps)
+    if (search) return search
   }
 
   if (!payload) {

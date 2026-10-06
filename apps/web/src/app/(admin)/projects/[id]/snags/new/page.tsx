@@ -1,5 +1,6 @@
 'use client'
 
+import { PhotoSourcePicker, addPhotos } from '@/components/ui/PhotoSourcePicker'
 import { use, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
@@ -147,7 +148,7 @@ export default function NewSnagPage({ params }: Props) {
               <textarea className="ob-input" rows={3} style={{ resize: 'none' }} {...register('description')} placeholder="Details, context, what should be done…" />
               {errors.description && <p className="ob-error">{errors.description.message}</p>}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="stack-on-phone" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label className="ob-label">Location</label>
                 <input className="ob-input" {...register('location')} placeholder="e.g. DB Room, Level 2" />
@@ -204,22 +205,7 @@ export default function NewSnagPage({ params }: Props) {
             )}
           </div>
           <div style={{ padding: '16px 18px' }}>
-            <label
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-                padding: '28px 18px', border: '1px dashed var(--c-border)', borderRadius: 8,
-                background: 'var(--c-base)', cursor: 'pointer', transition: 'border-color 0.15s',
-              }}
-            >
-              <input
-                type="file" accept="image/*" multiple style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
-                onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}
-              />
-              <span style={{ fontSize: 20 }} aria-hidden="true">📷</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
-                Click to select photos
-              </span>
-            </label>
+            <PhotoSourcePicker accept="image/*" onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
             {photoFiles.length > 0 && (
               <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoFiles.map((f, i) => (
@@ -249,7 +235,7 @@ export default function NewSnagPage({ params }: Props) {
 
         {error && <p className="ob-error" role="alert">{error}</p>}
 
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="sticky-actions" style={{ display: 'flex', gap: 10 }}>
           <button type="submit" className="btn-primary-amber" style={{ flex: 1 }} disabled={isSubmitting || uploading}>
             {uploading ? 'Uploading photos…' : isSubmitting ? 'Saving…' : 'Raise Snag'}
           </button>

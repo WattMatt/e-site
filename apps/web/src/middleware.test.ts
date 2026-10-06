@@ -196,6 +196,21 @@ describe('middleware — self-authenticating API bypass', () => {
 
 // `run(path)` issues a GET; middleware.ts does not branch on method, so the
 // bypass it proves is the same one a POST takes.
+describe('signed WhatsApp link (E4)', () => {
+  it('shows the link page to someone with no session instead of sending them to /login', async () => {
+    state.user = null
+    const res = await run('/auth/wa-link/' + 'A'.repeat(43))
+    expect(res).toBe(state.supabaseResponse)
+  })
+  it('does not bounce someone already signed in to /dashboard before they can use the link', async () => {
+    state.user = CONFIRMED
+    state.aal = 'aal2'
+    state.orgCount = 1
+    const res = await run('/auth/wa-link/' + 'A'.repeat(43))
+    expect(res).toBe(state.supabaseResponse)
+  })
+})
+
 describe('signed webhook bypass', () => {
   it('lets an unauthenticated request to /api/webhooks/resend through to its handler', async () => {
     state.user = null
@@ -293,7 +308,7 @@ function selfAuthenticatingRoutes(): string[] {
         const src = fs.readFileSync(full, 'utf8')
         const bearer = /headers\.get\(\s*['"][Aa]uthorization['"]/.test(src)
         const signature =
-          /x-paystack-signature|svix-signature|createHmac|new Webhook\(/i.test(src)
+          /x-paystack-signature|svix-signature|createHmac|new Webhook\(|verifyInternal\(/i.test(src)
         if (bearer || signature) {
           out.push('/' + path.relative(APP_DIR, path.dirname(full)).split(path.sep).join('/'))
         }
@@ -384,6 +399,7 @@ describe('middleware — self-authenticating route contract (app/api)', () => {
     expect(routes).toEqual(
       expect.arrayContaining([
         '/api/notifications/dispatch',
+        '/api/internal/whatsapp/forms',
         '/api/paystack/webhook',
         '/api/webhooks/resend',
       ]),

@@ -99,11 +99,13 @@ SELECT * FROM (VALUES
   ('no RESTRICTIVE policy touches SELECT',
      (SELECT count(*) = 0 FROM pg_policy
        WHERE polrelid = 'tenants.floor_plan_markups'::regclass
-         AND polpermissive = false AND polcmd NOT IN ('a','w','d'))),
+         AND polpermissive = false AND polcmd NOT IN ('a','w','d')
+         AND polname <> 'site_scope')),   -- the site gate narrows reads by design (site-scoped access, 2026-10)
   ('exactly one policy covers SELECT',
      (SELECT count(*) = 1 FROM pg_policy
        WHERE polrelid = 'tenants.floor_plan_markups'::regclass
-         AND polcmd IN ('r','*'))),
+         AND polcmd IN ('r','*')
+         AND polname <> 'site_scope')),
   ('the write gates name every MARKUP_WRITE_ROLE and no other',
      (SELECT bool_and(
                COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) LIKE '%owner%'
@@ -111,7 +113,11 @@ SELECT * FROM (VALUES
            AND COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) LIKE '%contractor%'
            AND COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) NOT LIKE '%inspector%')
         FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass
-          AND polpermissive = false)),
+          AND polpermissive = false AND polname <> 'site_scope')),
+  ('the site gate is the only other RESTRICTIVE policy, and it checks project access',
+     (SELECT count(*) = 1 AND bool_and(pg_get_expr(polqual, polrelid) LIKE '%user_has_project_access%')
+        FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass
+          AND polpermissive = false AND polname = 'site_scope')),
   ('read policy excludes client_viewer',
      (SELECT pg_get_expr(polqual, polrelid) LIKE '%client_viewer%'
         FROM pg_policy WHERE polname = 'floor_plan_markups_select')),

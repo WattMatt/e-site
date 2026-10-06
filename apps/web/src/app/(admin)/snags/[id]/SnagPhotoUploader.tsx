@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { PhotoSourcePicker } from '@/components/ui/PhotoSourcePicker'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/client'
@@ -36,14 +37,13 @@ interface Props {
 
 export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: Props) {
   const router = useRouter()
-  const inputRef = useRef<HTMLInputElement>(null)
   const [photoType, setPhotoType] = useState<PhotoType>('evidence')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
 
-  async function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return
+  async function handleFiles(files: File[]) {
+    if (files.length === 0) return
     setBusy(true)
     setError(null)
     setDone(null)
@@ -53,7 +53,7 @@ export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: P
 
     let uploaded = 0
     try {
-      for (const [i, raw] of Array.from(files).entries()) {
+      for (const [i, raw] of files.entries()) {
         await uploadSnagPhoto(supabase as never, {
           file: raw,
           orgId,
@@ -72,7 +72,6 @@ export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: P
       setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setBusy(false)
-      if (inputRef.current) inputRef.current.value = ''
     }
   }
 
@@ -114,15 +113,7 @@ export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: P
 
       <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>{selected.hint}</p>
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,image/heic"
-        multiple
-        disabled={busy}
-        onChange={(e) => void handleFiles(e.target.files)}
-        style={{ fontSize: 12, color: 'var(--c-text-dim)' }}
-      />
+      <PhotoSourcePicker disabled={busy} onFiles={(files) => void handleFiles(files)} />
 
       {busy && (
         <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>Uploading…</p>

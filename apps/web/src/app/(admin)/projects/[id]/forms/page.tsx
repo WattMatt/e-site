@@ -169,7 +169,7 @@ export default async function ProjectFormsPage({ params, searchParams }: Props) 
             </div>
           ) : (
             <div className="card">
-              <table className="table">
+              <table className="table table-cards">
                 <thead>
                   <tr>
                     <th>Form no.</th>
@@ -183,18 +183,18 @@ export default async function ProjectFormsPage({ params, searchParams }: Props) 
                 <tbody>
                   {forms.map((f) => (
                     <tr key={f.id}>
-                      <td>
+                      <td data-primary>
                         <Link href={`/projects/${projectId}/forms/${f.id}`}>
                           {f.form_no ?? 'Unnumbered'}
                         </Link>
                       </td>
-                      <td>{boardOf(f)}</td>
-                      <td>
+                      <td data-label="Board">{boardOf(f)}</td>
+                      <td data-label="Status">
                         <span className={statusBadge(f.status)}>{f.status}</span>
                       </td>
-                      <td>{f.as_left_status ? asLeftStatusLabel(f.as_left_status) : '—'}</td>
-                      <td>{f.created_by ? (names.get(f.created_by) ?? '—') : '—'}</td>
-                      <td>{formatDate(f.distributed_at ?? f.submitted_at ?? f.created_at)}</td>
+                      <td data-label="As left">{f.as_left_status ? asLeftStatusLabel(f.as_left_status) : '—'}</td>
+                      <td data-label="Captured by">{f.created_by ? (names.get(f.created_by) ?? '—') : '—'}</td>
+                      <td data-label="Date">{formatDate(f.distributed_at ?? f.submitted_at ?? f.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

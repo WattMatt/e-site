@@ -37,3 +37,21 @@ export async function setWhatsAppAlertEmailAction(input: { email: string }): Pro
   revalidatePath('/settings/whatsapp')
   return { ok: true }
 }
+
+/**
+ * Inspection forms over WhatsApp (E4) for the caller's OWN organisation. Unlike the platform switch
+ * above this is per org (whatsapp.org_settings, default off), so an org's owner/admin can only ever
+ * switch their own. Nothing is sent unless the platform switch is also on.
+ */
+export async function setWhatsAppFormsEnabledAction(input: { enabled: boolean }): Promise<{ ok: true } | { error: string }> {
+  const ctx = await getOrgContext().catch(() => null)
+  if (!ctx || !(OWNER_ADMIN as readonly string[]).includes(ctx.role)) return { error: 'Only an owner or admin can change this.' }
+  const enabled = z.boolean().parse(input.enabled)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (createServiceClient() as any).schema('whatsapp').from('org_settings')
+    .upsert({ organisation_id: ctx.organisationId, forms_enabled: enabled, updated_by: ctx.userId, updated_at: new Date().toISOString() },
+            { onConflict: 'organisation_id' })
+  if (error) return { error: 'Could not save. Try again.' }
+  revalidatePath('/settings/whatsapp')
+  return { ok: true }
+}

@@ -181,3 +181,52 @@ The schema can stay in place: it is inert while every `notify_whatsapp` is false
 ## 12. Go-live (owner-gated, needs Meta approval and #193 applied)
 
 See plan Task 25. Stage 1: WM staff on one project. Stage 2: one live project with invited foremen. Success measure: a snag assigned to a foreman is closed with a close-out photo over WhatsApp, leaves the PM's waiting list, and nobody chases it in a site group.
+
+## 13. Inspection forms over WhatsApp (E4, migration `00229`)
+
+Members fill in an inspection from WhatsApp: a Flow for the questions, photos in chat captioned with an item number, SUBMIT; a signed web link for the signature (or for the whole form when the template cannot be a Flow). Design: `docs/superpowers/specs/2026-10-05-whatsapp-inspection-flows-design.md`.
+
+It stays off until **all** of these are true. Steps marked **[owner]** configure Meta or are legal calls.
+
+1. **Secret** (both sides, same value; without it the edge never offers forms and the route refuses every call):
+   ```
+   openssl rand -base64 48
+   ```
+   Set it as `WHATSAPP_INTERNAL_SECRET` in Supabase Edge secrets and in Vercel Production and Preview, then redeploy `whatsapp-webhook` and `whatsapp-worker` with `apps/edge-functions/deploy.sh`.
+2. **[owner] Template** `esite_form_submitted`, category UTILITY, language `en`, body:
+   > {{1}} submitted the inspection {{2}} ({{3}}) on {{4}}. It is waiting for verification in E-Site.
+   
+   Sample values: `Johan B`, `MINIATURE SUBSTATION 1`, `Miniature Substation Inspection Report`, `(643) KINGSWALK`. When approved: `UPDATE whatsapp.templates SET status = 'approved' WHERE name = 'esite_form_submitted';`
+3. **[owner] The Flow.** Flows need a verified business. Dry run first (writes the JSON and prints its SHA-256, sends nothing):
+   ```
+   npx tsx apps/web/scripts/publish-inspection-flow.ts --template 6b991e32-36af-4869-a2cd-138f7ea52b45
+   ```
+   The JSON for the first template is checked in at `docs/whatsapp/flows/miniature-substation-inspection-v1.0.json`; paste it into WhatsApp Manager → Flows → Create → Flow JSON to see Meta's validation and preview. Then create it as a draft and record it (needs `WHATSAPP_TOKEN` with `whatsapp_business_management`, and `WHATSAPP_WABA_ID`):
+   ```
+   npx tsx apps/web/scripts/publish-inspection-flow.ts --template 6b991e32-36af-4869-a2cd-138f7ea52b45 --publish
+   ```
+   A draft Flow is sent with `mode: draft` and works for test numbers. After a test run, publish it:
+   ```
+   npx tsx apps/web/scripts/publish-inspection-flow.ts --template 6b991e32-36af-4869-a2cd-138f7ea52b45 --publish --status published
+   ```
+   The form service only sends a Flow whose recorded SHA-256 equals what the current builder produces. If the builder changes, re-run the script; until then people get the signed web link instead (logged as `published Flow does not match the builder output`).
+4. **[owner] Switches.** `/settings/whatsapp` → *Inspection forms over WhatsApp (this organisation)*; the platform *Sending enabled* switch; per project, *Integrations* → WhatsApp notifications (needed only for the summary to the site).
+5. **[owner] POPIA §72.** Answers, photos and the PDF pass through Meta's servers outside South Africa. **Cost** (from 1 Oct 2026): in-window replies USD 0.0095 after 1,000 free per number per month; each summary is a utility template at USD 0.0095 per recipient.
+
+**Behaviour worth knowing before switching on:**
+- *Albums.* WhatsApp puts a caption only on the first photo of an album, so uncaptioned photos sent within 30 minutes of a numbered one go to the same item, and the reply names the item. To put one elsewhere, send it again with its own number.
+- *Summary before template approval.* While `esite_form_submitted` is not `approved` in `whatsapp.templates`, summaries are dropped (`suppressed`, `template_not_approved`), not queued: a batch of week-old summaries arriving on approval would mislead more than help. The submitter's confirmation is a free-form reply and does not need the template.
+- *Confirmation timing.* The confirmation with the PDF goes about a minute after SUBMIT (it waits for the PDF to be rendered).
+- *Channel columns are hints.* `inspections.responses.via`, `photos.via` and `inspections.submitted_via` are set by the WhatsApp path and the web submit, but `authenticated` can write those tables, so do not use them as evidence.
+
+Smoke after enabling, with a linked test number on a project with a writable inspection: MENU → *Inspections* → pick → complete the Flow → send a photo captioned `10` → SUBMIT → open the signed link → sign → Submit. Check: `inspections.responses.via = 'whatsapp'`, a `whatsapp.form_sessions` row `submitted`, `whatsapp.outbox` rows `form_confirm` (sent, a document) and `form_submitted`.
+
+Rollback: switch the org off in `/settings/whatsapp` (stops new forms at once; queued summaries are suppressed by `form_receive_check`), or unset `WHATSAPP_INTERNAL_SECRET`.
+
+## 14. Drawings, documents and reports (sub-projects 3 + 4)
+
+- **Menu rows:** *Drawings & documents* and *Reports & schedules*, both for the current project. Spec: `docs/superpowers/specs/2026-10-06-whatsapp-files-reports-design.md`.
+- **Files:** `whatsapp.wa_project_files` / `wa_file` / `wa_project_reports` / `wa_report` act as the person (site scope applies). The edge downloads from `drawings`, `project-documents` or `reports` only after an ok, and sends via `uploadMedia` + `sendDocument`.
+- **Cable schedule:** built by the web app at `POST /api/internal/whatsapp/reports`. It needs `WHATSAPP_INTERNAL_SECRET` on both sides, the same as forms; without it the row is simply not offered.
+- **Debug:** `whatsapp.inbound.outcome_reason` records `files_recent`, `files_search`, `files_no_match`, `file_sent`, `file_gone`, `report_sent`, `cable_sent`, `cable_no_access`, `cable_none` and `cable_off`.
+

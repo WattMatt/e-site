@@ -9,6 +9,7 @@ export const TEMPLATES = {
   due_tomorrow: 'esite_item_due_tomorrow',
   overdue: 'esite_item_overdue',
   fold: 'esite_items_waiting',
+  form_submitted: 'esite_form_submitted',
 } as const
 
 export interface ItemCard {
@@ -70,4 +71,29 @@ export function optinSend(inviterName: string, projectName: string, linkId: stri
 
 export function foldSend(count: number): TemplateSend {
   return { name: TEMPLATES.fold, body: [String(count)], buttons: [] }
+}
+
+export interface FormSummary {
+  label: string
+  templateName: string
+  projectName: string
+  submitterName: string
+  verifierName: string | null
+}
+
+/**
+ * esite_form_submitted (UTILITY, to be approved by Meta; text in docs/whatsapp-runbook.md):
+ *   "{{1}} submitted the inspection {{2}} ({{3}}) on {{4}}. It is waiting for verification in E-Site."
+ */
+export function formSubmittedSend(s: FormSummary): TemplateSend {
+  return { name: TEMPLATES.form_submitted, body: [s.submitterName, s.label, s.templateName, s.projectName].map(cleanParam), buttons: [] }
+}
+
+export function formConfirmCaption(s: FormSummary): string {
+  return `✅ Submitted *${s.label}* (${s.templateName}) on ${s.projectName}. It is with ${s.verifierName ?? 'the verifier'} to verify.`
+}
+
+export function formPdfFilename(s: FormSummary): string {
+  const safe = `${s.label} ${s.templateName}`.replace(/[^A-Za-z0-9 ()_-]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120)
+  return `${safe || 'inspection'}.pdf`
 }

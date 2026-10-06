@@ -1,5 +1,6 @@
 'use client'
 
+import { PhotoSourcePicker, addPhotos } from '@/components/ui/PhotoSourcePicker'
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -575,16 +576,8 @@ function AddSnagForm({
 
           {/* Evidence photos */}
           <div>
-            <label style={FIELD_LABEL} htmlFor="asvf_photos">Evidence photos</label>
-            <input
-              id="asvf_photos"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic"
-              multiple
-              disabled={isPending}
-              onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}
-              style={{ fontSize: 12, color: 'var(--c-text-dim)', width: '100%' }}
-            />
+            <span style={FIELD_LABEL}>Evidence photos</span>
+            <PhotoSourcePicker disabled={isPending} onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
             <p style={{ fontSize: 11, color: 'var(--c-text-dim)', margin: '4px 0 0' }}>
               {photoFiles.length > 0
                 ? `${photoFiles.length} photo${photoFiles.length === 1 ? '' : 's'} will be attached to this snag.`

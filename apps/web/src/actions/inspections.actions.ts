@@ -27,8 +27,10 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
+import { ORG_WRITE_ROLES } from '@esite/shared'
 import { dispatchNotification } from '@/lib/notifications'
+import { afterWebSubmitOfWhatsAppForm } from '@/lib/whatsapp-forms/after-submit'
 import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -51,6 +53,19 @@ async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
   if (!data || !['owner', 'admin', 'project_manager'].includes(data.role as string)) {
     throw new Error('Forbidden: project_manager or above only')
   }
+  return user
+}
+
+/**
+ * PM or above on THIS project: org owner/admin/PM, or a member promoted to project_manager on the
+ * project. Matches inspections.user_can_manage_inspections(), which the transition guard (00235)
+ * applies to reassigning and abandoning.
+ */
+async function requireProjectPmOrAbove(supabase: AnyClient, projectId: string) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+  const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!guard.ok) throw new Error('Forbidden: project_manager or above only')
   return user
 }
 
@@ -314,7 +329,7 @@ export async function updateInspectionAssignmentAction(
   input: UpdateInspectionAssignmentInput,
 ): Promise<void> {
   const supabase = (await createClient()) as AnyClient
-  const user = await requirePmOrAbove(supabase, input.organisationId)
+  const user = await requireProjectPmOrAbove(supabase, input.projectId)
   await requireFeature(input.organisationId, 'inspections', supabase)
 
   // Read the current assignee to decide whether a notification is warranted.
@@ -522,13 +537,17 @@ export async function submitInspectionAction(
 ): Promise<void> {
   const supabase = (await createClient()) as AnyClient
 
-  const { error } = await supabase
+  const { data: moved, error } = await supabase
     .schema('inspections')
     .from('inspections')
-    .update({ status: 'awaiting_verification', completed_at: new Date().toISOString() })
+    // submitted_session_id is cleared: only a WhatsApp SUBMIT may claim the follow-up of a submit (E4).
+    .update({ status: 'awaiting_verification', completed_at: new Date().toISOString(), submitted_via: 'web', submitted_session_id: null })
     .eq('id', inspectionId)
     .in('status', ['in_progress', 're-inspect_required'])
+    .select('id')
   if (error) throw error
+  // Nothing moved (already submitted, or not in a submittable state): no notices, no WhatsApp follow-up.
+  const didSubmit = (moved ?? []).length > 0
 
   const { data: insp } = await supabase
     .schema('inspections')
@@ -540,7 +559,7 @@ export async function submitInspectionAction(
   const verifierId = (insp as { verifier_id: string | null } | null)?.verifier_id ?? null
   const targetLabel = (insp as { target_label: string } | null)?.target_label ?? 'inspection'
 
-  if (verifierId) {
+  if (verifierId && didSubmit) {
     await dispatchNotification({
       userIds: [verifierId],
       title: 'Inspection awaiting your verification',
@@ -552,6 +571,11 @@ export async function submitInspectionAction(
     })
   }
 
+  // Opened on WhatsApp (E4)? Then the person's chat gets the confirmation with the PDF and the
+  // site's linked members get the summary. Never throws.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user && didSubmit) await afterWebSubmitOfWhatsAppForm(inspectionId, user.id)
+
   revalidatePath(`/projects/${projectId}/inspections/${inspectionId}`)
   revalidatePath(`/projects/${projectId}/inspections`)
 }
@@ -560,7 +584,7 @@ export async function submitInspectionAction(
 
 /**
  * Cancel an in-flight inspection. Reason required (audit trail). Only
- * PM-or-above on the parent org may abandon.
+ * PM-or-above on the project (effective role) may abandon.
  *
  * Returns { ok: true } on success or { ok: false, error: string } on failure
  * so the client can surface the error without throwing.
@@ -577,7 +601,7 @@ export async function abandonInspectionAction(
   try {
     const supabase = (await createClient()) as AnyClient
     const orgId = await getOrgIdForProject(supabase, projectId)
-    const user = await requirePmOrAbove(supabase, orgId)
+    const user = await requireProjectPmOrAbove(supabase, projectId)
     await requireFeature(orgId, 'inspections', supabase)
 
     // Fetch inspection to validate status and collect notification recipients.
