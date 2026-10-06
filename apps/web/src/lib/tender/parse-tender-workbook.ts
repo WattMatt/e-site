@@ -161,17 +161,32 @@ const TOTAL_RE = /\bTOTAL\b|CARRIED\s+(FORWARD|TO)/i
 const BROUGHT_FORWARD_RE = /\bBROUGHT\s+FORWARD\b|\bB\/F\b/i
 
 function isTotalText(t: string): boolean {
-  return TOTAL_RE.test(t) && (/^(SUB[\s-]?)?TOTAL\b/i.test(t) || /CARRIED|SUMMARY|BILL|FORWARD/i.test(t))
+  return TOTAL_RE.test(t) && (/^(SUB[\s-]?)?TOTAL\b/i.test(t) || /CARRIED|SUMMARY|BILL|FORWARD|COLLECTION/i.test(t))
+}
+
+/** Total or collection wording standing where an item code belongs. */
+function isTotalCode(code: string): boolean {
+  return isTotalText(code) || /\bCOLLECTION\b/i.test(code)
 }
 
 /**
- * A total row carries no unit or quantity, and its "code" cell is either empty
- * or itself the total text. A coded item whose DESCRIPTION happens to start with
- * "Total" ("Total station survey") is an item, not a total.
+ * Words, not a code: no digit and at least two words ("Allow for testing").
+ * Short lettered codes ('C', 'AB') carry no space and stay codes.
+ */
+function isSentenceCode(code: string): boolean {
+  return !/\d/.test(code) && /[A-Za-z]{2,}[\s\-–:,&/]+[A-Za-z]{2,}/.test(code)
+}
+
+/**
+ * Total wording in the ITEM column makes a total whatever the other cells hold:
+ * a stray number in QTY (a misaligned amount) must not turn it into an item.
+ * Without a code, the DESCRIPTION decides, and only on a row with no unit or
+ * quantity, so a coded item whose description happens to start with "Total"
+ * ("Total station survey") is an item, not a total.
  */
 function isTotalRow(code: string, description: string, unit: string | null, quantity: number | null): boolean {
+  if (code !== '') return isTotalCode(code)
   if (unit != null || quantity != null) return false
-  if (code !== '') return isTotalText(code)
   return isTotalText(description)
 }
 
@@ -237,7 +252,7 @@ function parseBillSheet(
   const allCodes: string[] = []
   for (let r = header.index + 1; r < rows.length; r++) {
     const c = codeOf(r)
-    if (c && !isTotalText(c)) allCodes.push(c)
+    if (c && !isTotalCode(c) && !isSentenceCode(c)) allCodes.push(c)
   }
   const hasChildren = (code: string) => allCodes.some((c) => isDescendant(code, c))
   const billCode = billCodeFromName(name) ?? billCodeFromCodes(allCodes) ?? name
@@ -257,7 +272,7 @@ function parseBillSheet(
   for (let r = header.index + 1; r < rows.length; r++) {
     const row = rows[r]
     const rowNumber = r + 1
-    const code = codeOf(r)
+    const itemText = codeOf(r)
     let description = str(at(row, 'description'))
     if (description === '' && columns.description !== undefined) {
       // A description sometimes spills into the unlabelled column beside it.
@@ -265,6 +280,12 @@ function parseBillSheet(
       const mapped = Object.values(columns).includes(columns.description + 1)
       if (!mapped && typeof next === 'string') description = str(next)
     }
+    // A sentence in the ITEM column is text, never an item code: it joins the
+    // description and the row is classified as uncoded (note or unclassified).
+    // Total wording is kept as the code so the total check below still sees it.
+    const sentence = itemText !== '' && !isTotalCode(itemText) && isSentenceCode(itemText)
+    const code = sentence ? '' : itemText
+    if (sentence) description = [itemText, description].filter(Boolean).join(' ')
     const unitRaw = at(row, 'unit')
     const unit = str(unitRaw) || null
     const qtyRaw = at(row, 'qty')
