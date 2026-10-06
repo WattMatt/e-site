@@ -11,6 +11,7 @@ import { createProcessorStore, createWorkerStore } from '../_shared/whatsapp/sto
 import { drainOutbox } from '../_shared/whatsapp/worker.ts'
 import { processPending } from '../_shared/whatsapp/processor.ts'
 import { createFormsClient } from '../_shared/whatsapp/forms-client.ts'
+import { createReportsClient } from '../_shared/whatsapp/reports-client.ts'
 
 const env = (k: string) => Deno.env.get(k) ?? ''
 
@@ -24,7 +25,8 @@ export const handler = async (req: Request): Promise<Response> => {
     const drained = await drainOutbox({ store: createWorkerStore(sb), meta, now })
     const appUrl = env('APP_URL') || 'https://www.e-site.live'
     const retried = await processPending({ store: createProcessorStore(sb), meta, now, appUrl,
-      forms: createFormsClient({ appUrl, secret: env('WHATSAPP_INTERNAL_SECRET') }) }, 20, 30)
+      forms: createFormsClient({ appUrl, secret: env('WHATSAPP_INTERNAL_SECRET') }),
+      reports: createReportsClient({ appUrl, secret: env('WHATSAPP_INTERNAL_SECRET') }) }, 20, 30)
     return new Response(JSON.stringify({ drained, retried }), { headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
     console.error('whatsapp-worker error:', e)
