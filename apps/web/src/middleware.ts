@@ -32,6 +32,9 @@ const PUBLIC_PATHS = [
   '/inspection',
   // Client proposal by secure link (Solar §9.4, D-18): no login.
   '/proposal/',
+  // Tender invitation link and tenderer sign-in (E5 slice B): no login.
+  '/tender/invite/',
+  '/tender/login',
   // Public marketing + legal pages (PR #10, built for the Paystack KYC
   // review). Must be reachable without a session — Paystack reviewers and
   // anonymous visitors hit these without logging in.
@@ -60,6 +63,9 @@ const PUBLIC_CONTENT_PREFIXES = [
   // A signed-in client opening a mailed proposal link must not be bounced to /dashboard, nor
   // intercepted by the email-verify / MFA gates (Solar §9.4).
   '/proposal/',
+  // A signed-in tenderer opening another invitation must not be bounced away.
+  '/tender/invite/',
+  '/tender/login',
   '/pricing',
   '/legal',
   '/sitemap.xml',
@@ -67,6 +73,11 @@ const PUBLIC_CONTENT_PREFIXES = [
   ...LEGAL_PREFIXES,
 ]
 const ONBOARDING_PATH = '/onboarding'
+// The tenderer portal (E5 slice B). A tenderer is an auth user with NO
+// organisation, so these paths are exempt from the no-org → /onboarding
+// redirect; signed-out visitors go to the tenderer sign-in, not /login.
+const TENDER_PORTAL_PREFIX = '/tender'
+const isTenderPortalPath = (p: string) => p === TENDER_PORTAL_PREFIX || p.startsWith(`${TENDER_PORTAL_PREFIX}/`)
 const VERIFY_EMAIL_PATH = '/verify-email'
 const VERIFY_MFA_PATH = '/verify-mfa'
 
@@ -172,7 +183,7 @@ export async function middleware(request: NextRequest) {
   //    session even though it isn't fully elevated yet — neither is public).
   if (!user && !isPublicPath && !isVerifyEmail && !isVerifyMfa) {
     const url = request.nextUrl.clone()
-    url.pathname = '/login'
+    url.pathname = isTenderPortalPath(pathname) ? '/tender/login' : '/login'
     url.searchParams.set('next', pathname)
     return NextResponse.redirect(url)
   }
@@ -227,7 +238,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // 5. Authenticated but no org → onboarding
-  if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding) {
+  if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding && !isTenderPortalPath(pathname)) {
     if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
       url.pathname = ONBOARDING_PATH

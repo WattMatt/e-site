@@ -6,6 +6,10 @@ import { ORG_WRITE_ROLES } from '@esite/shared'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { getTenderDetailAction } from '@/actions/tender.actions'
+import { listInvitationsAction } from '@/actions/tender-invite.actions'
+import { tenderInvitesEnabled } from '@/lib/tender/gate'
+import { IssuePanel } from '../_components/IssuePanel'
+import { InvitationsPanel } from '../_components/InvitationsPanel'
 import { ImportPanel } from '../_components/ImportPanel'
 import { ReconciliationView } from '../_components/ReconciliationView'
 import { BoqGrid } from '../_components/BoqGrid'
@@ -28,6 +32,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const { tender, items, estimate } = res.data
   if (tender.project_id !== id) notFound()
   const isDraft = tender.status === 'draft'
+  const invRes = await listInvitationsAction(tenderId)
+  const invitations = 'data' in invRes ? invRes.data : []
   const itemCount = items.filter((i) => i.kind === 'item').length
 
   return (
@@ -51,6 +57,17 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </div>
 
       {isDraft && <ImportPanel tenderId={tender.id} hasImport={!!tender.imported_at} />}
+
+      {isDraft && tender.imported_at && <IssuePanel tenderId={tender.id} closingAt={tender.closing_at} />}
+
+      {(isDraft || tender.status === 'issued') && (
+        <InvitationsPanel
+          tenderId={tender.id}
+          invitations={invitations}
+          sendingEnabled={tenderInvitesEnabled()}
+          open={isDraft || tender.status === 'issued'}
+        />
+      )}
 
       {tender.reconciliation && (
         <ReconciliationView

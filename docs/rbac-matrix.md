@@ -883,6 +883,22 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > Every tender table (`projects.tenders`, `tender_boq_items`, `tender_estimate_lines`, `tender_requirements`) is readable **only** by the project's owner/admin/project manager (`user_effective_project_role`), not by every project member: a contractor on site must not see a tender being prepared, and nobody outside WM may ever read `tender_estimate_lines` (WM's internal estimate). Proven by `scripts/db/assert-tender-boq-roles.sql` (29 assertions, impersonating real production users; mutation-tested). Once a tender leaves `draft` its BOQ, estimate and requirements are frozen by trigger. The `tender-files` bucket has no client storage policies; the server mints signed upload/download URLs after the role check. Import runs through `projects.tender_replace_boq` (SECURITY DEFINER with one `user_can_manage_tender` gate up front, measured 268 ms for 3,000 rows vs 5.3 s as invoker against the 8 s `authenticated` statement timeout); stored workbook paths must sit inside `org/project/tender/`. Status only moves forward; an issued tender's import is frozen and needs every fixed sum priced. Slice B adds the tenderer read path.
 
+### Tender invitations and the tenderer portal (`tender-invite.actions.ts`, `tender-portal.actions.ts`, E5 slice B, migration `00243`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer | tenderer¹ |
+|---|---|---|---|---|---|---|---|---|
+| `issueTenderAction` / `listInvitationsAction` / `prepareInvitationsAction` / `regenerateInvitationLinkAction` / `revokeInvitationAction` / `readTenderListAction` | W | W | W | — | — | — | — | — |
+| `sendTenderInvitationsAction` (refuses unless `TENDER_INVITES_ENABLED=true`, shipped OFF) | W | W | W | — | — | — | — | — |
+| `myTendersAction` / `portalTenderAction` / `saveProfileAction` (own participation only) | — | — | — | — | — | — | — | W |
+| `previewInvitationAction` / `acceptInvitationAction` / `requestTenderSignInAction` (public, rate-limited) | public | public | public | public | public | public | public | public |
+
+| Route | Access |
+|---|---|
+| `/tender/invite/[token]`, `/tender/login` | Public (no session). |
+| `/tender`, `/tender/[tenderId]` | Signed-in tenderer; exempt from the no-organisation → `/onboarding` redirect; signed-out visitors go to `/tender/login`. A non-participant or a draft tender is a 404. |
+
+> ¹ A **tenderer** is an auth user with no organisation, holding a `projects.tender_participants` row from an accepted invitation. They have **no row policy on `projects.tenders`, `tender_boq_items`, `tender_requirements` or `tender_estimate_lines`**: everything they read comes through the column-limited `projects.tender_portal_*` SECURITY DEFINER functions, for tenders they accepted, once issued (a row policy would expose every column, including the reconciliation that carries WM's estimate totals). Proven by `scripts/db/assert-tender-invitations-roles.sql` (30 checks; adding such a row policy turns one red). Invitation links are 32 random bytes; only the SHA-256 is stored. A brand-new address is signed in directly from the link; **any existing account must prove its mailbox by emailed link**, so nobody who can prepare an invitation can open it as an existing bidder and read their sealed submissions.
+
 ## Public / unauthenticated
 
 | Route | Access |
