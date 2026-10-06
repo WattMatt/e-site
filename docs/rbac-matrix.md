@@ -51,6 +51,7 @@ membership.
 |---|---|---|---|---|---|---|---|
 | `/dashboard` | W | W | W | W | W | W | R |
 | `/projects` (list) | W | W | W | W | R | — | R |
+| `/projects/new` + `createProjectAction` (and the *+ New Project* buttons on `/dashboard`, `/projects`) | ✓ | ✓ | ✓ | → | → | → | → |
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
 | `/projects/[id]/capture` (the single in-project Capture menu — diary entry, snag, site form, inspection, photo; added 2026-10-05). Each tile is shown only to the roles its target already admits (`lib/capture/capture-actions.ts`, pinned by a contract test that reads the targets): snag follows `SNAG_FIELD_ROLES`, site form `FORMS_FIELD_ROLES`, diary/photo the diary row's write set. The inspection tile needs an ORG role of owner/admin/PM in the project's org (the gate `createInspectionAction` applies) and links to `/inspections/unlock` when the org has not unlocked inspections. A caller with no project role sees an explanation instead of tiles | W | W | W | W (no inspection) | W (snag, site form) | W (snag, site form) | → `/portal` |
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |

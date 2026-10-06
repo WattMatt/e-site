@@ -130,3 +130,30 @@ describe('updateProjectAction', () => {
     expect(revalidatePathMock).toHaveBeenCalledWith('/projects/proj-1', 'layout')
   })
 })
+
+describe('createProjectAction — role gate (site-scoped access)', () => {
+  beforeEach(() => {
+    createClientMock.mockReset()
+  })
+
+  function memberClient(role: string) {
+    const insert = vi.fn()
+    return {
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+      from: () => ({
+        select: () => ({ eq: () => ({ eq: () => ({ limit: () => ({ single: async () => ({ data: { organisation_id: 'o1', role }, error: null }) }) }) }) }),
+      }),
+      schema: () => ({ from: () => ({ insert }) }),
+      _insert: insert,
+    }
+  }
+
+  it('refuses a contractor with a sentence, before any quota check or insert', async () => {
+    const client = memberClient('contractor')
+    createClientMock.mockResolvedValue(client)
+    const { createProjectAction } = await import('./project.actions')
+    const result = await createProjectAction({ name: 'New site' } as never)
+    expect(result).toEqual({ error: 'Only an owner, admin or project manager can create projects.' })
+    expect(client._insert).not.toHaveBeenCalled()
+  })
+})

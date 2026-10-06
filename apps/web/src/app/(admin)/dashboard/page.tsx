@@ -8,6 +8,8 @@ import {
   getReInspectRequired,
   getStaleDraftInspections,
   SLA_DEFAULTS,
+  ORG_WRITE_ROLES,
+  type OrgRole,
 } from '@esite/shared'
 import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
@@ -28,6 +30,8 @@ export default async function DashboardPage() {
     .single()
 
   const orgId = membership?.organisation_id
+  // Only owner/admin/PM create projects (site-scoped access, 00238).
+  const canCreateProject = ORG_WRITE_ROLES.includes((membership?.role ?? '') as OrgRole)
   const orgIds = orgId ? [orgId] : []
 
   const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, awaiting, reinspect, staleDrafts] = await Promise.all([
@@ -154,9 +158,11 @@ export default async function DashboardPage() {
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">{orgName}</p>
         </div>
-        <Link href="/projects/new" className="btn-primary-amber">
-          + New Project
-        </Link>
+        {canCreateProject && (
+          <Link href="/projects/new" className="btn-primary-amber">
+            + New Project
+          </Link>
+        )}
       </div>
 
       {/* KPI row */}
@@ -528,7 +534,9 @@ export default async function DashboardPage() {
       {/* Quick actions */}
       <div className="quick-actions animate-fadeup animate-fadeup-4">
         {[
-          { href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} aria-hidden="true" /> },
+          ...(canCreateProject
+            ? [{ href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} aria-hidden="true" /> }]
+            : []),
           { href: '/snags/new',    label: 'Log Snag',     Icon: () => <AlertTriangle size={18} aria-hidden="true" /> },
           { href: '/diary',        label: 'Site Diary',   Icon: () => <BookOpen      size={18} aria-hidden="true" /> },
           ...(isMarketplaceEnabled()
