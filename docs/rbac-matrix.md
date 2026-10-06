@@ -909,6 +909,16 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > **Sealed bids.** `tender_submission_lines` (prices) and `tender_submission_documents` are readable by owner/admin/project manager only when `projects.tender_seal_lifted()` — the closing time has passed and the tender is not draft or cancelled — and only for bids whose status is `submitted`. A draft that was never submitted is never opened. Before closing WM sees only `tender_submissions` (status, time, count). A tenderer writes prices, documents and addendum acknowledgements only through SECURITY DEFINER functions (`tender_save_rates`, `tender_record_document`, `tender_acknowledge_addendum`, `tender_submit`, `tender_reopen_submission`), each gated on an email-proved session (`session_proves_email`) and an open tender; direct INSERT/UPDATE on lines and documents is not granted. Bidders read clarifications only through `tender_portal_clarifications`, which never returns who asked. Who may OPEN bids is `projects.user_can_open_tender` (today = owner/admin/PM; the one place to change when the owner decides). Once the closing time has passed it can no longer be moved if any bid was submitted (an issued tender with none may still be extended), and no addendum can be published; anything published to all bidders (addenda, answers) is final. Every tender table also carries the RESTRICTIVE `site_scope` policy (00238): WM rows follow the caller's access to the tender's project, and the tables a tenderer touches directly add an arm for the participant's OWN rows (a tenderer is never a project member); restrictive policies only narrow, so neither arm widens the seal. Proven by `scripts/db/assert-tender-sealed-bids.sql` (75 behavioural checks, 14 mutations each turning its own check red).
 
+### Tender adjudication (`tender-adjudication.actions.ts`, `lib/tender/load-adjudication.ts`, E5 slice D)
+
+| Route / action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer | tenderer |
+|---|---|---|---|---|---|---|---|---|
+| `/projects/[id]/tenders/[tenderId]/adjudication` (page; `requireEffectiveRole(ORG_WRITE_ROLES)` + `gateTender`) | R | R | R | — | — | — | — | — |
+| `GET /api/tenders/[tenderId]/adjudication` (Excel; `gateTender`) | R | R | R | — | — | — | — | — |
+| `closeTenderAction` (issued → closed, only after the closing time) / `markAdjudicatedAction` (closed → adjudicated) | W | W | W | — | — | — | — | — |
+
+> Bids are read through the caller's own session, so the sealed policies of `00244` are the real gate: nothing is shown until `tender_seal_lifted` (closing passed, tender neither draft nor cancelled) **and** the caller passes `projects.user_can_open_tender` (today the same owner/admin/PM set as `user_can_manage_tender`; the single place to narrow it when the owner decides who at WM may open tenders). Adjudication also waits for the tender to be **closed**, and compares submitted bids only. Every read pages past PostgREST's `max_rows`; a submitted bid with a missing rate is refused, never ranked.
+
 ## Public / unauthenticated
 
 | Route | Access |

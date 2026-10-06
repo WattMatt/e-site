@@ -17,6 +17,7 @@ import { ReconciliationView } from '../_components/ReconciliationView'
 import { BoqGrid } from '../_components/BoqGrid'
 import { DeleteTenderButton } from '../_components/DeleteTenderButton'
 import { formatRand, tenderStatusVariant } from '../_components/format'
+import { AdjudicationActions } from '../_components/AdjudicationActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,6 +59,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           )}
           {tender.stated_total != null && <span>Incl. VAT {formatRand(tender.stated_total)}</span>}
           {isDraft && <DeleteTenderButton tenderId={tender.id} projectId={id} />}
+          {tender.status === 'issued' && tender.closing_at && new Date(tender.closing_at) <= new Date() && (
+            <AdjudicationActions tenderId={tender.id} status={tender.status} />
+          )}
+          {(tender.status === 'closed' || tender.status === 'adjudicated') && (
+            <a className="btn btn-sm" href={`/projects/${id}/tenders/${tender.id}/adjudication`}>Adjudicate bids</a>
+          )}
         </div>
       </div>
 
