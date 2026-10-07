@@ -11,7 +11,10 @@ export function initServerSentry(dsn: string) {
     environment: process.env.NODE_ENV ?? 'production',
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
     sampleRate: 1.0,
-    includeLocalVariables: true,
+    // Off, deliberately: local variable capture attaches the value of every
+    // local in each stack frame (tenant rows, costs, BOQ rates) to the event,
+    // which exceeds what /legal/privacy says Sentry receives. sentry.test.ts.
+    includeLocalVariables: false,
     // httpIntegration is auto-included by @sentry/nextjs — explicit reference
     // was removed when the SDK changed exports. Listing it here breaks the
     // build with "httpIntegration is not exported".

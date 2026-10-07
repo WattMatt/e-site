@@ -13,15 +13,14 @@ export async function initSentry() {
 
   // Dynamic import to keep bundle size down when DSN is not configured
   const Sentry = await import('@sentry/nextjs')
+  // No Session Replay, deliberately. /legal/privacy tells users Sentry receives
+  // "IP address, stack traces, and limited request metadata only"; a replay is
+  // a recording of whatever is on screen (tenant names, costs, rates). Adding
+  // it back is a privacy-notice change first — sentry.test.ts guards this.
   Sentry.init({
     dsn,
     environment: process.env.NODE_ENV ?? 'production',
     tracesSampleRate: 0.2,
-    replaysSessionSampleRate: 0.05,
-    replaysOnErrorSampleRate: 1.0,
-    integrations: [
-      Sentry.replayIntegration({ maskAllText: false, blockAllMedia: false }),
-    ],
   })
 
   // Expose for ErrorBoundary componentDidCatch

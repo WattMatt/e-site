@@ -8,8 +8,8 @@ What this covers: turning on error monitoring (Sentry) and product analytics (Po
 
 | Surface | File | Status |
 |---|---|---|
-| Web — server-side Sentry | [`apps/web/src/instrumentation.ts`](../apps/web/src/instrumentation.ts) | ✅ Wired; loads on first server request |
-| Web — client-side Sentry | [`apps/web/src/lib/sentry.ts`](../apps/web/src/lib/sentry.ts) + [`SentryBoot.tsx`](../apps/web/src/components/providers/SentryBoot.tsx) | ✅ Wired in `layout.tsx` |
+| Web — server-side Sentry | [`apps/web/src/instrumentation.ts`](../apps/web/src/instrumentation.ts) | ✅ Wired; loads on first server request. `includeLocalVariables: false` (privacy notice — see below) |
+| Web — client-side Sentry | [`apps/web/src/lib/sentry.ts`](../apps/web/src/lib/sentry.ts) + [`SentryBoot.tsx`](../apps/web/src/components/providers/SentryBoot.tsx) | ✅ Wired in `layout.tsx`. **No Session Replay** (privacy notice — see below). CSP `connect-src` allows exactly the DSN's ingest origin ([`sentry-hosts.ts`](../apps/web/src/lib/sentry-hosts.ts)) |
 | Web — PostHog | [`apps/web/src/components/providers/AnalyticsProvider.tsx`](../apps/web/src/components/providers/AnalyticsProvider.tsx) | ✅ Wired, POPIA-safe (`autocapture: false`, `maskAllInputs: true`) |
 | Web — event catalogue | [`apps/web/src/lib/analytics.ts`](../apps/web/src/lib/analytics.ts) | ✅ `ANALYTICS_EVENTS` defined |
 | Web — health check | [`apps/web/src/app/api/health/route.ts`](../apps/web/src/app/api/health/route.ts) | Pre-existing (spot check before launch) |
@@ -49,6 +49,10 @@ NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com  # or https://eu.posthog.com
 ```
 
 Add both to Vercel → Project Settings → Environment Variables (scope: Production + Preview).
+
+The CSP's Sentry host is derived from `NEXT_PUBLIC_SENTRY_DSN` at build time, so a DSN in any region (E-Site's is `*.ingest.de.sentry.io`) is allowed without editing `csp.ts`. Changing the DSN needs a rebuild.
+
+**Privacy constraint.** `/legal/privacy` tells users Sentry receives "IP address, stack traces, and limited request metadata only". Session Replay (browser) and local variable capture (server) both exceed that, so both are off and `apps/web/src/lib/sentry.test.ts` fails if either is turned back on. Enabling either is a privacy-notice change first.
 
 ### Mobile (EAS secrets)
 
