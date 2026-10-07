@@ -4,6 +4,7 @@
  * can tree-shake it out of the Edge runtime bundle.
  */
 import * as Sentry from '@sentry/nextjs'
+import { scrubBreadcrumb, scrubEvent } from './sentry-scrub'
 
 export function initServerSentry(dsn: string) {
   Sentry.init({
@@ -25,19 +26,13 @@ export function initServerSentry(dsn: string) {
       if (name.includes('/api/health')) return 0
       return process.env.NODE_ENV === 'production' ? 0.1 : 1.0
     },
-    beforeSend(event) {
-      if (event.breadcrumbs?.values) {
-        const bcs = event.breadcrumbs.values as unknown as any[]
-        ;(event.breadcrumbs as any).values = bcs.map((bc: any) => {
-          if (bc.data?.url && typeof bc.data.url === 'string') {
-            bc.data.url = bc.data.url.replace(/access_token=[^&]+/, 'access_token=REDACTED')
-            bc.data.url = bc.data.url.replace(/token=[^&]+/, 'token=REDACTED')
-          }
-          return bc
-        })
-      }
-      return event
-    },
+    // Shared with the browser (lib/sentry-scrub.ts). The hook this replaced
+    // read event.breadcrumbs.values, but in the JS SDK breadcrumbs is an array,
+    // so .values was Array.prototype.values and .map threw: the SDK then drops
+    // the event, so every server error with a breadcrumb was discarded.
+    beforeSend: scrubEvent,
+    beforeSendTransaction: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
   })
 }
 

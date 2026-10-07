@@ -71,7 +71,7 @@ After the DSN is wired:
 1. Sentry → Projects → _(your project)_ → Alerts → **Create Alert Rule**.
 2. Rule: `When: event.level is error`  ·  `If: count > 10 in 1 hour`  ·  `Then: notify #eng-alerts`. (AC from T-061.)
 3. Enable **Release Tracking**: set `release: <git sha>` in the `Sentry.init` call OR configure the Vercel Sentry integration to auto-inject it.
-4. Confirm **PII scrubbing** is on (default). The `beforeSend` hooks in `instrumentation.ts` and `sentry.ts` already strip `access_token=` and `token=` from URLs.
+4. Confirm **PII scrubbing** is on (default), and add Advanced Data Scrubbing rules for the same secrets as a backstop. In the app, `lib/sentry.ts` (browser) and `lib/sentry-server.ts` both route `beforeSend`, `beforeSendTransaction` and `beforeBreadcrumb` through `lib/sentry-scrub.ts`. That module redacts secret query/fragment params (`token_hash`, `code`, `access_token`, `refresh_token`, `token`, `email`, …) and the bearer path segment of `/auth/wa-link/`, `/tender/invite/` and `/proposal/` links in every string of the event. `sentry.sdk.test.ts` drives the real browser SDK and reads the envelopes back. Before 2026-10-07 the browser had no hooks at all, and the server hook threw on every event with a breadcrumb, which made the SDK drop the event.
 
 ---
 
