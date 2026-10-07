@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { createClient } from '@/lib/supabase/client'
 import { getTenderUploadUrlAction } from '@/actions/tender.actions'
 import {
+  listInvitationsAction,
   prepareInvitationsAction,
   readTenderListAction,
   regenerateInvitationLinkAction,
@@ -21,6 +21,14 @@ import type { ParsedTenderList } from '@/lib/tender/parse-tender-list'
 const statusVariant = (s: string) =>
   s === 'accepted' ? 'success' : s === 'sent' ? 'info' : s === 'revoked' || s === 'declined' ? 'danger' : 'ghost'
 
+const DELIVERY: Record<string, { label: string; variant: 'success' | 'info' | 'danger' | 'warning' | 'ghost' }> = {
+  sent: { label: 'sending', variant: 'ghost' },
+  delivered: { label: 'delivered', variant: 'info' },
+  opened: { label: 'opened', variant: 'success' },
+  bounced: { label: 'bounced', variant: 'danger' },
+  complained: { label: 'marked as spam', variant: 'danger' },
+}
+
 export function InvitationsPanel({
   tenderId,
   invitations,
@@ -32,13 +40,40 @@ export function InvitationsPanel({
   sendingEnabled: boolean
   open: boolean
 }) {
-  const router = useRouter()
+  // The panel keeps its own copy of the list and re-reads it after every
+  // action. It does not rely on router.refresh(): on this page a refresh render
+  // can stay suspended and never commit, which left WM looking at a stale row
+  // ("prepared" after Send) while the database had moved on.
+  const [rows, setRows] = useState(invitations)
+  useEffect(() => setRows(invitations), [invitations])
   const [manual, setManual] = useState<Invitee>({ companyName: '', contactName: '', email: '', phone: '' })
   const [list, setList] = useState<ParsedTenderList | null>(null)
   const [picked, setPicked] = useState<Record<string, Invitee>>({})
   const [links, setLinks] = useState<{ email: string; link: string }[]>([])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // Withdrawing, or replacing the link of an invitation already emailed, kills
+  // the link the contractor holds: both take two presses.
+  const [armed, setArmed] = useState<string | null>(null)
+  const twoPress = (key: string, go: () => void) => {
+    if (armed !== key) {
+      setArmed(key)
+      setTimeout(() => setArmed((a) => (a === key ? null : a)), 4000)
+      return
+    }
+    setArmed(null)
+    go()
+  }
+
+  async function reload() {
+    const r = await listInvitationsAction(tenderId)
+    if ('data' in r) setRows(r.data)
+  }
+
+  const sendResult = (d: unknown) => {
+    const r = d as { sent: number; skipped: string[] }
+    setMsg({ ok: r.skipped.length === 0, text: `${r.sent} emailed.${r.skipped.length ? ` Not sent: ${r.skipped.join('; ')}` : ''}` })
+  }
 
   async function prepare(invitees: Invitee[], source: 'manual' | 'tender_list') {
     setBusy(true)
@@ -50,7 +85,7 @@ export function InvitationsPanel({
       const rej = r.data.rejected.map((x) => `${x.email}: ${x.reason}`).join('; ')
       setMsg({ ok: r.data.rejected.length === 0, text: `${r.data.prepared.length} prepared.${rej ? ` Not prepared: ${rej}` : ''}` })
       setPicked({})
-      router.refresh()
+      await reload()
     } finally {
       setBusy(false)
     }
@@ -79,7 +114,7 @@ export function InvitationsPanel({
       const r = await fn()
       if ('error' in r) return setMsg({ ok: false, text: r.error })
       after?.(r.data)
-      router.refresh()
+      await reload()
     } finally {
       setBusy(false)
     }
@@ -93,29 +128,56 @@ export function InvitationsPanel({
       return n
     })
 
-  const pendingIds = invitations.filter((i) => i.status === 'prepared' || i.status === 'sent').map((i) => i.id)
+  const unsentIds = rows.filter((i) => i.status === 'prepared').map((i) => i.id)
 
   return (
     <Card>
-      <CardHeader><span className="data-panel-title">Invited companies ({invitations.length})</span></CardHeader>
+      <CardHeader><span className="data-panel-title">Invited companies ({rows.length})</span></CardHeader>
       <CardBody>
         <div style={{ display: 'grid', gap: 16 }}>
-          {invitations.length > 0 && (
+          {rows.length > 0 && (
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ width: '100%', fontSize: 13 }}>
-                <thead><tr><th style={{ textAlign: 'left' }}>Company</th><th>Contact</th><th>Email</th><th>Status</th><th /></tr></thead>
+                <thead><tr><th style={{ textAlign: 'left' }}>Company</th><th>Contact</th><th>Email</th><th>Status</th><th>Email delivery</th><th /></tr></thead>
                 <tbody>
-                  {invitations.map((i) => (
+                  {rows.map((i) => (
                     <tr key={i.id}>
                       <td>{i.company_name}</td>
                       <td>{i.contact_name ?? ''}</td>
                       <td>{i.email}</td>
                       <td><Badge variant={statusVariant(i.status)}>{i.status}</Badge></td>
+                      <td>
+                        {i.delivery ? <Badge variant={DELIVERY[i.delivery].variant}>{DELIVERY[i.delivery].label}</Badge> : i.sent_at ? <span style={{ fontSize: 12 }}>no report yet</span> : ''}
+                      </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {(i.status === 'prepared' || i.status === 'sent') && open && (
                           <>
-                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(() => regenerateInvitationLinkAction(i.id), (d) => setLinks((l) => [{ email: i.email, link: (d as { link: string }).link }, ...l]))}>New link</Button>
-                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(() => revokeInvitationAction(i.id))}>Withdraw</Button>
+                            {sendingEnabled && (
+                              <Button size="sm" variant="secondary" disabled={busy} onClick={() => act(() => sendTenderInvitationsAction(tenderId, [i.id]), sendResult)}>
+                                {i.status === 'sent' ? 'Send again' : 'Send'}
+                              </Button>
+                            )}{' '}
+                            <Button
+                              size="sm"
+                              variant={armed === `link:${i.id}` ? 'primary' : 'ghost'}
+                              disabled={busy}
+                              onClick={() => {
+                                const go = () => act(() => regenerateInvitationLinkAction(i.id), (d) => setLinks((l) => [{ email: i.email, link: (d as { link: string }).link }, ...l]))
+                                // A new link replaces the one already emailed.
+                                if (i.status === 'sent') twoPress(`link:${i.id}`, go)
+                                else go()
+                              }}
+                            >
+                              {armed === `link:${i.id}` ? 'Press again: the emailed link stops working' : 'Copy a link'}
+                            </Button>{' '}
+                            <Button
+                              size="sm"
+                              variant={armed === `revoke:${i.id}` ? 'primary' : 'ghost'}
+                              disabled={busy}
+                              onClick={() => twoPress(`revoke:${i.id}`, () => act(() => revokeInvitationAction(i.id)))}
+                            >
+                              {armed === `revoke:${i.id}` ? 'Press again: their link stops working' : 'Withdraw'}
+                            </Button>
                           </>
                         )}
                       </td>
@@ -128,7 +190,7 @@ export function InvitationsPanel({
 
           {links.length > 0 && (
             <div role="status" style={{ border: '1px solid var(--c-amber)', borderRadius: 8, padding: 12, fontSize: 13 }}>
-              <strong>Links (shown once — copy them now; only a hash is stored)</strong>
+              <strong>Links (shown once; copy them now). A copied link opens the invitation, and the page then emails the contractor a secure way in. Emailing from here is quicker for them.</strong>
               <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
                 {links.map((l) => (
                   <li key={l.link} style={{ wordBreak: 'break-all' }}>
@@ -202,12 +264,16 @@ export function InvitationsPanel({
                 )}
               </div>
 
-              <div style={{ fontSize: 13 }}>
-                <Button variant="secondary" disabled={busy || !sendingEnabled || pendingIds.length === 0} onClick={() => act(() => sendTenderInvitationsAction(tenderId, pendingIds), (d) => setMsg({ ok: true, text: `${(d as { sent: number }).sent} sent.` }))}>
-                  Email invitations
-                </Button>{' '}
-                {!sendingEnabled && <span>Emailing contractors is switched off until the owner turns it on. Copy each link instead.</span>}
-              </div>
+              {(unsentIds.length > 1 || !sendingEnabled) && (
+                <div style={{ fontSize: 13 }}>
+                  {sendingEnabled && (
+                    <Button variant="secondary" disabled={busy} onClick={() => act(() => sendTenderInvitationsAction(tenderId, unsentIds), sendResult)}>
+                      Email all {unsentIds.length} not yet sent
+                    </Button>
+                  )}
+                  {!sendingEnabled && <span>Emailing contractors is switched off until the owner turns it on. Copy each link instead.</span>}
+                </div>
+              )}
             </>
           )}
 

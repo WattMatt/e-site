@@ -47,6 +47,7 @@ const DECLARED: Record<string, string> = {
   'app/(admin)/projects/[id]/settings/members/page.tsx': 'org owner only, after requireRole',
   'actions/tender-submission.actions.ts': 'tenderer portal: participant gate (tender_portal_summary + own tender_participants row under RLS) before any storage call; a tenderer is never a project member',
   'actions/tender-portal.actions.ts': 'tenderer portal: a tenderer is never a project member; the gate is the invitation token hash (lookup) and then the email-proved participant check inside the tender_* definer functions',
+  'lib/tender/access.ts': 'no project data: mints a sign-in for an address its (gated) caller already resolved, and posts an email to the send-email function; callers are tender-invite (gateTender) and tender-portal (invitation token)',
   'app/api/internal/whatsapp/forms/route.ts': 'HMAC-signed internal call; acts as the linked user',
   'app/api/internal/whatsapp/reports/route.ts': 'HMAC-signed internal call; gate in lib/whatsapp-reports/cable-schedule.ts (getExportPolicy for the named user)',
   'app/api/paystack/callback/route.ts': 'billing', 'app/api/paystack/mv-subscribe/route.ts': 'billing',

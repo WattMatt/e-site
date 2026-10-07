@@ -12,6 +12,7 @@ import {
   deleteDocumentAction,
   downloadPricingWorkbookAction,
   getDocumentUploadUrlAction,
+  getPricingAction,
   getPricedUploadUrlAction,
   importPricedWorkbookAction,
   recordDocumentAction,
@@ -122,6 +123,14 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
           ],
         })
       }
+      // The workbook's rates are now the saved ones: show them, and drop any
+      // unsaved typing so a later "Save rates" cannot put old values back.
+      const fresh = await getPricingAction(tenderId)
+      if ('data' in fresh) {
+        setRates(Object.fromEntries(Object.entries(fresh.data.lines).map(([id, l]) => [id, l.rate == null ? '' : String(l.rate)])))
+        setNotPriced(Object.fromEntries(Object.entries(fresh.data.lines).map(([id, l]) => [id, l.not_priced])))
+        setDirty(new Set())
+      }
       setExcelMsg({
         ok: true,
         lines: [
@@ -146,6 +155,9 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
 
   const rows = items.filter((i) => i.sheet_name === sheet)
   const submitted = state.submission?.status === 'submitted'
+  // A submitted bid is locked: any change would quietly return it to draft, so
+  // changing it is an explicit step (Withdraw to edit), then submit again.
+  const editable = open && !submitted
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -159,6 +171,11 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
               {' · '}Total {money(total)} excl. VAT
             </div>
             {!open && <div role="status">This tender is closed. Your last submission stands.</div>}
+            {open && submitted && (
+              <div role="status">
+                Your bid is submitted and sealed. To change anything, press <strong>Withdraw to edit</strong>, make the change, then submit again before the closing time.
+              </div>
+            )}
             {open && state.compliance.issues.length > 0 && (
               <details open={!submitted}>
                 <summary>{state.compliance.issues.length} thing(s) to finish before you can submit</summary>
@@ -181,7 +198,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
         <CardBody>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
             <Button variant="secondary" size="sm" disabled={busy} onClick={download}>Download BOQ (Excel)</Button>
-            {open && (
+            {editable && (
               <label style={{ fontSize: 13 }}>
                 Upload priced copy <input type="file" accept=".xlsx,.xlsm" disabled={busy} onChange={(e) => e.target.files?.[0] && uploadPriced(e.target.files[0])} />
               </label>
@@ -209,9 +226,11 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                   }
                   const t = i.rate_cell_type
                   const r = rates[i.id] ?? ''
+                  // Same reader as the total and the save: "1 250" and "185,75" are rates too.
+                  const pr = parseRate(r)
                   const amount =
                     t === 'fixed' ? Number(i.fixed_amount ?? 0)
-                    : t === 'priced' && i.quantity != null && r !== '' && Number.isFinite(Number(r)) ? cents(Number(i.quantity) * Number(r)) / 100
+                    : t === 'priced' && i.quantity != null && pr.ok && pr.value != null ? cents(Number(i.quantity) * pr.value) / 100
                     : null
                   return (
                     <tr key={i.id}>
@@ -228,7 +247,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                               aria-label={`Rate for ${i.code ?? i.description}`}
                               inputMode="decimal"
                               value={r}
-                              disabled={!open || !!notPriced[i.id]}
+                              disabled={!editable || !!notPriced[i.id]}
                               onChange={(e) => {
                                 setRates({ ...rates, [i.id]: e.target.value })
                                 setDirty(new Set(dirty).add(i.id))
@@ -237,7 +256,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                             />
                             {t === 'not_priced' && (
                               <label style={{ fontSize: 11 }}>
-                                <input type="checkbox" disabled={!open} checked={!!notPriced[i.id]} onChange={(e) => {
+                                <input type="checkbox" disabled={!editable} checked={!!notPriced[i.id]} onChange={(e) => {
                                   setNotPriced({ ...notPriced, [i.id]: e.target.checked })
                                   if (e.target.checked) setRates({ ...rates, [i.id]: '' })
                                   setDirty(new Set(dirty).add(i.id))
@@ -257,7 +276,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
           </div>
           {open && (
             <div style={{ position: 'sticky', bottom: 0, background: 'var(--c-panel, #fff)', padding: '8px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
-              <Button isLoading={busy} disabled={dirty.size === 0} onClick={saveRates}>Save rates{dirty.size ? ` (${dirty.size})` : ''}</Button>
+              {editable && <Button isLoading={busy} disabled={dirty.size === 0} onClick={saveRates}>Save rates{dirty.size ? ` (${dirty.size})` : ''}</Button>}
               <span style={{ fontSize: 13 }}>Total {money(total)}</span>
             </div>
           )}
@@ -277,7 +296,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                     <label>
                       <input
                         type="checkbox"
-                        disabled={!open || busy}
+                        disabled={!editable || busy}
                         checked={decl.has(req.id)}
                         onChange={(e) => {
                           const next = new Set(decl)
@@ -296,11 +315,11 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                         {docs.map((d) => (
                           <li key={d.id}>
                             {d.file_name} ({Math.ceil(d.size_bytes / 1024)} KB){' '}
-                            {open && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => { const r = await deleteDocumentAction(tenderId, d.id); if ('error' in r) setMsg({ ok: false, text: r.error }); router.refresh() })}>Remove</button>}
+                            {editable && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => { const r = await deleteDocumentAction(tenderId, d.id); if ('error' in r) setMsg({ ok: false, text: r.error }); router.refresh() })}>Remove</button>}
                           </li>
                         ))}
                       </ul>
-                      {open && <input type="file" aria-label={`Upload ${req.label}`} disabled={busy} onChange={(e) => e.target.files?.[0] && uploadDoc(req.id, e.target.files[0])} />}
+                      {editable && <input type="file" aria-label={`Upload ${req.label}`} disabled={busy} onChange={(e) => e.target.files?.[0] && uploadDoc(req.id, e.target.files[0])} />}
                     </div>
                   )}
                 </li>

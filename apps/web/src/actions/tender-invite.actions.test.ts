@@ -1,10 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const { gateMock, svcMock, cookieMock, revalidateMock } = vi.hoisted(() => ({
+const { gateMock, svcMock, cookieMock, revalidateMock, sendMock } = vi.hoisted(() => ({
   gateMock: vi.fn(),
   svcMock: vi.fn(),
   cookieMock: vi.fn(),
   revalidateMock: vi.fn(),
+  sendMock: vi.fn(),
+}))
+vi.mock('@esite/shared', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  filterSuppressed: async (_svc: unknown, emails: string[]) => ({ allowed: emails, suppressed: [] }),
+}))
+vi.mock('@/lib/tender/access', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  mintTenderAccess: async () => ({ tokenHash: 'a'.repeat(56), type: 'magiclink', code: '123456' }),
+  sendTenderEmail: sendMock,
 }))
 vi.mock('@/lib/tender/gate', () => ({
   gateTender: gateMock,
@@ -104,6 +114,51 @@ describe('sendTenderInvitationsAction', () => {
     expect((r as { error: string }).error).toMatch(/switched off/)
     expect(gateMock).not.toHaveBeenCalled()
     expect(svcMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('sendTenderInvitationsAction (switched on)', () => {
+  function sendWorld() {
+    const updates: Record<string, unknown>[] = []
+    const invs = [{ id: 'i1', email: 'bidder@co.example', company_name: 'Bidder', contact_name: null, status: 'prepared' }]
+    const from = () => {
+      const q: Record<string, unknown> = {}
+      q.select = () => q
+      q.eq = () => q
+      q.in = () => q
+      q.maybeSingle = () => Promise.resolve({ data: { name: 'Name' } })
+      q.update = (p: Record<string, unknown>) => {
+        updates.push(p)
+        const u: Record<string, unknown> = {}
+        u.eq = () => u
+        u.then = (res: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(res)
+        return u
+      }
+      q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: invs, error: null }).then(res)
+      return q
+    }
+    const client = { schema: () => ({ from }), from }
+    gateMock.mockResolvedValue({ ok: true, tender: TENDER, supabase: client })
+    svcMock.mockReturnValue(client)
+    process.env.TENDER_INVITES_ENABLED = 'true'
+    return { updates }
+  }
+
+  it('stores the new link first, emails it, and only then marks the invitation sent', async () => {
+    const w = sendWorld()
+    sendMock.mockResolvedValue({ data: true })
+    expect(await sendTenderInvitationsAction('t1', ['i1'])).toEqual({ data: { sent: 1, skipped: [] } })
+    expect(Object.keys(w.updates[0]).sort()).toEqual(['token_expires_at', 'token_hash'])
+    expect(w.updates[1]).toMatchObject({ status: 'sent' })
+    expect(sendMock.mock.calls[0][0]).toBe('bidder@co.example')
+    expect(sendMock.mock.calls[0][2]).toMatch(/\/tender\/invite\/[A-Za-z0-9_-]{20,}\?k=a{56}&amp;t=magiclink/)
+  })
+
+  it('never marks an invitation sent when the email did not go, and says so', async () => {
+    const w = sendWorld()
+    sendMock.mockResolvedValue({ error: 'The email could not be sent.' })
+    expect(await sendTenderInvitationsAction('t1', ['i1'])).toEqual({ data: { sent: 0, skipped: ['bidder@co.example (The email could not be sent.)'] } })
+    expect(w.updates.some((u) => u.status === 'sent')).toBe(false)
   })
 })
 

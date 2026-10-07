@@ -13,7 +13,10 @@ export default async function MyTendersPage() {
       <CardBody>
         {'error' in res && <p role="alert">{res.error}</p>}
         {tenders.length === 0 ? (
-          <p style={{ margin: 0 }}>You have no open tenders. Open the invitation link from your email to accept one.</p>
+          <p style={{ margin: 0 }}>
+            You have not accepted a tender invitation yet. Open the invitation email and press <strong>Open my invitation</strong>.
+            Can&apos;t find it? <Link href="/tender/login">Ask for a fresh link</Link> to the address it was sent to.
+          </p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
             {tenders.map((t) => (

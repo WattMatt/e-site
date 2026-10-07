@@ -13,7 +13,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { DEFAULT_ACCENT_COLOR, escapeHtml, filterSuppressed, renderBrandedEmail } from '@esite/shared'
+import { filterSuppressed } from '@esite/shared'
+import { invitationAccessLink, mintTenderAccess, renderInvitationEmail, sendTenderEmail } from '@/lib/tender/access'
 import { gateTender, tenderInvitesEnabled, tenderPrefix, type AnyClient } from '@/lib/tender/gate'
 import { hashInvitationToken, invitationExpiry, newInvitationToken } from '@/lib/tender/invitation'
 import { parseTenderList, splitEmails, type ParsedTenderList } from '@/lib/tender/parse-tender-list'
@@ -35,6 +36,8 @@ export interface InvitationRow {
   sent_at: string | null
   accepted_at: string | null
   created_at: string
+  /** What the mail provider reported for the latest email to this address since it was sent. */
+  delivery: 'sent' | 'delivered' | 'opened' | 'bounced' | 'complained' | null
 }
 
 const INVITATION_COLUMNS =
@@ -85,7 +88,42 @@ export async function listInvitationsAction(tenderId: string): Promise<Result<In
     .eq('tender_id', tenderId)
     .order('created_at')
   if (error) return { error: error.message }
-  return { data: (data ?? []) as InvitationRow[] }
+  const rows = (data ?? []) as Omit<InvitationRow, 'delivery'>[]
+  // Delivery, from the mail provider's webhook (public.email_events). Read
+  // with the service key only after gateTender, and only for these addresses.
+  const sentRows = rows.filter((r) => r.sent_at)
+  const events: { to_email: string; event_type: string; occurred_at: string }[] = []
+  if (sentRows.length) {
+    const svc = createServiceClient() as AnyClient
+    const since = sentRows.map((r) => r.sent_at!).sort()[0]
+    const { data: ev } = await svc
+      .from('email_events')
+      .select('to_email, event_type, occurred_at')
+      .in('to_email', sentRows.map((r) => r.email))
+      .gte('occurred_at', new Date(new Date(since).getTime() - 60_000).toISOString())
+      .order('occurred_at')
+      .limit(1000)
+    events.push(...((ev ?? []) as typeof events))
+  }
+  const RANK: Record<string, InvitationRow['delivery']> = {
+    'email.sent': 'sent', 'email.delivered': 'delivered', 'email.opened': 'opened', 'email.clicked': 'opened',
+    'email.bounced': 'bounced', 'email.complained': 'complained',
+  }
+  const ORDER = [null, 'sent', 'delivered', 'opened', 'complained', 'bounced']
+  return {
+    data: rows.map((r) => {
+      let delivery: InvitationRow['delivery'] = null
+      if (r.sent_at) {
+        const from = new Date(r.sent_at).getTime() - 60_000
+        for (const e of events) {
+          if (e.to_email.toLowerCase() !== r.email.toLowerCase() || new Date(e.occurred_at).getTime() < from) continue
+          const d = RANK[e.event_type]
+          if (d && ORDER.indexOf(d) > ORDER.indexOf(delivery)) delivery = d
+        }
+      }
+      return { ...r, delivery }
+    }),
+  }
 }
 
 export interface Invitee {
@@ -265,35 +303,49 @@ export async function sendTenderInvitationsAction(tenderId: string, invitationId
       skipped.push(`${inv.email} (unsubscribed or bouncing)`)
       continue
     }
+    // The new link is stored before the email goes (the email must never carry
+    // a link the database does not know), but the row only reads "sent" once
+    // the mail provider has accepted the email.
     const token = newInvitationToken()
     const { error: upErr } = await g.supabase
       .schema('projects')
       .from('tender_invitations')
-      .update({ token_hash: hashInvitationToken(token), token_expires_at: null, status: 'sent', sent_at: new Date().toISOString() })
+      .update({ token_hash: hashInvitationToken(token), token_expires_at: null })
       .eq('id', inv.id)
     if (upErr) {
       skipped.push(`${inv.email} (${upErr.message})`)
       continue
     }
-    const closes = g.tender.closing_at ? new Date(g.tender.closing_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''
-    const html = renderBrandedEmail({
-      accentColor: DEFAULT_ACCENT_COLOR,
-      logoUrl: null,
+    // The email IS the way in: a single-use sign-in for this address rides in
+    // the button (lib/tender/access.ts). WM never sees it.
+    const access = await mintTenderAccess(svc, inv.email)
+    if ('error' in access) {
+      skipped.push(`${inv.email} (${access.error})`)
+      continue
+    }
+    const { subject, html } = renderInvitationEmail({
+      orgName,
       projectName,
-      title: `Invitation to tender: ${g.tender.package}`,
-      contentHtml:
-        `<p>${escapeHtml(inv.contact_name ? `Dear ${inv.contact_name},` : 'Good day,')}</p>` +
-        `<p>${escapeHtml(orgName)} invites ${escapeHtml(inv.company_name)} to tender for <strong>${escapeHtml(g.tender.package)} — ${escapeHtml(g.tender.title)}</strong>.</p>` +
-        `<p><a href="${escapeHtml(inviteLink(token))}">Open the tender</a> to register your company, price the bill of quantities and upload the requested documents.</p>` +
-        `<p>Tenders close ${escapeHtml(closes)}. This link is personal to you — please do not forward it.</p>`,
-      siteUrl: siteUrl(),
+      companyName: inv.company_name,
+      contactName: inv.contact_name,
+      email: inv.email,
+      pkg: g.tender.package,
+      title: g.tender.title,
+      closingAt: g.tender.closing_at,
+      link: invitationAccessLink(token, access),
+      code: access.code,
     })
-    const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
-      body: JSON.stringify({ type: 'rfi-created', payload: { to: [inv.email], subject: `Invitation to tender: ${g.tender.package} — ${g.tender.title}`, html } }),
-    }).catch(() => null)
-    if (!res || !res.ok) skipped.push(`${inv.email} (email service refused)`)
+    const res = await sendTenderEmail(inv.email, subject, html)
+    if ('error' in res) {
+      skipped.push(`${inv.email} (${res.error})`)
+      continue
+    }
+    const { error: markErr } = await g.supabase
+      .schema('projects')
+      .from('tender_invitations')
+      .update({ status: 'sent', sent_at: new Date().toISOString() })
+      .eq('id', inv.id)
+    if (markErr) skipped.push(`${inv.email} (emailed, but not marked as sent: ${markErr.message})`)
     else sent += 1
   }
   bust(g.tender.project_id, tenderId)
