@@ -5,6 +5,10 @@
  */
 
 let sentryLoaded = false
+// The SDK module once initialised. Deliberately NOT on window.__SENTRY__: that
+// is the SDK's own global carrier (it holds the client and scopes), and
+// replacing it discarded the client so no browser event was ever sent.
+let sentry: typeof import('@sentry/nextjs') | null = null
 
 export async function initSentry() {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
@@ -23,12 +27,10 @@ export async function initSentry() {
     tracesSampleRate: 0.2,
   })
 
-  // Expose for ErrorBoundary componentDidCatch
-  ;(window as any).__SENTRY__ = Sentry
+  sentry = Sentry
 }
 
+/** Reports to Sentry when the browser SDK is running; a no-op otherwise. */
 export function captureError(err: unknown, context?: Record<string, unknown>) {
-  if (typeof window !== 'undefined' && (window as any).__SENTRY__) {
-    ;(window as any).__SENTRY__.captureException(err, { extra: context })
-  }
+  sentry?.captureException(err, { extra: context })
 }
