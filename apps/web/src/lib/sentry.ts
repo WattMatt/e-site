@@ -4,6 +4,8 @@
  * Lightweight stub — only initialises when NEXT_PUBLIC_SENTRY_DSN is set.
  */
 
+import { scrubBreadcrumb, scrubEvent } from './sentry-scrub'
+
 let sentryLoaded = false
 // The SDK module once initialised. Deliberately NOT on window.__SENTRY__: that
 // is the SDK's own global carrier (it holds the client and scopes), and
@@ -25,6 +27,11 @@ export async function initSentry() {
     dsn,
     environment: process.env.NODE_ENV ?? 'production',
     tracesSampleRate: 0.2,
+    // Auth links carry bearer secrets in the query, the fragment and the
+    // /auth/wa-link path; the SDK copies URLs into all three of these.
+    beforeSend: scrubEvent,
+    beforeSendTransaction: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
   })
 
   sentry = Sentry
