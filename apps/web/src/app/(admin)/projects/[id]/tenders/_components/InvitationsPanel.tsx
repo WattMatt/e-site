@@ -153,8 +153,18 @@ export function InvitationsPanel({
                         {(i.status === 'prepared' || i.status === 'sent') && open && (
                           <>
                             {sendingEnabled && (
-                              <Button size="sm" variant="secondary" disabled={busy} onClick={() => act(() => sendTenderInvitationsAction(tenderId, [i.id]), sendResult)}>
-                                {i.status === 'sent' ? 'Send again' : 'Send'}
+                              <Button
+                                size="sm"
+                                variant={armed === `send:${i.id}` ? 'primary' : 'secondary'}
+                                disabled={busy}
+                                onClick={() => {
+                                  const go = () => act(() => sendTenderInvitationsAction(tenderId, [i.id]), sendResult)
+                                  // A new email replaces the link in the one already sent.
+                                  if (i.status === 'sent') twoPress(`send:${i.id}`, go)
+                                  else go()
+                                }}
+                              >
+                                {armed === `send:${i.id}` ? 'Press again: the earlier email stops working' : i.status === 'sent' ? 'Send again' : 'Send'}
                               </Button>
                             )}{' '}
                             <Button

@@ -890,7 +890,8 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `issueTenderAction` / `listInvitationsAction` / `prepareInvitationsAction` / `regenerateInvitationLinkAction` / `revokeInvitationAction` / `readTenderListAction` | W | W | W | — | — | — | — | — |
 | `sendTenderInvitationsAction` (refuses unless `TENDER_INVITES_ENABLED=true`; marks an invitation `sent` only after the mail provider accepted the email) | W | W | W | — | — | — | — | — |
 | `myTendersAction` / `portalTenderAction` / `saveProfileAction` (own participation only) | — | — | — | — | — | — | — | W |
-| `previewInvitationAction` / `acceptInvitationAction` / `continueInvitationAction` / `continueInvitationWithCodeAction` / `emailInvitationLinkAction` / `requestTenderAccessAction` / `continueReturnVisitAction` / `continueReturnVisitWithCodeAction` (public, rate-limited; every link and code goes only to the invited address) | public | public | public | public | public | public | public | public |
+| `pendingInvitationsAction` / `acceptPendingInvitationAction` (signed in; only invitations to the session's own address; accept still goes through `tender_accept`, which re-checks the address and that the session proved the mailbox) | — | — | — | — | — | — | — | W |
+| `previewInvitationAction` / `acceptInvitationAction` / `continueInvitationAction` / `continueInvitationWithCodeAction` / `emailInvitationLinkAction` / `requestTenderAccessAction` / `continueReturnVisitAction` / `continueReturnVisitWithCodeAction` (public, rate-limited; every link and code goes only to the invited address; a public request never changes an invitation; codes are tried only for invited addresses, 5 per address per hour) | public | public | public | public | public | public | public | public |
 
 | Route | Access |
 |---|---|

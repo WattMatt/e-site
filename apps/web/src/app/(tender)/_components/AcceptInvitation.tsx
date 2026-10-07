@@ -108,7 +108,7 @@ export function AcceptInvitation({
           This browser is signed in to E-Site as <strong>{signedInAs}</strong>, but the invitation is for <strong>{email}</strong>.
           Sign out of that account, then open the invitation again from its email (or use a private window).
         </p>
-        <form action="/auth/signout" method="post"><button type="submit" className="btn btn-sm">Sign out of {signedInAs}</button></form>
+        <form action="/auth/signout" method="post"><input type="hidden" name="to" value="/tender/login" /><button type="submit" className="btn btn-sm">Sign out of {signedInAs}</button></form>
       </div>
     )
   }

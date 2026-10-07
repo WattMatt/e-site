@@ -134,14 +134,26 @@ async function hasOrg(userId: string): Promise<boolean> {
   return (count ?? 0) > 0
 }
 
-/** A tenderer: holds a tender participation (E5). Such a user has no organisation by design. */
-async function isTenderParticipant(userId: string): Promise<boolean> {
+/**
+ * A tenderer (E5): holds a tender participation, or a live invitation to their
+ * address that they have not accepted yet. Such a user has no organisation by
+ * design and belongs on /tender, never on "create your organisation".
+ */
+async function isTenderParticipant(userId: string, email: string | null | undefined): Promise<boolean> {
   const { count } = await serviceClient
     .schema('projects')
     .from('tender_participants')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-  return (count ?? 0) > 0
+  if ((count ?? 0) > 0) return true
+  if (!email) return false
+  const { count: invited } = await serviceClient
+    .schema('projects')
+    .from('tender_invitations')
+    .select('id', { count: 'exact', head: true })
+    .eq('email', email.toLowerCase())
+    .in('status', ['prepared', 'sent'])
+  return (invited ?? 0) > 0
 }
 
 async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
@@ -255,7 +267,7 @@ export async function middleware(request: NextRequest) {
   if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding && !isAuthCallback && !isTenderPortalPath(pathname)) {
     if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
-      url.pathname = (await isTenderParticipant(user.id)) ? TENDER_PORTAL_PREFIX : ONBOARDING_PATH
+      url.pathname = (await isTenderParticipant(user.id, user.email)) ? TENDER_PORTAL_PREFIX : ONBOARDING_PATH
       url.search = ''
       return NextResponse.redirect(url)
     }
@@ -270,7 +282,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
     // A tenderer is never asked to create an organisation.
-    if (await isTenderParticipant(user.id)) {
+    if (await isTenderParticipant(user.id, user.email)) {
       const url = request.nextUrl.clone()
       url.pathname = TENDER_PORTAL_PREFIX
       url.search = ''

@@ -73,7 +73,7 @@ function codeHtml(link: string, code: string): string {
     `<p style="font-size:13px;color:#555">If the button does not work, copy this address into your browser:<br>` +
     `<span style="word-break:break-all">${e(link)}</span><br>` +
     `If the page asks for a code, enter <strong style="font-size:16px;letter-spacing:2px">${e(code)}</strong>. ` +
-    `The link and the code work once and expire after 24 hours; the page offers a fresh one.</p>`
+    `The link and the code work once and expire after 24 hours. Only the newest email we sent you works; the page offers a fresh one.</p>`
   )
 }
 
@@ -123,7 +123,7 @@ export function renderAccessEmail(v: { email: string; link: string; code: string
       `<p>Here is your link to ${e(v.what)}. Press the button, then press <strong>Continue</strong> on the page that opens.</p>` +
       `<a class="btn" href="${e(v.link)}">Continue to the tender</a>` +
       `<p>Or enter this code on the page: <strong style="font-size:16px;letter-spacing:2px">${e(v.code)}</strong></p>` +
-      `<p style="font-size:12px;color:#666">The link and code are for ${e(v.email)} only, work once and expire after 24 hours. If you did not ask for this, ignore this email.</p>`,
+      `<p style="font-size:12px;color:#666">The link and code are for ${e(v.email)} only, work once and expire after 24 hours. Only the newest email we sent you works. If you did not ask for this, ignore this email.</p>`,
     siteUrl: siteUrl(),
   })
   return { subject: 'Your link to the tender', html }

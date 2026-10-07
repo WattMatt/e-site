@@ -101,7 +101,7 @@ export async function listInvitationsAction(tenderId: string): Promise<Result<In
       .select('to_email, event_type, occurred_at')
       .in('to_email', sentRows.map((r) => r.email))
       .gte('occurred_at', new Date(new Date(since).getTime() - 60_000).toISOString())
-      .order('occurred_at')
+      .order('occurred_at', { ascending: false }) // newest first: a cap drops the oldest
       .limit(1000)
     events.push(...((ev ?? []) as typeof events))
   }
@@ -312,6 +312,7 @@ export async function sendTenderInvitationsAction(tenderId: string, invitationId
       .from('tender_invitations')
       .update({ token_hash: hashInvitationToken(token), token_expires_at: null })
       .eq('id', inv.id)
+      .in('status', ['prepared', 'sent']) // accepted in the meantime: leave it alone
     if (upErr) {
       skipped.push(`${inv.email} (${upErr.message})`)
       continue
@@ -345,6 +346,7 @@ export async function sendTenderInvitationsAction(tenderId: string, invitationId
       .from('tender_invitations')
       .update({ status: 'sent', sent_at: new Date().toISOString() })
       .eq('id', inv.id)
+      .in('status', ['prepared', 'sent'])
     if (markErr) skipped.push(`${inv.email} (emailed, but not marked as sent: ${markErr.message})`)
     else sent += 1
   }

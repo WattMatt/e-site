@@ -131,6 +131,7 @@ describe('sendTenderInvitationsAction (switched on)', () => {
         updates.push(p)
         const u: Record<string, unknown> = {}
         u.eq = () => u
+        u.in = () => u
         u.then = (res: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(res)
         return u
       }

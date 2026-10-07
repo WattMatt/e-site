@@ -198,7 +198,11 @@ export async function acceptInvitationAction(token: string): Promise<Result<{ te
   const supabase = (await createClient()) as AnyClient
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Open the invitation from its email first, then press Continue.' }
-  const { data, error } = await supabase.schema('projects').rpc('tender_accept', { p_token_hash: hashInvitationToken(token) })
+  return acceptByHash(supabase, hashInvitationToken(token))
+}
+
+async function acceptByHash(supabase: AnyClient, tokenHash: string): Promise<Result<{ tenderId: string }>> {
+  const { data, error } = await supabase.schema('projects').rpc('tender_accept', { p_token_hash: tokenHash })
   if (error) {
     const reason =
       error.code === '42501' && /emailed/.test(error.message) ? 'needs_email_link'
@@ -214,10 +218,19 @@ export async function acceptInvitationAction(token: string): Promise<Result<{ te
   return { data: { tenderId: data as string } }
 }
 
+/** An address that has (or had) a tender invitation that went out. Exact match: stored lower-case by CHECK. */
+async function hasTenderInvitation(svc: AnyClient, address: string): Promise<boolean> {
+  const { data } = await svc.schema('projects').from('tender_invitations').select('id').eq('email', address).in('status', ['sent', 'accepted']).limit(1)
+  return !!data?.length
+}
+
 /**
  * Return visits (/tender/login): email a link and code to an address that has
  * a tender invitation. Same answer either way (no account probing); a send
- * that fails for a real tenderer is logged.
+ * that fails for a real tenderer is logged. It never touches an invitation:
+ * anyone may ask for an address, so a request must not be able to kill the
+ * bidder's invitation link. A bidder who has not accepted yet finds the
+ * invitation on /tender once signed in (pendingInvitationsAction).
  */
 export async function requestTenderAccessAction(email: string): Promise<Result<true>> {
   if (!rateLimit(`tender-signin:${await clientIp()}`, 5, 60_000)) return { error: 'Too many requests. Wait a minute and try again.' }
@@ -225,31 +238,10 @@ export async function requestTenderAccessAction(email: string): Promise<Result<t
   if (valid.length !== 1) return { error: 'Enter the email address your invitation was sent to' }
   const address = valid[0]
   const svc = createServiceClient() as AnyClient
-  const { data: invs } = await svc
-    .schema('projects')
-    .from('tender_invitations')
-    .select('id, status, sent_at, tender:tenders(status, closing_at)')
-    .ilike('email', address)
-    .in('status', ['sent', 'accepted'])
-    .order('sent_at', { ascending: false })
-    .limit(20)
-  const rows = (invs ?? []) as { id: string; status: string; tender: { status: string; closing_at: string | null } | null }[]
-  if (rows.length && rateLimit(`tender-signin-addr:${address.toLowerCase()}`, 5, 60 * 60_000)) {
+  if ((await hasTenderInvitation(svc, address)) && rateLimit(`tender-signin-addr:${address}`, 3, 60 * 60_000)) {
     const access = await mintTenderAccess(svc, address)
     if (!('error' in access)) {
-      // Not accepted yet: the way in is the invitation itself, never an empty
-      // tender list. Its link is replaced, so this newest email is the one that works.
-      const now = Date.now()
-      const pending = rows.find(
-        (r) => r.status === 'sent' && r.tender?.status === 'issued' && !!r.tender.closing_at && new Date(r.tender.closing_at).getTime() > now,
-      )
-      let link = returnAccessLink(access, address)
-      if (pending) {
-        const token = newInvitationToken()
-        const { error } = await svc.schema('projects').from('tender_invitations').update({ token_hash: hashInvitationToken(token) }).eq('id', pending.id).eq('status', 'sent')
-        if (!error) link = invitationAccessLink(token, access)
-      }
-      const { subject, html } = renderAccessEmail({ email: address, link, code: access.code, what: pending ? 'your tender invitation' : 'your tenders on E-Site' })
+      const { subject, html } = renderAccessEmail({ email: address, link: returnAccessLink(access, address), code: access.code, what: 'your tenders on E-Site' })
       const sent = await sendTenderEmail(address, subject, html)
       if ('error' in sent) console.error('requestTenderAccessAction: send failed for a tenderer')
     }
@@ -261,16 +253,73 @@ export async function requestTenderAccessAction(email: string): Promise<Result<t
 export async function continueReturnVisitAction(k: string, t: string): Promise<Result<true>> {
   if (!rateLimit(`tender-return-continue:${await clientIp()}`, 20, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
   const r = await useAccess({ tokenHash: k, type: t })
-  return r.ok ? { data: true } : { error: 'That link has already been used or has expired. Enter your email below for a fresh one.' }
+  return r.ok ? { data: true } : { error: 'That link has already been used, or a newer email replaced it. Go to "Your tenders" and ask for a fresh link.' }
 }
 
-/** The 6-digit code on /tender/login. */
+/** The 6-digit code on /tender/login: only for an address with a tender invitation, a few tries per address. */
 export async function continueReturnVisitWithCodeAction(email: string, code: string): Promise<Result<true>> {
   if (!rateLimit(`tender-return-code:${await clientIp()}`, 10, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
   const { valid } = splitEmails(email)
   if (valid.length !== 1) return { error: 'Enter the email address your invitation was sent to' }
-  const r = await useAccess({ email: valid[0], code: code.trim() })
+  const address = valid[0]
+  if (!rateLimit(`tender-code-addr:${address}`, 5, 60 * 60_000)) return { error: 'Too many tries for this address. Ask for a fresh link and code, or wait an hour.' }
+  if (!CODE_RE.test(code.trim()) || !(await hasTenderInvitation(createServiceClient() as AnyClient, address))) return { error: CODE_WRONG }
+  const r = await useAccess({ email: address, code: code.trim() })
   return r.ok ? { data: true } : { error: CODE_WRONG }
+}
+
+export interface PendingInvitation {
+  id: string
+  company_name: string
+  package: string
+  title: string
+  closing_at: string | null
+}
+
+/** Invitations to the signed-in address that are still waiting for Accept, on tenders that are open. */
+export async function pendingInvitationsAction(): Promise<Result<PendingInvitation[]>> {
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { error: 'Not signed in' }
+  const svc = createServiceClient() as AnyClient
+  const { data } = await svc
+    .schema('projects')
+    .from('tender_invitations')
+    .select('id, company_name, tender:tenders(package, title, status, closing_at)')
+    .eq('email', user.email.toLowerCase())
+    .in('status', ['prepared', 'sent'])
+    .limit(20)
+  const now = Date.now()
+  return {
+    data: ((data ?? []) as { id: string; company_name: string; tender: { package: string; title: string; status: string; closing_at: string | null } | null }[])
+      .filter((r) => r.tender?.status === 'issued' && !!r.tender.closing_at && new Date(r.tender.closing_at).getTime() > now)
+      .map((r) => ({ id: r.id, company_name: r.company_name, package: r.tender!.package, title: r.tender!.title, closing_at: r.tender!.closing_at })),
+  }
+}
+
+/**
+ * Accept an invitation found on /tender, signed in as its address. The link is
+ * not needed: the invitation is re-keyed for this one call and accepted through
+ * projects.tender_accept, which re-checks the address and that the session
+ * proved the mailbox.
+ */
+export async function acceptPendingInvitationAction(invitationId: string): Promise<Result<{ tenderId: string }>> {
+  if (!rateLimit(`tender-pending-accept:${await clientIp()}`, 10, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { error: 'Open the invitation from its email first, then press Continue.' }
+  const svc = createServiceClient() as AnyClient
+  const token = newInvitationToken()
+  const { data: rekeyed } = await svc
+    .schema('projects')
+    .from('tender_invitations')
+    .update({ token_hash: hashInvitationToken(token) })
+    .eq('id', invitationId)
+    .eq('email', user.email.toLowerCase())
+    .in('status', ['prepared', 'sent'])
+    .select('id')
+  if (!rekeyed?.length) return { error: INVITATION_REFUSAL_TEXT.not_found }
+  return acceptByHash(supabase, hashInvitationToken(token))
 }
 
 export interface PortalTender {
