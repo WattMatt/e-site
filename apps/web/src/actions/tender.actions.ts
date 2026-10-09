@@ -23,10 +23,9 @@ import { parseTenderWorkbook } from '@/lib/tender/parse-tender-workbook'
 import { reconcileTender } from '@/lib/tender/reconcile-tender'
 import { diffTenderBoqs } from '@/lib/tender/diff-tender-boqs'
 import { toEstimateLines, toItemRows, type TenderItemRow } from '@/lib/tender/to-rows'
+import { gateTender, tenderPrefix, type AnyClient } from '@/lib/tender/gate'
 import { RATE_CELL_TYPES, type RateCellType, type TenderBoqDiff, type TenderReconciliation } from '@/lib/tender/types'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyClient = any
 
 const BUCKET = 'tender-files'
 
@@ -63,25 +62,6 @@ const TENDER_COLUMNS =
 function bust(projectId: string, tenderId?: string) {
   revalidatePath(`/projects/${projectId}/tenders`, 'page')
   if (tenderId) revalidatePath(`/projects/${projectId}/tenders/${tenderId}`, 'page')
-}
-
-/** Resolve a tender's project with the service client (no RLS dependency), then gate. */
-async function gateTender(
-  tenderId: string,
-): Promise<{ ok: true; supabase: AnyClient; tender: { id: string; project_id: string; organisation_id: string; status: string } } | { ok: false; error: string }> {
-  // Read AS THE CALLER (RLS: tenders_select + site_scope), never the service key
-  // first: a tender on a site they cannot access reads as not found.
-  const supabase = (await createClient()) as AnyClient
-  const { data: t } = await supabase
-    .schema('projects')
-    .from('tenders')
-    .select('id, project_id, organisation_id, status')
-    .eq('id', tenderId)
-    .maybeSingle()
-  if (!t) return { ok: false, error: 'Tender not found' }
-  const guard = await requireEffectiveRole(supabase, t.project_id, ORG_WRITE_ROLES)
-  if (!guard.ok) return { ok: false, error: guard.error }
-  return { ok: true, supabase, tender: t }
 }
 
 export async function listTendersAction(projectId: string): Promise<Result<TenderRecord[]>> {
@@ -145,19 +125,20 @@ function safeName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(-120) || 'workbook.xlsx'
 }
 
-function tenderPrefix(t: { organisation_id: string; project_id: string; id: string }) {
-  return `${t.organisation_id}/${t.project_id}/${t.id}/`
-}
 
 export async function getTenderUploadUrlAction(
   tenderId: string,
-  kind: 'source' | 'estimate',
+  kind: 'source' | 'estimate' | 'list',
   fileName: string,
 ): Promise<Result<{ path: string; token: string }>> {
+  if (!['source', 'estimate', 'list'].includes(kind)) return { error: 'Unknown upload kind' }
   if (!/\.(xlsx|xlsm)$/i.test(fileName)) return { error: 'Upload an Excel workbook (.xlsx or .xlsm)' }
   const g = await gateTender(tenderId)
   if (!g.ok) return { error: g.error }
-  if (g.tender.status !== 'draft') return { error: 'Only a draft tender can be re-imported' }
+  // The BOQ can only change while the tender is a draft; a tender list (for
+  // invitations) may be read until the tender closes.
+  const allowed = kind === 'list' ? ['draft', 'issued'] : ['draft']
+  if (!allowed.includes(g.tender.status)) return { error: kind === 'list' ? 'This tender is no longer open' : 'Only a draft tender can be re-imported' }
   const path = `${tenderPrefix(g.tender)}${kind}-${Date.now()}-${safeName(fileName)}`
   const svc = createServiceClient() as AnyClient
   const { data, error } = await svc.storage.from(BUCKET).createSignedUploadUrl(path, { upsert: false })

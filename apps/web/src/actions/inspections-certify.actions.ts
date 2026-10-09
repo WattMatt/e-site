@@ -114,7 +114,7 @@ export interface CertifyInspectionInput {
   cocNumber?: string
 }
 
-export async function certifyInspectionAction(input: CertifyInspectionInput): Promise<string> {
+async function certifyInspection(input: CertifyInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
   const {
     data: { user },
@@ -232,11 +232,13 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
 
 // ─── sendBackForReinspectionAction ─────────────────────────────────────
 
-export async function sendBackForReinspectionAction(input: {
+export interface SendBackInput {
   inspectionId: string
   projectId: string
   notes: string
-}): Promise<void> {
+}
+
+async function sendBackForReinspection(input: SendBackInput): Promise<void> {
   const supabase = (await createClient()) as AnyClient
   const {
     data: { user },
@@ -293,3 +295,39 @@ export async function sendBackForReinspectionAction(input: {
 // inspections.certificates rows the current certify flow no longer creates.
 // The public /inspection/[shareToken] page remains for certificates whose
 // share links were issued under the legacy flow.
+
+// ─── exported actions ──────────────────────────────────────────────────
+
+/**
+ * A refusal travels back as data, never as a thrown error: Next.js replaces
+ * the message of an error thrown from a server action with a generic sentence
+ * in production builds ("An error occurred in the Server Components render"),
+ * so a thrown "send it back" or "COC number is required" never reached the
+ * verifier (seen on production, 2026-10-06). Same shape as
+ * abandonInspectionAction.
+ */
+export type VerifierActionResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string }
+
+function refusal(e: unknown): { ok: false; error: string } {
+  const message = (e as { message?: unknown })?.message
+  return { ok: false, error: typeof message === 'string' && message ? message : 'Something went wrong. Reload and try again.' }
+}
+
+export async function certifyInspectionAction(
+  input: CertifyInspectionInput,
+): Promise<VerifierActionResult<string>> {
+  try {
+    return { ok: true, value: await certifyInspection(input) }
+  } catch (e) {
+    return refusal(e)
+  }
+}
+
+export async function sendBackForReinspectionAction(input: SendBackInput): Promise<VerifierActionResult> {
+  try {
+    await sendBackForReinspection(input)
+    return { ok: true, value: undefined }
+  } catch (e) {
+    return refusal(e)
+  }
+}

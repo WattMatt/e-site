@@ -32,14 +32,19 @@ export default function CertifyModal({
     setError(null)
     setBusy(true)
     try {
-      if (mode === 'certify') {
-        await certifyInspectionAction({
-          inspectionId,
-          projectId,
-          cocNumber: deliverableType === 'coc' ? cocNumber : undefined,
-        })
-      } else {
-        await sendBackForReinspectionAction({ inspectionId, projectId, notes })
+      // The actions return their refusal as data: a thrown message is replaced
+      // by a generic sentence in production builds.
+      const result =
+        mode === 'certify'
+          ? await certifyInspectionAction({
+              inspectionId,
+              projectId,
+              cocNumber: deliverableType === 'coc' ? cocNumber : undefined,
+            })
+          : await sendBackForReinspectionAction({ inspectionId, projectId, notes })
+      if (!result.ok) {
+        setError(result.error)
+        return
       }
       onClose()
       router.refresh()

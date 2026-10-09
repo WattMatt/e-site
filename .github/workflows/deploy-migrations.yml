@@ -24,6 +24,18 @@ on:
     paths:
       - 'apps/edge-functions/supabase/migrations/**'
 
+# One deploy at a time. On 2026-10-05 three merges deployed together (runs
+# 37287268899, 37289583207, 37290886514); their verify steps shared the
+# Management API rate limit and run 37289583207 went red on 543 throttled
+# calls with no false predicate. Serialising also stops two `supabase db push`
+# runs racing on the same ledger. cancel-in-progress is false so a running
+# push is never killed mid-apply; GitHub keeps at most one run PENDING and
+# replaces it with a newer one, which is safe — a later commit's checkout
+# carries every earlier migration.
+concurrency:
+  group: deploy-db-migrations
+  cancel-in-progress: false
+
 jobs:
   migrate:
     name: Push migrations to Supabase
