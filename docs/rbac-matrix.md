@@ -340,6 +340,8 @@ above therefore documents legacy per-page gates only; the client's actual surfac
 | `/portal/[projectId]/floor-plans` | R | → `/dashboard` |
 | `/portal/[projectId]/handover` | R | → `/dashboard` |
 | `/portal/[projectId]/tenant-schedule` | R | → `/dashboard` |
+| `/portal/[projectId]/status-plans` (list; each plan opens as an A3 PDF in a new tab) | R²¹ | → `/dashboard` |
+| `GET /api/portal/[projectId]/status-plans/[planId]/pdf` | R²¹ | 404 (`requirePortalAccess`) |
 | `/portal/[projectId]/proposals` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
 | `/portal/[projectId]/proposals/[proposalId]` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
 
@@ -414,6 +416,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/tenant-schedule/legend-card/pdf` | R | R | R | R | R | — | R⁸ |
+| `GET /api/projects/[id]/tenant-schedule/report-preview` · `POST /api/projects/[id]/tenant-schedule/reports` (`?tenantPlans=1` / `?schematicPlans=1` append the status plans — spec 2026-10-09 §8) | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ |
+| `GET /api/projects/[id]/status-plans/[planId]/sheet` (Export sheet — the plan at the drawing's own size) | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ |
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/cable-schedule/export/excel` | R | R | R | R¹ | R¹ | R¹ | R¹ |
@@ -461,6 +465,15 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 > **Billing reads (migration `00187`).** `billing.invoices`' SELECT policy was named `"Org admins can view invoices"` and qualified on `organisation_id = ANY (get_user_org_ids())`, which is bare `is_active` membership — no role predicate. `billing` is PostgREST-exposed and `authenticated` holds table SELECT, so all 27 WM members (12 contractors, 3 `client_viewer`s, most of them staff at other firms) could `GET /rest/v1/invoices` with `Accept-Profile: billing` and read every amount paid and every Paystack reference — the reads that turned the callback replay into a one-click attack. `00187` replaces it with an owner/admin qual plus a **RESTRICTIVE** gate on `public.user_is_org_admin()` so a future permissive policy cannot reopen it, and revokes `anon`'s pointless grant. Verified on prod in a rolled-back transaction: org admin 3 rows, contractor/`client_viewer`/non-member 0, `anon` `permission denied`. **`billing.subscriptions` is deliberately left at org-member read** and merely renamed to `subscriptions_select_org_member` so the name stops lying: `PaymentStatusBanner` and `checkProjectQuota` read `status`/`tier` from it on the **user client at every role**, so an admin-only qual would delete the "account paused" warning for the 12 contractors and impose a false 1-project cap. See the Known gaps entry.
 
 > **²⁰ Medium-Voltage — TWO conditions, and role is the weaker one.** Every MV surface requires (a) `ORG_WRITE_ROLES` (owner/admin/project_manager) **and** (b) the per-USER R2 000/yr entitlement, `public.user_has_mv_access(auth.uid())`. `POST /api/medium-voltage/study` runs the heavy Z-bus + earth-fault solve and caches per-node `fault_results`; it is gated with `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org, refused on non-DRAFT revisions, and then returns **`402`** without a subscription. Discrimination/coordination compute is deferred to Phase 4b.
+
+> ²¹ **Status plans in PDF (slice 4, 2026-10-09).**
+> - **Report routes.** Their existing view-level gate is unchanged (`gatherTenantScheduleReportData` → `projectService.getById` under RLS + `site_scope`, so any project member of any role — the cells follow what RLS admits; `client_viewer` reaches them by API only, as the admin page bounces a client viewer to `/portal`). When `?tenantPlans=1` / `?schematicPlans=1` is present, `lib/status-plans/report-appendix.ts` adds `requireProjectAccess` (as the caller, site-scoped) before anything is read; preview and save share that helper, so they cannot differ. A plan that cannot be drawn, or a failed load, becomes a "Not included" line on the appendix divider — never a 500.
+> - **Export sheet.** Gated by `requireProjectAccess` alone (checked with `.ok`), the same set that can open the plan page. The button renders on distribution schematics only (spec §8); the route serves tenant layouts too.
+> - **Portal PDF.** `requirePortalAccess` (client_viewer in the active org AND an active `project_members` row on THIS project), then the plan rows through the viewer's session.
+> - **Reads.** Plan, shape, drawing, page-scale and node rows go through the caller's session (`00245` SELECT, which admits every project role including client_viewer). Order and scope facts and the drawing bytes in the `drawings` bucket use the service client, only after the gate.
+> - **Delivery, not streaming.** The report preview, Export sheet and portal PDF are never sent in the response body (Vercel refuses a response over ~4.5 MB; an A0 drawing plus its appendix can pass that). After the gate, the route uploads the PDF with the service client to the service-only `reports` bucket (`00207`) at a fixed, overwritten path and answers **303** to a signed URL valid 10 minutes: `{org}/{project}/status-plans/{plan}/sheet.pdf` (signed as a download under the sheet's file name), `{org}/{project}/status-plans/{plan}/portal.pdf` (inline), `{org}/{project}/previews/{user}/tenant-schedule.pdf` (per user, so two people previewing different options never receive each other's file). The preview reads the project's org through the caller's session before any service-client use. No `projects.reports` row is written for these files; a refusal or failure is still a JSON sentence with its status.
+> - **No row writes on any of these paths** apart from the existing report save. The saved report's `summary` gains `statusPlans` / `statusPlansNotIncluded` counts.
+> - Colours are computed at render time for the South African date, so a saved report version is a snapshot of that day.
 >
 > Until 2026-09-11 condition (b) existed **only in five `page.tsx` files** (finding #20 of the payments audit): `grep -r 'requireMvAccess\|hasMvAccess' apps/web/src/actions apps/web/src/app/api` returned nothing, so the compute route and all the MV server actions were role-gated and nothing more. Route handlers and server actions are directly invocable and sit outside `(admin)/layout.tsx`; this repo has shipped that exact class twice before (PR #135, PR #162).
 >

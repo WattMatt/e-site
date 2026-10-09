@@ -165,6 +165,11 @@ export function legendSummary(views: ReadonlyArray<ShapeView>, purpose: StatusPl
   return { counts, totalM2, unmeasured }
 }
 
+/** The Measured GLA line — one wording for the on-screen legend and the PDF legend. */
+export function measuredGlaText(totalM2: number, unmeasured: number): string {
+  return `Measured GLA: ${m2(totalM2)}${unmeasured ? ` (${unmeasured} shape${unmeasured === 1 ? '' : 's'} unmeasured)` : ''}`
+}
+
 export interface AttentionItem {
   shapeId: string
   label: string

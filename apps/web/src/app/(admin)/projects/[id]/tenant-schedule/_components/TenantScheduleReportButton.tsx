@@ -11,11 +11,14 @@
  * auth) and frame a `blob:` URL instead: `frame-src` already allows `blob:`, and
  * blob URLs carry no X-Frame-Options. The fetch also surfaces the route's error
  * body, so a failed render shows a message rather than a silent blank frame.
+ * A successful preview is a 303 to a short-lived storage signed URL (the PDF can be too large for a
+ * response body); fetch follows it — storage allows any origin and connect-src allows *.supabase.co.
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
+import { appendixQuery, type StatusPlanAppendixOptions } from '@/lib/status-plans/appendix-options'
 
 export function TenantScheduleReportButton({ projectId }: { projectId: string }) {
   const router = useRouter()
@@ -26,8 +29,14 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const blobRef = useRef<string | null>(null)
+  // Overlapping previews: only the newest request may touch state; the previous fetch is aborted.
+  const seqRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const previewUrl = `/api/projects/${projectId}/tenant-schedule/report-preview`
+  // Spec §8: tenant layout plans default ON, distribution schematics OFF. Preview and Save use the
+  // same choice, so the saved version is exactly what was previewed.
+  const [plans, setPlans] = useState<StatusPlanAppendixOptions>({ tenantLayout: true, schematic: false })
+  const previewUrl = (o: StatusPlanAppendixOptions) => `/api/projects/${projectId}/tenant-schedule/report-preview${appendixQuery(o)}`
 
   function revokeBlob() {
     if (blobRef.current) {
@@ -37,9 +46,14 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   }
 
   // Revoke any outstanding object URL when the component unmounts.
-  useEffect(() => revokeBlob, [])
+  useEffect(() => () => { seqRef.current++; abortRef.current?.abort(); revokeBlob() }, [])
 
-  async function openPreview() {
+  async function openPreview(o: StatusPlanAppendixOptions = plans) {
+    const seq = ++seqRef.current
+    abortRef.current?.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    const stale = () => seq !== seqRef.current
     setOpen(true)
     setSaved(false)
     setError(null)
@@ -47,23 +61,35 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
     revokeBlob()
     setBlobUrl(null)
     try {
-      const res = await fetch(previewUrl)
+      const res = await fetch(previewUrl(o), { signal: ctrl.signal })
+      if (stale()) return
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(body.error ?? `Preview failed (HTTP ${res.status})`)
       }
       const blob = await res.blob()
+      if (stale()) return
       const url = URL.createObjectURL(blob)
       blobRef.current = url
       setBlobUrl(url)
     } catch (err) {
+      if (stale()) return
       setError(err instanceof Error ? err.message : 'Failed to render the report preview.')
     } finally {
-      setLoading(false)
+      if (!stale()) setLoading(false)
     }
   }
 
+  function togglePlans(key: keyof StatusPlanAppendixOptions) {
+    const next = { ...plans, [key]: !plans[key] }
+    setPlans(next)
+    void openPreview(next)
+  }
+
   function close() {
+    seqRef.current++
+    abortRef.current?.abort()
+    setLoading(false)
     setOpen(false)
     revokeBlob()
     setBlobUrl(null)
@@ -71,7 +97,7 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
 
   function download() {
     const a = document.createElement('a')
-    a.href = blobRef.current ?? previewUrl
+    a.href = blobRef.current ?? previewUrl(plans)
     a.download = 'tenant-schedule-report.pdf'
     a.rel = 'noopener'
     document.body.appendChild(a)
@@ -83,7 +109,7 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch(`/api/projects/${projectId}/tenant-schedule/reports`, { method: 'POST' })
+      const res = await fetch(`/api/projects/${projectId}/tenant-schedule/reports${appendixQuery(plans)}`, { method: 'POST' })
       if (res.status === 201) { setSaved(true); router.refresh(); return }
       const body = (await res.json().catch(() => ({}))) as { error?: string }
       setError(body.error ?? `Save failed (HTTP ${res.status})`)
@@ -98,7 +124,7 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
 
   return (
     <>
-      <Button variant="secondary" size="sm" onClick={openPreview}>
+      <Button variant="secondary" size="sm" onClick={() => openPreview()}>
         Generate report
       </Button>
 
@@ -112,6 +138,14 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
           <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 8, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--c-border)' }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>Tenant Schedule Report</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)', marginLeft: 12 }}>
+                <input type="checkbox" checked={plans.tenantLayout} onChange={() => togglePlans('tenantLayout')} disabled={loading || saving} />
+                Tenant status plans
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)' }}>
+                <input type="checkbox" checked={plans.schematic} onChange={() => togglePlans('schematic')} disabled={loading || saving} />
+                Distribution schematics
+              </label>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
                 {saved && <span style={{ fontSize: 12, color: 'var(--c-green)' }}>Saved to project ✓</span>}
                 <Button variant="ghost" size="sm" onClick={download} disabled={!ready} style={{ fontSize: 12 }}>Download</Button>

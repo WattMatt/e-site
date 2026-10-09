@@ -74,6 +74,7 @@ const DECLARED: Record<string, string> = {
   'app/api/projects/[id]/equipment-materials/reports/route.ts': 'gatherEquipmentMaterialsReportData -> requireEffectiveRole',
   'app/api/projects/[id]/generator-cost-recovery/reports/route.ts': 'gatherGeneratorReportData -> requireEffectiveRole',
   'app/api/projects/[id]/tenant-schedule/reports/route.ts': 'gatherTenantScheduleReportData -> projectService.getById (session, site_scope)',
+  'app/api/projects/[id]/tenant-schedule/report-preview/route.ts': 'gatherTenantScheduleReportData -> projectService.getById (session, site_scope); svc only uploads + signs the preview PDF afterwards',
   'lib/recipients.ts': 'caller-gated; filters recipients by project access',
   'lib/solar/meter-archive/apply.ts': 'library of the scripts/solar-meter-archive.ts CLI; no end-user path',
 }
