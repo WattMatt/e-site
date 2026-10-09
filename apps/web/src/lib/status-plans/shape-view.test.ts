@@ -94,7 +94,7 @@ describe('tenant layout shapes', () => {
 describe('distribution schematic shapes', () => {
   const sctx = (o: Partial<ShapeViewContext> = {}) => ctx({
     purpose: 'distribution_schematic',
-    nodesById: new Map([['m1', node({ id: 'm1', code: 'MB-3.1', kind: 'main_board', shopNumber: null, shopName: null })]]),
+    nodesById: new Map([['m1', node({ id: 'm1', code: 'MB-9.7', kind: 'main_board', shopNumber: null, shopName: null })]]),
     shopLinks: {},
     ...o,
   })
@@ -103,7 +103,7 @@ describe('distribution schematic shapes', () => {
     const v = resolveShapeView(shape({ nodeId: 'm1' }), sctx({ dbOrders: { m1: 'ordered' } }))
     expect(v.style).toEqual(dbBlockStyle('ordered'))
     expect(v.legendKey).toBe('ordered')
-    expect(v.labelLines).toEqual(['MB-3.1'])
+    expect(v.labelLines).toEqual(['MB-9.7'])
     expect(v.areaM2).toBeNull()
   })
 

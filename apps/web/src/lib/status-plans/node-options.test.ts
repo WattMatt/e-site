@@ -9,7 +9,7 @@ const NODES: PlanNode[] = [
   n({ id: 'n10', code: 'DB-10', shopNumber: '10', shopName: 'Copper Kettle' }),
   n({ id: 'n2', code: 'DB-2', shopNumber: '2', shopName: 'Lantern Books' }),
   n({ id: 'n3', code: 'DB-3', shopNumber: '3', shopName: 'Old Mill', decommissioned: true }),
-  n({ id: 'm1', code: 'MB-3.1', kind: 'main_board' }),
+  n({ id: 'm1', code: 'MB-9.7', kind: 'main_board' }),
 ]
 const s = (id: string, nodeId: string | null): CanvasShape => ({
   id, shape: 'polygon', points: [0, 0, 1, 0, 1, 1], nodeId, areaType: null, detectedTag: null, source: 'manual', updatedAt: 't',
@@ -36,7 +36,7 @@ describe('buildNodeOptions', () => {
 
   it('schematic: every board, labelled by code with its kind', () => {
     const opts = buildNodeOptions(NODES, [], null, 'distribution_schematic')
-    expect(opts.map((o) => o.label)).toEqual(['DB-2', 'DB-3', 'DB-10', 'MB-3.1'])
+    expect(opts.map((o) => o.label)).toEqual(['DB-2', 'DB-3', 'DB-10', 'MB-9.7'])
     expect(opts.find((o) => o.id === 'm1')!.sub).toBe('Main board')
   })
 })
