@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { loadStatusPlanPage } from '@/lib/status-plans/load-plan-page'
 import { statusPlansHref } from '@/lib/status-plans/plan-urls'
 import { StatusPlanWorkspace } from './StatusPlanWorkspace'
+import { ExportSheetButton } from './_components/ExportSheetButton'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Status plan' }
@@ -30,9 +31,15 @@ export default async function StatusPlanPage({ params, searchParams }: Props) {
 
   return (
     <div style={{ padding: '16px 20px' }}>
-      <Link href={statusPlansHref(projectId)} style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}>
-        ← Status plans
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <Link href={statusPlansHref(projectId)} style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}>
+          ← Status plans
+        </Link>
+        {/* Spec §8: schematic plans only. The route serves tenant layouts too — widening is one line. */}
+        {props.plan.purpose === 'distribution_schematic' && (
+          <span style={{ marginLeft: 'auto' }}><ExportSheetButton projectId={projectId} planId={props.plan.id} /></span>
+        )}
+      </div>
       <div style={{ marginTop: 8 }}>
         <StatusPlanWorkspace {...props} />
       </div>
