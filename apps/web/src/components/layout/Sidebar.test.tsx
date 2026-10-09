@@ -71,3 +71,21 @@ describe('Sidebar — Rate library link', () => {
     expect(screen.queryByRole('link', { name: 'Rate library' })).toBeNull()
   })
 })
+
+describe('Sidebar — Status plans', () => {
+  it('sits right after Tenant Schedule inside a project, for writers and readers', () => {
+    pathname = '/projects/p1/tenant-schedule'
+    for (const role of ['owner', 'contractor'] as const) {
+      const { unmount } = render(<Sidebar role={role} />)
+      const order = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
+      expect(order.indexOf('/projects/p1/status-plans')).toBe(order.indexOf('/projects/p1/tenant-schedule') + 1)
+      unmount()
+    }
+  })
+
+  it('marks Status plans active on a plan page', () => {
+    pathname = '/projects/p1/status-plans/pl1'
+    render(<Sidebar role="owner" />)
+    expect(screen.getByRole('link', { name: 'Status plans' }).getAttribute('aria-current')).toBe('page')
+  })
+})
