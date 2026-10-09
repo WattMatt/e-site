@@ -10,7 +10,7 @@ vi.mock('@/lib/reports/branding', () => ({ resolveBranding: () => ({ issuer: {} 
 vi.mock('@/lib/reports/tenant-schedule-report-branding', () => ({ buildTenantScheduleBrandingInput: () => ({}) }))
 vi.mock('@/lib/status-plans/report-appendix', () => ({ loadReportAppendix: m.appendix }))
 
-import { POST } from './route'
+import { POST, maxDuration } from './route'
 
 const PID = '9c1a98b5-6ef3-4388-865f-417d3f5d7465'
 const post = (q = '') => POST(new NextRequest(`http://localhost/api/projects/${PID}/tenant-schedule/reports${q}`, { method: 'POST' }), { params: Promise.resolve({ id: PID }) })
@@ -57,16 +57,21 @@ describe('POST reports — status plan appendix', () => {
     expect(m.render).not.toHaveBeenCalled()
     expect(m.service).not.toHaveBeenCalled()
   })
-  it('renders with the appendix and records what the saved version holds', async () => {
+  it('renders with the appendix and records what the saved version ACTUALLY holds, not the loader counts', async () => {
     const appendix = { load: { inputs: [{}, {}], omitted: [{ title: 't', reason: 'r' }] }, generatedOn: '2026-10-09' }
     m.appendix.mockResolvedValue({ ok: true, appendix })
+    // The renderer reports what the appendix ACTUALLY holds: 1 drew, 2 did not (the loader promised 2 / 1).
+    m.render.mockImplementation(async (_d: unknown, _b: unknown, _a: unknown, opts: { onOutcome: (o: unknown) => void }) => {
+      opts.onOutcome({ appended: 1, notIncluded: [{ title: 'a', reason: 'x' }, { title: 'b', reason: 'y' }] })
+      return Buffer.from('%PDF-1.7')
+    })
     const { svc, inserted } = fakeService()
     m.service.mockReturnValue(svc)
     const res = await post('?tenantPlans=1&schematicPlans=1')
     expect(res.status).toBe(201)
     expect(m.appendix.mock.calls[0]![0].url).toContain('schematicPlans=1')
     expect(m.render.mock.calls[0]![2]).toBe(appendix)
-    expect(inserted[0]!.summary).toEqual({ statusPlans: 2, statusPlansNotIncluded: 1 })
+    expect(inserted[0]!.summary).toEqual({ statusPlans: 1, statusPlansNotIncluded: 2 })
   })
   it('no appendix → summary stays null', async () => {
     m.appendix.mockResolvedValue({ ok: true, appendix: null })
@@ -74,5 +79,19 @@ describe('POST reports — status plan appendix', () => {
     m.service.mockReturnValue(svc)
     expect((await post()).status).toBe(201)
     expect(inserted[0]!.summary).toBeNull()
+  })
+  it('a PDF over the 48 MiB ceiling is refused before anything is uploaded or recorded', async () => {
+    m.appendix.mockResolvedValue({ ok: true, appendix: null })
+    m.render.mockResolvedValue(Buffer.alloc(48 * 1024 * 1024 + 1))
+    const upload = vi.fn()
+    const { svc, inserted } = fakeService()
+    m.service.mockReturnValue({ ...svc, storage: { from: () => ({ upload, remove: vi.fn() }) } })
+    const res = await post()
+    expect(res.status).toBe(413)
+    expect(upload).not.toHaveBeenCalled()
+    expect(inserted).toHaveLength(0)
+  })
+  it('allows 120 s for the render', () => {
+    expect(maxDuration).toBe(120)
   })
 })

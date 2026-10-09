@@ -12,6 +12,9 @@
  * name back from `download=` on response.url (Content-Disposition is not CORS-exposed).
  */
 import { NextResponse } from 'next/server'
+import { MAX_HANDOFF_PDF_BYTES } from './pdf-limits'
+
+export { MAX_HANDOFF_PDF_BYTES }
 
 export const PDF_HANDOFF_BUCKET = 'reports'
 export const PDF_HANDOFF_TTL_SECONDS = 600
@@ -26,13 +29,40 @@ export interface HandoffStorage {
 export const statusPlanSheetPath = (orgId: string, projectId: string, planId: string) => `${orgId}/${projectId}/status-plans/${planId}/sheet.pdf`
 export const statusPlanPortalPath = (orgId: string, projectId: string, planId: string) => `${orgId}/${projectId}/status-plans/${planId}/portal.pdf`
 /** Per user, so two people previewing different appendix options at once never get each other's file. */
-export const tenantSchedulePreviewPath = (orgId: string, projectId: string, userId: string) => `${orgId}/${projectId}/previews/${userId}/tenant-schedule.pdf`
+export const tenantSchedulePreviewFolder = (orgId: string, projectId: string, userId: string) => `${orgId}/${projectId}/previews/${userId}`
+/** Plus a per-request nonce: a slower earlier preview can never overwrite the file a newer one is about to sign. */
+export const tenantSchedulePreviewPath = (orgId: string, projectId: string, userId: string, nonce: string) =>
+  `${tenantSchedulePreviewFolder(orgId, projectId, userId)}/tenant-schedule-${nonce}.pdf`
+
+/** Best-effort: keep the newest `keep` previews in a user's folder (the nonce makes each request a new object). Never throws. */
+export async function pruneOldPreviews(
+  storage: { from: (bucket: string) => unknown }, folder: string, keep = 3,
+): Promise<void> {
+  try {
+    const bucket = storage.from(PDF_HANDOFF_BUCKET) as {
+      list: (path: string, opts: { limit: number; sortBy: { column: string; order: string } }) => Promise<{ data: Array<{ name: string }> | null; error: unknown }>
+      remove: (paths: string[]) => Promise<{ error: unknown }>
+    }
+    const { data, error } = await bucket.list(folder, { limit: 100, sortBy: { column: 'created_at', order: 'desc' } })
+    if (error || !data) return
+    const old = data.map((f) => f.name).filter((n) => /^tenant-schedule-.+\.pdf$/.test(n)).slice(keep)
+    if (old.length === 0) return
+    const { error: rmErr } = await bucket.remove(old.map((n) => `${folder}/${n}`))
+    if (rmErr) console.error('[pdf-handoff] old previews could not be removed')
+  } catch {
+    console.error('[pdf-handoff] preview pruning failed')
+  }
+}
 
 const FAILED = 'The PDF was drawn but could not be handed over — try again.'
 
 export async function pdfHandoffResponse(
-  storage: HandoffStorage, path: string, bytes: Uint8Array, opts: { download?: string; logTag: string },
+  storage: HandoffStorage, path: string, bytes: Uint8Array, opts: { download?: string; logTag: string; maxBytes?: number },
 ): Promise<Response> {
+  if (bytes.byteLength > (opts.maxBytes ?? MAX_HANDOFF_PDF_BYTES)) {
+    console.error(`[${opts.logTag}] PDF too large to hand over`, bytes.byteLength)
+    return NextResponse.json({ error: 'This PDF is too large to hand over. Try again with fewer plans.' }, { status: 413 })
+  }
   const bucket = storage.from(PDF_HANDOFF_BUCKET)
   const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   const { error: upErr } = await bucket.upload(path, body, { contentType: 'application/pdf', upsert: true, cacheControl: '0' })

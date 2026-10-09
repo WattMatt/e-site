@@ -6,12 +6,13 @@ import { renderTenantScheduleReport } from '@/lib/reports/render-tenant-schedule
 import { loadReportAppendix } from '@/lib/status-plans/report-appendix'
 import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { pdfHandoffResponse, tenantSchedulePreviewPath, type HandoffStorage } from '@/lib/reports/pdf-handoff'
+import { randomBytes } from 'node:crypto'
+import { pdfHandoffResponse, pruneOldPreviews, tenantSchedulePreviewFolder, tenantSchedulePreviewPath, type HandoffStorage } from '@/lib/reports/pdf-handoff'
 
 /*
  * The preview is never streamed in the response: with the status-plan appendix it can pass Vercel's
- * ~4.5 MB limit. It is uploaded to the service-only `reports` bucket at a per-user path (overwritten
- * each preview) and the route answers 303 to a 10-minute signed URL; TenantScheduleReportButton's
+ * ~4.5 MB limit. It is uploaded to the service-only `reports` bucket at a per-user, per-request path (a
+ * random nonce, so overlapping previews never overwrite each other; older ones are pruned best-effort, newest 3 kept) and the route answers 303 to a 10-minute signed URL; TenantScheduleReportButton's
  * fetch follows it and frames the result as a blob: URL, as before.
  *
  * Gate: gatherTenantScheduleReportData reads the project as the caller (site_scope) and throws when
@@ -22,7 +23,7 @@ import { pdfHandoffResponse, tenantSchedulePreviewPath, type HandoffStorage } fr
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 // The status-plan appendix embeds drawings: allow for the extra render time.
-export const maxDuration = 60
+export const maxDuration = 120
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -65,7 +66,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!orgId) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   const service = createServiceClient()
-  return pdfHandoffResponse(service.storage as unknown as HandoffStorage, tenantSchedulePreviewPath(orgId, id, user.id), new Uint8Array(pdf), {
+  const storage = service.storage as unknown as HandoffStorage
+  const nonce = randomBytes(6).toString('hex')
+  const res = await pdfHandoffResponse(storage, tenantSchedulePreviewPath(orgId, id, user.id, nonce), new Uint8Array(pdf), {
     logTag: 'tenant-schedule-report-preview',
   })
+  if (res.status === 303) await pruneOldPreviews(storage, tenantSchedulePreviewFolder(orgId, id, user.id), 3)
+  return res
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 const refreshMock = vi.fn()
@@ -64,5 +64,48 @@ describe('TenantScheduleReportButton', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(fetchMock.mock.calls[2]![0]).toBe(`/api/projects/${PROJECT_ID}/tenant-schedule/reports?tenantPlans=1&schematicPlans=1`)
     expect(fetchMock.mock.calls[2]![1]).toEqual({ method: 'POST' })
+  })
+
+  it('overlapping previews: the stale response is ignored and the previous fetch is aborted', async () => {
+    const created: string[] = []
+    URL.createObjectURL = vi.fn((b: Blob) => { const u = `blob:${(b as unknown as { tag: string }).tag}`; created.push(u); return u })
+    URL.revokeObjectURL = vi.fn()
+    const pending: Array<{ resolve: (v: unknown) => void; signal: AbortSignal | undefined }> = []
+    const fetchMock = vi.fn((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((resolve) => { pending.push({ resolve, signal: init?.signal }) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const respond = (i: number, tag: string) => pending[i]!.resolve({ ok: true, blob: () => Promise.resolve(Object.assign(new Blob(['%PDF']), { tag })) })
+
+    const { TenantScheduleReportButton } = await import('./TenantScheduleReportButton')
+    render(<TenantScheduleReportButton projectId={PROJECT_ID} />)
+    const generate = screen.getByRole('button', { name: /generate report/i })
+    fireEvent.click(generate)
+    fireEvent.click(generate)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(pending[0]!.signal?.aborted).toBe(true)
+    expect(pending[1]!.signal?.aborted).toBe(false)
+
+    // The newer request answers first, then the stale one arrives late.
+    await act(async () => { respond(1, 'new'); await Promise.resolve() })
+    await waitFor(() => expect(created).toEqual(['blob:new']))
+    await act(async () => { respond(0, 'old'); await Promise.resolve(); await Promise.resolve() })
+    expect(created).toEqual(['blob:new'])
+    expect(screen.getByTitle(/report preview/i).getAttribute('src')).toBe('blob:new')
+  })
+
+  it('closing while a preview is in flight aborts it and never creates a blob', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:late')
+    URL.revokeObjectURL = vi.fn()
+    let resolve!: (v: unknown) => void
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((_u: string, init?: { signal?: AbortSignal }) => { signal = init?.signal; return new Promise((r) => { resolve = r }) }))
+    const { TenantScheduleReportButton } = await import('./TenantScheduleReportButton')
+    render(<TenantScheduleReportButton projectId={PROJECT_ID} />)
+    fireEvent.click(screen.getByRole('button', { name: /generate report/i }))
+    await waitFor(() => expect(signal).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: /^close$/i }))
+    expect(signal!.aborted).toBe(true)
+    await act(async () => { resolve({ ok: true, blob: () => Promise.resolve(new Blob(['%PDF'])) }); await Promise.resolve(); await Promise.resolve() })
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
 })

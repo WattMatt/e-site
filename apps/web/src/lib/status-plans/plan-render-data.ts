@@ -38,8 +38,13 @@ import type { CanvasShape, PlanNode } from './types'
 
 export const DRAWINGS_BUCKET = 'drawings'
 export const MAX_STATUS_PLANS_PER_REPORT = 20
-/** Σ unique drawing files downloaded for one render. */
-export const MAX_STATUS_PLAN_SOURCE_BYTES = 60 * 1024 * 1024
+/**
+ * One drawing file, and Σ unique drawing files for one appendix. Both sit well under the `reports`
+ * bucket's 50 MiB file_size_limit (00117): the finished PDF carries the sources (vector pages are
+ * copied, not rasterised), so the handoff also re-checks the final bytes (pdf-handoff.ts).
+ */
+export const MAX_STATUS_PLAN_SOURCE_BYTES = 40 * 1024 * 1024
+export const MAX_STATUS_PLAN_TOTAL_BYTES = 40 * 1024 * 1024
 
 export interface StorageLike {
   from: (bucket: string) => { download: (path: string) => Promise<{ data: Blob | null; error: { message: string } | null }> }
@@ -52,7 +57,10 @@ export interface LoadPlanRenderArgs {
   purposes: readonly StatusPlanPurpose[]
   planIds?: readonly string[]
   maxPlans?: number
+  /** Per drawing file. */
   maxSourceBytes?: number
+  /** Σ unique drawing files in this appendix. */
+  maxTotalBytes?: number
 }
 export interface PlanOmission { title: string; reason: string }
 export interface PlanRenderLoadResult {
@@ -87,7 +95,8 @@ const num = (v: unknown): number | null => (v === null || v === undefined || v =
 export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, args: LoadPlanRenderArgs): Promise<PlanRenderLoadResult> {
   const db = clients.db as any
   const maxPlans = args.maxPlans ?? MAX_STATUS_PLANS_PER_REPORT
-  const maxBytes = args.maxSourceBytes ?? MAX_STATUS_PLAN_SOURCE_BYTES
+  const maxSingle = args.maxSourceBytes ?? MAX_STATUS_PLAN_SOURCE_BYTES
+  const maxTotal = args.maxTotalBytes ?? MAX_STATUS_PLAN_TOTAL_BYTES
   const empty: PlanRenderLoadResult = { inputs: [], omitted: [] }
   if (args.purposes.length === 0) return empty
 
@@ -181,10 +190,15 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     if (!file) {
       const { data, error } = await clients.storage.from(DRAWINGS_BUCKET).download(fp.file_path)
       if (error || !data) {
-        file = { error: `the drawing file could not be read (${error?.message ?? 'empty'})` }
+        file = { error: 'the drawing file could not be read' }
       } else {
         const bytes = new Uint8Array(await data.arrayBuffer())
-        if (totalBytes + bytes.byteLength > maxBytes) {
+        if (bytes.byteLength > maxSingle) {
+          omitted.push({ title, reason: 'the drawing file is over the size cap for a report — export this plan from its page' })
+          files.set(fp.file_path, { error: 'the drawing file is over the size cap for a report — export this plan from its page' })
+          continue
+        }
+        if (totalBytes + bytes.byteLength > maxTotal) {
           omitted.push({ title, reason: 'the size cap for one PDF was reached — export this plan from its page' })
           continue // not cached: a smaller later drawing may still fit
         }

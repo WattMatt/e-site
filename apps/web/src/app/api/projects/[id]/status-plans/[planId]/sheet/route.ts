@@ -16,6 +16,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireProjectAccess } from '@/lib/auth/require-project-access'
 import { loadStatusPlanRenderInputs, MAX_STATUS_PLAN_SOURCE_BYTES, type PlanRenderLoadResult, type StorageLike } from '@/lib/status-plans/plan-render-data'
 import { renderStatusPlanPdf, StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
+import { isPlanId } from '@/lib/status-plans/plan-id'
 import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
 import { pdfHandoffResponse, statusPlanSheetPath, type HandoffStorage } from '@/lib/reports/pdf-handoff'
 
@@ -32,6 +33,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  if (!isPlanId(planId)) return NextResponse.json({ error: 'Status plan not found' }, { status: 404 })
 
   const access = await requireProjectAccess(supabase, id)
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })

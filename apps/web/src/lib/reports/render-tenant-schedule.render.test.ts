@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { renderTenantScheduleReport } from './render-tenant-schedule'
 import { resolveBranding } from './branding'
 import { buildTenantScheduleBrandingInput } from './tenant-schedule-report-branding'
@@ -79,5 +79,44 @@ describe('renderTenantScheduleReport — status plan appendix', () => {
     const out = await renderWith({ load: { inputs: [planInput(new TextEncoder().encode('nope'))], omitted: [] }, generatedOn: '2026-06-20' })
     expect(await pages(out)).toBe(base + 1)
     expect(squash(extractPdfText(out))).toContain('thedrawingPDFcouldnotberead')
+  })
+})
+
+describe('renderTenantScheduleReport — final size limit', () => {
+  const brand = () => resolveBranding(buildTenantScheduleBrandingInput(baseData, '2026-06-20'))
+  it('over the limit with the appendix → re-rendered without it, every plan listed as not included, report intact', async () => {
+    const base = await render(baseData)
+    const appendix = { load: { inputs: [planInput(await drawingPdf())], omitted: [{ title: 'Other', reason: 'the drawing is no longer available' }] }, generatedOn: '2026-06-20' }
+    const withPlans = await renderTenantScheduleReport(baseData, brand(), appendix)
+    expect(withPlans.length).toBeGreaterThan(base.length)
+    const limit = withPlans.length - 1
+    let outcome: unknown
+    const out = await renderTenantScheduleReport(baseData, brand(), appendix, { maxBytes: limit, onOutcome: (o) => { outcome = o } })
+    expect(out.length).toBeLessThanOrEqual(limit)
+    expect(await pages(out)).toBe((await pages(base)) + 1) // divider only, no plan page
+    const text = squash(extractPdfText(out))
+    expect(text).toContain('Appendix—Tenantstatusplans')
+    expect(text).toContain('Groundfloortenants')
+    expect(text).toContain('Other')
+    expect(outcome).toEqual({
+      appended: 0,
+      notIncluded: [
+        { title: 'Other', reason: 'the drawing is no longer available' },
+        { title: expect.stringContaining('Ground floor tenants'), reason: expect.stringMatching(/too large/) },
+      ],
+    })
+  })
+  it('within the limit nothing changes and the outcome is the real appended count', async () => {
+    const appendix = { load: { inputs: [planInput(await drawingPdf()), planInput(new TextEncoder().encode('nope'))], omitted: [] }, generatedOn: '2026-06-20' }
+    let outcome: { appended: number; notIncluded: unknown[] } | undefined
+    const out = await renderTenantScheduleReport(baseData, brand(), appendix, { onOutcome: (o) => { outcome = o } })
+    expect(out.length).toBeLessThan(48 * 1024 * 1024)
+    expect(outcome?.appended).toBe(1)
+    expect(outcome?.notIncluded).toHaveLength(1)
+  })
+  it('no appendix → no outcome call', async () => {
+    const cb = vi.fn()
+    await renderTenantScheduleReport(baseData, brand(), null, { onOutcome: cb })
+    expect(cb).not.toHaveBeenCalled()
   })
 })

@@ -16,6 +16,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requirePortalAccess } from '@/lib/portal/data'
 import { loadStatusPlanRenderInputs, type PlanRenderLoadResult, type StorageLike } from '@/lib/status-plans/plan-render-data'
 import { renderStatusPlanPdf, StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
+import { isPlanId } from '@/lib/status-plans/plan-id'
 import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
 import { pdfHandoffResponse, statusPlanPortalPath, type HandoffStorage } from '@/lib/reports/pdf-handoff'
 
@@ -25,6 +26,7 @@ export const maxDuration = 60
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ projectId: string; planId: string }> }) {
   const { projectId, planId } = await params
+  if (!isPlanId(planId)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const access = await requirePortalAccess(projectId)
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 

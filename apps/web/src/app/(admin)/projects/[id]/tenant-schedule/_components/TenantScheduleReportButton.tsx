@@ -29,6 +29,9 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const blobRef = useRef<string | null>(null)
+  // Overlapping previews: only the newest request may touch state; the previous fetch is aborted.
+  const seqRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
 
   // Spec §8: tenant layout plans default ON, distribution schematics OFF. Preview and Save use the
   // same choice, so the saved version is exactly what was previewed.
@@ -43,9 +46,14 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   }
 
   // Revoke any outstanding object URL when the component unmounts.
-  useEffect(() => revokeBlob, [])
+  useEffect(() => () => { seqRef.current++; abortRef.current?.abort(); revokeBlob() }, [])
 
   async function openPreview(o: StatusPlanAppendixOptions = plans) {
+    const seq = ++seqRef.current
+    abortRef.current?.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    const stale = () => seq !== seqRef.current
     setOpen(true)
     setSaved(false)
     setError(null)
@@ -53,19 +61,22 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
     revokeBlob()
     setBlobUrl(null)
     try {
-      const res = await fetch(previewUrl(o))
+      const res = await fetch(previewUrl(o), { signal: ctrl.signal })
+      if (stale()) return
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(body.error ?? `Preview failed (HTTP ${res.status})`)
       }
       const blob = await res.blob()
+      if (stale()) return
       const url = URL.createObjectURL(blob)
       blobRef.current = url
       setBlobUrl(url)
     } catch (err) {
+      if (stale()) return
       setError(err instanceof Error ? err.message : 'Failed to render the report preview.')
     } finally {
-      setLoading(false)
+      if (!stale()) setLoading(false)
     }
   }
 
@@ -76,6 +87,9 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   }
 
   function close() {
+    seqRef.current++
+    abortRef.current?.abort()
+    setLoading(false)
     setOpen(false)
     revokeBlob()
     setBlobUrl(null)

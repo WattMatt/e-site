@@ -4,7 +4,7 @@ import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { TENANT_LEGEND, SCHEMATIC_LEGEND } from '@esite/shared/status-plans'
 import { squash } from '@/test/pdf-text'
 import { drawnText } from '@/test/pdf-ops'
-import { appendStatusPlansToReport } from './appendix'
+import { appendStatusPlansToReport, appendStatusPlansToReportDetailed, dividerLayout, DIVIDER_BOTTOM_MARGIN } from './appendix'
 import { A3_LANDSCAPE, type StatusPlanRenderInput } from './render-plan-page'
 import type { PlanRenderLoadResult } from './plan-render-data'
 
@@ -94,5 +94,62 @@ describe('appendStatusPlansToReport', () => {
     const out = await appendStatusPlansToReport(base, { inputs: [withKey('a'), withKey('b'), withKey('c')], omitted: [] }, '2026-10-09')
     expect((await sizes(out)).length).toBe(6) // 2 report + divider + 3 plans
     expect(out.byteLength).toBeLessThan(base.byteLength + src.byteLength * 1.6 + 30_000)
+  })
+})
+
+describe('divider layout (many rows)', () => {
+  it('25 included + 30 omissions: nothing is laid out below the bottom margin, the rest is "...and N more"', () => {
+    const l = dividerLayout(25, 30)
+    expect(l.lowestBaseline).toBeGreaterThanOrEqual(DIVIDER_BOTTOM_MARGIN)
+    expect(l.includedShown).toBe(25)
+    expect(l.omissionsShown).toBeLessThan(30)
+    expect(l.omissionsMore).toBe(30 - l.omissionsShown)
+    expect(l.includedMore).toBe(0)
+  })
+  it('even a very long included list stays on the page', () => {
+    const l = dividerLayout(120, 5)
+    expect(l.lowestBaseline).toBeGreaterThanOrEqual(DIVIDER_BOTTOM_MARGIN)
+    expect(l.includedMore).toBeGreaterThan(0)
+    expect(l.includedShown + l.includedMore).toBe(120)
+    expect(l.omissionsShown).toBeGreaterThan(0)
+  })
+  it('a short list shows everything with no "more" line', () => {
+    expect(dividerLayout(2, 1)).toMatchObject({ includedShown: 2, includedMore: 0, omissionsShown: 1, omissionsMore: 0 })
+  })
+  it('the rendered divider says how many more were left off', async () => {
+    const src = await drawing()
+    const load: PlanRenderLoadResult = {
+      inputs: [plan('a', 'Alpha', 'tenant_layout', src)],
+      omitted: Array.from({ length: 60 }, (_, i) => ({ title: `Omitted ${i}`, reason: 'the drawing is no longer available' })),
+    }
+    const out = await appendStatusPlansToReport(await report(), load, '2026-10-09')
+    const divider = await pageText(out, 2)
+    expect(divider).toMatch(/and\d+more/)
+    expect(divider).not.toContain('Omitted59')
+  })
+})
+
+describe('appendix error text', () => {
+  it('an unexpected (non-source) error is "the plan could not be drawn", never its raw message', async () => {
+    const bad = { ...plan('a', 'Alpha', 'tenant_layout', await drawing()), source: null } as unknown as StatusPlanRenderInput
+    const r = await appendStatusPlansToReportDetailed(await report(), { inputs: [bad], omitted: [] }, '2026-10-09')
+    expect(r.notIncluded).toEqual([{ title: expect.stringContaining('Alpha'), reason: 'the plan could not be drawn' }])
+    const divider = await pageText(r.bytes, 2)
+    expect(divider).toContain('theplancouldnotbedrawn')
+    expect(divider).not.toMatch(/Cannot|undefined|null/)
+  })
+  it('a source error keeps its own sentence', async () => {
+    const r = await appendStatusPlansToReportDetailed(
+      await report(), { inputs: [plan('a', 'Alpha', 'tenant_layout', new TextEncoder().encode('not a pdf'))], omitted: [] }, '2026-10-09')
+    expect(r.notIncluded[0]!.reason).toBe('the drawing PDF could not be read')
+  })
+  it('reports the actual appended / notIncluded result', async () => {
+    const src = await drawing()
+    const r = await appendStatusPlansToReportDetailed(
+      await report(),
+      { inputs: [plan('a', 'Alpha', 'tenant_layout', src), plan('b', 'Bravo', 'tenant_layout', new TextEncoder().encode('x'))], omitted: [{ title: 'C', reason: 'r' }] },
+      '2026-10-09')
+    expect(r.appended).toBe(1)
+    expect(r.notIncluded.map((o) => o.title.split(' ')[0])).toEqual(['C', 'Bravo'])
   })
 })

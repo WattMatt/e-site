@@ -6,11 +6,12 @@ import { renderTenantScheduleReport } from '@/lib/reports/render-tenant-schedule
 import { loadReportAppendix } from '@/lib/status-plans/report-appendix'
 import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { MAX_HANDOFF_PDF_BYTES } from '@/lib/reports/pdf-limits'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 // The status-plan appendix embeds drawings: allow for the extra render time.
-export const maxDuration = 60
+export const maxDuration = 120
 
 const REPORTS_BUCKET = 'reports'
 
@@ -46,10 +47,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const appendixResult = await loadReportAppendix({ url: req.url, sessionClient: supabase, projectId: id, today: johannesburgDate(new Date()) })
   if (!appendixResult.ok) return NextResponse.json({ error: appendixResult.error }, { status: appendixResult.status })
   let pdf: Buffer
+  // What the appendix ACTUALLY holds (after embedding and any size fallback), not the loader's pre-embed counts.
+  let outcome: { appended: number; notIncluded: unknown[] } | null = null
   try {
-    pdf = await renderTenantScheduleReport(data, branding, appendixResult.appendix)
+    pdf = await renderTenantScheduleReport(data, branding, appendixResult.appendix, { onOutcome: (o) => { outcome = o } })
   } catch {
     return NextResponse.json({ error: 'PDF render failed' }, { status: 500 })
+  }
+  // The renderer already fell back to a plan-free report when the appendix made it too big; this is
+  // the last check before the `reports` bucket (50 MiB limit) would refuse the upload.
+  if (pdf.length > MAX_HANDOFF_PDF_BYTES) {
+    return NextResponse.json({ error: 'This report is too large to save.' }, { status: 413 })
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,8 +99,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       branding_snapshot: brandingSnapshot,
       generated_by: user.id,
       // What this version holds (00183 summary): the saved-reports panel can say so.
-      summary: appendixResult.appendix
-        ? { statusPlans: appendixResult.appendix.load.inputs.length, statusPlansNotIncluded: appendixResult.appendix.load.omitted.length }
+      summary: outcome
+        ? { statusPlans: (outcome as { appended: number }).appended, statusPlansNotIncluded: (outcome as { notIncluded: unknown[] }).notIncluded.length }
         : null,
     })
     .select('id, version').single()

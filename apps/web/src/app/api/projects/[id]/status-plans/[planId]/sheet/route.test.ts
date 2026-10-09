@@ -21,8 +21,9 @@ import { GET } from './route'
 import { StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
 
 const PID = 'proj-1'
-const PLAN = 'plan-1'
+const PLAN = '9c1a98b5-6ef3-4388-865f-417d3f5d7465'
 const call = () => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${PLAN}/sheet`), { params: Promise.resolve({ id: PID, planId: PLAN }) })
+const callWith = (planId: string) => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${planId}/sheet`), { params: Promise.resolve({ id: PID, planId }) })
 const input = { planId: PLAN, planName: 'Main board 3.1 / Level 2', pageIndex: 1, generatedOn: '2026-10-09' }
 
 beforeEach(() => {
@@ -41,6 +42,12 @@ describe('GET status plan Export sheet', () => {
     m.getUser.mockResolvedValue({ data: { user: null } })
     expect((await call()).status).toBe(401)
     expect(m.access).not.toHaveBeenCalled()
+  })
+  it('a planId that is not a uuid → 404, nothing is queried (not a 500)', async () => {
+    const res = await callWith('plan-1')
+    expect(res.status).toBe(404)
+    expect(m.load).not.toHaveBeenCalled()
+    expect(m.service).not.toHaveBeenCalled()
   })
   it('no project access → 404 and nothing is read', async () => {
     m.access.mockResolvedValue({ ok: false, status: 404, error: 'Project not found' })

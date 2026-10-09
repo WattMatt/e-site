@@ -14,7 +14,8 @@ vi.mock('@/lib/status-plans/render-plan-page', async () => {
 import { GET } from './route'
 import { StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
 
-const call = () => GET(new NextRequest('http://localhost/api/portal/p1/status-plans/s1/pdf'), { params: Promise.resolve({ projectId: 'p1', planId: 's1' }) })
+const PLAN = '9c1a98b5-6ef3-4388-865f-417d3f5d7465'
+const call = () => GET(new NextRequest(`http://localhost/api/portal/p1/status-plans/${PLAN}/pdf`), { params: Promise.resolve({ projectId: 'p1', planId: PLAN }) })
 const input = { planName: 'Ground floor', pageIndex: 1 }
 
 beforeEach(() => {
@@ -28,6 +29,12 @@ beforeEach(() => {
 })
 
 describe('GET portal status plan PDF', () => {
+  it('a planId that is not a uuid → 404, nothing is queried (not a 500)', async () => {
+    const res = await GET(new NextRequest('http://localhost/api/portal/p1/status-plans/s1/pdf'), { params: Promise.resolve({ projectId: 'p1', planId: 's1' }) })
+    expect(res.status).toBe(404)
+    expect(m.load).not.toHaveBeenCalled()
+    expect(m.service).not.toHaveBeenCalled()
+  })
   it('only a client viewer with an active membership on THIS project gets it', async () => {
     m.portal.mockResolvedValue(null)
     expect((await call()).status).toBe(404)
@@ -39,11 +46,11 @@ describe('GET portal status plan PDF', () => {
     const res = await call()
     const [clients, args] = m.load.mock.calls[0]!
     expect(clients.db).toEqual({ tag: 'session' })
-    expect(args).toMatchObject({ projectId: 'p1', planIds: ['s1'], maxPlans: 1 })
+    expect(args).toMatchObject({ projectId: 'p1', planIds: [PLAN], maxPlans: 1 })
     expect(m.render).toHaveBeenCalledWith(input, 'a3')
-    expect(m.upload).toHaveBeenCalledWith('org-1/p1/status-plans/s1/portal.pdf', expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
+    expect(m.upload).toHaveBeenCalledWith(`org-1/p1/status-plans/${PLAN}/portal.pdf`, expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
     // No download name: the signed URL opens inline in the tab the portal link opened.
-    expect(m.sign).toHaveBeenCalledWith('org-1/p1/status-plans/s1/portal.pdf', 600, undefined)
+    expect(m.sign).toHaveBeenCalledWith(`org-1/p1/status-plans/${PLAN}/portal.pdf`, 600, undefined)
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toBe('https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t')
   })

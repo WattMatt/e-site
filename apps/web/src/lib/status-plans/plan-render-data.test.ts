@@ -9,6 +9,7 @@ vi.mock('@/lib/tenant-schedule/shop-facts', () => ({ loadTenantShopFacts: factsM
 
 import {
   loadStatusPlanRenderInputs, orderPlans, sourceKindFor, MAX_STATUS_PLANS_PER_REPORT,
+  MAX_STATUS_PLAN_SOURCE_BYTES, MAX_STATUS_PLAN_TOTAL_BYTES,
 } from './plan-render-data'
 
 const PROJ = 'proj-1'
@@ -195,7 +196,7 @@ describe('loadStatusPlanRenderInputs', () => {
     const { inputs, omitted } = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'] })
     expect(inputs.map((i) => i.planId)).toEqual(['a'])
     expect(omitted).toEqual([
-      { title: 'Plan b (Tenant layout, page 1)', reason: 'the drawing file could not be read (Object not found)' },
+      { title: 'Plan b (Tenant layout, page 1)', reason: 'the drawing file could not be read' },
       { title: 'Plan c (Tenant layout, page 1)', reason: 'the drawing is not a PDF, PNG or JPEG file (layout.dwg)' },
       { title: 'Plan d (Tenant layout, page 1)', reason: 'the drawing is no longer available' },
     ])
@@ -218,6 +219,47 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(small.inputs).toHaveLength(0)
     // the two over-count lines come first; every kept plan then hits the byte cap
     expect(small.omitted.filter((o) => /size cap/.test(o.reason))).toHaveLength(MAX_STATUS_PLANS_PER_REPORT)
+  })
+
+  it('per-source cap is 40 MiB and the total across the appendix is 40 MiB', () => {
+    expect(MAX_STATUS_PLAN_SOURCE_BYTES).toBe(40 * 1024 * 1024)
+    expect(MAX_STATUS_PLAN_TOTAL_BYTES).toBe(40 * 1024 * 1024)
+  })
+
+  it('a drawing over the per-source cap is omitted with a size-cap line; a smaller one still fits', async () => {
+    const big = new Uint8Array(10)
+    const { clients } = world({
+      plans: [planRow('a'), planRow('b', { floor_plan_id: 'fp-2' })],
+      fps: [
+        { id: 'fp-1', name: 'Big', file_path: `${ORG}/${PROJ}/big.pdf`, pixels_per_meter: 20 },
+        { id: 'fp-2', name: 'Small', file_path: `${ORG}/${PROJ}/small.pdf`, pixels_per_meter: 20 },
+      ],
+      files: { [`${ORG}/${PROJ}/big.pdf`]: big, [`${ORG}/${PROJ}/small.pdf`]: PDF },
+    })
+    const r = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'], maxSourceBytes: 5 })
+    expect(r.inputs.map((i) => i.planId)).toEqual(['b'])
+    expect(r.omitted).toEqual([{ title: 'Plan a (Tenant layout, page 1)', reason: expect.stringMatching(/size cap/) }])
+  })
+
+  it('plans beyond the total budget across all drawings become "size cap" lines', async () => {
+    const four = new Uint8Array(4)
+    const { clients } = world({
+      plans: [planRow('a'), planRow('b', { floor_plan_id: 'fp-2' }), planRow('c', { floor_plan_id: 'fp-3' })],
+      fps: ['1', '2', '3'].map((n) => ({ id: `fp-${n}`, name: `D${n}`, file_path: `${ORG}/${PROJ}/d${n}.pdf`, pixels_per_meter: 20 })),
+      files: Object.fromEntries(['1', '2', '3'].map((n) => [`${ORG}/${PROJ}/d${n}.pdf`, four])),
+    })
+    const r = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'], maxTotalBytes: 9 })
+    expect(r.inputs.map((i) => i.planId)).toEqual(['a', 'b'])
+    expect(r.omitted).toHaveLength(1)
+    expect(r.omitted[0]!.title).toBe('Plan c (Tenant layout, page 1)')
+    expect(r.omitted[0]!.reason).toMatch(/size cap/)
+  })
+
+  it('never puts storage error text in a reason', async () => {
+    const { clients } = world({ files: {} })
+    const r = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'] })
+    expect(r.omitted[0]!.reason).toBe('the drawing file could not be read')
+    expect(JSON.stringify(r.omitted)).not.toContain('Object not found')
   })
 
   it('pages shapes past PostgREST max_rows', async () => {
