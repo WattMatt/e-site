@@ -54,7 +54,7 @@ function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: Read
   const base = { key, block, match }
   switch (match.state) {
     case 'no_tag':
-      return { ...base, category: 'no_tag', nodeId: null, candidateIds: [], reason: 'This block has no NO: value.' }
+      return { ...base, category: 'no_tag', nodeId: null, candidateIds: [], reason: block.tag ? `"${block.tag}" in NO: is not a board tag; choose the board.` : 'This block has no NO: value.' }
     case 'matched':
       if (used.has(match.nodeId)) {
         return { ...base, category: 'needs_you', nodeId: null, candidateIds: [], reason: `${block.tag} matches a board that is already on this plan.` }

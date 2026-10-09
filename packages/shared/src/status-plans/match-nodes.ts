@@ -68,13 +68,35 @@ function lookup(index: NodeIndex, key: string): { ids: string[]; via: MatchVia }
   return { ids, via: code.length > 0 ? 'code' : 'shop_number' }
 }
 
+const KIOSK_RE = /^KIOSK\s*0*(\d{1,3})$/i
+const CODE_SHAPE_RE = /^[A-Z]{2,4}-[A-Z0-9]+$/
+
+/**
+ * Whether a NO: value is a board tag rather than a sentence: one token of at
+ * most 16 characters that carries a digit or reads like PREFIX-SUFFIX
+ * (DB-05, DB-20/21, DB-K07, MB-3.1, DB-CM). "KIOSK n" is the one two-word tag.
+ */
+export function isTagShaped(text: string | null): boolean {
+  const t = (text ?? '').trim()
+  if (!t) return false
+  if (KIOSK_RE.test(t)) return true
+  if (/\s/.test(t) || Array.from(t).length > 16) return false
+  return /\d/.test(t) || CODE_SHAPE_RE.test(t.toUpperCase())
+}
+
 const MB_RE = /^MB[\s\-‐-―.]*(\d+(?:\.\d+)*)$/i
 
 export function matchBlock(block: { tag: string | null; name: string | null }, index: NodeIndex): BlockMatch {
-  const key = block.tag ? normaliseTag(block.tag) : ''
+  const key = block.tag && isTagShaped(block.tag) ? normaliseTag(block.tag) : ''
   if (!key) return { state: 'no_tag' }
 
   let found = lookup(index, key)
+  const kiosk = KIOSK_RE.exec(block.tag!.trim())
+  if (found.ids.length === 0 && kiosk) {
+    const n = String(Number(kiosk[1]))
+    const ids = [...new Set([...lookup(index, normaliseTag(`DB-K${n.padStart(2, '0')}`)).ids, ...lookup(index, normaliseTag(`DB-K${n}`)).ids])]
+    found = { ids, via: 'code' }
+  }
   if (found.ids.length === 0 && key.startsWith('DB') && key.length > 2) {
     found = { ids: lookup(index, key.slice(2)).ids, via: 'without_db' }
   }

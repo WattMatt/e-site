@@ -33,6 +33,14 @@ describe('reviewDetection', () => {
     expect(detectionSummary(r)).toBe('Detected 4 blocks — 2 matched · 1 needs you · 1 without a tag')
   })
 
+  it('sorts a block whose NO: is a sentence into without a tag and keeps the text as the hint', () => {
+    const items = blockItems({ x: 100, y: 100, values: ['STANDBY LOCAL INCOMING', 'ECHO PLANT', '', '', '', '', ''] })
+    const r = reviewDetection(detectBlocks(items), NODES, [])
+    expect(r.rows.map((x) => x.category)).toEqual(['no_tag'])
+    expect(r.rows[0].reason).toContain('STANDBY LOCAL INCOMING')
+    expect(detectedTagFor(r.rows[0].block)).toBe('STANDBY LOCAL INCOMING')
+  })
+
   it('leaves out blocks that overlap a shape already on the plan (re-run)', () => {
     const existing = [{ id: 's1', points: rectToPoints(90, 80, 150, 120), nodeId: null }]
     const r = reviewDetection(detectBlocks(ITEMS), NODES, existing)
