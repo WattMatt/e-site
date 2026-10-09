@@ -11,7 +11,8 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { LOAD_PROFILE_BUCKET, LOAD_PROFILE_READ_ROLES, LOAD_PROFILE_WRITE_ROLES, MAX_PROFILE_SLOTS } from '@/lib/load-profile/access'
 import { buildMeterRows, parseStoredFile, type ChannelSelection, type ParseResult } from '@/lib/load-profile/pipeline'
 import { listPublishedLicensees, listPublishedTariffs, loadCostingTariff, type PublishedLicensee, type PublishedTariffOption } from '@/lib/load-profile/tariff-source'
-import type { AnyClient } from '@/lib/load-profile/load'
+import { loadTenants, type AnyClient } from '@/lib/load-profile/load'
+import { computeTenantBenchmarks } from '@/lib/load-profile/benchmarks'
 import { LOAD_ROLES, roleOfKind, type MeterKind } from '@esite/shared/load-profile'
 
 type Err = { error: string }
@@ -116,13 +117,16 @@ export async function commitLoadProfileFileAction(projectId: string, input: { pa
 
 const ARCHETYPES = ['retail', 'fast_food', 'restaurant', 'supermarket', 'office_bank', 'gym', 'anchor_24h', 'vacant'] as const
 const SyntheticSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('tenant_schedule'), label: z.string().trim().min(1).max(200), params: z.object({ commonAreaPct: z.number().min(0).max(100) }) }),
+  z.object({
+    kind: z.literal('tenant_schedule'), label: z.string().trim().min(1).max(200),
+    params: z.object({ commonAreaPct: z.number().min(0).max(100), basis: z.enum(['measured', 'generic']).default('measured') }),
+  }),
   z.object({
     kind: z.literal('admd'), label: z.string().trim().min(1).max(200),
     params: z.object({ units: z.number().int().min(1).max(100_000), admdKva: z.number().min(0.1).max(1000), archetype: z.enum(ARCHETYPES) }),
   }),
 ])
-export type SyntheticInput = z.infer<typeof SyntheticSchema>
+export type SyntheticInput = z.input<typeof SyntheticSchema>
 
 export async function addSyntheticSourceAction(projectId: string, input: SyntheticInput): Promise<{ ok: true } | Err> {
   const parsed = SyntheticSchema.safeParse(input)
@@ -133,7 +137,67 @@ export async function addSyntheticSourceAction(projectId: string, input: Synthet
   if (typeof profileId !== 'string') return profileId
   // An estimate of the tenants stands in for them; an ADMD block is new load on top (roles.ts).
   const role = parsed.data.kind === 'admd' ? 'addition' : 'tenant'
-  const { error } = await g.supabase.schema('projects').from('load_profile_sources').insert({ profile_id: profileId, ...parsed.data, role })
+  const { data: made, error } = await g.supabase.schema('projects').from('load_profile_sources').insert({ profile_id: profileId, ...parsed.data, role }).select('id').single()
+  if (error || !made) return { error: GENERIC }
+  if (parsed.data.kind === 'tenant_schedule' && parsed.data.params.basis === 'measured') {
+    const r = await refreshBenchmarks(g.supabase, projectId, (made as { id: string }).id)
+    if ('error' in r) { revalidatePath(pagePath(projectId)); return { error: `The estimate was added with generic figures: ${r.error}` } }
+  }
+  revalidatePath(pagePath(projectId))
+  return { ok: true }
+}
+
+// ── Measured tenant benchmarks ────────────────────────────────────────────────
+
+/**
+ * Re-reads the library's measured stores for every tenant brand in the schedule and stores the
+ * benchmarks on the source (benchmark-store.ts). Reads through the caller's session: an org without a
+ * Solar library gets none, so every tenant stays on the generic figures.
+ */
+async function refreshBenchmarks(supabase: AnyClient, projectId: string, sourceId: string): Promise<{ ok: true; brands: number } | Err> {
+  const p = supabase.schema('projects')
+  const { data: src } = await p.from('load_profile_sources').select('id, kind, params, profile_id').eq('id', sourceId).eq('project_id', projectId).maybeSingle()
+  const row = src as { kind: string; params: Record<string, unknown> | null; profile_id: string } | null
+  if (!row || row.kind !== 'tenant_schedule') return { error: 'That tenant-schedule estimate is not in this project.' }
+  const { data: prof } = await p.from('load_profiles').select('reference_year').eq('id', row.profile_id).maybeSingle()
+  const referenceYear = prof ? Number((prof as { reference_year: number }).reference_year) : 2025
+  let benchmarks
+  try {
+    const tenants = await loadTenants(supabase, projectId)
+    benchmarks = await computeTenantBenchmarks(supabase, tenants.map((t) => t.matchName ?? t.label), referenceYear)
+  } catch (e) {
+    console.error('[load-profile] benchmarks', e)
+    return { error: 'the library could not be read. Try Refresh again.' }
+  }
+  const { data, error } = await p.from('load_profile_sources').update({ params: { ...(row.params ?? {}), basis: 'measured', benchmarks } }).eq('id', sourceId).eq('project_id', projectId).select('id')
+  if (error || !data?.length) return { error: GENERIC }
+  return { ok: true, brands: Object.keys(benchmarks.byKey).length }
+}
+
+export async function refreshTenantBenchmarksAction(projectId: string, sourceId: string): Promise<{ ok: true; brands: number } | Err> {
+  if (!uuid.safeParse(sourceId).success) return { error: 'Unknown source.' }
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
+  if ('error' in g) return g
+  const r = await refreshBenchmarks(g.supabase, projectId, sourceId)
+  revalidatePath(pagePath(projectId))
+  return r
+}
+
+/** Generic figures, or measured stores of each tenant's brand (computed now if never computed). */
+export async function setTenantEstimateBasisAction(projectId: string, sourceId: string, basis: 'measured' | 'generic'): Promise<{ ok: true } | Err> {
+  if (!uuid.safeParse(sourceId).success || (basis !== 'measured' && basis !== 'generic')) return { error: 'Check the values.' }
+  const g = await gate(projectId, LOAD_PROFILE_WRITE_ROLES)
+  if ('error' in g) return g
+  const p = g.supabase.schema('projects')
+  const { data: src } = await p.from('load_profile_sources').select('kind, params').eq('id', sourceId).eq('project_id', projectId).maybeSingle()
+  const row = src as { kind: string; params: Record<string, unknown> | null } | null
+  if (!row || row.kind !== 'tenant_schedule') return { error: 'That tenant-schedule estimate is not in this project.' }
+  if (basis === 'measured' && !row.params?.benchmarks) {
+    const r = await refreshBenchmarks(g.supabase, projectId, sourceId)
+    revalidatePath(pagePath(projectId))
+    return 'error' in r ? r : { ok: true }
+  }
+  const { error } = await p.from('load_profile_sources').update({ params: { ...(row.params ?? {}), basis } }).eq('id', sourceId).eq('project_id', projectId)
   if (error) return { error: GENERIC }
   revalidatePath(pagePath(projectId))
   return { ok: true }

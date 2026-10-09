@@ -58,7 +58,7 @@ describe('composeView', () => {
       sources: [synthetic('schedule', 'tenant_schedule', { commonAreaPct: 10 })],
       tenants: [{ label: 'Shop 1', areaM2: 100, category: 'standard', densityWPerM2: 20 }, { label: 'Shop 2', areaM2: null, category: null }],
     })
-    expect(v.sources[0].detail).toBe('1 tenant synthesised, 1 without an area skipped; common area +10 %')
+    expect(v.sources[0].detail).toBe('1 tenant estimated from generic figures, 1 without an area skipped; common area +10 %')
     expect(v.analysis!.md).toBeNull()
     expect(v.analysis!.nmd.basis).toBe('design_peak')
   })

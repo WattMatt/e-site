@@ -25,6 +25,7 @@ export async function loadTenants(supabase: AnyClient, projectId: string): Promi
   if (error) throw new Error(`tenants: ${error.message}`)
   return ((data ?? []) as Row[]).map((n) => ({
     label: [n.shop_number, n.shop_name ?? n.name].filter(Boolean).join(' ') || String(n.code ?? n.id),
+    matchName: (n.shop_name as string | null) ?? (n.name as string | null) ?? null,
     areaM2: n.shop_area_m2 == null ? null : Number(n.shop_area_m2),
     category: (n.shop_category as TenantSynthInput['category']) ?? null,
   }))
