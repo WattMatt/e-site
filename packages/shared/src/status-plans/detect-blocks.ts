@@ -106,7 +106,15 @@ function valueOf(
   const parts = items
     .filter((i) => !labelItems.has(i) && Math.abs(i.baseline - own.baseline) <= tol && i.x >= start && i.x < limit)
     .sort((a, b) => a.x - b.x)
-  const text = tidy([label.inline, ...parts.map((p) => p.str)].join(' '))
+  // Runs split mid-token (a kerned "DB-" + "71") touch; separate words do not.
+  let joined = label.inline
+  let prevEnd: number | null = joined ? null : own.x + own.width
+  for (const p of parts) {
+    const glue = prevEnd !== null && p.x - prevEnd < 0.3 * h
+    joined = joined ? (glue ? joined + p.str : `${joined} ${p.str}`) : p.str
+    prevEnd = p.x + p.width
+  }
+  const text = tidy(joined)
   const right = parts.reduce((r, p) => Math.max(r, p.x + p.width), own.x + own.width)
   return { text, right }
 }

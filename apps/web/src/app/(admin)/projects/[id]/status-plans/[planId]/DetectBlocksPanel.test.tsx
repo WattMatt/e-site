@@ -147,8 +147,45 @@ describe('DetectBlocksPanel', () => {
     expect(await screen.findByText('This page has no readable text — draw blocks by hand.')).not.toBeNull()
   })
 
+  it('text found but none upright says to draw by hand', async () => {
+    extractMock.mockResolvedValue({ ok: true, items: [], rawItemCount: 40, width: 1, height: 1 })
+    render(<DetectBlocksPanel {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
+    expect(await screen.findByText('Text was found on this page, but none of it reads upright — draw the blocks by hand.')).not.toBeNull()
+  })
+
+  it('an unreadable or expired drawing link says to reload', async () => {
+    extractMock.mockRejectedValue(new Error('UnexpectedResponseException'))
+    render(<DetectBlocksPanel {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The drawing link has expired or could not be read — reload the page and try again.')
+  })
+
+  it('a block without a tag can be linked to a picked board as well as added unlinked', async () => {
+    acceptMock.mockResolvedValue({ ok: true, data: [shape('s5', 'n-75', 'NAME: FOXTROT')] })
+    render(<DetectBlocksPanel {...props()} />)
+    await detect()
+    expect(screen.getByRole('button', { name: 'Add FOXTROT unlinked' })).not.toBeNull()
+    const addLinked = screen.getByRole('button', { name: 'Add FOXTROT' }) as HTMLButtonElement
+    expect(addLinked.disabled).toBe(true)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Board for FOXTROT' }), { target: { value: 'n-75' } })
+    expect(addLinked.disabled).toBe(false)
+    fireEvent.click(addLinked)
+    await waitFor(() => expect(acceptMock).toHaveBeenCalledTimes(1))
+    expect(acceptMock.mock.calls[0][0].blocks).toEqual([expect.objectContaining({ nodeId: 'n-75', detectedTag: 'NAME: FOXTROT' })])
+  })
+
+  it('a dots-only match arrives with its candidate preselected but not accepted', async () => {
+    extractMock.mockResolvedValue({ ok: true, items: block(100, 100, ['DB-7.5', 'ECHO', '1m2', '10A', '2C', 'ZX', '-']), rawItemCount: 9, width: 1, height: 1 })
+    render(<DetectBlocksPanel {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
+    const select = (await screen.findByRole('combobox', { name: 'Board for DB-7.5' })) as HTMLSelectElement
+    expect(select.value).toBe('n-75')
+    expect(acceptMock).not.toHaveBeenCalled()
+  })
+
   it('a re-run leaves out blocks already on the plan and says how many', async () => {
-    render(<DetectBlocksPanel {...props({ existingShapes: [{ id: 'x', points: [90, 80, 150, 80, 150, 120, 90, 120], nodeId: 'n-71' }] })} />)
+    render(<DetectBlocksPanel {...props({ existingShapes: [{ id: 'x', points: [90, 80, 225, 80, 225, 210, 90, 210], nodeId: 'n-71' }] })} />)
     fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
     expect(await screen.findByText('Detected 3 blocks — 1 matched · 1 needs you · 1 without a tag')).not.toBeNull()
     expect(text('1 block already on this plan was left out.')).not.toBeNull()

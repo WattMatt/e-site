@@ -82,6 +82,19 @@ describe('matchBlock', () => {
     expect(match('DB-99', 'Alpha Store')).toEqual({ state: 'unmatched' })
   })
 
+  it('a tag with one space after a short alpha prefix still matches (DB 72, MB 9.3)', () => {
+    expect(match('DB 72')).toEqual({ state: 'matched', nodeId: 'n-72', via: 'code', tieBrokenByName: false })
+    expect(match('MB 9.3')).toEqual({ state: 'matched', nodeId: 'n-mb93', via: 'main_board', tieBrokenByName: false })
+  })
+
+  it('dots are significant: DB-2.1 never auto-matches DB-21, but offers it for a person to confirm', () => {
+    const idx = buildNodeIndex([n('d21', 'tenant_db', 'DB-21', null, 'Twenty One'), n('d2-1', 'tenant_db', 'DB-2.1', null, 'Two One')])
+    expect(matchBlock({ tag: 'DB-2.1', name: null }, idx)).toMatchObject({ state: 'matched', nodeId: 'd2-1' })
+    expect(matchBlock({ tag: 'DB-21', name: null }, idx)).toMatchObject({ state: 'matched', nodeId: 'd21' })
+    const only21 = buildNodeIndex([n('d21', 'tenant_db', 'DB-21', null, 'Twenty One')])
+    expect(matchBlock({ tag: 'DB-2.1', name: null }, only21)).toEqual({ state: 'ambiguous', candidateIds: ['d21'], dotsOnly: true })
+  })
+
   it('no tag → no_tag', () => {
     expect(match(null, 'Alpha Store')).toEqual({ state: 'no_tag' })
     expect(match(' - ')).toEqual({ state: 'no_tag' })
@@ -95,9 +108,9 @@ describe('matchBlock', () => {
 
 describe('isTagShaped', () => {
   it('accepts board tags and KIOSK n', () => {
-    for (const t of ['DB-05', 'DB-20/21', 'DB-ZR7', 'MB-3.1', 'DB-K07', 'DB-CM', ' KIOSK 7 ']) expect(isTagShaped(t)).toBe(true)
+    for (const t of ['DB-05', 'DB-20/21', 'DB-ZR7', 'MB-3.1', 'DB-K07', 'DB-CM', ' KIOSK 7 ', 'DB 72', 'MB 3.1']) expect(isTagShaped(t)).toBe(true)
   })
   it('rejects empty, sentences and over-long text', () => {
-    for (const t of ['', '  ', null, 'BULK CHECK METER', 'HELLO', 'A-1234567890123456']) expect(isTagShaped(t)).toBe(false)
+    for (const t of ['', '  ', null, 'BULK CHECK METER', 'HELLO', 'A-1234567890123456', 'GENERATOR 2.1 INCOMING', 'MB-1.1 LOCAL MAIN']) expect(isTagShaped(t)).toBe(false)
   })
 })

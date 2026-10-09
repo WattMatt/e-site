@@ -119,9 +119,15 @@ export function DetectBlocksPanel({
     setDone(new Set())
     setChoice({})
     try {
-      const page = await extractPageText({ url: pdfUrl }, pageIndex)
+      let page: Awaited<ReturnType<typeof extractPageText>>
+      try {
+        page = await extractPageText({ url: pdfUrl }, pageIndex)
+      } catch {
+        setReadError('The drawing link has expired or could not be read — reload the page and try again.')
+        return
+      }
       if (!page.ok) { setReadError(page.error); return }
-      setOutcome(runDetection(page.items, nodes, existingShapes))
+      setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount))
     } catch {
       setReadError('The drawing could not be read. Try again.')
     } finally {
@@ -162,6 +168,32 @@ export function DetectBlocksPanel({
       .sort((a, b) => Number(first.has(b.id)) - Number(first.has(a.id)) || nodeLabel(a).localeCompare(nodeLabel(b)))
   }
 
+  const boardPicker = (row: ReviewRow, label: string, picked: string) => (
+    <>
+      <input
+        type="search"
+        aria-label={`Filter boards for ${label}`}
+        placeholder="Filter boards"
+        value={filter[row.key] ?? ''}
+        onChange={(e) => setFilter((f) => ({ ...f, [row.key]: e.target.value }))}
+        className="compact-field"
+      />
+      <select
+        aria-label={`Board for ${label}`}
+        value={picked}
+        onChange={(e) => setChoice((c) => ({ ...c, [row.key]: e.target.value }))}
+        className="compact-field"
+      >
+        <option value="">Pick a board…</option>
+        {optionsFor(row).map((n) => (
+          <option key={n.id} value={n.id} disabled={reserved.has(n.id) && picked !== n.id}>
+            {nodeLabel(n)}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+
   const focusButton = (row: ReviewRow) =>
     onFocus ? (
       <button type="button" onClick={() => onFocus(row.block.box)} aria-label={`Show ${rowLabel(row)} on the drawing`}>Show</button>
@@ -181,6 +213,10 @@ export function DetectBlocksPanel({
       {readError && <p role="alert" style={{ ...muted, color: 'var(--c-amber)' }}>{readError}</p>}
 
       {outcome?.kind === 'no_text' && <p style={muted}>This page has no readable text — draw blocks by hand.</p>}
+
+      {outcome?.kind === 'not_upright' && (
+        <p style={muted}>Text was found on this page, but none of it reads upright — draw the blocks by hand.</p>
+      )}
 
       {outcome?.kind === 'no_blocks' && (
         <p style={muted}>
@@ -232,32 +268,12 @@ export function DetectBlocksPanel({
               <h4 style={sectionTitle}>Need you ({needsYou.length})</h4>
               {needsYou.map((row) => {
                 const label = rowLabel(row)
-                const picked = choice[row.key] ?? ''
+                const picked = choice[row.key] ?? row.preselectId ?? ''
                 return (
                   <div key={row.key} style={rowStyle}>
                     <span>{label}{row.block.name && row.block.tag ? ` (${row.block.name})` : ''}</span>
                     <span style={muted}>{row.reason}</span>
-                    <input
-                      type="search"
-                      aria-label={`Filter boards for ${label}`}
-                      placeholder="Filter boards"
-                      value={filter[row.key] ?? ''}
-                      onChange={(e) => setFilter((f) => ({ ...f, [row.key]: e.target.value }))}
-                      className="compact-field"
-                    />
-                    <select
-                      aria-label={`Board for ${label}`}
-                      value={picked}
-                      onChange={(e) => setChoice((c) => ({ ...c, [row.key]: e.target.value }))}
-                      className="compact-field"
-                    >
-                      <option value="">Pick a board…</option>
-                      {optionsFor(row).map((n) => (
-                        <option key={n.id} value={n.id} disabled={reserved.has(n.id) && picked !== n.id}>
-                          {nodeLabel(n)}
-                        </option>
-                      ))}
-                    </select>
+                    {boardPicker(row, label, picked)}
                     <button
                       type="button"
                       disabled={busy || !picked}
@@ -277,9 +293,18 @@ export function DetectBlocksPanel({
               <h4 style={sectionTitle}>Without a tag ({noTag.length})</h4>
               {noTag.map((row) => {
                 const label = rowLabel(row)
+                const picked = choice[row.key] ?? ''
                 return (
                   <div key={row.key} style={rowStyle}>
                     <span>{label}</span>
+                    <span style={muted}>{row.reason}</span>
+                    {boardPicker(row, label, picked)}
+                    <button
+                      type="button"
+                      disabled={busy || !picked}
+                      onClick={() => accept([{ row, nodeId: picked }])}
+                      aria-label={`Add ${label}`}
+                    >Add</button>
                     <button type="button" disabled={busy} onClick={() => accept([{ row, nodeId: null }])} aria-label={`Add ${label} unlinked`}>
                       Add unlinked
                     </button>

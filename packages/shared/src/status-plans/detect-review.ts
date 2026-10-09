@@ -25,6 +25,8 @@ export interface ReviewRow {
   nodeId: string | null
   /** Boards to offer first in the picker. */
   candidateIds: string[]
+  /** A candidate the picker starts on (a dots-only match); null otherwise. */
+  preselectId: string | null
   /** Why a person is needed; null for matched rows. */
   reason: string | null
 }
@@ -32,7 +34,7 @@ export interface ReviewRow {
 export interface DetectionReview {
   labelCount: number
   rows: ReviewRow[]
-  /** Blocks left out because they overlap a shape already on the plan. */
+  /** Blocks left out because a block-sized shape already covers them. */
   alreadyOnPlan: number
   rejected: RejectedBlock[]
   counts: { detected: number; matched: number; needsYou: number; noTag: number }
@@ -40,10 +42,28 @@ export interface DetectionReview {
 
 export type DetectionOutcome =
   | { kind: 'no_text' }
+  | { kind: 'not_upright' }
   | { kind: 'no_blocks'; labelCount: number; rejected: RejectedBlock[] }
   | { kind: 'review'; review: DetectionReview }
 
 export const DETECTED_TAG_MAX = 64
+
+function boxArea(b: Box): number {
+  return Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY)
+}
+
+/**
+ * Whether an existing shape is the same block already drawn: it covers at least
+ * half of the detected block AND is itself block-sized (at most 4× its area),
+ * so a big manual rectangle round several blocks does not hide them.
+ */
+export function coversBlock(existing: Box, block: Box): boolean {
+  const w = Math.min(existing.maxX, block.maxX) - Math.max(existing.minX, block.minX)
+  const h = Math.min(existing.maxY, block.maxY) - Math.max(existing.minY, block.minY)
+  if (w <= 0 || h <= 0) return false
+  const blockArea = boxArea(block)
+  return w * h >= 0.5 * blockArea && boxArea(existing) <= 4 * blockArea
+}
 
 /** Positive-area intersection; boxes that only touch do not overlap. */
 export function boxesOverlap(a: Box, b: Box): boolean {
@@ -51,7 +71,7 @@ export function boxesOverlap(a: Box, b: Box): boolean {
 }
 
 function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: ReadonlySet<string>): ReviewRow {
-  const base = { key, block, match }
+  const base = { key, block, match, preselectId: null as string | null }
   switch (match.state) {
     case 'no_tag':
       return { ...base, category: 'no_tag', nodeId: null, candidateIds: [], reason: block.tag ? `"${block.tag}" in NO: is not a board tag; choose the board.` : 'This block has no NO: value.' }
@@ -61,6 +81,9 @@ function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: Read
       }
       return { ...base, category: 'matched', nodeId: match.nodeId, candidateIds: [match.nodeId], reason: null }
     case 'ambiguous':
+      if (match.dotsOnly) {
+        return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, preselectId: match.candidateIds.length === 1 ? match.candidateIds[0]! : null, reason: `${block.tag} matches ${match.candidateIds.length === 1 ? 'a board' : 'boards'} only if the dots are ignored; confirm the board.` }
+      }
       return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, reason: `${block.tag} matches ${match.candidateIds.length} boards; choose one.` }
     case 'unmatched':
       return { ...base, category: 'needs_you', nodeId: null, candidateIds: [], reason: `No board in this project has the tag ${block.tag}.` }
@@ -79,7 +102,7 @@ export function reviewDetection(
   let alreadyOnPlan = 0
 
   result.blocks.forEach((block, i) => {
-    if (existingBoxes.some((b) => boxesOverlap(b, block.box))) { alreadyOnPlan++; return }
+    if (existingBoxes.some((b) => coversBlock(b, block.box))) { alreadyOnPlan++; return }
     rows.push(rowFor(`block-${i}`, block, matchBlock(block, index), used))
   })
 
@@ -115,8 +138,9 @@ export function runDetection(
   items: readonly ImageTextItem[],
   nodes: readonly MatchableNode[],
   existing: readonly ExistingShapeRef[],
+  rawItemCount: number = items.length,
 ): DetectionOutcome {
-  if (items.length === 0) return { kind: 'no_text' }
+  if (items.length === 0) return rawItemCount > 0 ? { kind: 'not_upright' } : { kind: 'no_text' }
   const result = detectBlocks(items)
   if (result.blocks.length === 0) return { kind: 'no_blocks', labelCount: result.labelCount, rejected: result.rejected }
   return { kind: 'review', review: reviewDetection(result, nodes, existing) }

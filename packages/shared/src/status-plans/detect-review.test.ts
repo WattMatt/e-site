@@ -42,10 +42,29 @@ describe('reviewDetection', () => {
   })
 
   it('leaves out blocks that overlap a shape already on the plan (re-run)', () => {
-    const existing = [{ id: 's1', points: rectToPoints(90, 80, 150, 120), nodeId: null }]
+    const existing = [{ id: 's1', points: rectToPoints(90, 80, 225, 210), nodeId: null }]
     const r = reviewDetection(detectBlocks(ITEMS), NODES, existing)
     expect(r.alreadyOnPlan).toBe(1)
     expect(r.rows.map((x) => x.block.tag)).toEqual(['DB-72', 'DB-90/91', null])
+  })
+
+  it('a large shape that merely contains small blocks does not exclude them; a block-sized one does', () => {
+    const big = [{ id: 'big', points: rectToPoints(0, 0, 1000, 1000), nodeId: null }]
+    expect(reviewDetection(detectBlocks(ITEMS), NODES, big).alreadyOnPlan).toBe(0)
+    // a sliver touching a block (< 50% of its area) excludes nothing
+    const sliver = [{ id: 'sl', points: rectToPoints(90, 80, 150, 120), nodeId: null }]
+    expect(reviewDetection(detectBlocks(ITEMS), NODES, sliver).alreadyOnPlan).toBe(0)
+    // block-sized (<= 4x block area) and covering most of the block excludes it
+    const sized = [{ id: 'sz', points: rectToPoints(80, 70, 240, 220), nodeId: null }]
+    expect(reviewDetection(detectBlocks(ITEMS), NODES, sized).alreadyOnPlan).toBe(1)
+  })
+
+  it('a tag that matches only once dots are ignored needs a person, candidate offered', () => {
+    const nodes: MatchableNode[] = [{ id: 'n-21', kind: 'tenant_db', code: 'DB-21', shop_number: null, name: 'Twenty One' }]
+    const items = blockItems({ x: 100, y: 100, values: ['DB-2.1', 'ECHO', '', '', '', '', ''] })
+    const r = reviewDetection(detectBlocks(items), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'needs_you', nodeId: null, candidateIds: ['n-21'], preselectId: 'n-21' })
+    expect(r.rows[0].reason).toContain('DB-2.1')
   })
 
   it('a matched board already on the plan elsewhere needs a person', () => {
@@ -82,6 +101,9 @@ describe('runDetection', () => {
       expect(out.labelCount).toBe(1)
       expect(out.rejected[0].reason).toContain('NAME:')
     }
+  })
+  it('raw text found but none upright → not_upright', () => {
+    expect(runDetection([], NODES, [], 25)).toEqual({ kind: 'not_upright' })
   })
   it('blocks → review', () => {
     expect(runDetection(ITEMS, NODES, []).kind).toBe('review')
