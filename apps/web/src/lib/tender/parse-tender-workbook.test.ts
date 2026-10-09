@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseTenderWorkbook } from './parse-tender-workbook'
+import { parseTenderWorkbook, toNumber } from './parse-tender-workbook'
+import { toItemRows } from './to-rows'
 import { buildMvlWorkbook, buildWmWorkbook, MVL_BILL_TOTALS, MVL_SUBTOTAL, MVL_VAT, MVL_TOTAL } from './__fixtures__/workbooks'
 import type { ParsedTenderWorkbook } from './types'
 
@@ -356,5 +357,92 @@ describe('parseTenderWorkbook — second review', () => {
     })
     const p = await parseTenderWorkbook(buf)
     expect(p.sheets[0].rows.map((r) => r.rateCellType)).toEqual(['priced', 'fixed'])
+  })
+})
+
+describe('parseTenderWorkbook — total wording in the ITEM column', () => {
+  it('reads TOTAL CARRIED TO SUMMARY in the ITEM column as a total even when QTY holds a number', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+      ws.addRow(['TOTAL CARRIED TO SUMMARY', null, null, 17428.33, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    const rows = toItemRows(p)
+    expect(rows.filter((r) => r.kind === 'item').map((r) => r.code)).toEqual(['1.1'])
+    expect(rows[1]).toMatchObject({ kind: 'total', code: null, description: 'TOTAL CARRIED TO SUMMARY', stated_amount: 17428.33 })
+    expect(p.sheets[0].statedTotal).toBe(17428.33)
+  })
+
+  it('reads collection wording in the ITEM column as a total whatever QTY holds', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+      ws.addRow(['PAGE TOTAL CARRIED TO COLLECTION', null, null, 5000, null, null])
+      ws.addRow(['1.2', 'Other', 'No', 1, null, null])
+      ws.addRow(['PAGE TOTAL TO COLLECTION', null, 'Sum', 900, null, null])
+      ws.addRow(['COLLECTION', null, null, 5900, null, null])
+    })
+    const rows = toItemRows(await parseTenderWorkbook(buf))
+    expect(rows.filter((r) => r.kind === 'item').map((r) => r.code)).toEqual(['1.1', '1.2'])
+    expect(rows.filter((r) => r.kind === 'total').map((r) => r.stated_amount)).toEqual([5000, 900, 5900])
+  })
+
+  it('never makes a digitless sentence in the ITEM column an item code', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['1.1', 'Thing', 'No', 1, null, null])
+      ws.addRow(['Allow for testing and commissioning', null, 'Sum', 1, null, null])
+      ws.addRow(['General notes apply to all items'])
+    })
+    const p = await parseTenderWorkbook(buf)
+    const rows = toItemRows(p)
+    expect(rows.filter((r) => r.kind === 'item').map((r) => r.code)).toEqual(['1.1'])
+    expect(rows.some((r) => r.code != null && /[a-z]{2,} [a-z]{2,}/i.test(r.code))).toBe(false)
+    // Not dropped: the unit/quantity row is reported, the bare text is a note.
+    expect(p.unclassified).toEqual([
+      expect.objectContaining({ rowNumber: 3, description: 'Allow for testing and commissioning', reason: 'row has a unit or quantity but no item code' }),
+    ])
+    expect(rows.find((r) => r.row_number === 4)).toMatchObject({ kind: 'note', code: null, description: 'General notes apply to all items' })
+  })
+
+  it('does not take a bill code from a sentence in the ITEM column', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Electrical')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['General notes apply'])
+      ws.addRow(['5.1', 'Thing', 'No', 1, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].billCode).toBe('5')
+  })
+
+  it('still reads short lettered codes as codes', async () => {
+    const buf = await sheetBook((wb) => {
+      const ws = wb.addWorksheet('Bill No 1')
+      ws.addRow(['ITEM', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE', 'AMOUNT'])
+      ws.addRow(['AB', 'Daywork allowance', 'Sum', 1, null, null])
+    })
+    const p = await parseTenderWorkbook(buf)
+    expect(p.sheets[0].rows[0]).toMatchObject({ kind: 'item', code: 'AB' })
+  })
+})
+
+describe('toNumber (text cells in a workbook)', () => {
+  it('reads an en-ZA decimal comma as cents, never as a thousands separator', () => {
+    expect(toNumber('12,50')).toBe(12.5)
+    expect(toNumber('1 000,50')).toBe(1000.5)
+    expect(toNumber('1.000,50')).toBe(1000.5)
+    expect(toNumber('R 2 450,5')).toBe(2450.5)
+  })
+  it('keeps reading English grouping as before', () => {
+    expect(toNumber('1,500')).toBe(1500)
+    expect(toNumber('1,000.50')).toBe(1000.5)
+    expect(toNumber('12.5')).toBe(12.5)
+    expect(toNumber(42)).toBe(42)
+    expect(toNumber('RATE ONLY')).toBeNull()
   })
 })

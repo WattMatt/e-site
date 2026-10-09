@@ -41,3 +41,35 @@ describe('buildContentSecurityPolicy — frame-src guards document preview', () 
     expect(directive(policy, 'connect-src')).not.toContain('*.openfreemap.org')
   })
 })
+
+describe('buildContentSecurityPolicy — Sentry ingest follows the DSN', () => {
+  // The production DSN is in Sentry's DE region. Until 2026-10-07 connect-src
+  // hard-coded https://ingest.sentry.io, which does not match
+  // o<org>.ingest.de.sentry.io, so every browser envelope was refused.
+  const DE_INGEST = 'https://o1000000000000001.ingest.de.sentry.io'
+
+  it('allows the exact ingest origin the configured DSN posts to', () => {
+    const connect = directive(
+      buildContentSecurityPolicy({ dev: false, sentryIngestOrigin: DE_INGEST }),
+      'connect-src',
+    )
+    expect(connect.split(' ')).toContain(DE_INGEST)
+  })
+
+  it('does not fall back to a wildcard or the legacy host', () => {
+    const connect = directive(
+      buildContentSecurityPolicy({ dev: false, sentryIngestOrigin: DE_INGEST }),
+      'connect-src',
+    )
+    expect(connect).not.toContain('*.sentry.io')
+    expect(connect.split(' ')).not.toContain('https://ingest.sentry.io')
+  })
+
+  it('allows no Sentry host when no DSN is configured', () => {
+    const connect = directive(
+      buildContentSecurityPolicy({ dev: false, sentryIngestOrigin: null }),
+      'connect-src',
+    )
+    expect(connect).not.toContain('sentry')
+  })
+})

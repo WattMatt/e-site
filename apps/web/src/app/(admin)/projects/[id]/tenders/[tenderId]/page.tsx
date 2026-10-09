@@ -6,11 +6,18 @@ import { ORG_WRITE_ROLES } from '@esite/shared'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { getTenderDetailAction } from '@/actions/tender.actions'
+import { listInvitationsAction } from '@/actions/tender-invite.actions'
+import { tenderInvitesEnabled } from '@/lib/tender/gate'
+import { IssuePanel } from '../_components/IssuePanel'
+import { InvitationsPanel } from '../_components/InvitationsPanel'
+import { getTenderManagementAction } from '@/actions/tender-manage.actions'
+import { ClarificationsPanel, RequirementsPanel, SubmissionsPanel } from '../_components/ManagePanels'
 import { ImportPanel } from '../_components/ImportPanel'
 import { ReconciliationView } from '../_components/ReconciliationView'
 import { BoqGrid } from '../_components/BoqGrid'
 import { DeleteTenderButton } from '../_components/DeleteTenderButton'
 import { formatRand, tenderStatusVariant } from '../_components/format'
+import { AdjudicationActions } from '../_components/AdjudicationActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,6 +35,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const { tender, items, estimate } = res.data
   if (tender.project_id !== id) notFound()
   const isDraft = tender.status === 'draft'
+  const invRes = await listInvitationsAction(tenderId)
+  const invitations = 'data' in invRes ? invRes.data : []
+  const manRes = await getTenderManagementAction(tenderId)
+  const manage = 'data' in manRes ? manRes.data : null
+  const sealed = tender.status === 'issued' && !!tender.closing_at && new Date(tender.closing_at) > new Date()
   const itemCount = items.filter((i) => i.kind === 'item').length
 
   return (
@@ -47,10 +59,33 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           )}
           {tender.stated_total != null && <span>Incl. VAT {formatRand(tender.stated_total)}</span>}
           {isDraft && <DeleteTenderButton tenderId={tender.id} projectId={id} />}
+          {tender.status === 'issued' && tender.closing_at && new Date(tender.closing_at) <= new Date() && (
+            <AdjudicationActions tenderId={tender.id} status={tender.status} />
+          )}
+          {(tender.status === 'closed' || tender.status === 'adjudicated') && (
+            <a className="btn btn-sm" href={`/projects/${id}/tenders/${tender.id}/adjudication`}>Adjudicate bids</a>
+          )}
         </div>
       </div>
 
       {isDraft && <ImportPanel tenderId={tender.id} hasImport={!!tender.imported_at} />}
+
+      {isDraft && tender.imported_at && <IssuePanel tenderId={tender.id} closingAt={tender.closing_at} />}
+
+      {manage && <RequirementsPanel tenderId={tender.id} requirements={manage.requirements} editable={isDraft} />}
+
+      {manage && !isDraft && <SubmissionsPanel submissions={manage.submissions} publishedAddenda={manage.publishedAddenda} sealed={sealed} />}
+
+      {manage && !isDraft && <ClarificationsPanel tenderId={tender.id} clarifications={manage.clarifications} canPublishAddendum={sealed} />}
+
+      {(isDraft || tender.status === 'issued') && (
+        <InvitationsPanel
+          tenderId={tender.id}
+          invitations={invitations}
+          sendingEnabled={tenderInvitesEnabled()}
+          open={isDraft || tender.status === 'issued'}
+        />
+      )}
 
       {tender.reconciliation && (
         <ReconciliationView

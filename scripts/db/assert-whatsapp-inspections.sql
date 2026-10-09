@@ -162,9 +162,15 @@ DO $$ BEGIN
   INSERT INTO _f VALUES ('forge_via', 'ok');
 EXCEPTION WHEN OTHERS THEN INSERT INTO _f VALUES ('forge_via', SQLERRM);
 END $$;
-DO $$ BEGIN
-  UPDATE inspections.inspections SET submitted_session_id = NULL, submitted_via = 'web' WHERE id = (SELECT id FROM _i WHERE k = 'WA probe off');
-  INSERT INTO _f VALUES ('clear', 'ok');
+-- A real web submit (00234's status guard admits marker changes only as part of the submit itself):
+-- answer once (assigned -> in_progress), then exactly what submitInspectionAction sends.
+DO $$ DECLARE n int; BEGIN
+  INSERT INTO inspections.responses (inspection_id, section_id, field_id, value_text, latest_responded_by)
+  VALUES ((SELECT id FROM _i WHERE k = 'WA probe off'), 'visual_structural_checks', 'probe_note', 'x', current_setting('x.c')::uuid);
+  UPDATE inspections.inspections SET status = 'awaiting_verification', completed_at = now(), submitted_via = 'web', submitted_session_id = NULL
+   WHERE id = (SELECT id FROM _i WHERE k = 'WA probe off') AND status IN ('in_progress', 're-inspect_required');
+  GET DIAGNOSTICS n = ROW_COUNT;
+  INSERT INTO _f VALUES ('clear', CASE WHEN n = 1 THEN 'ok' ELSE 'no row moved' END);
 EXCEPTION WHEN OTHERS THEN INSERT INTO _f VALUES ('clear', SQLERRM);
 END $$;
 RESET ROLE;
@@ -173,7 +179,7 @@ SELECT set_config('request.jwt.claims', '', true);
 SELECT * FROM (VALUES
   ('a contributor cannot forge the submit session marker', (SELECT v FROM _f WHERE k = 'forge_session') <> 'ok'),
   ('a contributor cannot mark a submit as WhatsApp',       (SELECT v FROM _f WHERE k = 'forge_via') <> 'ok'),
-  ('a web submit may clear the marker and say web',        (SELECT v FROM _f WHERE k = 'clear') = 'ok'),
+  ('a real web submit clears the marker and says web',     (SELECT v FROM _f WHERE k = 'clear') = 'ok'),
   ('flag off: gate refuses',                 (SELECT v->>'code' FROM _r WHERE k = 'gate_off') = 'flag_off'),
   ('flag off: nothing listed',               (SELECT v = '[]'::jsonb FROM _r WHERE k = 'list_off')),
   ('flag off: save refused',                 (SELECT v->>'code' FROM _r WHERE k = 'save_off') = 'flag_off'),
@@ -217,7 +223,8 @@ SELECT * FROM (VALUES
   ('release removes only what was attached',  (SELECT v = '["aaaaaaaa-0000-4000-8000-000000000002"]'::jsonb FROM _r WHERE k = 'release')),
   ('authenticated cannot hold photos',        NOT has_function_privilege('authenticated', 'whatsapp.form_session_hold_photo(uuid,uuid)', 'EXECUTE')),
   ('fan-out is idempotent',                  (SELECT v::int = 0 FROM _r WHERE k = 'fanout_again') AND (SELECT v::int >= 2 FROM _r WHERE k = 'fanout')),
-  ('project-scoped client viewer: gate refuses', (SELECT v->>'code' FROM _r WHERE k = 'gate_pcv') = 'no_access'),
+  -- not_found since 00234/00238: a client viewer cannot see an uncertified inspection at all, so the read refuses first.
+  ('project-scoped client viewer: gate refuses', (SELECT v->>'code' FROM _r WHERE k = 'gate_pcv') IN ('no_access', 'not_found')),
   ('project-scoped client viewer: nothing listed', (SELECT v = '[]'::jsonb FROM _r WHERE k = 'list_pcv')),
   ('inactive member: gate refuses',          (SELECT v->>'code' FROM _r WHERE k = 'gate_inactive') IN ('no_access', 'not_found')),
   ('inactive member: save refused',          (SELECT v->>'code' FROM _r WHERE k = 'save_inactive') IN ('no_access', 'not_found')),

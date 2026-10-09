@@ -97,4 +97,11 @@ export const GATED: Gated[] = [
   child('projects.tender_boq_items', 'tender', 'tender_id'),
   child('projects.tender_requirements', 'tender', 'tender_id'),
   child('projects.tender_estimate_lines', 'tender', 'tender_id'),
+  // The E5 tables created AFTER 00238 (tender_invitations, tender_participants,
+  // tender_submissions, tender_submission_lines, tender_submission_documents,
+  // tender_clarifications, tender_addendum_acks) carry their site_scope policy
+  // in their own migrations, 00243 and 00244, because the bidder-facing ones add
+  // an arm for the tender's own participant (a tenderer is never a project
+  // member), which this generator does not express. The coverage check
+  // (scripts/db/assert-site-scope-coverage.sql) still requires every one.
 ]
