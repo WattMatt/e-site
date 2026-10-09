@@ -12423,6 +12423,110 @@ export type Database = {
           },
         ]
       }
+      status_plan_shapes: {
+        Row: {
+          area_type: string | null
+          created_at: string
+          created_by: string | null
+          detected_tag: string | null
+          id: string
+          node_id: string | null
+          points: Json
+          shape: string
+          source: string
+          status_plan_id: string
+          updated_at: string
+        }
+        Insert: {
+          area_type?: string | null
+          created_at?: string
+          /** Hand-patched optional: bound to auth.uid() by trigger (00245). */
+          created_by?: string | null
+          detected_tag?: string | null
+          id?: string
+          node_id?: string | null
+          points: Json
+          shape: string
+          source?: string
+          status_plan_id: string
+          updated_at?: string
+        }
+        Update: {
+          area_type?: string | null
+          created_at?: string
+          created_by?: string | null
+          detected_tag?: string | null
+          id?: string
+          node_id?: string | null
+          points?: Json
+          shape?: string
+          source?: string
+          status_plan_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_plan_shapes_status_plan_id_fkey"
+            columns: ["status_plan_id"]
+            isOneToOne: false
+            referencedRelation: "status_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_plans: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          floor_plan_id: string
+          id: string
+          name: string
+          organisation_id: string
+          page_index: number
+          project_id: string
+          purpose: string
+          source_file_path: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          /** Hand-patched optional: bound to auth.uid() by trigger (00245). */
+          created_by?: string | null
+          floor_plan_id: string
+          id?: string
+          name: string
+          /** Hand-patched optional: bound from the drawing by trigger (00245). */
+          organisation_id?: string
+          page_index: number
+          project_id: string
+          purpose: string
+          /** Hand-patched optional: stamped from the drawing by trigger (00245). */
+          source_file_path?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          floor_plan_id?: string
+          id?: string
+          name?: string
+          organisation_id?: string
+          page_index?: number
+          project_id?: string
+          purpose?: string
+          source_file_path?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_plans_floor_plan_id_fkey"
+            columns: ["floor_plan_id"]
+            isOneToOne: false
+            referencedRelation: "floor_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

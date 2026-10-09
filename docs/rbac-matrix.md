@@ -920,6 +920,16 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > Bids are read through the caller's own session, so the sealed policies of `00244` are the real gate: nothing is shown until `tender_seal_lifted` (closing passed, tender neither draft nor cancelled) **and** the caller passes `projects.user_can_open_tender` (today the same owner/admin/PM set as `user_can_manage_tender`; the single place to narrow it when the owner decides who at WM may open tenders). Adjudication also waits for the tender to be **closed**, and compares submitted bids only. Every read pages past PostgREST's `max_rows`; a submitted bid with a missing rate is refused, never ranked.
 
+### Status plans (`tenants.status_plans`, `tenants.status_plan_shapes`, migration `00245`)
+
+| Surface | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| Read a status plan and its shapes (RLS `status_plans_select` / `status_plan_shapes_select`) | R | R | R | R | R | R | R |
+| Create, rename, re-anchor or delete a plan (RLS) | W | W | W | — | — | — | — |
+| Draw, move, link, unlink or delete a shape (RLS) | W | W | W | — | — | — | — |
+
+> **Added 2026-10-09 (status plans slice 1, data only).** No page, action or route exists yet; slice 2 adds `/projects/[id]/status-plans` and its server actions, which must gate writes on `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` (check `.ok`) and give every other role the same page read-only. The database already enforces this table: read = every project member (`user_has_project_access`), **client_viewer included** (a status plan is a progress picture made to be shown); write = `ORG_WRITE_ROLES` through a PERMISSIVE membership policy plus a **RESTRICTIVE per-verb** role gate (never `FOR ALL`, the `00205`/`00206` trap), and the generated `site_scope` policy on both tables. `organisation_id` and `source_file_path` are bound from the drawing by trigger; `project_id` must match the drawing's; a plan's drawing, page and purpose are fixed; a shape's node must be on the plan's project and not soft-deleted, and a tenant layout links `tenant_db` nodes only. Nothing derived (colour, status, area) is stored. Proven by `scripts/db/assert-status-plans-roles.sql` (impersonation, red first). Cloud-sync's `isAnnotated()` treats a drawing with a status plan as annotated, so it is never silently swapped for a newer Dropbox revision.
+
 ## Public / unauthenticated
 
 | Route | Access |

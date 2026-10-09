@@ -604,3 +604,30 @@ export async function runDirectivesBatched(
   })
   return { passed, failures, skipped, batched: true }
 }
+
+/**
+ * One assertions file for scripts/db/dry-run-migration.sh that re-evaluates
+ * every checkable @verify directive of the given migrations, as ONE statement
+ * returning (check, ok) rows (the Management API returns only the last result
+ * set). Run it with a NEW migration as the harness's migration argument to see
+ * every earlier block under the state that migration leaves behind.
+ *
+ * A directive that raises aborts the whole statement; the harness then reports
+ * the file as one failure with the error, and you bisect by passing a later
+ * `since` to scripts/db/emit-verify-sweep.ts.
+ */
+export function buildVerifySweepSql(entries: ReadonlyArray<{ file: string; sql: string }>): string {
+  const branches: string[] = []
+  for (const e of entries) {
+    const directives = parseVerifyBlock(e.sql)
+    if (!directives) continue
+    directives.forEach((d, i) => {
+      const predicate = buildPredicate(d)
+      if (!predicate) return
+      const label = q(`${e.file} #${i + 1} ${d.kind}`)
+      branches.push(`SELECT ${label}::text AS "check", s.ok FROM (\n${predicate}\n) AS s`)
+    })
+  }
+  if (branches.length === 0) throw new Error('nothing to sweep')
+  return `${branches.join('\nUNION ALL\n')};\n`
+}
