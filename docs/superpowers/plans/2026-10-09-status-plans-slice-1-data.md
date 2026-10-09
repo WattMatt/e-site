@@ -1292,7 +1292,7 @@ Expected: `no top-level transaction control` (PL/pgSQL `BEGIN` without a semicol
 git add scripts/db/assert-status-plans-roles.sql
 git commit -m "test(status-plans): impersonation assertions for 00245
 
-47 rows; run in Task 20 against production in rolled-back transactions.
+54 rows; run in Task 20 against production in rolled-back transactions.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3991,7 +3991,7 @@ Expected: `✗ assert-status-plans-roles.sql aborted (API error, transaction rol
 TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00245_status_plans.sql scripts/db/assert-status-plans-roles.sql
 ```
 
-Expected: 47 `✓` lines and `✓ 47 assertion(s) green across 1 file(s) — transactions rolled back, nothing persisted`. If a `FIXTURE:` row is red, the fixture is wrong (for example no contractor whose org role is also contractor on a project with drawings); fix the fixture query, not the migration.
+Expected: 54 `✓` lines and `✓ 54 assertion(s) green across 1 file(s) — transactions rolled back, nothing persisted`. If a `FIXTURE:` row is red, the fixture is wrong (for example no contractor whose org role is also contractor on a project with drawings); fix the fixture query, not the migration.
 
 - [ ] **Step 4: Mutations — each arm must be able to fail**
 

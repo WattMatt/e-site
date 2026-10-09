@@ -199,7 +199,7 @@ BEGIN
     NEW.source_file_path := v_file;
     NEW.created_by := auth.uid();
   ELSE
-    NEW.created_by := OLD.created_by;
+    NEW.created_by := CASE WHEN NEW.created_by IS NULL THEN NULL ELSE OLD.created_by END;
     NEW.created_at := OLD.created_at;
     IF NEW.source_file_path IS DISTINCT FROM OLD.source_file_path
        AND NEW.source_file_path IS DISTINCT FROM v_file THEN
@@ -241,7 +241,7 @@ BEGIN
     IF NEW.status_plan_id IS DISTINCT FROM OLD.status_plan_id THEN
       RAISE EXCEPTION 'status_plan_shapes: a shape cannot move to another plan' USING ERRCODE = '23514';
     END IF;
-    NEW.created_by := OLD.created_by;
+    NEW.created_by := CASE WHEN NEW.created_by IS NULL THEN NULL ELSE OLD.created_by END;
     NEW.created_at := OLD.created_at;
     v_node_changed := NEW.node_id IS NOT NULL AND NEW.node_id IS DISTINCT FROM OLD.node_id;
     v_area_changed := NEW.area_type IS NOT NULL AND NEW.area_type IS DISTINCT FROM OLD.area_type;

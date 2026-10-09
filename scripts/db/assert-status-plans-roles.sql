@@ -43,6 +43,8 @@ DECLARE
   v_shape          UUID;
   v_pm_plan        UUID;
   v_pm_shape       UUID;
+  v_drawing2       UUID;
+  v_pm_shape2      UUID;
   v_n              INT;
   v_txt            TEXT;
   v_uuid           UUID;
@@ -76,6 +78,9 @@ BEGIN
   VALUES (v_project, v_pm, v_org, 'project_manager', TRUE),
          (v_project, v_client, v_org, 'client_viewer', TRUE),
          (v_project, v_lapsed, v_org, 'project_manager', TRUE);
+
+  INSERT INTO tenants.floor_plans (organisation_id, project_id, name, file_path, uploaded_by)
+  VALUES (v_org, v_project, 'ZZ probe second drawing', 'probe/zzsp/second.pdf', v_client) RETURNING id INTO v_drawing2;
 
   INSERT INTO structure.nodes (project_id, organisation_id, kind, code, shop_number, shop_name)
   VALUES (v_project, v_org, 'tenant_db', 'ZZSP-T1', 'ZZSP-1', 'Probe Lantern') RETURNING id INTO v_t1;
@@ -160,11 +165,27 @@ BEGIN
   END;
 
   BEGIN
-    UPDATE tenants.status_plans SET purpose = 'distribution_schematic', page_index = 9 WHERE id = v_layout;
+    UPDATE tenants.status_plans SET purpose = 'distribution_schematic' WHERE id = v_layout;
     INSERT INTO _r VALUES ('pm_plan_purpose_change_refused', false);
   EXCEPTION
     WHEN check_violation THEN INSERT INTO _r VALUES ('pm_plan_purpose_change_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('pm_plan_purpose_change_refused', false);
+  END;
+
+  BEGIN
+    UPDATE tenants.status_plans SET floor_plan_id = v_drawing2 WHERE id = v_layout;
+    INSERT INTO _r VALUES ('pm_plan_drawing_change_refused', false);
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('pm_plan_drawing_change_refused', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('pm_plan_drawing_change_refused', false);
+  END;
+
+  BEGIN
+    UPDATE tenants.status_plans SET source_file_path = v_drawing_file WHERE id = v_layout;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('pm_plan_reanchor_to_current_file_ok', v_n = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('pm_plan_reanchor_to_current_file_ok', false);
   END;
 
   BEGIN
@@ -324,6 +345,10 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('contractor_shape_insert_refused', false);
   END;
 
+  UPDATE tenants.status_plans SET name = 'x' WHERE id = v_layout;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('contractor_plan_update_affects_nothing', v_n = 0);
+
   UPDATE tenants.status_plan_shapes SET points = '[1,1,2,1,2,2]'::jsonb WHERE id = v_shape;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO _r VALUES ('contractor_shape_update_affects_nothing', v_n = 0);
@@ -377,7 +402,7 @@ BEGIN
     VALUES (v_layout, 'polygon', '[0,0,5,0,5,5]'::jsonb);
     INSERT INTO _r VALUES ('lapsed_shape_insert_refused', false);
   EXCEPTION
-    WHEN insufficient_privilege OR foreign_key_violation THEN INSERT INTO _r VALUES ('lapsed_shape_insert_refused', true);
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('lapsed_shape_insert_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('lapsed_shape_insert_refused', false);
   END;
 
@@ -413,6 +438,26 @@ BEGIN
   SELECT node_id INTO v_uuid FROM tenants.status_plan_shapes WHERE id = v_shape;
   INSERT INTO _r VALUES ('node_hard_delete_unlinks_shape',
     v_uuid IS NULL AND EXISTS (SELECT 1 FROM tenants.status_plan_shapes WHERE id = v_shape));
+
+  -- ═══ 8. Deleting the author clears created_by (FK SET NULL survives the trigger)
+  -- Runs last: nothing above may use the PM after this. The shape is inserted
+  -- under the PM's claim so the trigger stamps created_by = PM.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_pm::text, 'role', 'authenticated')::text, true);
+  INSERT INTO tenants.status_plan_shapes (status_plan_id, shape, points, area_type)
+  VALUES (v_layout, 'polygon', '[700,10,800,10,800,80,700,80]'::jsonb, 'plant_room') RETURNING id INTO v_pm_shape2;
+  PERFORM set_config('request.jwt.claims', '', true);
+  SELECT created_by INTO v_uuid FROM tenants.status_plan_shapes WHERE id = v_pm_shape2;
+  INSERT INTO _r VALUES ('fx_pm_shape_stamped_before_delete', v_uuid = v_pm);
+  SELECT created_by INTO v_uuid FROM tenants.status_plans WHERE id = v_pm_plan;
+  INSERT INTO _r VALUES ('fx_pm_plan_stamped_before_delete', v_uuid = v_pm);
+
+  DELETE FROM auth.users WHERE id = v_pm;
+  SELECT created_by INTO v_uuid FROM tenants.status_plans WHERE id = v_pm_plan;
+  INSERT INTO _r VALUES ('author_delete_clears_plan_created_by',
+    v_uuid IS NULL AND EXISTS (SELECT 1 FROM tenants.status_plans WHERE id = v_pm_plan));
+  SELECT created_by INTO v_uuid FROM tenants.status_plan_shapes WHERE id = v_pm_shape2;
+  INSERT INTO _r VALUES ('author_delete_clears_shape_created_by',
+    v_uuid IS NULL AND EXISTS (SELECT 1 FROM tenants.status_plan_shapes WHERE id = v_pm_shape2));
 END $$;
 
 SELECT * FROM (VALUES
@@ -429,7 +474,9 @@ SELECT * FROM (VALUES
   ('a blank plan name is refused',                                     (SELECT v FROM _r WHERE k='pm_plan_blank_name_refused')),
   ('PM renames a plan',                                                (SELECT v FROM _r WHERE k='pm_plan_rename_ok')),
   ('re-anchoring to a file that is not the drawing''s is refused',     (SELECT v FROM _r WHERE k='pm_plan_forged_anchor_refused')),
-  ('a plan''s purpose and page are fixed',                             (SELECT v FROM _r WHERE k='pm_plan_purpose_change_refused')),
+  ('a plan''s purpose is fixed',                                       (SELECT v FROM _r WHERE k='pm_plan_purpose_change_refused')),
+  ('a plan cannot move to another drawing of the same project',        (SELECT v FROM _r WHERE k='pm_plan_drawing_change_refused')),
+  ('re-anchoring to the drawing''s current file is accepted',          (SELECT v FROM _r WHERE k='pm_plan_reanchor_to_current_file_ok')),
   ('PM links a shape to a tenant board',                               (SELECT v FROM _r WHERE k='pm_shape_insert_ok')),
   ('shape created_by is the caller',                                   (SELECT v FROM _r WHERE k='pm_shape_created_by_is_caller')),
   ('a board appears at most once per plan',                            (SELECT v FROM _r WHERE k='pm_shape_duplicate_node_refused')),
@@ -450,6 +497,7 @@ SELECT * FROM (VALUES
   ('contractor reads the shape',                                       (SELECT v FROM _r WHERE k='contractor_reads_shape')),
   ('RESTRICTIVE gate bites: contractor plan insert refused 42501',     (SELECT v FROM _r WHERE k='contractor_plan_insert_refused')),
   ('RESTRICTIVE gate bites: contractor shape insert refused 42501',    (SELECT v FROM _r WHERE k='contractor_shape_insert_refused')),
+  ('contractor update of a readable plan affects nothing',            (SELECT v FROM _r WHERE k='contractor_plan_update_affects_nothing')),
   ('contractor update of a readable shape affects nothing',            (SELECT v FROM _r WHERE k='contractor_shape_update_affects_nothing')),
   ('contractor delete of a readable shape affects nothing',            (SELECT v FROM _r WHERE k='contractor_shape_delete_affects_nothing')),
   ('contractor delete of a readable plan affects nothing',             (SELECT v FROM _r WHERE k='contractor_plan_delete_affects_nothing')),
@@ -462,5 +510,9 @@ SELECT * FROM (VALUES
   ('service role still sees plans, so isAnnotated() is not blind',     (SELECT v FROM _r WHERE k='service_role_sees_plans')),
   ('anon refused on the table',                                        (SELECT v FROM _r WHERE k='anon_table_refused')),
   ('anon refused on the resolver',                                     (SELECT v FROM _r WHERE k='anon_resolver_refused')),
-  ('hard-deleting a board unlinks its shape and keeps the shape',      (SELECT v FROM _r WHERE k='node_hard_delete_unlinks_shape'))
+  ('hard-deleting a board unlinks its shape and keeps the shape',      (SELECT v FROM _r WHERE k='node_hard_delete_unlinks_shape')),
+  ('FIXTURE: PM-authored shape is stamped before the author is deleted', (SELECT v FROM _r WHERE k='fx_pm_shape_stamped_before_delete')),
+  ('FIXTURE: PM-authored plan is stamped before the author is deleted',  (SELECT v FROM _r WHERE k='fx_pm_plan_stamped_before_delete')),
+  ('deleting the author clears the plan''s created_by, keeps the plan',   (SELECT v FROM _r WHERE k='author_delete_clears_plan_created_by')),
+  ('deleting the author clears the shape''s created_by, keeps the shape', (SELECT v FROM _r WHERE k='author_delete_clears_shape_created_by'))
 ) AS t("check", ok);
