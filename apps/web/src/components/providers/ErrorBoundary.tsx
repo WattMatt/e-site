@@ -2,6 +2,7 @@
 
 import { Component, type ReactNode } from 'react'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { captureError } from '@/lib/sentry'
 
 interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { hasError: boolean; error?: Error }
@@ -14,10 +15,8 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // Report to Sentry if configured
-    if (typeof window !== 'undefined' && (window as any).__SENTRY__) {
-      ;(window as any).__SENTRY__.captureException(error, { extra: info })
-    }
+    // Report to Sentry if configured (a no-op until the browser SDK has started)
+    captureError(error, { componentStack: info.componentStack })
     console.error('[ErrorBoundary]', error, info)
   }
 
