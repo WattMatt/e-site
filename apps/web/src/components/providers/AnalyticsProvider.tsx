@@ -3,10 +3,26 @@
 import { Suspense, useEffect } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import posthog from 'posthog-js'
+import { posthogClientOptions } from '@/lib/analytics/posthog-client-options'
 
 const PH_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY
 
 let initialized = false
+
+/**
+ * Initialise on first use. Init used to live in AnalyticsProvider's own
+ * useEffect, but React runs a child's effects before its parent's, so
+ * PageViewTracker's first run always saw `initialized === false` and the
+ * landing page view was never sent.
+ */
+function ensurePostHog(): boolean {
+  if (!PH_KEY || typeof window === 'undefined') return false
+  if (!initialized) {
+    posthog.init(PH_KEY, posthogClientOptions)
+    initialized = true
+  }
+  return true
+}
 
 // useSearchParams() opts the caller into client-side-only rendering. Isolating
 // it inside its own Suspense boundary keeps the rest of the tree (including
@@ -16,7 +32,7 @@ function PageViewTracker() {
   const searchParams = useSearchParams()
 
   useEffect(() => {
-    if (!PH_KEY || !initialized) return
+    if (!ensurePostHog()) return
     const url = pathname + (searchParams.toString() ? `?${searchParams.toString()}` : '')
     posthog.capture('$pageview', { $current_url: url })
   }, [pathname, searchParams])
@@ -25,19 +41,6 @@ function PageViewTracker() {
 }
 
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    if (!PH_KEY || initialized) return
-    posthog.init(PH_KEY, {
-      api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://eu.posthog.com',
-      capture_pageview: false,
-      capture_pageleave: true,
-      autocapture: false,
-      persistence: 'localStorage+cookie',
-      session_recording: { maskAllInputs: true },
-    })
-    initialized = true
-  }, [])
-
   return (
     <>
       <Suspense fallback={null}>
@@ -50,12 +53,6 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 
 /** Track events from any client component */
 export function trackEvent(event: string, props?: Record<string, unknown>) {
-  if (!PH_KEY || typeof window === 'undefined') return
+  if (!ensurePostHog()) return
   posthog.capture(event, props)
-}
-
-/** Identify authenticated user in PostHog */
-export function identifyUser(userId: string, traits?: Record<string, unknown>) {
-  if (!PH_KEY || typeof window === 'undefined') return
-  posthog.identify(userId, traits)
 }

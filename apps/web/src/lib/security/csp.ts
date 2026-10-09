@@ -1,3 +1,4 @@
+import { posthogHosts, type PostHogHosts } from '../analytics/posthog-hosts'
 import { sentryIngestOrigin as defaultSentryIngestOrigin } from '../sentry-hosts'
 
 /**
@@ -10,15 +11,22 @@ import { sentryIngestOrigin as defaultSentryIngestOrigin } from '../sentry-hosts
  * preview opens to a blank frame with no error. Setting it to 'none' silently
  * blanks every preview — see csp.test.ts, which guards against exactly that.
  *
+ * PostHog origins come from the same resolver the browser client initialises
+ * with (lib/analytics/posthog-hosts.ts), so the policy cannot drift from the
+ * hosts posthog-js actually calls: events + flags on the api host, remote
+ * config (fetch) and extension scripts (<script>) on the assets host.
+ *
  * The Sentry ingest origin comes from the DSN (lib/sentry-hosts.ts), so the
  * policy allows exactly the regional host the browser SDK posts to, and no
  * Sentry host when no DSN is configured.
  */
 export function buildContentSecurityPolicy({
   dev,
+  posthog = posthogHosts,
   sentryIngestOrigin = defaultSentryIngestOrigin,
 }: {
   dev: boolean
+  posthog?: PostHogHosts
   sentryIngestOrigin?: string | null
 }): string {
   // Sources the preview <iframe>s load: same-origin (streaming + draft-preview
@@ -32,13 +40,15 @@ export function buildContentSecurityPolicy({
     ...(dev ? ['http://127.0.0.1:*', 'http://localhost:*'] : []),
   ].join(' ')
 
+  const posthogConnectSrc = [...new Set([posthog.apiHost, posthog.assetsHost])].join(' ')
+
   const directives = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.posthog.com https://js.sentry-cdn.com",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${posthog.assetsHost} https://js.sentry-cdn.com`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com",
     "font-src 'self' data:",
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co https://app.posthog.com${sentryIngestOrigin ? ` ${sentryIngestOrigin}` : ''} https://api.paystack.co https://tiles.openfreemap.org`,
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co ${posthogConnectSrc}${sentryIngestOrigin ? ` ${sentryIngestOrigin}` : ''} https://api.paystack.co https://tiles.openfreemap.org`,
     // MapLibre (the /tariffs/map area-of-supply map) spawns its tile worker from a blob: URL.
     "worker-src 'self' blob:",
     `frame-src ${frameSrc}`,
