@@ -29,6 +29,9 @@ const actions = vi.hoisted(() => ({
   reanchorStatusPlanAction: vi.fn(),
 }))
 vi.mock('@/actions/status-plan.actions', () => actions)
+const detection = vi.hoisted(() => ({ extractPageText: vi.fn(), acceptDetectedBlocksAction: vi.fn() }))
+vi.mock('@/lib/status-plans/extract-page-text', () => ({ extractPageText: detection.extractPageText }))
+vi.mock('@/actions/status-plan-detection.actions', () => ({ acceptDetectedBlocksAction: detection.acceptDetectedBlocksAction }))
 
 import { StatusPlanWorkspace } from './StatusPlanWorkspace'
 
@@ -112,10 +115,32 @@ describe('StatusPlanWorkspace', () => {
     expect(canvasText()).toContain('tool:calibrate')
   })
 
-  it('a schematic plan shows the detection seam and no scale banner', () => {
-    render(<StatusPlanWorkspace {...props({ plan: { ...props().plan, purpose: 'distribution_schematic' }, shopLinks: {}, sheet: { ...props().sheet, pixels_per_meter: null } })} />)
-    expect(screen.getByText(/Automatic block detection is not available yet/)).toBeTruthy()
+  it('a schematic plan offers Detect blocks and no scale banner; a tenant layout does not', () => {
+    const { unmount } = render(<StatusPlanWorkspace {...props({ plan: { ...props().plan, purpose: 'distribution_schematic' }, shopLinks: {}, sheet: { ...props().sheet, pixels_per_meter: null } })} />)
+    expect(screen.getByRole('button', { name: 'Detect blocks' })).toBeTruthy()
     expect(screen.queryByText(/Calibrate this page/)).toBeNull()
+    unmount()
+    render(<StatusPlanWorkspace {...props()} />)
+    expect(screen.queryByRole('button', { name: 'Detect blocks' })).toBeNull()
+  })
+
+  it('accepted detected blocks fold into the canvas state without a refresh', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 2000, height: 2000 })
+    detection.acceptDetectedBlocksAction.mockResolvedValue({
+      ok: true,
+      data: [{ id: 's9', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
+    })
+    render(<StatusPlanWorkspace {...props({ plan: { ...props().plan, purpose: 'distribution_schematic' }, shopLinks: {} })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept 1 matched' }))
+    await waitFor(() => expect(canvasText()).toContain('shapes:2'))
+    expect(detection.acceptDetectedBlocksAction.mock.calls[0][0].blocks[0].nodeId).toBe('n1')
+    expect(detection.extractPageText).toHaveBeenCalledWith({ url: 'https://s/x' }, 1)
+    expect(refresh).not.toHaveBeenCalled()
   })
 
   it('read-only: no rename, no delete plan, no Set scale', () => {
