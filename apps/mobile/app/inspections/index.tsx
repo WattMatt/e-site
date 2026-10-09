@@ -1,17 +1,22 @@
 // apps/mobile/app/inspections/index.tsx
 //
-// List of inspections, read entirely from the locally synced PowerSync
-// SQLite table (bucket: org_inspections). Two filter modes:
+// List of in-flight inspections, read from Supabase as the signed-in user (RLS
+// applies; same scope as the org_inspections sync bucket). Two filter modes:
 //   - "Assigned to me" — current user's queue
-//   - "All"            — every active inspection on the org
+//   - "All"            — every active inspection the user can see
+//
+// Rows with changes still waiting in this device's outbox carry a badge.
+// Reloads whenever the screen regains focus (e.g. back from a submit).
 //
 // Tapping a card opens the capture screen at /inspections/[inspectionId].
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { Link } from 'expo-router'
-import { usePowerSync } from '@powersync/react-native'
+import { Link, useFocusEffect } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
+import { inspectionRemote } from '../../src/inspections/outbox-worker'
+import { countsByInspection } from '../../src/inspections/response-outbox'
+import { powerSyncExecutor } from '../../src/lib/powersync/executor'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
 type Row = {
@@ -24,6 +29,7 @@ type Row = {
 }
 
 type Filter = 'assigned_to_me' | 'all'
+type Unsent = Record<string, { waiting: number; rejected: number }>
 
 const STATUS_BADGE: Record<string, { bg: string; fg: string; border: string }> = {
   assigned: { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
@@ -34,51 +40,52 @@ const STATUS_BADGE: Record<string, { bg: string; fg: string; border: string }> =
   abandoned: { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
 }
 
+// "Assigned to me": soonest scheduled first, unscheduled last.
+function byScheduled(a: Row, b: Row): number {
+  if (!a.scheduled_at && !b.scheduled_at) return 0
+  if (!a.scheduled_at) return 1
+  if (!b.scheduled_at) return -1
+  return a.scheduled_at.localeCompare(b.scheduled_at)
+}
+
 export default function InspectionsListScreen() {
-  const db = usePowerSync()
   const { session } = useAuth()
   const userId = session?.user.id ?? ''
 
   const [items, setItems] = useState<Row[]>([])
+  const [unsent, setUnsent] = useState<Unsent>({})
   const [filter, setFilter] = useState<Filter>('assigned_to_me')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    ;(async () => {
-      try {
-        const rs =
-          filter === 'assigned_to_me' && userId
-            ? await db.execute(
-                `SELECT id, target_label, status, coc_number, scheduled_at, updated_at
-                 FROM inspections
-                 WHERE assigned_to_id = ?
-                 ORDER BY scheduled_at IS NULL, scheduled_at ASC, updated_at DESC`,
-                [userId],
-              )
-            : await db.execute(
-                `SELECT id, target_label, status, coc_number, scheduled_at, updated_at
-                 FROM inspections
-                 ORDER BY updated_at DESC
-                 LIMIT 100`,
-              )
-        if (cancelled) return
-        const rows: Row[] =
-          (rs.rows?._array as Row[] | undefined) ??
-          ((rs.rows as unknown as Row[]) ?? [])
-        setItems(rows)
-      } finally {
-        if (!cancelled) setLoading(false)
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false
+      setLoading(true)
+      setError(null)
+      ;(async () => {
+        try {
+          const mine = filter === 'assigned_to_me' && !!userId
+          const rows = await inspectionRemote.listInspections(mine ? { assignedTo: userId } : {})
+          const counts = await countsByInspection(powerSyncExecutor).catch(() => ({}) as Unsent)
+          if (cancelled) return
+          setItems(mine ? [...rows].sort(byScheduled) : rows)
+          setUnsent(counts)
+        } catch (e) {
+          if (!cancelled) setError((e as Error).message ?? String(e))
+        } finally {
+          if (!cancelled) setLoading(false)
+        }
+      })()
+      return () => {
+        cancelled = true
       }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [db, filter, userId])
+    }, [filter, userId]),
+  )
 
   const renderItem = useCallback(({ item }: { item: Row }) => {
     const badge = STATUS_BADGE[item.status] ?? STATUS_BADGE.assigned
+    const local = unsent[item.id]
     return (
       <Link href={`/inspections/${item.id}`} asChild>
         <TouchableOpacity style={styles.card} activeOpacity={0.7}>
@@ -95,10 +102,19 @@ export default function InspectionsListScreen() {
           {item.coc_number ? (
             <Text style={styles.metaText}>COC {item.coc_number}</Text>
           ) : null}
+          {local?.rejected ? (
+            <Text style={[styles.metaText, { color: colors.red }]}>
+              {local.rejected} change{local.rejected === 1 ? '' : 's'} refused — open to review
+            </Text>
+          ) : local?.waiting ? (
+            <Text style={[styles.metaText, { color: colors.amber }]}>
+              {local.waiting} change{local.waiting === 1 ? '' : 's'} waiting to upload
+            </Text>
+          ) : null}
         </TouchableOpacity>
       </Link>
     )
-  }, [])
+  }, [unsent])
 
   return (
     <View style={styles.container} testID="inspections-screen">
@@ -124,6 +140,11 @@ export default function InspectionsListScreen() {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.amber} size="large" />
+        </View>
+      ) : error ? (
+        <View style={styles.center}>
+          <Text style={styles.emptyText}>Could not load inspections. Check your connection.</Text>
+          <Text style={styles.metaText}>{error}</Text>
         </View>
       ) : (
         <FlatList
