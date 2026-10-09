@@ -28,7 +28,7 @@ const operationalFormSchema = z.object({
   dateFormat: z.string().min(1).max(32),
   defaultRfiPriority: z.enum(['low', 'medium', 'high', 'critical']),
   defaultRfiAssigneeId: z.string(), // blank = null on submit
-  defaultRfiDueDays: z.number().int().min(1),
+  defaultRfiDueDays: z.number({ invalid_type_error: 'Enter a number of days' }).int().min(1),
 })
 
 type OperationalFormValues = z.infer<typeof operationalFormSchema>

@@ -6,7 +6,10 @@ const requireRoleMock = vi.fn()
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
 
 const createClientMock = vi.fn()
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: createClientMock,
+  createServiceClient: () => ({ functions: { invoke: async () => ({ error: null }) } }),
+}))
 
 // Avoid importing analytics / PLANS which have side effects in the module.
 vi.mock('@/lib/analytics', () => ({
@@ -155,5 +158,73 @@ describe('createProjectAction — role gate (site-scoped access)', () => {
     const result = await createProjectAction({ name: 'New site' } as never)
     expect(result).toEqual({ error: 'Only an owner, admin or project manager can create projects.' })
     expect(client._insert).not.toHaveBeenCalled()
+  })
+})
+
+describe('createProjectAction — optional fields left blank', () => {
+  beforeEach(() => {
+    createClientMock.mockReset()
+  })
+
+  /** An owner on a plan with room: quota reads succeed, insert is captured. */
+  function ownerClient() {
+    const inserts: Array<{ table: string; row: Record<string, unknown> }> = []
+    return {
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+      from: () => ({
+        select: () => ({ eq: () => ({ eq: () => ({ limit: () => ({ single: async () => ({ data: { organisation_id: 'o1', role: 'owner' }, error: null }) }) }) }) }),
+      }),
+      schema: () => ({
+        from: (table: string) => ({
+          // checkProjectQuota: billing.subscriptions + projects count.
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { tier: 'enterprise', status: 'active' } }),
+              neq: async () => ({ count: 0 }),
+            }),
+          }),
+          insert: (row: Record<string, unknown>) => {
+            inserts.push({ table, row })
+            return { select: () => ({ single: async () => ({ data: { id: 'p-new' }, error: null }) }) }
+          },
+        }),
+      }),
+      _inserts: inserts,
+    }
+  }
+
+  it('writes NULL for a blank Province and an empty Contract value instead of refusing', async () => {
+    const client = ownerClient()
+    createClientMock.mockResolvedValue(client)
+    const { createProjectAction } = await import('./project.actions')
+
+    // Exactly what the form sends with both fields untouched.
+    const result = await createProjectAction({
+      name: 'Throwaway site',
+      description: 'Short description',
+      status: 'active',
+      province: '',
+      contractValue: Number.NaN,
+      address: '',
+      city: '',
+      startDate: '',
+      endDate: '',
+      clientName: '',
+      clientContact: '',
+    } as never)
+
+    expect(result).toEqual({ projectId: 'p-new' })
+    const project = client._inserts.find((i) => i.table === 'projects')?.row
+    expect(project).toMatchObject({
+      name: 'Throwaway site',
+      province: null,
+      contract_value: null,
+      address: null,
+      city: null,
+      start_date: null,
+      end_date: null,
+      client_name: null,
+      client_contact: null,
+    })
   })
 })
