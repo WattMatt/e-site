@@ -57,6 +57,14 @@ describe('textItemsToImageSpace', () => {
     expect(run.top).toBe(run.baseline - 20)
   })
 
+  it('/Rotate 180: a run drawn turned 180° in user space reads upright on the raster', () => {
+    const v = pdfViewportTransform(PAGE, 180, 2)
+    expect(v).toEqual([-2, 0, 0, 2, 1200, 0])
+    // raster x = 1200 - 2·userX, raster baseline = 2·userY
+    const [run] = textItemsToImageSpace([{ str: 'NO:', transform: [-10, 0, 0, -10, 550, 100], width: 18, height: 10 }], v)
+    expect(run).toEqual({ str: 'NO:', x: 100, baseline: 200, top: 180, width: 36, height: 20 })
+  })
+
   it('drops vertical, mirrored and blank runs and non-text items', () => {
     const v = pdfViewportTransform(PAGE, 0, 2)
     const out = textItemsToImageSpace(

@@ -23,6 +23,18 @@ describe('detectBlocks — one block', () => {
     expect(b.points).toEqual(rectToPoints(95, 85, 221, 203.5))
   })
 
+  it('joins one tag split across two touching runs, but keeps a real word gap', () => {
+    const items = blockItems({ x: 100, y: 100, values: ['', 'ALPHA STORE', '1m2', '10A', '2C', 'ZX-1', '-'] })
+    // "DB-" (3 chars = 18 wide) then "71" starting 1 unit later: gap 1 < 0.3h (3).
+    items.push(textAt('DB-', 150, 100), textAt('71', 169, 100))
+    // NAME split with a word-sized gap stays two words.
+    const nameIdx = items.findIndex((i) => i.str === 'ALPHA STORE')
+    items.splice(nameIdx, 1, textAt('ALPHA', 150, 116), textAt('STORE', 190, 116))
+    const r = detectBlocks(items)
+    expect(r.blocks[0].tag).toBe('DB-71')
+    expect(r.blocks[0].name).toBe('ALPHA STORE')
+  })
+
   it('proposes a block whose NO: cell is empty, with a null tag and its name kept', () => {
     const r = detectBlocks(blockItems({ x: 100, y: 100, values: DELTA_NO_TAG }))
     expect(r.blocks).toHaveLength(1)
