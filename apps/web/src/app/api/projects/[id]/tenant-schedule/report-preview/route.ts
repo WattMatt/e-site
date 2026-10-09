@@ -3,12 +3,16 @@ import { gatherTenantScheduleReportData } from '@/lib/reports/tenant-schedule-re
 import { resolveBranding } from '@/lib/reports/branding'
 import { buildTenantScheduleBrandingInput } from '@/lib/reports/tenant-schedule-report-branding'
 import { renderTenantScheduleReport } from '@/lib/reports/render-tenant-schedule'
+import { loadReportAppendix } from '@/lib/status-plans/report-appendix'
+import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
 import { createClient } from '@/lib/supabase/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// The status-plan appendix embeds drawings: allow for the extra render time.
+export const maxDuration = 60
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
   const supabase = await createClient()
@@ -28,9 +32,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const today = new Date().toISOString().slice(0, 10)
   const branding = resolveBranding(buildTenantScheduleBrandingInput(data, today))
 
+  // Status plans (?tenantPlans=1 / ?schematicPlans=1): gated + loaded in one helper shared with the
+  // other report route, so the preview and the saved version cannot differ. Colours use the SA date,
+  // as on the plan page.
+  const appendixResult = await loadReportAppendix({ url: req.url, sessionClient: supabase, projectId: id, today: johannesburgDate(new Date()) })
+  if (!appendixResult.ok) return NextResponse.json({ error: appendixResult.error }, { status: appendixResult.status })
+
   let pdf: Buffer
   try {
-    pdf = await renderTenantScheduleReport(data, branding)
+    pdf = await renderTenantScheduleReport(data, branding, appendixResult.appendix)
   } catch (err) {
     console.error('[tenant-schedule-report-preview] render error', err)
     return NextResponse.json({ error: 'PDF render failed' }, { status: 500 })
