@@ -42,6 +42,10 @@ export interface ShapeView {
   areaM2: number | null
   /** Shop shapes on a tenant layout only. */
   check: AreaCheck | null
+  /** A linked shop shape on a tenant layout: the only kind Measured GLA adds up. */
+  shopLinked: boolean
+  /** The stored outline fails today's checks: drawn dashed red, counted nowhere. */
+  invalid: boolean
   /** node_id is set but the board is not live (soft-deleted, or not visible). */
   linkedNodeMissing: boolean
 }
@@ -57,9 +61,27 @@ export interface ShapeViewContext {
 
 const m2 = (v: number): string => `${v.toFixed(1)} m²`
 
+const INVALID_STYLE: ShapeStyle = { fill: null, fillOpacity: 0, stroke: '#dc2626', strokeWidth: 2, dash: [6, 4], hatches: [], strikeLabel: false }
+
 export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeView {
   const node = s.nodeId ? ctx.nodesById.get(s.nodeId) ?? null : null
   const linkedNodeMissing = s.nodeId !== null && node === null
+
+  if (s.invalidReason) {
+    return {
+      id: s.id,
+      style: INVALID_STYLE,
+      legendKey: 'invalid',
+      overdue: false,
+      statusLabel: s.invalidReason,
+      labelLines: [node ? node.code : s.detectedTag ?? 'Shape'],
+      areaM2: null,
+      check: null,
+      shopLinked: false,
+      invalid: true,
+      linkedNodeMissing,
+    }
+  }
 
   if (ctx.purpose === 'distribution_schematic') {
     const status = dbBlockStatus(node !== null, node ? ctx.dbOrders[node.id] ?? null : null)
@@ -72,6 +94,8 @@ export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeVi
       labelLines: [node ? node.code : s.detectedTag ?? 'Unlinked'],
       areaM2: null,
       check: null,
+      shopLinked: false,
+      invalid: false,
       linkedNodeMissing,
     }
   }
@@ -89,6 +113,8 @@ export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeVi
       labelLines: [AREA_TYPE_LABEL[s.areaType], ...areaLine],
       areaM2,
       check: null,
+      shopLinked: false,
+      invalid: false,
       linkedNodeMissing: false,
     }
   }
@@ -111,6 +137,8 @@ export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeVi
     labelLines: [...nameLines, ...areaLine],
     areaM2,
     check: node ? areaCheck(areaM2, node.scheduledM2) : null,
+    shopLinked: node !== null,
+    invalid: false,
     linkedNodeMissing,
   }
 }
@@ -118,7 +146,9 @@ export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeVi
 export interface LegendSummary {
   /** Every legend key for the purpose, zero included. Overdue counts on top of its base status. */
   counts: Record<string, number>
+  /** Measured GLA: linked shop shapes only (an area-type shape keeps its own m² on its label). */
   totalM2: number
+  /** Linked shop shapes with no measurable area (no page scale). */
   unmeasured: number
 }
 
@@ -126,11 +156,12 @@ export function legendSummary(views: ReadonlyArray<ShapeView>, purpose: StatusPl
   const legend = purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND
   const counts: Record<string, number> = Object.fromEntries(legend.map((e) => [e.key, 0]))
   for (const v of views) {
+    if (v.invalid) continue
     counts[v.legendKey] = (counts[v.legendKey] ?? 0) + 1
     if (v.overdue) counts.overdue = (counts.overdue ?? 0) + 1
   }
   if (purpose !== 'tenant_layout') return { counts, totalM2: 0, unmeasured: 0 }
-  const { totalM2, unmeasured } = totalMeasuredM2(views.map((v) => v.areaM2))
+  const { totalM2, unmeasured } = totalMeasuredM2(views.filter((v) => v.shopLinked).map((v) => v.areaM2))
   return { counts, totalM2, unmeasured }
 }
 
@@ -150,7 +181,9 @@ export function needsAttention(
     const v = views[s.id]
     if (!v) continue
     const label = v.labelLines[0] ?? 'Shape'
-    if (v.linkedNodeMissing) {
+    if (v.invalid) {
+      out.push({ shapeId: s.id, label, reason: s.invalidReason ?? 'Outline needs redrawing' })
+    } else if (v.linkedNodeMissing) {
       out.push({ shapeId: s.id, label, reason: 'The board this shape was linked to has been deleted. Link another or leave it unassigned.' })
     } else if (v.check?.state === 'differs' && v.check.measuredM2 !== null && v.check.scheduledM2 !== null) {
       const pct = v.check.deltaPct ?? 0

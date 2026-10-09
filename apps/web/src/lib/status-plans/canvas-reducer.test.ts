@@ -90,3 +90,35 @@ describe('dragVertex', () => {
       .toEqual([50, 40, 100, 40, 100, 100, 50, 100])
   })
 })
+
+describe('client-side shape check before commit', () => {
+  it('a polygon that crosses itself keeps the draft and says why', () => {
+    const start = run(initialCanvasState('polygon'), [press(0, 0), press(100, 100), press(100, 0), press(0, 100)]).state
+    const step = canvasReducer(start, { type: 'finish', tolPx: TOL })
+    expect(step.commit).toBeNull()
+    expect(step.state.draft).toEqual([0, 0, 100, 100, 100, 0, 0, 100])
+    expect(step.error).toBe('The outline crosses itself — redraw it without crossing lines.')
+  })
+  it('closing on the first corner is checked the same way', () => {
+    const start = run(initialCanvasState('polygon'), [press(0, 0), press(100, 100), press(100, 0), press(0, 100)]).state
+    const step = canvasReducer(start, press(1, 1))
+    expect(step.commit).toBeNull()
+    expect(step.state.draft).toHaveLength(8)
+    expect(step.error).toMatch(/crosses itself/)
+  })
+  it('a good polygon commits, clears the draft and has no error', () => {
+    const start = run(initialCanvasState('polygon'), [press(0, 0), press(100, 0), press(100, 50)]).state
+    const step = canvasReducer(start, { type: 'finish', tolPx: TOL })
+    expect(step.commit).toEqual({ shape: 'polygon', points: [0, 0, 100, 0, 100, 50] })
+    expect(step.state.draft).toEqual([])
+    expect(step.error).toBeNull()
+  })
+})
+
+describe('dragVertex to zero size', () => {
+  it('yields points pointsError calls a rectangle with no area', async () => {
+    const { pointsError } = await import('@esite/shared/status-plans')
+    const pts = dragVertex({ shape: 'rect', points: [0, 0, 100, 0, 100, 50, 0, 50] }, 2, 0, 0)
+    expect(pointsError('rect', pts)).toBe('The rectangle has no area — drag it larger.')
+  })
+})

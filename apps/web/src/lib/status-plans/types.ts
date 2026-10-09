@@ -57,6 +57,8 @@ export interface CanvasShape {
   source: ShapeSource
   /** The concurrency token every write must present. */
   updatedAt: string
+  /** Set (omitted otherwise) when the stored outline fails today's checks; points may then be []. */
+  invalidReason?: string
 }
 
 /** A live (not soft-deleted) project node a shape may link to. */

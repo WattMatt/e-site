@@ -129,8 +129,9 @@ describe('legendSummary', () => {
     const s = legendSummary(views, 'tenant_layout')
     expect(Object.keys(s.counts).sort()).toEqual(TENANT_LEGEND.map((e) => e.key).sort())
     expect(s.counts).toMatchObject({ complete: 1, in_progress: 1, overdue: 1, common: 1, unlinked: 1 })
-    expect(s.totalM2).toBeCloseTo(240, 9)
-    expect(s.unmeasured).toBe(1)
+    // Measured GLA is the linked shops only: the common area (80 m²) is not GLA.
+    expect(s.totalM2).toBeCloseTo(160, 9)
+    expect(s.unmeasured).toBe(0)
   })
 
   it('a schematic summary has the schematic keys and no area', () => {
@@ -164,5 +165,20 @@ describe('colour helpers', () => {
   it('swatchCss marks dashed outlines and hatches', () => {
     expect(swatchCss(dbBlockStyle('unlinked')).border).toMatch(/dashed/)
     expect(swatchCss(dbBlockStyle('ordered')).backgroundImage).toMatch(/repeating-linear-gradient/)
+  })
+})
+
+describe('invalid outlines', () => {
+  it('an invalid shape is drawn dashed red, counts nowhere and is listed as needing a redraw', () => {
+    const bad = shape({ id: 'bad', nodeId: 'n1', invalidReason: 'Outline needs redrawing' })
+    const v = resolveShapeView(bad, ctx())
+    expect(v.style.dash).not.toBeNull()
+    expect(v.style.stroke).toBe('#dc2626')
+    expect(v.areaM2).toBeNull()
+    expect(v.check).toBeNull()
+    const sum = legendSummary([v], 'tenant_layout')
+    expect(Object.values(sum.counts).every((n) => n === 0)).toBe(true)
+    expect(sum.totalM2).toBe(0)
+    expect(needsAttention([bad], { bad: v })).toEqual([{ shapeId: 'bad', label: 'DB-ZZ01', reason: 'Outline needs redrawing' }])
   })
 })

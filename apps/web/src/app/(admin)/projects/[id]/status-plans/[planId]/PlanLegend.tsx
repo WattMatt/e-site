@@ -29,7 +29,7 @@ export function PlanLegend({ purpose, summary, hasScale, attention, onSelectShap
       {purpose === 'tenant_layout' && (
         <p style={{ margin: 0, fontSize: 12, color: 'var(--c-text-mid)' }}>
           {hasScale
-            ? `Total measured: ${summary.totalM2.toFixed(1)} m²${summary.unmeasured ? ` (${summary.unmeasured} shape${summary.unmeasured === 1 ? '' : 's'} unmeasured)` : ''}`
+            ? `Measured GLA: ${summary.totalM2.toFixed(1)} m²${summary.unmeasured ? ` (${summary.unmeasured} shape${summary.unmeasured === 1 ? '' : 's'} unmeasured)` : ''}`
             : 'Set the page scale to measure areas.'}
         </p>
       )}

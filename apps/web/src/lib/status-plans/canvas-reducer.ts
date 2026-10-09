@@ -7,7 +7,8 @@
  * distance by the zoom), so the rules hold at any zoom.
  */
 import { dedupeConsecutivePoints } from '@esite/shared'
-import { rectToPoints } from '@esite/shared/status-plans'
+import { roundPoints } from './canvas-shape'
+import { pointsError, rectToPoints } from '@esite/shared/status-plans'
 
 export type CanvasTool = 'select' | 'polygon' | 'rect' | 'pan' | 'calibrate'
 
@@ -38,6 +39,8 @@ export type CanvasEvent =
 export interface CanvasStep {
   state: CanvasState
   commit: ShapeCommit | null
+  /** A sentence for the person when a finished shape was refused client-side; the draft is kept. */
+  error?: string | null
 }
 
 export function initialCanvasState(tool: CanvasTool = 'select'): CanvasState {
@@ -61,7 +64,19 @@ function closePolygon(draft: number[], tolPx: number): number[] | null {
   return pts.length >= 6 ? pts : null
 }
 
-const same = (state: CanvasState): CanvasStep => ({ state, commit: null })
+const same = (state: CanvasState): CanvasStep => ({ state, commit: null, error: null })
+
+/**
+ * Finish a polygon draft: commit it, or keep every vertex and say why not.
+ * The server would refuse the same shape, but only after the draft was gone.
+ */
+function finishPolygon(s: CanvasState, tolPx: number): CanvasStep {
+  const pts = closePolygon(s.draft, tolPx)
+  if (!pts) return { state: { ...s, draft: [] }, commit: null, error: null }
+  const err = pointsError('polygon', roundPoints(pts))
+  if (err) return { state: s, commit: null, error: err }
+  return { state: { ...s, draft: [] }, commit: { shape: 'polygon', points: pts }, error: null }
+}
 
 export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
   switch (e.type) {
@@ -72,8 +87,7 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
       if (s.tool === 'polygon') {
         const n = s.draft.length
         if (n >= 6 && Math.hypot(e.x - s.draft[0]!, e.y - s.draft[1]!) <= e.tolPx) {
-          const pts = closePolygon(s.draft, e.tolPx)
-          return { state: { ...s, draft: [] }, commit: pts ? { shape: 'polygon', points: pts } : null }
+          return finishPolygon(s, e.tolPx)
         }
         return same({ ...s, draft: [...s.draft, e.x, e.y] })
       }
@@ -91,13 +105,12 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
       const { x0, y0 } = s.rect
       const next = { ...s, rect: null }
       if (Math.abs(e.x - x0) < e.tolPx || Math.abs(e.y - y0) < e.tolPx) return same(next)
-      return { state: next, commit: { shape: 'rect', points: rectToPoints(x0, y0, e.x, e.y) } }
+      return { state: next, commit: { shape: 'rect', points: rectToPoints(x0, y0, e.x, e.y) }, error: null }
     }
 
     case 'finish': {
       if (s.tool !== 'polygon' || s.draft.length === 0) return same(s)
-      const pts = closePolygon(s.draft, e.tolPx)
-      return { state: { ...s, draft: [] }, commit: pts ? { shape: 'polygon', points: pts } : null }
+      return finishPolygon(s, e.tolPx)
     }
 
     case 'escape':
