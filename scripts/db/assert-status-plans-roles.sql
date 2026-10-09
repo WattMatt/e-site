@@ -327,10 +327,16 @@ BEGIN
   SELECT count(*) INTO v_n FROM tenants.status_plan_shapes WHERE id = v_shape;
   INSERT INTO _r VALUES ('contractor_reads_shape', v_n = 1);
 
+  -- Every refused-write probe below runs in its own sub-block that ends by
+  -- raising the sentinel SQLSTATE ZZ001, so a write that wrongly SUCCEEDS is
+  -- rolled back before the next probe. Without this, a broken gate (mutation
+  -- M1) let the contractor delete v_layout, and section 7 then aborted the
+  -- whole file instead of naming the red assertions. The result is carried out
+  -- of the rolled-back sub-block in a PL/pgSQL variable, which survives it.
   BEGIN
     INSERT INTO tenants.status_plans (project_id, floor_plan_id, page_index, purpose, name)
     VALUES (v_project, v_drawing, 5, 'tenant_layout', 'Contractor plan');
-    INSERT INTO _r VALUES ('contractor_plan_insert_refused', false);
+    RAISE EXCEPTION 'probe write succeeded' USING ERRCODE = 'ZZ001';
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('contractor_plan_insert_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('contractor_plan_insert_refused', false);
@@ -339,26 +345,46 @@ BEGIN
   BEGIN
     INSERT INTO tenants.status_plan_shapes (status_plan_id, shape, points, area_type)
     VALUES (v_layout, 'polygon', '[0,0,5,0,5,5]'::jsonb, 'vacant');
-    INSERT INTO _r VALUES ('contractor_shape_insert_refused', false);
+    RAISE EXCEPTION 'probe write succeeded' USING ERRCODE = 'ZZ001';
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('contractor_shape_insert_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('contractor_shape_insert_refused', false);
   END;
 
-  UPDATE tenants.status_plans SET name = 'x' WHERE id = v_layout;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_n := NULL;
+  BEGIN
+    UPDATE tenants.status_plans SET name = 'x' WHERE id = v_layout;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'probe rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION WHEN SQLSTATE 'ZZ001' THEN NULL;
+  END;
   INSERT INTO _r VALUES ('contractor_plan_update_affects_nothing', v_n = 0);
 
-  UPDATE tenants.status_plan_shapes SET points = '[1,1,2,1,2,2]'::jsonb WHERE id = v_shape;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_n := NULL;
+  BEGIN
+    UPDATE tenants.status_plan_shapes SET points = '[1,1,2,1,2,2]'::jsonb WHERE id = v_shape;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'probe rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION WHEN SQLSTATE 'ZZ001' THEN NULL;
+  END;
   INSERT INTO _r VALUES ('contractor_shape_update_affects_nothing', v_n = 0);
 
-  DELETE FROM tenants.status_plan_shapes WHERE id = v_shape;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_n := NULL;
+  BEGIN
+    DELETE FROM tenants.status_plan_shapes WHERE id = v_shape;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'probe rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION WHEN SQLSTATE 'ZZ001' THEN NULL;
+  END;
   INSERT INTO _r VALUES ('contractor_shape_delete_affects_nothing', v_n = 0);
 
-  DELETE FROM tenants.status_plans WHERE id = v_layout;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_n := NULL;
+  BEGIN
+    DELETE FROM tenants.status_plans WHERE id = v_layout;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'probe rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION WHEN SQLSTATE 'ZZ001' THEN NULL;
+  END;
   INSERT INTO _r VALUES ('contractor_plan_delete_affects_nothing', v_n = 0);
 
   RESET ROLE;
@@ -377,7 +403,7 @@ BEGIN
   BEGIN
     INSERT INTO tenants.status_plan_shapes (status_plan_id, shape, points)
     VALUES (v_layout, 'polygon', '[0,0,5,0,5,5]'::jsonb);
-    INSERT INTO _r VALUES ('client_shape_insert_refused', false);
+    RAISE EXCEPTION 'probe write succeeded' USING ERRCODE = 'ZZ001';
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('client_shape_insert_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('client_shape_insert_refused', false);
@@ -400,7 +426,7 @@ BEGIN
   BEGIN
     INSERT INTO tenants.status_plan_shapes (status_plan_id, shape, points)
     VALUES (v_layout, 'polygon', '[0,0,5,0,5,5]'::jsonb);
-    INSERT INTO _r VALUES ('lapsed_shape_insert_refused', false);
+    RAISE EXCEPTION 'probe write succeeded' USING ERRCODE = 'ZZ001';
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('lapsed_shape_insert_refused', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('lapsed_shape_insert_refused', false);
