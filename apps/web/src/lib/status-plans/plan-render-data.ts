@@ -190,7 +190,10 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     }
     if ('error' in file) { omitted.push({ title, reason: file.error }); continue }
 
-    const source: PlanSource = kind === 'pdf' ? { kind, bytes: file.bytes, pageIndex: plan.pageIndex } : { kind, bytes: file.bytes }
+    // `key` = the storage path: plans sharing a drawing page embed it once per output PDF.
+    const source: PlanSource = kind === 'pdf'
+      ? { kind, bytes: file.bytes, pageIndex: plan.pageIndex, key: fp.file_path }
+      : { kind, bytes: file.bytes, key: fp.file_path }
     const ppm = pageScaleFor({ pixels_per_meter: num(fp.pixels_per_meter), page_scales: scalesByFp.get(fp.id) ?? [] }, plan.pageIndex)
     const ctx: ShapeViewContext = {
       purpose: plan.purpose,

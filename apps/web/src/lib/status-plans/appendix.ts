@@ -10,6 +10,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import { PURPOSE_LABEL } from '@esite/shared/status-plans'
 import { winAnsiSafe } from '@/lib/pdf/winansi'
+import { pruneUnreachableObjects } from '@/lib/pdf/prune-unreachable'
 import { drawStatusPlanPage, planTitle, type PlanFonts, type StatusPlanRenderInput } from './render-plan-page'
 import type { PlanOmission, PlanRenderLoadResult } from './plan-render-data'
 
@@ -95,5 +96,6 @@ export async function appendStatusPlansToReport(reportPdf: Uint8Array, load: Pla
   const pdf = await PDFDocument.load(reportPdf)
   const fonts = { regular: await pdf.embedFont(StandardFonts.Helvetica), bold: await pdf.embedFont(StandardFonts.HelveticaBold) }
   await appendStatusPlansToPdf(pdf, load, fonts, generatedOn)
+  await pruneUnreachableObjects(pdf)
   return pdf.save()
 }

@@ -124,7 +124,7 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(plan!.counts).toMatchObject({ complete: 1, in_progress: 1, overdue: 1, common: 1, unlinked: 1, vacant: 0 })
     expect(plan!.measured).toEqual({ totalM2: 100, unmeasured: 0 }) // two linked shops; the mall area is not added
     expect(plan!.generatedOn).toBe(TODAY)
-    expect(plan!.source).toEqual({ kind: 'pdf', bytes: PDF, pageIndex: 1 })
+    expect(plan!.source).toEqual({ kind: 'pdf', bytes: PDF, pageIndex: 1, key: `${ORG}/${PROJ}/layout.pdf` })
     expect(plan!.warnings).toEqual([])
   })
 

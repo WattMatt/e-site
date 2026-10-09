@@ -189,6 +189,43 @@ describe('text', () => {
   })
 })
 
+/** Line work that does not compress away, so a duplicated copy shows in the byte count. */
+async function heavyDrawing(segments: number, r = 0): Promise<Uint8Array> {
+  const d = await PDFDocument.create()
+  const p = d.addPage([2000, 1400])
+  p.setRotation(degrees(r))
+  let seed = 7
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
+  for (let k = 0; k < segments / 500; k++) {
+    let path = `M ${(rnd() * 2000).toFixed(1)} ${(rnd() * 1400).toFixed(1)}`
+    for (let i = 0; i < 500; i++) path += ` L ${(rnd() * 2000).toFixed(1)} ${(rnd() * 1400).toFixed(1)}`
+    p.drawSvgPath(path, { x: 0, y: 1400, borderColor: rgb(0, 0, 0), borderWidth: 0.3 })
+  }
+  return d.save()
+}
+
+describe('output size', () => {
+  it.each(['source', 'a3'] as const)('%s layout: one sheet is ~1x its drawing, not 2x (the copied donor page is pruned)', async (layout) => {
+    const src = await heavyDrawing(10_000, 90)
+    const out = await renderStatusPlanPdf(input(src), layout)
+    expect(out.byteLength).toBeLessThan(src.byteLength * 1.15 + 20_000)
+  })
+
+  it('the same (file, page) drawn twice in one document is embedded once and reused', async () => {
+    const src = await heavyDrawing(10_000)
+    const doc = await PDFDocument.create()
+    const fonts = { regular: await doc.embedFont(StandardFonts.Helvetica), bold: await doc.embedFont(StandardFonts.HelveticaBold) }
+    const source = { kind: 'pdf' as const, bytes: src, pageIndex: 1, key: 'org/project/drawing.pdf' }
+    await drawStatusPlanPage(doc, input(src, { source }), 'a3', fonts)
+    await drawStatusPlanPage(doc, input(src, { source, planName: 'Second plan' }), 'a3', fonts)
+    const xobj = (i: number) => {
+      const xo = doc.getPage(i).node.Resources()!.lookup(PDFName.of('XObject')) as unknown as { values(): unknown[] }
+      return xo.values().map(String)
+    }
+    expect(xobj(0)).toEqual(xobj(1))
+  })
+})
+
 describe('unreadable sources fail with a sentence and add no page', () => {
   async function attempt(source: StatusPlanRenderInput['source']) {
     const doc = await PDFDocument.create()

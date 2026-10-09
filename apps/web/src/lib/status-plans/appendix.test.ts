@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { TENANT_LEGEND, SCHEMATIC_LEGEND } from '@esite/shared/status-plans'
 import { squash } from '@/test/pdf-text'
 import { drawnText } from '@/test/pdf-ops'
@@ -75,5 +75,24 @@ describe('appendStatusPlansToReport', () => {
     expect(divider).toContain('Alpha')
     expect(divider).toContain('thedrawingPDFcouldnotberead')
     expect(await pageText(out, 3)).toContain('Bravo')
+  })
+
+  it('three plans on one drawing carry the drawing ~once, not three times', async () => {
+    const d = await PDFDocument.create()
+    const p = d.addPage([2000, 1400])
+    p.setRotation(degrees(90))
+    let seed = 3
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
+    for (let k = 0; k < 20; k++) {
+      let path = `M ${(rnd() * 2000).toFixed(1)} ${(rnd() * 1400).toFixed(1)}`
+      for (let i = 0; i < 500; i++) path += ` L ${(rnd() * 2000).toFixed(1)} ${(rnd() * 1400).toFixed(1)}`
+      p.drawSvgPath(path, { x: 0, y: 1400, borderColor: rgb(0, 0, 0), borderWidth: 0.3 })
+    }
+    const src = await d.save()
+    const withKey = (id: string) => ({ ...plan(id, `Plan ${id}`, 'tenant_layout', src), source: { kind: 'pdf' as const, bytes: src, pageIndex: 1, key: 'org/proj/e300.pdf' } })
+    const base = await report()
+    const out = await appendStatusPlansToReport(base, { inputs: [withKey('a'), withKey('b'), withKey('c')], omitted: [] }, '2026-10-09')
+    expect((await sizes(out)).length).toBe(6) // 2 report + divider + 3 plans
+    expect(out.byteLength).toBeLessThan(base.byteLength + src.byteLength * 1.6 + 30_000)
   })
 })

@@ -12,6 +12,13 @@
  * Every string drawn goes through winAnsiSafe: pdf-lib's standard fonts THROW on anything outside
  * WinAnsi (PR #154). `m²` is safe; `→ ✓ Ω` are not.
  *
+ * Size (2026-10-09): within one output document each (drawing file, page) is embedded ONCE and the
+ * form XObject reused by every plan page that shows it — keyed by PlanSource.key (the storage path),
+ * with one object copier per drawing file so resources shared by its pages are copied once too. The
+ * donor page pdf-lib copies in order to embed it is left unreferenced, and pruneUnreachableObjects
+ * drops it before save (without that, every sheet carried its drawing twice). Callers that build a
+ * document with drawStatusPlanPage must prune before save — renderStatusPlanPdf and the appendix do.
+ *
  * Failure model: the source is resolved (loaded, page checked, embedded) BEFORE a page is added, and
  * the embed is forced with `.embed()` — pdf-lib otherwise embeds lazily inside `save()`, where one bad
  * drawing would fail the whole report. A failure is a StatusPlanSourceError carrying a sentence the
@@ -24,26 +31,31 @@
  * never hatched, filled or labelled; an outline with no readable points is skipped. Never throws.
  */
 import {
-  PDFDocument, StandardFonts, EncryptedPDFError, rgb,
+  PDFDocument, PDFObjectCopier, PDFPage, StandardFonts, EncryptedPDFError, rgb,
   pushGraphicsState, popGraphicsState, setGraphicsState, concatTransformationMatrix, drawObject,
   rectangle, clip, endPath, moveTo, lineTo, closePath, fill, stroke,
   setFillingRgbColor, setStrokingRgbColor, setLineWidth, setDashPattern,
-  type PDFFont, type PDFPage, type PDFName, type PDFOperator,
+  type PDFFont, type PDFName, type PDFOperator,
 } from 'pdf-lib'
 import {
   PURPOSE_LABEL, boundingBox, hatchSegments, hexToRgb01, visualCentre,
   type HatchSpec, type LegendEntry, type Segment, type ShapeStyle, type StatusPlanPurpose,
 } from '@esite/shared/status-plans'
 import { winAnsiSafe } from '@/lib/pdf/winansi'
+import { pruneUnreachableObjects } from '@/lib/pdf/prune-unreachable'
 import { measuredGlaText } from './shape-view'
 import {
   IMAGE_PX_PER_PT, PDF_PX_PER_PT, imageToOutput, normaliseRotation, placementFor, viewedSize,
   type Frame, type PageBox, type Placement, type QuarterTurn,
 } from './pdf-geometry'
 
+/**
+ * `key` identifies the file (its storage path). Sources sharing a key within one output document are
+ * embedded once; without a key every page embeds its own copy.
+ */
 export type PlanSource =
-  | { kind: 'pdf'; bytes: Uint8Array; /** 1-based */ pageIndex: number }
-  | { kind: 'png' | 'jpg'; bytes: Uint8Array }
+  | { kind: 'pdf'; bytes: Uint8Array; /** 1-based */ pageIndex: number; key?: string }
+  | { kind: 'png' | 'jpg'; bytes: Uint8Array; key?: string }
 
 export interface RenderShape {
   /** Image space, flat [x0, y0, …] — exactly as stored (may be [] for an unreadable outline). */
@@ -112,16 +124,54 @@ interface ResolvedSource {
   draw: (page: PDFPage, placement: Placement) => void
 }
 
-async function resolveSource(doc: PDFDocument, source: PlanSource): Promise<ResolvedSource> {
+interface DocCaches {
+  /** key → the parsed drawing and ONE copier into this document (shared resources copied once). */
+  files: Map<string, Promise<{ src: PDFDocument; copier: PDFObjectCopier }>>
+  /** `${key}#${page}` (or key for an image) → the embedded source. */
+  sources: Map<string, Promise<ResolvedSource>>
+}
+const docCaches = new WeakMap<PDFDocument, DocCaches>()
+function cachesFor(doc: PDFDocument): DocCaches {
+  let c = docCaches.get(doc)
+  if (!c) { c = { files: new Map(), sources: new Map() }; docCaches.set(doc, c) }
+  return c
+}
+
+async function loadSourcePdf(bytes: Uint8Array): Promise<PDFDocument> {
+  try {
+    return await PDFDocument.load(bytes, { updateMetadata: false })
+  } catch (e) {
+    // pdf-lib's errors are ES5 classes: `instanceof EncryptedPDFError` is false at runtime, so read the message too.
+    const encrypted = e instanceof EncryptedPDFError || (e instanceof Error && /is encrypted/i.test(e.message))
+    throw new StatusPlanSourceError(encrypted ? 'the drawing PDF is password-protected' : 'the drawing PDF could not be read')
+  }
+}
+
+function sourceFile(doc: PDFDocument, source: Extract<PlanSource, { kind: 'pdf' }>): Promise<{ src: PDFDocument; copier: PDFObjectCopier }> {
+  const make = async () => {
+    const src = await loadSourcePdf(source.bytes)
+    return { src, copier: PDFObjectCopier.for(src.context, doc.context) }
+  }
+  if (source.key === undefined) return make()
+  const files = cachesFor(doc).files
+  let p = files.get(source.key)
+  if (!p) { p = make(); files.set(source.key, p) }
+  return p
+}
+
+/** Embedded once per (document, key, page); a failure is cached too (the same file fails the same way). */
+function resolveSource(doc: PDFDocument, source: PlanSource): Promise<ResolvedSource> {
+  if (source.key === undefined) return resolveSourceUncached(doc, source)
+  const k = source.kind === 'pdf' ? `${source.key}#${source.pageIndex}` : source.key
+  const sources = cachesFor(doc).sources
+  let p = sources.get(k)
+  if (!p) { p = resolveSourceUncached(doc, source); sources.set(k, p) }
+  return p
+}
+
+async function resolveSourceUncached(doc: PDFDocument, source: PlanSource): Promise<ResolvedSource> {
   if (source.kind === 'pdf') {
-    let src: PDFDocument
-    try {
-      src = await PDFDocument.load(source.bytes, { updateMetadata: false })
-    } catch (e) {
-      // pdf-lib's errors are ES5 classes: `instanceof EncryptedPDFError` is false at runtime, so read the message too.
-      const encrypted = e instanceof EncryptedPDFError || (e instanceof Error && /is encrypted/i.test(e.message))
-      throw new StatusPlanSourceError(encrypted ? 'the drawing PDF is password-protected' : 'the drawing PDF could not be read')
-    }
+    const { src, copier } = await sourceFile(doc, source)
     const count = src.getPageCount()
     if (source.pageIndex < 1 || source.pageIndex > count) {
       throw new StatusPlanSourceError(`page ${source.pageIndex} is not in the drawing (it has ${count})`)
@@ -131,7 +181,10 @@ async function resolveSource(doc: PDFDocument, source: PlanSource): Promise<Reso
     const rotate = normaliseRotation(srcPage.getRotation().angle)
     let embedded: Awaited<ReturnType<PDFDocument['embedPage']>>
     try {
-      embedded = await doc.embedPage(srcPage, { left: box.x, bottom: box.y, right: box.x + box.width, top: box.y + box.height })
+      // Copy the page with this file's shared copier, then embed it from inside `doc` (no second copy).
+      const leaf = copier.copy(srcPage.node)
+      const local = PDFPage.of(leaf, doc.context.register(leaf), doc)
+      embedded = await doc.embedPage(local, { left: box.x, bottom: box.y, right: box.x + box.width, top: box.y + box.height })
       await embedded.embed()
     } catch {
       throw new StatusPlanSourceError(`page ${source.pageIndex} of the drawing could not be embedded`)
@@ -363,5 +416,6 @@ export async function renderStatusPlanPdf(input: StatusPlanRenderInput, layout: 
   doc.setProducer('E-Site')
   const fonts = { regular: await doc.embedFont(StandardFonts.Helvetica), bold: await doc.embedFont(StandardFonts.HelveticaBold) }
   await drawStatusPlanPage(doc, input, layout, fonts)
+  await pruneUnreachableObjects(doc)
   return doc.save()
 }
