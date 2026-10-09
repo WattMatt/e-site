@@ -9,10 +9,18 @@ import 'server-only'
  * The calculator is the integration adapter `tariffBillCalculator` (solar-engine), priced on the
  * day types of `year` — which MUST be the site load's reference year (caseLoadFromSiteSeries), or
  * every weekday shifts and the TOU split is mispriced without an error. Holidays are the statutory
- * SA public holidays of that same year (`referenceYearHolidays`).
+ * SA public holidays of that same year (`referenceYearHolidays`), with the tariff family's dated
+ * treatment for that year where the library holds one (tariffs.holiday_treatment, exact dates only).
+ *
+ * The TOU calendar is the Tariff tab's (`loadStudyCalendar`): the pinned licensee's calendar valid on
+ * the pricing date, else Eskom's hours flagged assumed_eskom. Where they came from rides on
+ * `tariffRef.touHours`, which the run stores and shows.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { DEFAULT_REFERENCE_YEAR, studyPricingHash, yearOneExportTariff, yearOneTariff, type ResolvedStudyPricing, type Tariff, type TouCalendar } from '@esite/shared'
+import {
+  DEFAULT_REFERENCE_YEAR, resolveHolidayDays, studyPricingHash, yearOneExportTariff, yearOneTariff,
+  type HolidayDays, type ResolvedStudyPricing, type Tariff, type TouCalendar, type WindowDayType,
+} from '@esite/shared'
 import {
   SOLAR_ENGINE_DEFAULTS, referenceYearHolidays, tariffBillCalculator,
   type BillCalculator, type TariffBillCalculatorOptions,
@@ -20,6 +28,7 @@ import {
 import type { TariffRef } from '@esite/shared/solar-cases'
 import { loadStudyPricing, ssegFromRow } from '../pricing/load-study-pricing'
 import { keyedPricingHash } from '../pricing/pricing-hash'
+import { loadStudyCalendar } from '../tariff/calendar-loader'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -28,13 +37,13 @@ type Row = Record<string, unknown>
 export const TARIFF_REASONS = {
   notPinned: 'No tariff is pinned for this study — pin one on the Tariff tab.',
   notPublished: 'The pinned tariff’s year is not published.',
-  noCalendar: 'There is no TOU calendar for this supply authority yet.',
+  noCalendar: 'There is no TOU calendar for this supply authority, and none for Eskom to stand in.',
   unreadable: 'The pinned tariff could not be read — try again.',
 } as const
 
 export type StudyTariff =
   | {
-      ok: true; calc: BillCalculator; calendar: TouCalendar; holidays: ReadonlySet<string>; tariffRef: TariffRef; year: number
+      ok: true; calc: BillCalculator; calendar: TouCalendar; holidays: HolidayDays; tariffRef: TariffRef; year: number
       /** The resolved study pricing the calculator was built from, and its KEYED canonical hash (I-1, pricing-hash.ts). */
       pricing: ResolvedStudyPricing; pricingHash: string
     }
@@ -53,17 +62,28 @@ export function isMissingTariffColumn(error: { code?: string; message?: string }
 
 export { ssegFromRow }
 
-type WindowT = TouCalendar['windows'][number]
-export function calendarFromRows(cal: Row, windows: Row[], rule: Row | null): TouCalendar {
-  return {
-    highSeasonMonths: (cal.high_season_months as number[]) ?? [],
-    windows: windows.map((w) => ({
-      season: w.season as WindowT['season'], dayType: w.day_type as WindowT['dayType'],
-      startMinute: Number(w.start_minute), endMinute: Number(w.end_minute), period: w.period as WindowT['period'],
-    })),
-    holidayTreatedAs: rule ? (rule.treated_as as 'saturday' | 'sunday') : null,
-    source: cal.source as TouCalendar['source'],
+/** PostgREST / Postgres "no such table": a base where the holiday_treatment migration has not applied. */
+const isMissingTable = (e: { code?: string }) => e.code === 'PGRST205' || e.code === '42P01'
+
+/**
+ * The tariff family's dated holiday treatment on this calendar, within `year`. Families match
+ * case- and space-insensitively (the explorer's rule). A tariff without a family has none.
+ */
+async function datedHolidays(
+  svc: AnyClient, calendarId: string, family: string | null, year: number,
+): Promise<{ date: string; treatedAs: WindowDayType }[] | 'unreadable'> {
+  const fam = family?.trim().toUpperCase()
+  if (!fam) return []
+  const { data, error } = await svc.schema('tariffs').from('holiday_treatment').select('tariff_family, holiday_date, treated_as')
+    .eq('calendar_id', calendarId).gte('holiday_date', `${year}-01-01`).lte('holiday_date', `${year}-12-31`)
+  if (error) {
+    if (isMissingTable(error)) return []
+    console.error('[solar-tariff] holiday treatment read failed', { calendarId, code: error.code })
+    return 'unreadable'
   }
+  return ((data ?? []) as Row[])
+    .filter((r) => String(r.tariff_family).trim().toUpperCase() === fam)
+    .map((r) => ({ date: String(r.holiday_date).slice(0, 10), treatedAs: r.treated_as as WindowDayType }))
 }
 
 export type BuildBillCalculator = (t: Tariff, o: TariffBillCalculatorOptions) => BillCalculator
@@ -83,19 +103,15 @@ export async function resolveStudyTariff(
     return { ok: false, reason: loaded.code === 'noStudy' || loaded.code === 'notPinned' ? TARIFF_REASONS.notPinned : TARIFF_REASONS.unreadable }
   }
   if (loaded.tariffYear.state !== 'published') return { ok: false, reason: TARIFF_REASONS.notPublished }
-  const t = svc.schema('tariffs')
-  const { data: cals } = await t.from('tou_calendar').select('id, valid_from, valid_to, high_season_months, source').eq('licensee_id', loaded.tariffYear.licenseeId)
-  const cal = ((cals ?? []) as Row[])
-    .filter((c) => String(c.valid_from) <= `${year}-12-31` && (c.valid_to === null || c.valid_to === undefined || String(c.valid_to) >= `${year}-01-01`))
-    .sort((a, b) => String(b.valid_from).localeCompare(String(a.valid_from)))[0]
-  if (!cal) return { ok: false, reason: TARIFF_REASONS.noCalendar }
-  const [{ data: windows }, { data: rule }] = await Promise.all([
-    t.from('tou_window').select('season, day_type, start_minute, end_minute, period').eq('calendar_id', cal.id as string),
-    t.from('holiday_rule').select('treated_as').eq('calendar_id', cal.id as string).maybeSingle(),
-  ])
-  const calendar = calendarFromRows(cal, (windows ?? []) as Row[], (rule as Row | null) ?? null)
-  const holidays = referenceYearHolidays(year)
+  // The calendar valid on the pricing date — the date year 1 is priced in, the tab's rule.
+  const onIso = opts.todayIso ?? new Date().toISOString().slice(0, 10)
+  const cal = await loadStudyCalendar(svc, loaded.tariffYear.licenseeId, onIso)
+  if (!cal.calendar || !cal.origin) return { ok: false, reason: TARIFF_REASONS.noCalendar }
+  const calendar = cal.calendar
   const { pricing } = loaded
+  const dated = await datedHolidays(svc, cal.origin.id, pricing.tariff.family, year)
+  if (dated === 'unreadable') return { ok: false, reason: TARIFF_REASONS.unreadable }
+  const { days: holidays, dated: datedCount } = resolveHolidayDays(year, referenceYearHolidays(year), calendar.holidayTreatedAs, dated)
   const nmd = loaded.study.nmdKva
   const build: BuildBillCalculator = opts.build ?? tariffBillCalculator
   // Year 1 is priced in the financial year it falls in: a pin from an earlier year is brought
@@ -109,6 +125,12 @@ export async function resolveStudyTariff(
   })
   return {
     ok: true, calc, calendar, holidays, year, pricing, pricingHash: keyedPricingHash(studyPricingHash(pricing)),
-    tariffRef: { tariffId: loaded.study.tariffId, tariffName: pricing.tariff.name, financialYear: loaded.tariffYear.financialYear, licenseeName: loaded.licenseeName },
+    tariffRef: {
+      tariffId: loaded.study.tariffId, tariffName: pricing.tariff.name, financialYear: loaded.tariffYear.financialYear, licenseeName: loaded.licenseeName,
+      touHours: {
+        source: calendar.source, calendarLicenseeName: cal.origin.licenseeName ?? loaded.licenseeName,
+        validFrom: cal.origin.validFrom, datedHolidays: datedCount,
+      },
+    },
   }
 }

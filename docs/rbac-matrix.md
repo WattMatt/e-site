@@ -498,7 +498,7 @@ Storage bucket `solar-meter-raw` (private): read needs the path's org in the cal
 
 ### Solar cases, runs and financials API (Phase 4b)
 
-`app/api/*` sits outside `(admin)/layout.tsx`: every route below gates itself with `requireSolarLevelAPI` (JSON 401/403) BEFORE any other work, UUID-validates its params and answers errors as sentences. Run rows are INSERTed through the caller's session (00216 RLS); only the service client finishes a run, and only while it is `running` (`case_runs_freeze`). Both buckets (`solar-runs`, `solar-weather`) have **no** `storage.objects` policy for `authenticated`.
+`app/api/*` sits outside `(admin)/layout.tsx`: every route below gates itself with `requireSolarLevelAPI` (JSON 401/403) BEFORE any other work, UUID-validates its params and answers errors as sentences. Run rows are INSERTed through the caller's session (00216 RLS); only the service client finishes a run, and only while it is `running` (`case_runs_freeze`). Both buckets (`solar-runs`, `solar-weather`) have **no** `storage.objects` policy for `authenticated`. The run reads the tariff library (the pinned tariff, its TOU calendar — Eskom's when the supply authority has none — and `tariffs.holiday_treatment`) with the service client after the gate; nothing from it is writable through the run.
 
 | Route | Needs | Notes |
 |---|---|---|

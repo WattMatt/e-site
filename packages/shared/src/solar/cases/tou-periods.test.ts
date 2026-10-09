@@ -41,3 +41,16 @@ describe('monthlyTouSplit', () => {
     expect(s[0]!.peak).toBe(23 * 3) // 23 weekdays in January 2025, 3 peak hours each
   })
 })
+
+describe('engineTouPeriods with dated holiday treatment', () => {
+  // 2025-04-28 is a Monday. Low season weekday 07-10 is peak in this calendar.
+  const idx = (m: number, d: number, h: number) => {
+    const before = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31].slice(0, m - 1).reduce((a, b) => a + b, 0)
+    return (before + d - 1) * 24 + h
+  }
+  it('a Monday billed as a Saturday has no peak hours; the Set form is unchanged', () => {
+    const noRule = { ...cal, holidayTreatedAs: null }
+    expect(engineTouPeriods(noRule, new Set(['2025-04-28']), 2025)[idx(4, 28, 8)]).toBe('peak')
+    expect(engineTouPeriods(noRule, new Map([['2025-04-28', 'saturday' as const]]), 2025)[idx(4, 28, 8)]).toBe('off-peak')
+  })
+})

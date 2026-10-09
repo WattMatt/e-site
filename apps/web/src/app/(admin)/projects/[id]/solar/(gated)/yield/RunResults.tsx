@@ -2,6 +2,7 @@
 /** Results of the stored run (functional spec §7.3). Formatting only — every figure is read from `run.outputs`. */
 import { useState } from 'react'
 import type { DayType, TouSplit } from '@esite/shared/solar-cases'
+import { touHoursLabel } from '@esite/shared'
 import type { RunView } from '@/lib/solar/cases/page-data'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -92,6 +93,7 @@ export function RunResults({ projectId, caseId, run }: { projectId: string; case
         <span>{`Engine ${p.engineVersion}`}</span>
         <span>{`${p.weatherSource}${p.weatherFetchedAt ? `, fetched ${sastDate(p.weatherFetchedAt)}` : ''}`}</span>
         <span>{p.tariffRef ? `Tariff ${p.tariffRef.licenseeName} ${p.tariffRef.tariffName} ${p.tariffRef.financialYear}` : 'No tariff pinned'}</span>
+        {touHoursLabel(p.tariffRef?.touHours) && <span>{touHoursLabel(p.tariffRef?.touHours)}</span>}
         <span>{`Load ${p.loadBasis} ${p.loadReferenceYear}`}</span>
         <span>{`Inputs ${p.inputsHash.slice(0, 12)}`}</span>
         <span>{`Run by ${run.runByName}`}</span>
