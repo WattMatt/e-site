@@ -95,8 +95,9 @@ const AMBER = rgb(0.71, 0.45, 0.04)
 
 const T = (s: string) => winAnsiSafe(s)
 
-export function planTitle(i: Pick<StatusPlanRenderInput, 'planName' | 'purpose' | 'pageIndex'>): string {
-  return `${i.planName} (${PURPOSE_LABEL[i.purpose]}, page ${i.pageIndex})`
+/** "Ground floor (Tenant layout, page 2)" — how a plan is named in not-included lines and dividers. */
+export function planTitle(name: string, purpose: StatusPlanPurpose, pageIndex: number): string {
+  return `${name} (${PURPOSE_LABEL[purpose]}, page ${pageIndex})`
 }
 
 /** Enough finite points to draw a polygon. Anything else is skipped rather than thrown on. */
