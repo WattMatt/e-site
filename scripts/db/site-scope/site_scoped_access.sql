@@ -27,6 +27,7 @@
 -- function: public.site_project_of_gcr_zone(uuid)
 -- function: public.site_project_of_snag(uuid)
 -- function: public.site_project_of_floor_plan(uuid)
+-- function: public.site_project_of_status_plan(uuid)
 -- function: public.site_project_of_variation_order(uuid)
 -- function: public.site_project_of_valuation(uuid)
 -- function: public.site_project_of_qc_report(uuid)
@@ -48,6 +49,7 @@
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_gcr_zone(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_snag(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_floor_plan(uuid)', 'EXECUTE'))
+-- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_status_plan(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_variation_order(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_valuation(uuid)', 'EXECUTE'))
 -- sql: (SELECT NOT has_function_privilege('anon', 'public.site_project_of_qc_report(uuid)', 'EXECUTE'))
@@ -102,6 +104,7 @@
 -- policy: site_scope ON projects.work_items RESTRICTIVE
 -- policy: site_scope ON projects.tenders RESTRICTIVE
 -- policy: site_scope ON projects.project_settings RESTRICTIVE
+-- policy: site_scope ON tenants.status_plans RESTRICTIVE
 -- policy: site_scope ON projects.site_diary_attachments RESTRICTIVE
 -- policy: site_scope ON projects.jbcc_letter_events RESTRICTIVE
 -- policy: site_scope ON projects.jbcc_letter_recipients RESTRICTIVE
@@ -123,6 +126,7 @@
 -- policy: site_scope ON field.snag_photos RESTRICTIVE
 -- policy: site_scope ON tenants.floor_plan_zones RESTRICTIVE
 -- policy: site_scope ON tenants.floor_plan_page_scales RESTRICTIVE
+-- policy: site_scope ON tenants.status_plan_shapes RESTRICTIVE
 -- policy: site_scope ON projects.variation_lines RESTRICTIVE
 -- policy: site_scope ON projects.valuation_lines RESTRICTIVE
 -- policy: site_scope ON projects.qc_comments RESTRICTIVE
@@ -253,6 +257,11 @@ CREATE OR REPLACE FUNCTION public.site_project_of_floor_plan(p_id uuid)
 AS $f$ SELECT project_id FROM tenants.floor_plans WHERE id = p_id $f$;
 REVOKE ALL ON FUNCTION public.site_project_of_floor_plan(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.site_project_of_floor_plan(uuid) TO authenticated, service_role;
+CREATE OR REPLACE FUNCTION public.site_project_of_status_plan(p_id uuid)
+ RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$ SELECT project_id FROM tenants.status_plans WHERE id = p_id $f$;
+REVOKE ALL ON FUNCTION public.site_project_of_status_plan(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.site_project_of_status_plan(uuid) TO authenticated, service_role;
 CREATE OR REPLACE FUNCTION public.site_project_of_variation_order(p_id uuid)
  RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
 AS $f$ SELECT project_id FROM projects.variation_orders WHERE id = p_id $f$;
@@ -479,6 +488,10 @@ DROP POLICY IF EXISTS site_scope ON projects.project_settings;
 CREATE POLICY site_scope ON projects.project_settings AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(project_id))
   WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON tenants.status_plans;
+CREATE POLICY site_scope ON tenants.status_plans AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
 DROP POLICY IF EXISTS site_scope ON projects.site_diary_attachments;
 CREATE POLICY site_scope ON projects.site_diary_attachments AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_site_diary_entry(diary_entry_id)))
@@ -563,6 +576,10 @@ DROP POLICY IF EXISTS site_scope ON tenants.floor_plan_page_scales;
 CREATE POLICY site_scope ON tenants.floor_plan_page_scales AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_floor_plan(floor_plan_id)))
   WITH CHECK (public.user_has_project_access(public.site_project_of_floor_plan(floor_plan_id)));
+DROP POLICY IF EXISTS site_scope ON tenants.status_plan_shapes;
+CREATE POLICY site_scope ON tenants.status_plan_shapes AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)));
 DROP POLICY IF EXISTS site_scope ON projects.variation_lines;
 CREATE POLICY site_scope ON projects.variation_lines AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_variation_order(variation_order_id)))
