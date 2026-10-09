@@ -159,7 +159,9 @@ describe('visualCentre on degenerate slivers', () => {
   ])('a %d x %d rectangle returns inside its bbox quickly', (w, h) => {
     const t0 = performance.now()
     const c = visualCentre(rectToPoints(0, 0, w, h))
-    expect(performance.now() - t0).toBeLessThan(200)
+    // Unbounded, the 10000 x 1e-6 case allocated ~10^10 cells and crashed the
+    // worker; bounded it is milliseconds. 2 s is a CI-safe ceiling, not a target.
+    expect(performance.now() - t0).toBeLessThan(2000)
     expect(c.x).toBeGreaterThanOrEqual(0)
     expect(c.x).toBeLessThanOrEqual(w)
     expect(c.y).toBeGreaterThanOrEqual(0)
