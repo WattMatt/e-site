@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, Fragment } from 'react'
+import Link from 'next/link'
+import { statusPlanHref } from '@/lib/status-plans/plan-urls'
+import type { OnPlanLink } from '@/lib/status-plans/on-plan-links'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { TableScrollX } from '@/components/ui/TableScrollX'
@@ -39,6 +42,8 @@ interface Props {
   legendHeaderByNode?: Record<string, LegendHeader>
   /** True for viewers without a write role — hides every mutating control. */
   readOnly?: boolean
+  /** node_id → the tenant-layout status plan showing this shop (status plans slice 2). */
+  onPlanByNode?: Record<string, OnPlanLink>
 }
 
 export function ScheduleTable({
@@ -55,6 +60,7 @@ export function ScheduleTable({
   legendCircuitsByNode = {},
   legendHeaderByNode = {},
   readOnly = false,
+  onPlanByNode = {},
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // Recycle-bin disclosure (closed by default; mirrors showDecommissioned).
@@ -410,6 +416,24 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
+                          {onPlanByNode[node.id] && (
+                            <Link
+                              href={statusPlanHref(projectId, onPlanByNode[node.id]!.planId, onPlanByNode[node.id]!.shapeId)}
+                              title={`Shown on ${onPlanByNode[node.id]!.planName}`}
+                              style={{
+                                border: '1px solid var(--c-border)',
+                                borderRadius: 5,
+                                padding: '4px 10px',
+                                fontSize: 11,
+                                color: 'var(--c-text-dim)',
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap',
+                                textDecoration: 'none',
+                              }}
+                            >
+                              On plan ↗
+                            </Link>
+                          )}
                           <button
                             onClick={() => toggleLegend(node.id)}
                             style={{

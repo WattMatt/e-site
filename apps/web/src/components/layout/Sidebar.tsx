@@ -10,7 +10,7 @@ import { Gavel,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
   ShieldCheck, FileText, BarChart3, Sun, Camera, Calculator,
-  Receipt, Activity,
+  Receipt, Activity, Layers,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
 import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
@@ -95,6 +95,7 @@ export function projectNav(id: string) {
     { href: `/projects/${id}/load-profile`,        label: 'Load profile',       Icon: Activity,      exact: false },
     { href: `/projects/${id}/generator-cost-recovery`, label: 'Generator Cost-Recovery', Icon: Zap, exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
+    { href: `/projects/${id}/status-plans`,       label: 'Status plans',       Icon: Layers,        exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },

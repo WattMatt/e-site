@@ -110,3 +110,23 @@ describe('ScheduleTable tenant editing', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
   })
 })
+
+describe('ScheduleTable status plan link', () => {
+  it('links a shop that is on a plan to that plan with its shape selected', () => {
+    render(
+      <ScheduleTable
+        nodes={[tenant({})]}
+        {...base}
+        onPlanByNode={{ n1: { planId: 'pl1', planName: 'Ground floor', shapeId: 's1' } }}
+      />,
+    )
+    const link = screen.getByRole('link', { name: /on plan/i })
+    expect(link.getAttribute('href')).toBe('/projects/p1/status-plans/pl1?shape=s1')
+    expect(link.getAttribute('title')).toBe('Shown on Ground floor')
+  })
+
+  it('shows no link for a shop that is on no plan', () => {
+    render(<ScheduleTable nodes={[tenant({})]} {...base} />)
+    expect(screen.queryByRole('link', { name: /on plan/i })).toBeNull()
+  })
+})
