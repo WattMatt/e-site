@@ -134,6 +134,28 @@ async function hasOrg(userId: string): Promise<boolean> {
   return (count ?? 0) > 0
 }
 
+/**
+ * A tenderer (E5): holds a tender participation, or a live invitation to their
+ * address that they have not accepted yet. Such a user has no organisation by
+ * design and belongs on /tender, never on "create your organisation".
+ */
+async function isTenderParticipant(userId: string, email: string | null | undefined): Promise<boolean> {
+  const { count } = await serviceClient
+    .schema('projects')
+    .from('tender_participants')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  if ((count ?? 0) > 0) return true
+  if (!email) return false
+  const { count: invited } = await serviceClient
+    .schema('projects')
+    .from('tender_invitations')
+    .select('id', { count: 'exact', head: true })
+    .eq('email', email.toLowerCase())
+    .in('status', ['prepared', 'sent'])
+  return (invited ?? 0) > 0
+}
+
 async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
   try {
     const res = await fetch(
@@ -237,11 +259,16 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 5. Authenticated but no org → onboarding
-  if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding && !isTenderPortalPath(pathname)) {
+  // 5. Authenticated but no org → onboarding. A tenderer has no organisation
+  //    by design: anywhere outside the tender portal (e.g. /dashboard from a
+  //    generic sign-in email) sends them to their tenders, never to "create
+  //    your organisation". /auth/* (sign-out above all) is exempt: without it
+  //    a signed-in user with no organisation could never sign out.
+  if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding && !isAuthCallback && !isTenderPortalPath(pathname)) {
     if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
-      url.pathname = ONBOARDING_PATH
+      url.pathname = (await isTenderParticipant(user.id, user.email)) ? TENDER_PORTAL_PREFIX : ONBOARDING_PATH
+      url.search = ''
       return NextResponse.redirect(url)
     }
     return supabaseResponse
@@ -252,6 +279,13 @@ export async function middleware(request: NextRequest) {
     if (await hasOrg(user.id)) {
       const url = request.nextUrl.clone()
       url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
+    // A tenderer is never asked to create an organisation.
+    if (await isTenderParticipant(user.id, user.email)) {
+      const url = request.nextUrl.clone()
+      url.pathname = TENDER_PORTAL_PREFIX
+      url.search = ''
       return NextResponse.redirect(url)
     }
   }

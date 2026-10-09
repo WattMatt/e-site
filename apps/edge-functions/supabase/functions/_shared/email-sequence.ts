@@ -433,7 +433,7 @@ export async function usersSignedUpDaysAgo(
     user_metadata?: { full_name?: string }
   }>
 
-  return users
+  const targets = users
     .filter(u => {
       if (!u.email || !u.created_at) return false
       const t = new Date(u.created_at).getTime()
@@ -444,6 +444,40 @@ export async function usersSignedUpDaysAgo(
       email: u.email as string,
       firstName: u.user_metadata?.full_name?.split(' ')[0] ?? null,
     }))
+  return excludeTenderOnlyAccounts(supabase, targets)
+}
+
+/**
+ * Drop accounts that exist only because of a tender (E5): a contractor's
+ * account is created when WM emails the invitation, and they never signed up
+ * for E-Site. They get no onboarding or re-engagement mail. Anyone who also
+ * belongs to an organisation keeps it. Fails closed: if the lookup errors,
+ * this throws and the run sends nothing.
+ */
+export async function excludeTenderOnlyAccounts<T extends { userId: string; email: string }>(
+  supabase: SupabaseClient,
+  targets: T[],
+): Promise<T[]> {
+  const keep: T[] = []
+  for (let i = 0; i < targets.length; i += 100) {
+    const chunk = targets.slice(i, i + 100)
+    const ids = chunk.map(t => t.userId)
+    const emails = chunk.map(t => t.email.toLowerCase())
+    const [orgs, parts, invs] = await Promise.all([
+      (supabase as any).from('user_organisations').select('user_id').in('user_id', ids).eq('is_active', true),
+      (supabase as any).schema('projects').from('tender_participants').select('user_id').in('user_id', ids),
+      (supabase as any).schema('projects').from('tender_invitations').select('email').in('email', emails),
+    ])
+    for (const r of [orgs, parts, invs]) if (r.error) throw new Error(`excludeTenderOnlyAccounts: ${r.error.message}`)
+    const withOrg = new Set((orgs.data ?? []).map((r: { user_id: string }) => r.user_id))
+    const tenderIds = new Set((parts.data ?? []).map((r: { user_id: string }) => r.user_id))
+    const tenderEmails = new Set((invs.data ?? []).map((r: { email: string }) => r.email))
+    for (const t of chunk) {
+      const tenderOnly = !withOrg.has(t.userId) && (tenderIds.has(t.userId) || tenderEmails.has(t.email.toLowerCase()))
+      if (!tenderOnly) keep.push(t)
+    }
+  }
+  return keep
 }
 
 // ─── Shared JSON response helpers ────────────────────────────────────────────

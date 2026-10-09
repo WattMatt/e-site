@@ -16,9 +16,11 @@ import { fileURLToPath } from 'node:url'
  */
 
 const state = vi.hoisted(() => ({
-  user: null as { id: string; email_confirmed_at?: string } | null,
+  user: null as { id: string; email?: string; email_confirmed_at?: string } | null,
   aal: null as 'aal1' | 'aal2' | null,
   orgCount: 0,
+  participantCount: 0,
+  invitedCount: 0,
   // Sentinel returned by updateSession — middleware must return it as-is on
   // every pass-through path, so `toBe` identity is the assertion.
   supabaseResponse: { __passthrough: true },
@@ -34,20 +36,27 @@ vi.mock('./lib/supabase/middleware', () => ({
   })),
 }))
 
-// middleware.ts builds a module-level service-role client (hasOrg). Mock the
-// builder chain: .from().select().eq().eq() awaited -> { count }.
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn(() => ({
-    from: () => {
-      const builder: Record<string, unknown> = {}
-      builder.select = () => builder
-      builder.eq = () => builder
-      builder.then = (resolve: (value: { count: number }) => void) =>
-        resolve({ count: state.orgCount })
-      return builder
-    },
-  })),
-}))
+// middleware.ts builds a module-level service-role client (hasOrg, and
+// isTenderParticipant through .schema('projects')). Mock the builder chain:
+// .from().select().eq().eq() awaited -> { count }.
+vi.mock('@supabase/supabase-js', () => {
+  const counting = (count: () => number) => () => {
+    const builder: Record<string, unknown> = {}
+    builder.select = () => builder
+    builder.eq = () => builder
+    builder.in = () => builder
+    builder.then = (resolve: (value: { count: number }) => void) => resolve({ count: count() })
+    return builder
+  }
+  return {
+    createClient: vi.fn(() => ({
+      from: counting(() => state.orgCount),
+      schema: () => ({
+        from: (table: string) => counting(() => (table === 'tender_invitations' ? state.invitedCount : state.participantCount))(),
+      }),
+    })),
+  }
+})
 
 import { middleware, config as middlewareConfig } from './middleware'
 // Next's own matcher compiler — the same function the build uses. Exported at
@@ -73,6 +82,8 @@ beforeEach(() => {
   state.user = null
   state.aal = null
   state.orgCount = 0
+  state.participantCount = 0
+  state.invitedCount = 0
 })
 
 afterEach(() => {
@@ -499,6 +510,31 @@ describe('middleware — tenderer portal (E5 slice B)', () => {
     expect(locationOf(await run('/dashboard')).pathname).toBe('/onboarding')
     expect(locationOf(await run('/tenders')).pathname).toBe('/onboarding')
     expect(locationOf(await run('/projects/x/tenders')).pathname).toBe('/onboarding')
+  })
+
+  it('sends a tenderer (no organisation, by design) to their tenders, never to onboarding', async () => {
+    state.user = CONFIRMED
+    state.orgCount = 0
+    state.participantCount = 1
+    expect(locationOf(await run('/dashboard')).pathname).toBe('/tender')
+    expect(locationOf(await run('/onboarding')).pathname).toBe('/tender')
+  })
+
+  it('sends an invitee who has not accepted yet to /tender (their invitation waits there)', async () => {
+    state.user = { ...CONFIRMED, email: 'Bidder@Co.Example' } as typeof state.user
+    state.orgCount = 0
+    state.invitedCount = 1
+    expect(locationOf(await run('/dashboard')).pathname).toBe('/tender')
+    state.invitedCount = 0
+    expect(locationOf(await run('/dashboard')).pathname).toBe('/onboarding')
+  })
+
+  it('lets a signed-in user with no organisation sign out', async () => {
+    state.user = CONFIRMED
+    state.orgCount = 0
+    state.participantCount = 1
+    const res = await middleware(new NextRequest('http://localhost:3000/auth/signout', { method: 'POST' }))
+    expect(res).toBe(state.supabaseResponse)
   })
 
   it('does not open a neighbouring path to anonymous visitors', async () => {

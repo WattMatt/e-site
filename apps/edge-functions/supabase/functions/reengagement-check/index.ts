@@ -17,7 +17,7 @@
 import {
   corsPreflight, jsonResponse, serviceRoleClient,
   sendSequenceEmail, getSiteUrl, unsubscribeUrlFor,
-  type StepName, requireServiceRole,
+  type StepName, requireServiceRole, excludeTenderOnlyAccounts,
 } from '../_shared/email-sequence.ts'
 import { reengagement7d }  from '../_shared/email-templates/reengagement-7d.ts'
 import { reengagement14d } from '../_shared/email-templates/reengagement-14d.ts'
@@ -83,7 +83,14 @@ Deno.serve(async (req) => {
 
   const report = { sent: 0, skipped_opt_out: 0, skipped_duplicate: 0, failed: 0, errors: [] as string[] }
 
-  for (const t of targets) {
+  let mailable: Target[]
+  try {
+    mailable = await excludeTenderOnlyAccounts(supabase, targets)
+  } catch (err) {
+    return jsonResponse({ ok: false, error: (err as Error).message }, 500)
+  }
+
+  for (const t of mailable) {
     const baseVars = {
       firstName: t.firstName ?? '',
       siteUrl: getSiteUrl(),

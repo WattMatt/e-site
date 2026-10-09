@@ -38,7 +38,10 @@ export function buildContentSecurityPolicy({
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com",
     "font-src 'self' data:",
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co https://app.posthog.com${sentryIngestOrigin ? ` ${sentryIngestOrigin}` : ''} https://api.paystack.co https://tiles.openfreemap.org`,
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co https://app.posthog.com${sentryIngestOrigin ? ` ${sentryIngestOrigin}` : ''} https://api.paystack.co https://tiles.openfreemap.org${
+      // The local Supabase stack (sign-in, storage uploads) is http on 127.0.0.1/localhost.
+      dev ? ' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*' : ''
+    }`,
     // MapLibre (the /tariffs/map area-of-supply map) spawns its tile worker from a blob: URL.
     "worker-src 'self' blob:",
     `frame-src ${frameSrc}`,
