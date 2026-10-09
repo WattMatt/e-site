@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { Instrument_Sans, DM_Mono } from 'next/font/google'
 
 export const metadata: Metadata = {
   title: 'E-Site — Construction Management',
@@ -9,9 +10,25 @@ export const metadata: Metadata = {
 // prerender errors when env vars are missing on the build host.
 export const dynamic = 'force-dynamic'
 
+// Self-hosted at build time by next/font: the CSP admits styles and fonts from
+// 'self' only, so a Google Fonts @import is blocked in production and the page
+// falls back to system fonts. No runtime request leaves for Google.
+const instrumentSans = Instrument_Sans({
+  subsets: ['latin'],
+  variable: '--font-auth-sans',
+  display: 'swap',
+})
+
+const dmMono = DM_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-auth-mono',
+  display: 'swap',
+})
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="auth-shell">
+    <div className={`auth-shell ${instrumentSans.variable} ${dmMono.variable}`}>
       {/* Structural grid background */}
       <div className="auth-grid" aria-hidden />
 
@@ -67,8 +84,6 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       </main>
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap');
-
         * { box-sizing: border-box; }
 
         .auth-shell {
@@ -76,7 +91,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           display: grid;
           grid-template-columns: 1fr;
           background: var(--c-base);
-          font-family: 'Instrument Sans', sans-serif;
+          font-family: var(--font-auth-sans), sans-serif;
           position: relative;
           overflow: hidden;
         }
@@ -172,7 +187,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           font-size: 11px;
           color: var(--c-text-dim);
           margin: 0;
-          font-family: 'DM Mono', monospace;
+          font-family: var(--font-auth-mono), monospace;
         }
 
         /* ── Form panel ── */
@@ -232,7 +247,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           text-transform: uppercase;
           letter-spacing: 0.08em;
           margin-bottom: 6px;
-          font-family: 'DM Mono', monospace;
+          font-family: var(--font-auth-mono), monospace;
         }
         .auth-input {
           width: 100%;
@@ -242,7 +257,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           padding: 10px 14px;
           font-size: 14px;
           color: var(--c-text);
-          font-family: 'Instrument Sans', sans-serif;
+          font-family: var(--font-auth-sans), sans-serif;
           transition: border-color 0.15s, box-shadow 0.15s;
           outline: none;
         }
@@ -271,7 +286,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           color: var(--c-on-amber);
           font-size: 14px;
           font-weight: 700;
-          font-family: 'Instrument Sans', sans-serif;
+          font-family: var(--font-auth-sans), sans-serif;
           border: none;
           border-radius: 8px;
           padding: 11px 20px;
