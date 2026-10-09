@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const m = vi.hoisted(() => ({ getUser: vi.fn(), access: vi.fn(), load: vi.fn(), render: vi.fn(), service: vi.fn() }))
+const m = vi.hoisted(() => ({ getUser: vi.fn(), access: vi.fn(), load: vi.fn(), render: vi.fn(), service: vi.fn(), upload: vi.fn(), sign: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: { getUser: m.getUser } }),
   createServiceClient: m.service,
@@ -29,8 +29,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   m.getUser.mockResolvedValue({ data: { user: { id: 'u1' } } })
   m.access.mockResolvedValue({ ok: true })
-  m.service.mockReturnValue({ storage: { tag: 'storage' } })
-  m.load.mockResolvedValue({ inputs: [input], omitted: [] })
+  m.upload.mockResolvedValue({ error: null })
+  m.sign.mockResolvedValue({ data: { signedUrl: 'https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t' }, error: null })
+  m.service.mockReturnValue({ storage: { tag: 'storage', from: () => ({ upload: m.upload, createSignedUrl: m.sign }) } })
+  m.load.mockResolvedValue({ inputs: [input], omitted: [], organisationId: 'org-1' })
   m.render.mockResolvedValue(new Uint8Array([0x25, 0x50, 0x44, 0x46]))
 })
 
@@ -46,15 +48,28 @@ describe('GET status plan Export sheet', () => {
     expect(m.load).not.toHaveBeenCalled()
     expect(m.service).not.toHaveBeenCalled()
   })
-  it('renders this plan only, at source size, as an attachment', async () => {
+  it('renders this plan only, at source size, and hands it over through storage (never in the body)', async () => {
     const res = await call()
-    expect(res.status).toBe(200)
     const [clients, args] = m.load.mock.calls[0]!
-    expect(clients.storage).toEqual({ tag: 'storage' })
+    expect(clients.storage.tag).toBe('storage')
     expect(args).toMatchObject({ projectId: PID, planIds: [PLAN], purposes: ['tenant_layout', 'distribution_schematic'], maxPlans: 1 })
     expect(m.render).toHaveBeenCalledWith(input, 'source')
-    expect(res.headers.get('content-type')).toBe('application/pdf')
-    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="main-board-3-1-level-2-p1-\d{4}-\d{2}-\d{2}\.pdf"$/)
+    // Uploaded (overwrite) at the plan's deterministic path, then a 303 to a 10-minute signed URL
+    // that downloads under the sheet's file name.
+    expect(m.upload).toHaveBeenCalledWith(`org-1/${PID}/status-plans/${PLAN}/sheet.pdf`, expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
+    const [path, ttl, opts] = m.sign.mock.calls[0]!
+    expect(path).toBe(`org-1/${PID}/status-plans/${PLAN}/sheet.pdf`)
+    expect(ttl).toBe(600)
+    expect(opts.download).toMatch(/^main-board-3-1-level-2-p1-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t')
+  })
+  it('a storage failure → 500 with a sentence', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    m.upload.mockResolvedValue({ error: { message: 'The object exceeded the maximum allowed size' } })
+    const res = await call()
+    expect(res.status).toBe(500)
+    expect((await res.json()).error).toBe('The PDF was drawn but could not be handed over — try again.')
   })
   it('unknown plan → 404', async () => {
     m.load.mockResolvedValue({ inputs: [], omitted: [] })
@@ -71,7 +86,7 @@ describe('GET status plan Export sheet', () => {
     const res = await call()
     expect(res.status).toBe(422)
     expect(await res.json()).toEqual({ error: 'This sheet could not be exported: the drawing file could not be read (Object not found).' })
-    m.load.mockResolvedValue({ inputs: [input], omitted: [] })
+    m.load.mockResolvedValue({ inputs: [input], omitted: [], organisationId: 'org-1' })
     m.render.mockRejectedValue(new StatusPlanSourceError('the drawing PDF is password-protected'))
     const res2 = await call()
     expect(res2.status).toBe(422)

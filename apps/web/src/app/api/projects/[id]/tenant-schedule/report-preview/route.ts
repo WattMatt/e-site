@@ -5,7 +5,19 @@ import { buildTenantScheduleBrandingInput } from '@/lib/reports/tenant-schedule-
 import { renderTenantScheduleReport } from '@/lib/reports/render-tenant-schedule'
 import { loadReportAppendix } from '@/lib/status-plans/report-appendix'
 import { johannesburgDate } from '@/lib/status-plans/load-plan-page'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { pdfHandoffResponse, tenantSchedulePreviewPath, type HandoffStorage } from '@/lib/reports/pdf-handoff'
+
+/*
+ * The preview is never streamed in the response: with the status-plan appendix it can pass Vercel's
+ * ~4.5 MB limit. It is uploaded to the service-only `reports` bucket at a per-user path (overwritten
+ * each preview) and the route answers 303 to a 10-minute signed URL; TenantScheduleReportButton's
+ * fetch follows it and frames the result as a blob: URL, as before.
+ *
+ * Gate: gatherTenantScheduleReportData reads the project as the caller (site_scope) and throws when
+ * it is not visible; the org for the path is read through the caller's session too. The service
+ * client is created only after both.
+ */
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,12 +58,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: 'PDF render failed' }, { status: 500 })
   }
 
-  return new Response(new Uint8Array(pdf), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'inline; filename="tenant-schedule.pdf"',
-      'Cache-Control': 'no-store',
-    },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: projRow } = await (supabase as any).schema('projects').from('projects')
+    .select('organisation_id').eq('id', id).maybeSingle()
+  const orgId = (projRow as { organisation_id?: string } | null)?.organisation_id
+  if (!orgId) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+
+  const service = createServiceClient()
+  return pdfHandoffResponse(service.storage as unknown as HandoffStorage, tenantSchedulePreviewPath(orgId, id, user.id), new Uint8Array(pdf), {
+    logTag: 'tenant-schedule-report-preview',
   })
 }

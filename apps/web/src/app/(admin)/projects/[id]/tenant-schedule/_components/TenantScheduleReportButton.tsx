@@ -11,6 +11,8 @@
  * auth) and frame a `blob:` URL instead: `frame-src` already allows `blob:`, and
  * blob URLs carry no X-Frame-Options. The fetch also surfaces the route's error
  * body, so a failed render shows a message rather than a silent blank frame.
+ * A successful preview is a 303 to a short-lived storage signed URL (the PDF can be too large for a
+ * response body); fetch follows it — storage allows any origin and connect-src allows *.supabase.co.
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'

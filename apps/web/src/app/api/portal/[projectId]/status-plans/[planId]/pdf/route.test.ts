@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const m = vi.hoisted(() => ({ portal: vi.fn(), load: vi.fn(), render: vi.fn(), service: vi.fn() }))
+const m = vi.hoisted(() => ({ portal: vi.fn(), load: vi.fn(), render: vi.fn(), service: vi.fn(), upload: vi.fn(), sign: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ tag: 'session' }), createServiceClient: m.service }))
 vi.mock('@/lib/portal/data', () => ({ requirePortalAccess: m.portal }))
 vi.mock('@/lib/status-plans/plan-render-data', () => ({ loadStatusPlanRenderInputs: m.load }))
@@ -20,8 +20,10 @@ const input = { planName: 'Ground floor', pageIndex: 1 }
 beforeEach(() => {
   vi.clearAllMocks()
   m.portal.mockResolvedValue({ userId: 'u', organisationId: 'o', projectId: 'p1' })
-  m.service.mockReturnValue({ storage: { tag: 'storage' } })
-  m.load.mockResolvedValue({ inputs: [input], omitted: [] })
+  m.upload.mockResolvedValue({ error: null })
+  m.sign.mockResolvedValue({ data: { signedUrl: 'https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t' }, error: null })
+  m.service.mockReturnValue({ storage: { from: () => ({ upload: m.upload, createSignedUrl: m.sign }) } })
+  m.load.mockResolvedValue({ inputs: [input], omitted: [], organisationId: 'org-1' })
   m.render.mockResolvedValue(new Uint8Array([0x25]))
 })
 
@@ -33,15 +35,17 @@ describe('GET portal status plan PDF', () => {
     expect(m.load).not.toHaveBeenCalled()
     expect(m.service).not.toHaveBeenCalled()
   })
-  it('reads plan rows as the viewer and renders this plan only, A3, inline', async () => {
+  it('reads plan rows as the viewer, renders this plan only (A3), and hands it over inline through storage', async () => {
     const res = await call()
-    expect(res.status).toBe(200)
     const [clients, args] = m.load.mock.calls[0]!
     expect(clients.db).toEqual({ tag: 'session' })
     expect(args).toMatchObject({ projectId: 'p1', planIds: ['s1'], maxPlans: 1 })
     expect(m.render).toHaveBeenCalledWith(input, 'a3')
-    expect(res.headers.get('content-type')).toBe('application/pdf')
-    expect(res.headers.get('content-disposition')).toMatch(/^inline;/)
+    expect(m.upload).toHaveBeenCalledWith('org-1/p1/status-plans/s1/portal.pdf', expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
+    // No download name: the signed URL opens inline in the tab the portal link opened.
+    expect(m.sign).toHaveBeenCalledWith('org-1/p1/status-plans/s1/portal.pdf', 600, undefined)
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t')
   })
   it('unknown plan → 404', async () => {
     m.load.mockResolvedValue({ inputs: [], omitted: [] })
@@ -52,7 +56,7 @@ describe('GET portal status plan PDF', () => {
     const res = await call()
     expect(res.status).toBe(422)
     expect((await res.json()).error).toBe('This plan cannot be shown: the drawing is no longer available.')
-    m.load.mockResolvedValue({ inputs: [input], omitted: [] })
+    m.load.mockResolvedValue({ inputs: [input], omitted: [], organisationId: 'org-1' })
     m.render.mockRejectedValue(new StatusPlanSourceError('the drawing PDF could not be read'))
     const res2 = await call()
     expect(res2.status).toBe(422)

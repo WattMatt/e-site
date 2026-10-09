@@ -2,11 +2,25 @@
 
 /**
  * "Export sheet" — the plan as a PDF at the drawing's own size. fetch → blob (not a bare <a href>) so a
- * refusal shows its sentence instead of downloading a JSON file named .pdf.
+ * refusal shows its sentence instead of downloading a JSON file named .pdf. A success is a 303 to a
+ * storage signed URL, which fetch follows.
  * Props are strings only (page.tsx → client component must be JSON).
  */
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
+
+/**
+ * The route answers 303 to a storage signed URL (the PDF can be too large for a response body), and
+ * fetch follows it. Content-Disposition is not CORS-exposed by storage, so the name is read from the
+ * signed URL's `download` parameter; a same-origin header is still honoured.
+ */
+function downloadName(res: Response): string {
+  try {
+    const fromUrl = res.url ? new URL(res.url).searchParams.get('download') : null
+    if (fromUrl) return fromUrl
+  } catch { /* not a URL: fall through */ }
+  return /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'status-plan.pdf'
+}
 
 export function ExportSheetButton({ projectId, planId }: { projectId: string; planId: string }) {
   const [busy, setBusy] = useState(false)
@@ -22,7 +36,7 @@ export function ExportSheetButton({ projectId, planId }: { projectId: string; pl
         setError(body.error ?? `Export failed (HTTP ${res.status}).`)
         return
       }
-      const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'status-plan.pdf'
+      const name = downloadName(res)
       const url = URL.createObjectURL(await res.blob())
       const a = document.createElement('a')
       a.href = url

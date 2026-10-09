@@ -55,7 +55,12 @@ export interface LoadPlanRenderArgs {
   maxSourceBytes?: number
 }
 export interface PlanOmission { title: string; reason: string }
-export interface PlanRenderLoadResult { inputs: StatusPlanRenderInput[]; omitted: PlanOmission[] }
+export interface PlanRenderLoadResult {
+  inputs: StatusPlanRenderInput[]
+  omitted: PlanOmission[]
+  /** The project's organisation, read as the caller — set whenever the project row was visible. */
+  organisationId?: string
+}
 
 const PLAN_COLUMNS = 'id, project_id, organisation_id, floor_plan_id, page_index, purpose, name, source_file_path, created_by, created_at, updated_at'
 const PURPOSE_ORDER: Record<StatusPlanPurpose, number> = { tenant_layout: 0, distribution_schematic: 1 }
@@ -229,5 +234,5 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
       warnings,
     })
   }
-  return { inputs, omitted }
+  return { inputs, omitted, organisationId: orgId }
 }

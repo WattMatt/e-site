@@ -112,8 +112,9 @@ describe('loadStatusPlanRenderInputs', () => {
       shapeRow('s3', 'a', { area_type: 'common' }),
       shapeRow('s4', 'a'),
     ] })
-    const { inputs, omitted } = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'] })
+    const { inputs, omitted, organisationId } = await loadStatusPlanRenderInputs(clients, { projectId: PROJ, today: TODAY, purposes: ['tenant_layout'] })
     expect(omitted).toEqual([])
+    expect(organisationId).toBe(ORG) // the handoff path is keyed on the project's org
     const [plan] = inputs
     expect(plan!.shapes[0]!.style.fill).toBe(COLOURS.complete)
     expect(plan!.shapes[1]!.style).toEqual(tenantShapeStyle({ status: 'in_progress', overdue: true }))
