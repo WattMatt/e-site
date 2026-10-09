@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeReportModel, orderStateLabel, scopeStateLabel, type ComputeInput } from './tenant-schedule-report-compute'
+import { computeReportModel, orderStateLabel, scopeStateLabel, shopProgressFor, type ComputeInput } from './tenant-schedule-report-compute'
 
 const base: ComputeInput = {
   activeNodes: [
@@ -111,5 +111,31 @@ describe('computeReportModel — landlord-covered scope override (not_required)'
     // Both tenants complete: one received, one not_required → 2 of 2, 100%.
     expect(kpis.scopeComplete).toBe(2)
     expect(kpis.scopeCompletePct).toBe(100)
+  })
+})
+
+describe('shopProgressFor', () => {
+  it('reads one node exactly as the report row shows it', () => {
+    expect(shopProgressFor(base, 'n1')).toEqual({
+      db: 'ordered', lights: 'received', scope: 'received', layoutIssued: true, boDate: '2026-08-15',
+    })
+    expect(shopProgressFor(base, 'n3')).toEqual({
+      db: 'required', lights: null, scope: 'received', layoutIssued: false, boDate: null,
+    })
+  })
+
+  it('a node with no details and no orders is awaited, not issued, without orders', () => {
+    expect(shopProgressFor(base, 'n-unknown')).toEqual({
+      db: null, lights: null, scope: 'awaited', layoutIssued: false, boDate: null,
+    })
+  })
+
+  it('agrees with every row computeReportModel produces', () => {
+    const { shopRows } = computeReportModel(base)
+    for (const n of base.activeNodes) {
+      const row = shopRows.find((r) => r.shopNumber === n.shopNumber)!
+      expect({ db: row.db, lights: row.lights, scope: row.scope, layoutIssued: row.layoutIssued, boDate: row.boDate })
+        .toEqual(shopProgressFor(base, n.id))
+    }
   })
 })
