@@ -2,7 +2,7 @@
 
 /** The plan's live legend: every entry with its count, total measured area, and what needs attention. */
 import { SCHEMATIC_LEGEND, TENANT_LEGEND, type StatusPlanPurpose } from '@esite/shared/status-plans'
-import { swatchCss, type AttentionItem, type LegendSummary } from '@/lib/status-plans/shape-view'
+import { measuredGlaText, swatchCss, type AttentionItem, type LegendSummary } from '@/lib/status-plans/shape-view'
 
 export interface PlanLegendProps {
   purpose: StatusPlanPurpose
@@ -29,7 +29,7 @@ export function PlanLegend({ purpose, summary, hasScale, attention, onSelectShap
       {purpose === 'tenant_layout' && (
         <p style={{ margin: 0, fontSize: 12, color: 'var(--c-text-mid)' }}>
           {hasScale
-            ? `Measured GLA: ${summary.totalM2.toFixed(1)} m²${summary.unmeasured ? ` (${summary.unmeasured} shape${summary.unmeasured === 1 ? '' : 's'} unmeasured)` : ''}`
+            ? measuredGlaText(summary.totalM2, summary.unmeasured)
             : 'Set the page scale to measure areas.'}
         </p>
       )}
