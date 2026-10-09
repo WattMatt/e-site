@@ -8,8 +8,8 @@ What this covers: turning on error monitoring (Sentry) and product analytics (Po
 
 | Surface | File | Status |
 |---|---|---|
-| Web — server-side Sentry | [`apps/web/src/instrumentation.ts`](../apps/web/src/instrumentation.ts) | ✅ Wired; loads on first server request |
-| Web — client-side Sentry | [`apps/web/src/lib/sentry.ts`](../apps/web/src/lib/sentry.ts) + [`SentryBoot.tsx`](../apps/web/src/components/providers/SentryBoot.tsx) | ✅ Wired in `layout.tsx` |
+| Web — server-side Sentry | [`apps/web/src/instrumentation.ts`](../apps/web/src/instrumentation.ts) | ✅ Wired; loads on first server request. `includeLocalVariables: false` (privacy notice — see below) |
+| Web — client-side Sentry | [`apps/web/src/lib/sentry.ts`](../apps/web/src/lib/sentry.ts) + [`SentryBoot.tsx`](../apps/web/src/components/providers/SentryBoot.tsx) | ✅ Wired in `layout.tsx`. **No Session Replay** (privacy notice — see below). CSP `connect-src` allows exactly the DSN's ingest origin ([`sentry-hosts.ts`](../apps/web/src/lib/sentry-hosts.ts)) |
 | Web — PostHog | [`apps/web/src/components/providers/AnalyticsProvider.tsx`](../apps/web/src/components/providers/AnalyticsProvider.tsx) | ✅ Wired, POPIA-safe (`autocapture: false`, `maskAllInputs: true`) |
 | Web — event catalogue | [`apps/web/src/lib/analytics.ts`](../apps/web/src/lib/analytics.ts) | ✅ `ANALYTICS_EVENTS` defined |
 | Web — health check | [`apps/web/src/app/api/health/route.ts`](../apps/web/src/app/api/health/route.ts) | Pre-existing (spot check before launch) |
@@ -50,6 +50,10 @@ NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com  # or https://eu.posthog.com
 
 Add both to Vercel → Project Settings → Environment Variables (scope: Production + Preview).
 
+The CSP's Sentry host is derived from `NEXT_PUBLIC_SENTRY_DSN` at build time, so a DSN in any region (E-Site's is `*.ingest.de.sentry.io`) is allowed without editing `csp.ts`. Changing the DSN needs a rebuild.
+
+**Privacy constraint.** `/legal/privacy` tells users Sentry receives "IP address, stack traces, and limited request metadata only". Session Replay (browser) and local variable capture (server) both exceed that, so both are off and `apps/web/src/lib/sentry.test.ts` fails if either is turned back on. Enabling either is a privacy-notice change first.
+
 ### Mobile (EAS secrets)
 
 ```bash
@@ -67,7 +71,7 @@ After the DSN is wired:
 1. Sentry → Projects → _(your project)_ → Alerts → **Create Alert Rule**.
 2. Rule: `When: event.level is error`  ·  `If: count > 10 in 1 hour`  ·  `Then: notify #eng-alerts`. (AC from T-061.)
 3. Enable **Release Tracking**: set `release: <git sha>` in the `Sentry.init` call OR configure the Vercel Sentry integration to auto-inject it.
-4. Confirm **PII scrubbing** is on (default). The `beforeSend` hooks in `instrumentation.ts` and `sentry.ts` already strip `access_token=` and `token=` from URLs.
+4. Confirm **PII scrubbing** is on (default), and add Advanced Data Scrubbing rules for the same secrets as a backstop. In the app, `lib/sentry.ts` (browser) and `lib/sentry-server.ts` both route `beforeSend`, `beforeSendTransaction` and `beforeBreadcrumb` through `lib/sentry-scrub.ts`. That module redacts secret query/fragment params (`token_hash`, `code`, `access_token`, `refresh_token`, `token`, `email`, …) and the bearer path segment of `/auth/wa-link/`, `/tender/invite/` and `/proposal/` links in every string of the event. `sentry.sdk.test.ts` drives the real browser SDK and reads the envelopes back. Before 2026-10-07 the browser had no hooks at all, and the server hook threw on every event with a breadcrumb, which made the SDK drop the event.
 
 ---
 

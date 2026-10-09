@@ -4,7 +4,13 @@
  * Lightweight stub — only initialises when NEXT_PUBLIC_SENTRY_DSN is set.
  */
 
+import { scrubBreadcrumb, scrubEvent } from './sentry-scrub'
+
 let sentryLoaded = false
+// The SDK module once initialised. Deliberately NOT on window.__SENTRY__: that
+// is the SDK's own global carrier (it holds the client and scopes), and
+// replacing it discarded the client so no browser event was ever sent.
+let sentry: typeof import('@sentry/nextjs') | null = null
 
 export async function initSentry() {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
@@ -13,23 +19,25 @@ export async function initSentry() {
 
   // Dynamic import to keep bundle size down when DSN is not configured
   const Sentry = await import('@sentry/nextjs')
+  // No Session Replay, deliberately. /legal/privacy tells users Sentry receives
+  // "IP address, stack traces, and limited request metadata only"; a replay is
+  // a recording of whatever is on screen (tenant names, costs, rates). Adding
+  // it back is a privacy-notice change first — sentry.test.ts guards this.
   Sentry.init({
     dsn,
     environment: process.env.NODE_ENV ?? 'production',
     tracesSampleRate: 0.2,
-    replaysSessionSampleRate: 0.05,
-    replaysOnErrorSampleRate: 1.0,
-    integrations: [
-      Sentry.replayIntegration({ maskAllText: false, blockAllMedia: false }),
-    ],
+    // Auth links carry bearer secrets in the query, the fragment and the
+    // /auth/wa-link path; the SDK copies URLs into all three of these.
+    beforeSend: scrubEvent,
+    beforeSendTransaction: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
   })
 
-  // Expose for ErrorBoundary componentDidCatch
-  ;(window as any).__SENTRY__ = Sentry
+  sentry = Sentry
 }
 
+/** Reports to Sentry when the browser SDK is running; a no-op otherwise. */
 export function captureError(err: unknown, context?: Record<string, unknown>) {
-  if (typeof window !== 'undefined' && (window as any).__SENTRY__) {
-    ;(window as any).__SENTRY__.captureException(err, { extra: context })
-  }
+  sentry?.captureException(err, { extra: context })
 }
