@@ -26,9 +26,19 @@ import { legendSummary, needsAttention, resolveShapeView, type ShapeView } from 
 import { buildNodeOptions } from '@/lib/status-plans/node-options'
 import { fileLabel, statusPlanHref, statusPlansHref } from '@/lib/status-plans/plan-urls'
 import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
-import type { ActionResult, CanvasShape, PlanSheet, StatusPlanPageProps } from '@/lib/status-plans/types'
+import type { ActionResult, CanvasShape, PlanNode, PlanSheet, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
+import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
+
+/**
+ * A plan node as the block matcher reads it. The loader shows a missing code
+ * as '—' and folds a board's name into shopName (shop_name ?? name), which is
+ * the name the main-board alias needs.
+ */
+function toDetectNode(n: PlanNode): DetectNode {
+  return { id: n.id, kind: n.kind, code: n.code && n.code !== '—' ? n.code : null, shop_number: n.shopNumber, name: n.shopName }
+}
 
 const StatusPlanCanvas = dynamic(() => import('./StatusPlanCanvas').then((m) => m.StatusPlanCanvas), {
   ssr: false,
@@ -90,6 +100,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const summary = useMemo(() => legendSummary(Object.values(views), purpose), [views, purpose])
   const attention = useMemo(() => needsAttention(shapes, views), [shapes, views])
   const selected = shapes.find((s) => s.id === selectedId) ?? null
+  const detectNodes = useMemo(() => props.nodes.map(toDetectNode), [props.nodes])
   const options = useMemo(() => buildNodeOptions(props.nodes, shapes, selectedId, purpose), [props.nodes, shapes, selectedId, purpose])
   const drawingChanged = sheet.currentFilePath !== sourceFilePath
 
@@ -163,11 +174,21 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     void run(() => reanchorStatusPlanAction({ planId: plan.id }), (d) => setSourceFilePath(d.sourceFilePath))
   }
 
-  // Slice 3 seam: the schematic "Detect blocks" panel replaces this note.
+  // Schematic plans: read the drawing's text and propose one rectangle per DB block (slice 3).
+  // existingShapes is the LIVE state, so a re-run leaves accepted blocks out.
   const schematicSlot = purpose === 'distribution_schematic' ? (
-    <p data-slot="schematic-detection" style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--c-text-dim)' }}>
-      Automatic block detection is not available yet — draw a rectangle over each DB block and link it to its board.
-    </p>
+    <div data-slot="schematic-detection">
+      <DetectBlocksPanel
+        planId={plan.id}
+        pageIndex={plan.pageIndex}
+        pdfUrl={sheet.signedUrl}
+        isPdf={sheet.isPdf}
+        nodes={detectNodes}
+        existingShapes={shapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId }))}
+        canEdit={canEdit}
+        onAccepted={(added) => setShapes((prev) => [...prev, ...added])}
+      />
+    </div>
   ) : null
 
   return (
