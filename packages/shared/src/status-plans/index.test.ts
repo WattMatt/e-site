@@ -21,4 +21,17 @@ describe('@esite/shared/status-plans public surface', () => {
     expect(sp.TENANT_LEGEND.length).toBe(9)
     expect(sp.SCHEMATIC_LEGEND.length).toBe(6)
   })
+
+  it('exports the detection surface (slice 3)', () => {
+    for (const name of [
+      'composeMatrix', 'textItemsToImageSpace',
+      'detectBlocks',
+      'normaliseTag', 'buildNodeIndex', 'matchBlock',
+      'reviewDetection', 'runDetection', 'detectionSummary', 'detectedTagFor', 'boxesOverlap',
+    ]) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.BLOCK_LABELS).toEqual(['NO', 'NAME', 'AREA', 'RATING', 'CABLE', 'SERIAL', 'CT'])
+    expect(sp.DETECTED_TAG_MAX).toBe(64)
+  })
 })
