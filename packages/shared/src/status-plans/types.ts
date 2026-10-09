@@ -10,6 +10,8 @@
  * types.test.ts reads the migration and fails if they drift.
  */
 
+import { isSelfIntersecting } from './geometry'
+
 export const STATUS_PLAN_PURPOSES = ['tenant_layout', 'distribution_schematic'] as const
 export type StatusPlanPurpose = (typeof STATUS_PLAN_PURPOSES)[number]
 
@@ -55,6 +57,7 @@ export function pointsError(shape: ShapeKind, points: unknown): string | null {
   if (points.length < 6) return 'A shape needs at least three corners.'
   if (points.length > MAX_POINT_VALUES) return 'This shape has too many corners (2,000 at most).'
   if (shape === 'rect' && points.length !== 8) return 'A rectangle has exactly four corners.'
+  if (isSelfIntersecting(points as number[])) return 'The outline crosses itself — redraw it without crossing lines.'
   return null
 }
 

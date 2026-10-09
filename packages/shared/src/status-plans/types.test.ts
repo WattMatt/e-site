@@ -65,7 +65,12 @@ describe('pointsError mirrors status_plan_shapes_points_shape', () => {
     expect(pointsError('rect', [0, 0, 10, 0, 10, 10])).toBe('A rectangle has exactly four corners.')
   })
   it('refuses more than the cap and accepts exactly the cap', () => {
-    const at = Array.from({ length: MAX_POINT_VALUES }, (_, i) => i)
+    // A convex 1000-gon: the cap test must not trip the crossing check.
+    const n = MAX_POINT_VALUES / 2
+    const at = Array.from({ length: n }, (_, i) => [
+      1000 * Math.cos((2 * Math.PI * i) / n),
+      1000 * Math.sin((2 * Math.PI * i) / n),
+    ]).flat()
     expect(pointsError('polygon', at)).toBeNull()
     expect(pointsError('polygon', [...at, 1, 2])).toBe('This shape has too many corners (2,000 at most).')
   })
@@ -101,5 +106,13 @@ describe('row mappers', () => {
       node_id: null, area_type: null, detected_tag: null, source: 'manual',
       created_by: null, created_at: 'x', updated_at: 'x' } as unknown as StatusPlanShapeRow
     expect(() => statusPlanShapeFromRow(row)).toThrow('status_plan_shapes sh-2: A shape needs a list of points.')
+  })
+})
+
+describe('pointsError self-intersection', () => {
+  it('asks for a redraw when the outline crosses itself', () => {
+    expect(pointsError('polygon', [0, 0, 10, 10, 10, 0, 0, 10])).toBe(
+      'The outline crosses itself — redraw it without crossing lines.',
+    )
   })
 })

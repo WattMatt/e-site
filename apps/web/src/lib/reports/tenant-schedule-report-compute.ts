@@ -3,7 +3,9 @@
  * data into the KPI numbers and per-shop rows the PDF renders. Fully unit-tested.
  */
 
-export type OrderStatus = 'by_tenant' | 'required' | 'ordered' | 'received'
+import type { NodeOrderStatus, ScopeState as SharedScopeState } from '@esite/shared/status-plans'
+
+export type OrderStatus = NodeOrderStatus
 
 const ORDER_LABEL: Record<OrderStatus, string> = {
   by_tenant: 'By tenant',
@@ -18,7 +20,7 @@ export function orderStateLabel(status: OrderStatus | null): string {
 }
 
 /** Per-tenant scope-of-work state for the report column. */
-export type ScopeState = 'awaited' | 'received' | 'not_required'
+export type ScopeState = SharedScopeState
 
 const SCOPE_LABEL: Record<ScopeState, string> = {
   awaited: 'Awaited',

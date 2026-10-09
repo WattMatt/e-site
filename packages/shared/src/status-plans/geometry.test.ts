@@ -8,6 +8,7 @@ import {
   distanceToEdge,
   visualCentre,
   hatchSegments,
+  isSelfIntersecting,
 } from './geometry'
 
 /** A 12.5 m x 8 m L-shape with a 4.5 m x 3 m notch: 100 - 13.5 = 86.5 m². Invented. */
@@ -120,5 +121,48 @@ describe('hatchSegments', () => {
   it('returns nothing for fewer than three corners and refuses a bad spacing', () => {
     expect(hatchSegments([0, 0, 10, 10], { angleDeg: 0, spacing: 2 })).toEqual([])
     expect(() => hatchSegments(rectToPoints(0, 0, 10, 10), { angleDeg: 0, spacing: 0 })).toThrow('spacing must be positive')
+  })
+})
+
+describe('hatchSegments with vertices exactly on a scan line', () => {
+  it('a diamond: the widest scan line passes through two vertices and is neither doubled nor lost', () => {
+    const diamond = [5, 1, 9, 5, 5, 9, 1, 5]
+    expect(hatchSegments(diamond, { angleDeg: 0, spacing: 2 })).toEqual([[3, 3, 7, 3], [1, 5, 9, 5], [3, 7, 7, 7]])
+  })
+  it('a W with reflex vertices on a scan line', () => {
+    const w = [0, 0, 10, 0, 10, 10, 7, 5, 5, 10, 3, 5, 0, 10]
+    expect(hatchSegments(w, { angleDeg: 0, spacing: 2 })).toEqual([
+      [0, 1, 10, 1], [0, 3, 10, 3],
+      // y = 5 runs through both reflex vertices: one line, split at them
+      [0, 5, 3, 5], [3, 5, 7, 5], [7, 5, 10, 5],
+      [0, 7, 1.8, 7], [3.8, 7, 6.2, 7], [8.2, 7, 10, 7],
+      [0, 9, 0.6, 9], [4.6, 9, 5.4, 9], [9.4, 9, 10, 9],
+    ])
+  })
+})
+
+describe('isSelfIntersecting', () => {
+  it('flags a bowtie', () => {
+    expect(isSelfIntersecting([0, 0, 10, 10, 10, 0, 0, 10])).toBe(true)
+  })
+  it('does not flag a concave L, a square or a triangle', () => {
+    expect(isSelfIntersecting([0, 0, 10, 0, 10, 5, 5, 5, 5, 10, 0, 10])).toBe(false)
+    expect(isSelfIntersecting([0, 0, 10, 0, 10, 10, 0, 10])).toBe(false)
+    expect(isSelfIntersecting([0, 0, 10, 0, 5, 8])).toBe(false)
+  })
+})
+
+describe('visualCentre on degenerate slivers', () => {
+  it.each([
+    [10000, 1e-6],
+    [100000, 1e-4],
+  ])('a %d x %d rectangle returns inside its bbox quickly', (w, h) => {
+    const t0 = performance.now()
+    const c = visualCentre(rectToPoints(0, 0, w, h))
+    expect(performance.now() - t0).toBeLessThan(200)
+    expect(c.x).toBeGreaterThanOrEqual(0)
+    expect(c.x).toBeLessThanOrEqual(w)
+    expect(c.y).toBeGreaterThanOrEqual(0)
+    expect(c.y).toBeLessThanOrEqual(h)
   })
 })

@@ -185,8 +185,9 @@ export function visualCentre(points: readonly number[], precision = 1): Pt {
   const { minX, minY, maxX, maxY } = boundingBox(points)
   const width = maxX - minX
   const height = maxY - minY
-  const cellSize = Math.min(width, height)
-  if (!(cellSize > 0)) return { x: minX, y: minY }
+  if (!(Math.min(width, height) > 0)) return { x: minX, y: minY }
+  // A sliver would otherwise seed (long / short) cells; cap the grid at 256 along the long side.
+  const cellSize = Math.max(Math.min(width, height), Math.max(width, height) / 256)
 
   const heap: Cell[] = []
   let h = cellSize / 2
@@ -262,4 +263,31 @@ export function hatchSegments(points: readonly number[], opts: HatchOptions): Se
     }
   }
   return out
+}
+
+const orient = (a: Pt, b: Pt, c: Pt) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x))
+const onSeg = (a: Pt, b: Pt, c: Pt) =>
+  Math.min(a.x, b.x) <= c.x && c.x <= Math.max(a.x, b.x) && Math.min(a.y, b.y) <= c.y && c.y <= Math.max(a.y, b.y)
+
+function segmentsIntersect(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
+  const o1 = orient(a, b, c)
+  const o2 = orient(a, b, d)
+  const o3 = orient(c, d, a)
+  const o4 = orient(c, d, b)
+  if (o1 !== o2 && o3 !== o4) return true
+  return (o1 === 0 && onSeg(a, b, c)) || (o2 === 0 && onSeg(a, b, d)) || (o3 === 0 && onSeg(c, d, a)) || (o4 === 0 && onSeg(c, d, b))
+}
+
+/** True when any two non-adjacent edges of the outline touch or cross. */
+export function isSelfIntersecting(points: readonly number[]): boolean {
+  const pts = flatToPts(points)
+  const n = pts.length
+  if (n < 4) return false
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue
+      if (segmentsIntersect(pts[i]!, pts[(i + 1) % n]!, pts[j]!, pts[(j + 1) % n]!)) return true
+    }
+  }
+  return false
 }
