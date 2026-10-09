@@ -8,6 +8,17 @@ import { loadStatusPlanList } from '@/lib/status-plans/plan-list'
 import { statusPlanHref } from '@/lib/status-plans/plan-urls'
 import { NewStatusPlanForm } from './NewStatusPlanForm'
 
+/** The one query this page makes outside the typed schemas. */
+interface ProjectReader {
+  schema(name: string): {
+    from(table: string): {
+      select(cols: string): {
+        eq(col: string, v: string): { maybeSingle(): Promise<{ data: { id: string; name: string } | null }> }
+      }
+    }
+  }
+}
+
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Status plans' }
 
@@ -24,7 +35,7 @@ export default async function StatusPlansPage({ params }: Props) {
   const { id: projectId } = await params
   const supabase = await createClient()
 
-  const { data: project } = await (supabase as any)
+  const { data: project } = await (supabase as unknown as ProjectReader)
     .schema('projects').from('projects').select('id, name').eq('id', projectId).maybeSingle()
   if (!project) notFound()
 

@@ -17,8 +17,20 @@ describe('toCanvasShape', () => {
       updatedAt: '2026-10-09T09:15:42.123456+00:00',
     })
   })
-  it('refuses points the database would refuse (slice 1 statusPlanShapeFromRow)', () => {
-    expect(() => toCanvasShape({ ...ROW, shape: 'rect' })).toThrow()
+  it('a row the checks refuse is kept and flagged, never thrown', () => {
+    const wrongCount = toCanvasShape({ ...ROW, shape: 'rect' })
+    expect(wrongCount.invalidReason).toBe('Outline needs redrawing')
+    expect(wrongCount.points).toEqual(ROW.points)
+    const crossed = toCanvasShape({ ...ROW, points: [0, 0, 10, 10, 10, 0, 0, 10] })
+    expect(crossed).toMatchObject({ id: 's1', invalidReason: 'Outline needs redrawing', points: [0, 0, 10, 10, 10, 0, 0, 10] })
+  })
+  it('unparseable points keep the id and token with no points', () => {
+    for (const points of ['nope', null, [1, 2, 'x', 4, 5, 6], [1, 2, 3]]) {
+      expect(toCanvasShape({ ...ROW, points })).toMatchObject({ id: 's1', points: [], invalidReason: 'Outline needs redrawing', updatedAt: ROW.updated_at })
+    }
+  })
+  it('a good row carries no invalidReason key', () => {
+    expect('invalidReason' in toCanvasShape(ROW)).toBe(false)
   })
   it('selects every column the mapper reads', () => {
     for (const k of Object.keys(ROW)) expect(SHAPE_COLUMNS).toContain(k)

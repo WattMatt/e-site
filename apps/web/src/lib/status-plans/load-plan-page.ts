@@ -77,6 +77,11 @@ export function buildStatusPlanPageProps(raw: PlanPageRaw): StatusPlanPageProps 
   }
 }
 
+/** yyyy-mm-dd on the South African calendar: overdue is a local-date question. */
+export function johannesburgDate(now: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Johannesburg' }).format(now)
+}
+
 const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v))
 
 export async function loadStatusPlanPage(
@@ -163,7 +168,7 @@ export async function loadStatusPlanPage(
     nodes,
     shopLinks,
     dbOrders,
-    today: new Date().toISOString().slice(0, 10),
+    today: johannesburgDate(new Date()),
     canEdit,
     requestedShapeId: args.requestedShapeId,
   })

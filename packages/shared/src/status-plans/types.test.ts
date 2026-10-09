@@ -116,3 +116,13 @@ describe('pointsError self-intersection', () => {
     )
   })
 })
+
+describe('pointsError zero area', () => {
+  it('names the rectangle problem before any crossing check', () => {
+    expect(pointsError('rect', [100, 100, 100, 100, 100, 260, 100, 260])).toBe('The rectangle has no area — drag it larger.')
+    expect(pointsError('rect', [0, 0, 50, 0, 50, 0, 0, 0])).toBe('The rectangle has no area — drag it larger.')
+  })
+  it('names the polygon problem for collinear corners', () => {
+    expect(pointsError('polygon', [0, 0, 10, 10, 20, 20])).toBe('The outline has no area — move the corners apart.')
+  })
+})

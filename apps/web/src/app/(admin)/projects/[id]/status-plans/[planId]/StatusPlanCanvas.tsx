@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Shape } from 'react-konva'
 import type Konva from 'konva'
-import { hatchSegments, rectToPoints, visualCentre, type StatusPlanPurpose } from '@esite/shared/status-plans'
+import { hatchSegments, pointsError, rectToPoints, visualCentre, type StatusPlanPurpose } from '@esite/shared/status-plans'
 import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
 import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
 import { Tooltip } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/markup-tooltip'
@@ -33,6 +33,7 @@ import {
   type CanvasTool,
   type ShapeCommit,
 } from '@/lib/status-plans/canvas-reducer'
+import { roundPoints } from '@/lib/status-plans/canvas-shape'
 import { fillRgba, type ShapeView } from '@/lib/status-plans/shape-view'
 import type { CanvasShape, PlanSheet } from '@/lib/status-plans/types'
 
@@ -111,6 +112,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
       csRef.current = step.state
       setCs(step.state)
     }
+    if (step.error) setLocalError(step.error)
     if (step.commit) void commit(step.commit)
   }
   async function commit(c: ShapeCommit) {
@@ -180,7 +182,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
 
   // ── Derived drawing data (memoised: hatching 150 blocks is not free) ───────
   const drawn = useMemo(
-    () => shapes.map((s) => (preview && preview.id === s.id ? { ...s, points: preview.points } : s)),
+    () => shapes.filter((s) => s.points.length >= 6).map((s) => (preview && preview.id === s.id ? { ...s, points: preview.points } : s)),
     [shapes, preview],
   )
   const hatchById = useMemo(() => {
@@ -210,6 +212,8 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     // Put the handle back where the props say it is; the preview (then the
     // stored shape) decides where it is drawn.
     e.target.position({ x: shape.points[index * 2]!, y: shape.points[index * 2 + 1]! })
+    const refused = pointsError(shape.shape, roundPoints(pts))
+    if (refused) { setLocalError(refused); return }
     setPreview({ id: shape.id, points: pts })
     setLocalError(null)
     const res = await p.onReshape(shape.id, pts)

@@ -33,6 +33,8 @@ export default async function TenantSchedulePage({ params }: Props) {
     .getById(supabase as never, projectId)
     .catch(() => null)
   if (!project) notFound()
+  // Started now, awaited with the other reads' tail: loadOnPlanLinks never rejects.
+  const onPlanPromise = loadOnPlanLinks(supabase, projectId)
 
   const orgId = project.organisation_id as string
   // opening_date is added by migration 00093; pre-apply select('*') simply omits it.
@@ -265,7 +267,7 @@ export default async function TenantSchedulePage({ params }: Props) {
   const canWrite = writeGuard.ok
   // Which status plan shows each shop (best-effort: {} on any error, so the
   // schedule never fails because of a plan).
-  const onPlanByNode = await loadOnPlanLinks(supabase, projectId)
+  const onPlanByNode = await onPlanPromise
 
   return (
     <div className="animate-fadeup">

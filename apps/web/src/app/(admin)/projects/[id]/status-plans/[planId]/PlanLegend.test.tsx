@@ -13,7 +13,7 @@ describe('PlanLegend', () => {
     render(<PlanLegend purpose="tenant_layout" summary={summary} hasScale attention={[]} onSelectShape={vi.fn()} />)
     expect(legendRow('Complete')).toBe('Complete2')
     expect(legendRow('Overdue (past BO date)')).toBe('Overdue (past BO date)1')
-    expect(screen.getByText(/Total measured: 1234\.6 m²/)).toBeTruthy()
+    expect(screen.getByText(/Measured GLA: 1234\.6 m²/)).toBeTruthy()
   })
 
   it('without a scale says how to get one instead of a total', () => {

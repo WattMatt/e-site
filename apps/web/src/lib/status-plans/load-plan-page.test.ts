@@ -79,6 +79,27 @@ describe('loadStatusPlanPage', () => {
     expect(loadProjectDbOrderStatusMock).not.toHaveBeenCalled()
   })
 
+  it('one crossed outline does not crash the page: the good shape is normal, the bad one flagged', async () => {
+    const crossed = { ...SHAPE_ROW, id: 's2', shape: 'polygon', points: [0, 0, 10, 10, 10, 0, 0, 10], node_id: null }
+    const { client } = fakeClient(queued(tables({ 'tenants.status_plan_shapes:select': [{ data: [SHAPE_ROW, crossed] }] })))
+    const props = await loadStatusPlanPage(client, { projectId: 'p1', planId: 'pl1', requestedShapeId: null })
+    expect(props!.shapes.map((s) => s.id)).toEqual(['s1', 's2'])
+    expect('invalidReason' in props!.shapes[0]!).toBe(false)
+    expect(props!.shapes[1]!.invalidReason).toBe('Outline needs redrawing')
+    expect(jsonUnsafePath(props)).toBeNull()
+  })
+
+  it('today is the Johannesburg date, not the UTC one', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-09T23:30:00Z'))
+    try {
+      const { client } = fakeClient(queued(tables()))
+      expect((await loadStatusPlanPage(client, { projectId: 'p1', planId: 'pl1', requestedShapeId: null }))!.today).toBe('2026-10-10')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reads a schematic with every live node and DB orders, not tenant facts', async () => {
     const { client, calls } = fakeClient(queued(tables({ 'tenants.status_plans:select': [{ data: { ...PLAN_ROW, purpose: 'distribution_schematic' } }] })))
     const props = await loadStatusPlanPage(client, { projectId: 'p1', planId: 'pl1', requestedShapeId: null })
