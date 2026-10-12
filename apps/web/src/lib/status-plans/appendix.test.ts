@@ -23,7 +23,7 @@ async function drawing(): Promise<Uint8Array> {
 }
 function plan(id: string, name: string, purpose: StatusPlanRenderInput['purpose'], bytes: Uint8Array): StatusPlanRenderInput {
   return {
-    planId: id, planName: name, purpose, drawingName: 'Drawing', pageIndex: 1, generatedOn: '2026-10-09',
+    planId: id, planName: name, purpose, drawingName: 'Drawing', sheetId: `sh-${id}`, sheetLabel: 'Sheet 1 of 1', pageIndex: 1, generatedOn: '2026-10-09',
     source: { kind: 'pdf', bytes, pageIndex: 1 }, shapes: [], counts: {}, measured: null, warnings: [],
     legend: purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND,
   }

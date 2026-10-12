@@ -55,7 +55,7 @@ async function drawingPdf() {
   return d.save()
 }
 const planInput = (bytes: Uint8Array) => ({
-  planId: 'a', planName: 'Ground floor tenants', purpose: 'tenant_layout' as const, drawingName: 'Tenant layout', pageIndex: 1,
+  planId: 'a', planName: 'Ground floor tenants', purpose: 'tenant_layout' as const, drawingName: 'Tenant layout', sheetId: 'sh1', sheetLabel: 'Sheet 1 of 1', pageIndex: 1,
   generatedOn: '2026-06-20', source: { kind: 'pdf' as const, bytes, pageIndex: 1 }, shapes: [], legend: TENANT_LEGEND,
   counts: {}, measured: null, warnings: [],
 })
