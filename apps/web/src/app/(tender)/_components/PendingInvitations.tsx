@@ -3,21 +3,39 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
-import { acceptPendingInvitationAction, type PendingInvitation } from '@/actions/tender-portal.actions'
+import { acceptPendingInvitationAction, requestTenderAccessAction, type PendingInvitation } from '@/actions/tender-portal.actions'
 
 /** Invitations to the signed-in address that still wait for Accept. No link needed. */
-export function PendingInvitations({ invitations }: { invitations: PendingInvitation[] }) {
+export function PendingInvitations({ invitations, email }: { invitations: PendingInvitation[]; email: string }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
-  const [msg, setMsg] = useState<string | null>(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [needEmail, setNeedEmail] = useState(false)
 
   const accept = async (id: string) => {
     setBusy(id)
     setMsg(null)
     try {
       const r = await acceptPendingInvitationAction(id)
-      if ('error' in r) return setMsg(r.error)
+      if ('error' in r) {
+        if (r.needsEmailLink) setNeedEmail(true)
+        return setMsg({ ok: false, text: r.error })
+      }
       router.push(`/tender/${r.data.tenderId}`)
+    } catch {
+      setMsg({ ok: false, text: 'We could not reach E-Site. Check your connection and press Accept again.' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const emailLink = async () => {
+    setBusy('email')
+    try {
+      await requestTenderAccessAction(email)
+      setMsg({ ok: true, text: `Sent to ${email}. Press Continue in that email (or type its code on the page it opens), then Accept here.` })
+    } catch {
+      setMsg({ ok: false, text: 'We could not reach E-Site. Check your connection and try again.' })
     } finally {
       setBusy(null)
     }
@@ -40,7 +58,8 @@ export function PendingInvitations({ invitations }: { invitations: PendingInvita
           </li>
         ))}
       </ul>
-      {msg && <p role="alert" style={{ margin: 0, fontSize: 13, color: 'var(--c-red)' }}>{msg}</p>}
+      {needEmail && <div><Button variant="secondary" isLoading={busy === 'email'} disabled={!!busy} onClick={emailLink}>Email me a link to {email}</Button></div>}
+      {msg && <p role={msg.ok ? 'status' : 'alert'} style={{ margin: 0, fontSize: 13, color: msg.ok ? 'var(--c-green)' : 'var(--c-red)' }}>{msg.text}</p>}
     </div>
   )
 }

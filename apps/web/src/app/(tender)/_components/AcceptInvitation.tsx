@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import {
@@ -41,12 +41,19 @@ export function AcceptInvitation({
   const [linkFailed, setLinkFailed] = useState(false)
   const [emailed, setEmailed] = useState(false)
   const [code, setCode] = useState('')
+  // Signed in another way (a password): the mailbox must be confirmed once by the emailed link or code.
+  const [needEmail, setNeedEmail] = useState(false)
+  const [cookiesOff, setCookiesOff] = useState(false)
+  useEffect(() => setCookiesOff(typeof navigator !== 'undefined' && navigator.cookieEnabled === false), [])
 
   async function run(fn: () => Promise<void>) {
     setBusy(true)
     setMsg(null)
     try {
       await fn()
+    } catch {
+      // A dropped connection: say so, rather than a button that silently stops.
+      setMsg({ ok: false, text: 'We could not reach E-Site. Check your connection and press the button again. If it then says the link was used, press "Email me a fresh link".' })
     } finally {
       setBusy(false)
     }
@@ -76,14 +83,24 @@ export function AcceptInvitation({
     run(async () => {
       const r = await continueInvitationWithCodeAction(token, code)
       if ('error' in r) return setMsg({ ok: false, text: r.error })
+      setNeedEmail(false)
+      setMsg({ ok: true, text: 'Confirmed. Now press Accept the invitation.' })
       router.replace(`/tender/invite/${token}`)
       router.refresh()
     })
 
   const accept = () =>
     run(async () => {
-      const r = await acceptInvitationAction(token)
-      if ('error' in r) return setMsg({ ok: false, text: r.error })
+      let r = await acceptInvitationAction(token)
+      if ('error' in r && r.needsEmailLink && access) {
+        // The invitation email's link is in the address bar: use it, then accept.
+        const c = await continueInvitationAction(token, access.k, access.t)
+        if (!('error' in c)) r = await acceptInvitationAction(token)
+      }
+      if ('error' in r) {
+        if (r.needsEmailLink) setNeedEmail(true)
+        return setMsg({ ok: false, text: r.error })
+      }
       router.push(`/tender/${r.data.tenderId}`)
     })
 
@@ -91,9 +108,16 @@ export function AcceptInvitation({
     <p role={msg.ok ? 'status' : 'alert'} style={{ margin: 0, fontSize: 13, color: msg.ok ? 'var(--c-green)' : 'var(--c-red)' }}>{msg.text}</p>
   )
 
-  if (canAccept) {
+  const cookieWarning = cookiesOff && (
+    <p role="alert" style={{ margin: 0, fontSize: 13, color: 'var(--c-red)' }}>
+      This browser is blocking cookies, so E-Site cannot keep you signed in. Allow cookies for e-site.live, or open the link in another browser.
+    </p>
+  )
+
+  if (canAccept && !needEmail) {
     return (
       <div style={{ display: 'grid', gap: 8 }}>
+        {cookieWarning}
         <p style={{ margin: 0, fontSize: 14 }}>You are in as <strong>{email}</strong>. Accept the invitation to see the bill of quantities and start pricing.</p>
         <div><Button isLoading={busy} onClick={accept}>Accept the invitation</Button></div>
         {message}
@@ -101,7 +125,7 @@ export function AcceptInvitation({
     )
   }
 
-  if (signedInAs) {
+  if (signedInAs && !canAccept) {
     return (
       <div style={{ display: 'grid', gap: 8 }}>
         <p role="status" style={{ margin: 0, fontSize: 14 }}>
@@ -113,10 +137,11 @@ export function AcceptInvitation({
     )
   }
 
-  const showFallback = !access || linkFailed
+  const showFallback = !access || linkFailed || needEmail
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      {access && !linkFailed && (
+      {cookieWarning}
+      {access && !linkFailed && !needEmail && (
         <div style={{ display: 'grid', gap: 8 }}>
           <p style={{ margin: 0, fontSize: 14 }}>No password is needed. Press Continue to open the tender as <strong>{email}</strong>.</p>
           <div><Button isLoading={busy} onClick={cont}>Continue</Button></div>

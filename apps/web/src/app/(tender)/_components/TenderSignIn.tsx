@@ -30,6 +30,8 @@ export function TenderSignIn({ access, initialEmail }: { access: { k: string; t:
     setMsg(null)
     try {
       await fn()
+    } catch {
+      setMsg({ ok: false, text: 'We could not reach E-Site. Check your connection and press the button again.' })
     } finally {
       setBusy(false)
     }

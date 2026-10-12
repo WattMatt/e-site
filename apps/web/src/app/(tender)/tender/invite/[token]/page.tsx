@@ -34,7 +34,7 @@ export default async function InvitePage({
             <p style={{ marginTop: 0 }}>
               {res.error === INVITATION_REFUSAL_TEXT.used
                 ? 'You have already accepted this invitation.'
-                : 'This invitation link has already been used, or a newer email replaced it. Continue to your tenders: an invitation you have not accepted yet is waiting there.'}
+                : 'This invitation link has already been used, or a newer email replaced it. Your tenders, and any invitation still waiting for you, are on your tenders page.'}
             </p>
             <ContinueToTenders access={access} />
           </CardBody>

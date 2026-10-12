@@ -41,6 +41,7 @@ const ALLOWED_PREFIXES = [
   '/portal',
   '/onboarding',
   '/supplier',
+  '/tender',
   '/unsubscribe',
   '/privacy/request',
   '/cookies',

@@ -160,7 +160,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
   const editable = open && !submitted
 
   return (
-    <div style={{ display: 'grid', gap: 16 }}>
+    <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'minmax(0, 1fr)' }}>
       <Card>
         <CardHeader><span className="data-panel-title">Your submission</span></CardHeader>
         <CardBody>

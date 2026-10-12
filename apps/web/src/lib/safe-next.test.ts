@@ -52,6 +52,13 @@ describe('safeNext', () => {
     expect(safeNext('/privacy/requests')).toBeNull()
   })
 
+  it('returns a tenderer to their tender after the two-factor step', () => {
+    expect(safeNext('/tender')).toBe('/tender')
+    expect(safeNext('/tender/0b9c5f7e-1111-4222-8333-944445555666')).toBe('/tender/0b9c5f7e-1111-4222-8333-944445555666')
+    // The WM tenders area is a different path and is not opened by the /tender entry.
+    expect(safeNext('/tenders')).toBeNull()
+  })
+
   it('rejects prefix look-alikes', () => {
     expect(safeNext('/dashboardevil')).toBeNull()
     expect(safeNext('/portalx/foo')).toBeNull()

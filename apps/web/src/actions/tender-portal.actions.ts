@@ -116,23 +116,31 @@ const CODE_RE = /^\d{6}$/
 const TOKEN_HASH_RE = /^[A-Za-z0-9_-]{20,128}$/
 
 /** Use a single-use sign-in (from an email link) or a 6-digit code, as the cookie session. */
-async function useAccess(
-  input: { tokenHash: string; type: string } | { email: string; code: string },
-): Promise<{ ok: true; email: string } | { ok: false }> {
+type AccessResult = { ok: true; email: string } | { ok: false; busy?: boolean }
+
+/** The auth server says "too many requests": not the contractor's fault, and not a used link. */
+const isRateLimited = (e: { status?: number; code?: string; message?: string } | null) =>
+  !!e && (e.status === 429 || /rate limit|too many/i.test(`${e.code ?? ''} ${e.message ?? ''}`))
+
+async function useAccess(input: { tokenHash: string; type: string } | { email: string; code: string }): Promise<AccessResult> {
   const supabase = await createClient()
   if ('tokenHash' in input) {
     if (!TOKEN_HASH_RE.test(input.tokenHash) || !isTenderOtpType(input.type)) return { ok: false }
     const { data, error } = await supabase.auth.verifyOtp({ token_hash: input.tokenHash, type: input.type })
+    if (isRateLimited(error)) return { ok: false, busy: true }
     return error || !data.user?.email ? { ok: false } : { ok: true, email: data.user.email }
   }
   if (!CODE_RE.test(input.code)) return { ok: false }
   // A code minted for a brand-new address is a signup code; for an existing one, an email code.
   for (const type of ['email', 'signup'] as const) {
     const { data, error } = await supabase.auth.verifyOtp({ email: input.email, token: input.code, type })
+    if (isRateLimited(error)) return { ok: false, busy: true }
     if (!error && data.user?.email) return { ok: true, email: data.user.email }
   }
   return { ok: false }
 }
+
+const BUSY = 'Too many attempts on our side right now. Wait a minute, then press the button again (your link or code is still good).'
 
 const LINK_USED = 'That link has already been used or has expired. Press "Email me a fresh link" below.'
 const CODE_WRONG = 'That code is not right, or it has expired. Check the latest email, or ask for a fresh link.'
@@ -148,7 +156,7 @@ export async function continueInvitationAction(token: string, k: string, t: stri
   const check = checkInvitation(found?.invitation ?? null, found?.tender ?? null, new Date())
   if (!check.ok) return { error: INVITATION_REFUSAL_TEXT[check.reason] }
   const r = await useAccess({ tokenHash: k, type: t })
-  if (!r.ok) return { error: LINK_USED }
+  if (!r.ok) return { error: r.busy ? BUSY : LINK_USED }
   if (!emailMatches(r.email, found!.invitation.email)) {
     await (await createClient()).auth.signOut()
     return { error: 'That link belongs to a different address.' }
@@ -163,7 +171,7 @@ export async function continueInvitationWithCodeAction(token: string, code: stri
   const check = checkInvitation(found?.invitation ?? null, found?.tender ?? null, new Date())
   if (!check.ok) return { error: INVITATION_REFUSAL_TEXT[check.reason] }
   const r = await useAccess({ email: found!.invitation.email, code: code.trim() })
-  return r.ok ? { data: true } : { error: CODE_WRONG }
+  return r.ok ? { data: true } : { error: r.busy ? BUSY : CODE_WRONG }
 }
 
 /**
@@ -192,7 +200,7 @@ export async function emailInvitationLinkAction(token: string): Promise<Result<{
 }
 
 /** Step 2: accept, signed in as the invited address. */
-export async function acceptInvitationAction(token: string): Promise<Result<{ tenderId: string }>> {
+export async function acceptInvitationAction(token: string): Promise<AcceptResult> {
   if (!rateLimit(`tender-invite-accept:${await clientIp()}`, 10, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
   if (!looksLikeInvitationToken(token)) return { error: INVITATION_REFUSAL_TEXT.not_found }
   const supabase = (await createClient()) as AnyClient
@@ -201,11 +209,20 @@ export async function acceptInvitationAction(token: string): Promise<Result<{ te
   return acceptByHash(supabase, hashInvitationToken(token))
 }
 
-async function acceptByHash(supabase: AnyClient, tokenHash: string): Promise<Result<{ tenderId: string }>> {
+export type AcceptResult = { data: { tenderId: string } } | { error: string; needsEmailLink?: boolean }
+
+async function acceptByHash(supabase: AnyClient, tokenHash: string): Promise<AcceptResult> {
   const { data, error } = await supabase.schema('projects').rpc('tender_accept', { p_token_hash: tokenHash })
   if (error) {
+    if (error.code === '42501' && /cannot bid/.test(error.message)) {
+      return { error: 'You help run this tender for the engineer, so you cannot also bid on it. If this is wrong, ask the engineer.' }
+    }
+    if (error.code === '42501' && /emailed/.test(error.message)) {
+      // A password session: the mailbox has not been proved for this sign-in. The screens offer the emailed link.
+      return { error: 'To accept, we need to confirm this mailbox once: use the link or code we email you.', needsEmailLink: true }
+    }
     const reason =
-      error.code === '42501' && /emailed/.test(error.message) ? 'needs_email_link'
+      error.code === '42501' && /sign in first/.test(error.message) ? 'needs_email_link'
       : error.code === '42501' ? 'wrong_account'
       : error.code === 'P0002' ? 'not_found'
       : /expired/.test(error.message) ? 'expired'
@@ -218,9 +235,12 @@ async function acceptByHash(supabase: AnyClient, tokenHash: string): Promise<Res
   return { data: { tenderId: data as string } }
 }
 
-/** An address that has (or had) a tender invitation that went out. Exact match: stored lower-case by CHECK. */
+/**
+ * An address that has (or had) a live tender invitation, emailed by E-Site or
+ * copied by WM and sent another way (`prepared`). Exact match: stored lower-case by CHECK.
+ */
 async function hasTenderInvitation(svc: AnyClient, address: string): Promise<boolean> {
-  const { data } = await svc.schema('projects').from('tender_invitations').select('id').eq('email', address).in('status', ['sent', 'accepted']).limit(1)
+  const { data } = await svc.schema('projects').from('tender_invitations').select('id').eq('email', address).in('status', ['prepared', 'sent', 'accepted']).limit(1)
   return !!data?.length
 }
 
@@ -253,7 +273,7 @@ export async function requestTenderAccessAction(email: string): Promise<Result<t
 export async function continueReturnVisitAction(k: string, t: string): Promise<Result<true>> {
   if (!rateLimit(`tender-return-continue:${await clientIp()}`, 20, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
   const r = await useAccess({ tokenHash: k, type: t })
-  return r.ok ? { data: true } : { error: 'That link has already been used, or a newer email replaced it. Go to "Your tenders" and ask for a fresh link.' }
+  return r.ok ? { data: true } : { error: r.busy ? BUSY : 'That link has already been used, or a newer email replaced it. Enter your email below for a fresh link.' }
 }
 
 /** The 6-digit code on /tender/login: only for an address with a tender invitation, a few tries per address. */
@@ -265,7 +285,25 @@ export async function continueReturnVisitWithCodeAction(email: string, code: str
   if (!rateLimit(`tender-code-addr:${address}`, 5, 60 * 60_000)) return { error: 'Too many tries for this address. Ask for a fresh link and code, or wait an hour.' }
   if (!CODE_RE.test(code.trim()) || !(await hasTenderInvitation(createServiceClient() as AnyClient, address))) return { error: CODE_WRONG }
   const r = await useAccess({ email: address, code: code.trim() })
-  return r.ok ? { data: true } : { error: CODE_WRONG }
+  return r.ok ? { data: true } : { error: r.busy ? BUSY : CODE_WRONG }
+}
+
+/** True when this session was opened from an emailed link or code (what tender_accept and the portal require). */
+async function sessionProvesEmail(supabase: AnyClient): Promise<boolean> {
+  const { data } = await supabase.schema('projects').rpc('session_proves_email')
+  return data === true
+}
+
+/** For /tender: whether the signed-in session can see tenders, or must confirm the mailbox once. */
+export async function tenderSessionStateAction(): Promise<{ email: string | null; provesEmail: boolean; invited: boolean }> {
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { email: null, provesEmail: false, invited: false }
+  const [provesEmail, invited] = await Promise.all([
+    sessionProvesEmail(supabase),
+    hasTenderInvitation(createServiceClient() as AnyClient, user.email.toLowerCase()),
+  ])
+  return { email: user.email, provesEmail, invited }
 }
 
 export interface PendingInvitation {
@@ -303,11 +341,16 @@ export async function pendingInvitationsAction(): Promise<Result<PendingInvitati
  * projects.tender_accept, which re-checks the address and that the session
  * proved the mailbox.
  */
-export async function acceptPendingInvitationAction(invitationId: string): Promise<Result<{ tenderId: string }>> {
+export async function acceptPendingInvitationAction(invitationId: string): Promise<AcceptResult> {
   if (!rateLimit(`tender-pending-accept:${await clientIp()}`, 10, 60_000)) return { error: 'Too many attempts. Wait a minute and try again.' }
   const supabase = (await createClient()) as AnyClient
   const { data: { user } } = await supabase.auth.getUser()
   if (!user?.email) return { error: 'Open the invitation from its email first, then press Continue.' }
+  // Check first, change nothing: a password session cannot accept, and re-keying
+  // would kill the invitation link the contractor still holds.
+  if (!(await sessionProvesEmail(supabase))) {
+    return { error: 'To accept, we need to confirm this mailbox once: use the link or code we email you.', needsEmailLink: true }
+  }
   const svc = createServiceClient() as AnyClient
   const token = newInvitationToken()
   const { data: rekeyed } = await svc

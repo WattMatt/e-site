@@ -1,12 +1,13 @@
 import Link from 'next/link'
-import { myTendersAction, pendingInvitationsAction } from '@/actions/tender-portal.actions'
+import { myTendersAction, pendingInvitationsAction, tenderSessionStateAction } from '@/actions/tender-portal.actions'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { PendingInvitations } from '../_components/PendingInvitations'
+import { ConfirmMailbox } from '../_components/ConfirmMailbox'
 
 export const dynamic = 'force-dynamic'
 
 export default async function MyTendersPage() {
-  const [res, pendingRes] = await Promise.all([myTendersAction(), pendingInvitationsAction()])
+  const [res, pendingRes, session] = await Promise.all([myTendersAction(), pendingInvitationsAction(), tenderSessionStateAction()])
   const tenders = 'data' in res ? res.data : []
   const pending = 'data' in pendingRes ? pendingRes.data : []
   return (
@@ -14,9 +15,10 @@ export default async function MyTendersPage() {
       <CardHeader><span className="data-panel-title">Your tenders</span></CardHeader>
       <CardBody>
         <div style={{ display: 'grid', gap: 16 }}>
+          {session.email && session.invited && !session.provesEmail && <ConfirmMailbox email={session.email} />}
           {'error' in res && <p role="alert">{res.error}</p>}
-          {pending.length > 0 && <PendingInvitations invitations={pending} />}
-          {tenders.length === 0 && pending.length === 0 && (
+          {pending.length > 0 && <PendingInvitations invitations={pending} email={session.email ?? ''} />}
+          {tenders.length === 0 && pending.length === 0 && (session.provesEmail || !session.invited) && (
             <p style={{ margin: 0 }}>
               You have no tender invitations at the moment. If you expected one, check that you opened the email sent to this address,
               or <Link href="/tender/login">ask for a fresh link</Link> to the address the invitation went to.

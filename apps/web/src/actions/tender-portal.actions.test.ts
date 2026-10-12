@@ -54,6 +54,8 @@ function world(w: {
   byAddress?: Row[]
   pending?: Row[]
   rekeyed?: Row[]
+  proves?: boolean
+  verifyError?: { status?: number; message: string }
 }) {
   const calls: string[] = []
   const lookedUpHash: string[] = []
@@ -98,12 +100,14 @@ function world(w: {
       getUser: async () => ({ data: { user: w.sessionEmail ? { id: 'u1', email: w.sessionEmail } : null } }),
       verifyOtp: async (a: Row) => {
         calls.push(`verifyOtp:${JSON.stringify(a)}`)
+        if (w.verifyError) return { data: { user: null }, error: w.verifyError }
         return verified ? { data: { user: { email: verified } }, error: null } : { data: { user: null }, error: { message: 'Token has expired or is invalid' } }
       },
       signOut: async () => { calls.push('signOut'); return { error: null } },
     },
     schema: () => ({
       rpc: (name: string, args: unknown) => {
+        if (name === 'session_proves_email') return Promise.resolve({ data: w.proves ?? true, error: null })
         calls.push(`rpc:${name}`)
         rpcArgs.push(args)
         return Promise.resolve(w.rpcError ? { data: null, error: w.rpcError } : { data: 't1', error: null })
@@ -172,6 +176,13 @@ describe('continueInvitationAction (the Continue button from the email)', () => 
     const w = world({ invitation: INVITE, tender: OPEN, sessionEmail: null, verifiedEmail: 'someone@else.example' })
     expect(((await continueInvitationAction(TOKEN, K, 'magiclink')) as { error: string }).error).toMatch(/different address/)
     expect(w.calls.at(-1)).toBe('signOut')
+  })
+
+  it('a rate-limited auth server is "try again in a minute", never "link already used"', async () => {
+    world({ invitation: INVITE, tender: OPEN, sessionEmail: null, verifyError: { status: 429, message: 'Request rate limit reached' } })
+    const r = (await continueInvitationAction(TOKEN, K, 'magiclink')) as { error: string }
+    expect(r.error).toMatch(/Wait a minute/)
+    expect(r.error).not.toMatch(/already been used/)
   })
 
   it('says a used or expired link plainly, and offers the way out', async () => {
@@ -275,6 +286,14 @@ describe('pendingInvitationsAction / acceptPendingInvitationAction (accept from 
     expect(await acceptPendingInvitationAction('inv')).toHaveProperty('error')
     expect(w.updates).toEqual([])
   })
+
+  it('a password session is asked to confirm the mailbox, and NOTHING is re-keyed (the emailed link survives)', async () => {
+    const w = world({ invitation: null, tender: null, sessionEmail: 'bidder@co.example', proves: false })
+    const r = await acceptPendingInvitationAction('inv')
+    expect(r).toMatchObject({ needsEmailLink: true })
+    expect(w.updates).toEqual([])
+    expect(w.calls).toEqual([])
+  })
 })
 
 describe('previewInvitationAction', () => {
@@ -301,6 +320,18 @@ describe('acceptInvitationAction', () => {
     expect(w.calls).toEqual(['rpc:tender_accept'])
     expect(w.rpcArgs).toEqual([{ p_token_hash: hashInvitationToken(TOKEN) }])
     expect(JSON.stringify(w.rpcArgs)).not.toContain(TOKEN)
+  })
+
+  it('flags a password session so the screen can offer the emailed link', async () => {
+    world({ invitation: INVITE, tender: OPEN, sessionEmail: 'bidder@co.example', rpcError: { code: '42501', message: 'sign in with the link we emailed to the invited address' } })
+    expect(await acceptInvitationAction(TOKEN)).toMatchObject({ needsEmailLink: true })
+  })
+
+  it('tells someone who runs the tender that they cannot bid (not "different address")', async () => {
+    world({ invitation: INVITE, tender: OPEN, sessionEmail: 'bidder@co.example', rpcError: { code: '42501', message: 'the people running a tender cannot bid on it' } })
+    const r = (await acceptInvitationAction(TOKEN)) as { error: string }
+    expect(r.error).toMatch(/cannot also bid/)
+    expect(r.error).not.toMatch(/different email/)
   })
 
   it('explains a different signed-in account (the database refuses it)', async () => {

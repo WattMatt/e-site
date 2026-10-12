@@ -15,9 +15,9 @@ export default async function TenderLayout({ children }: { children: ReactNode }
   const { data: { user } } = await supabase.auth.getUser()
   return (
     <div style={{ minHeight: '100vh', background: 'var(--c-base, #f8fafc)', color: 'var(--c-text, #0f172a)', padding: '24px 16px', fontFamily: 'system-ui, sans-serif' }}>
-      <main style={{ maxWidth: 1080, margin: '0 auto', display: 'grid', gap: 16 }}>
+      <main style={{ maxWidth: 1080, margin: '0 auto', display: 'grid', gap: 16, gridTemplateColumns: 'minmax(0, 1fr)' }}>
         {user?.email && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8, fontSize: 13, overflowWrap: 'anywhere' }}>
             <span>Signed in as {user.email}</span>
             <form action="/auth/signout" method="post">
               <input type="hidden" name="to" value="/tender/login" />
