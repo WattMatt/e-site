@@ -62,6 +62,11 @@ const DECLARED_EXEMPT: Record<string, string> = {
     'The sync ledger itself — one row per file version seen in cloud storage. It records ' +
     'the adopt rather than being invalidated by it; treating it as annotation would freeze ' +
     'every synced drawing forever.',
+  'tenants.status_plans':
+    'No longer anchored to a drawing. The tenant plans migration (00248) drops floor_plan_id, ' +
+    'page_index and source_file_path; a plan\'s sheets are files in the tenant-plan-files bucket, ' +
+    'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
+    'is the only reason discovery finds it.',
 }
 
 /**
@@ -209,6 +214,7 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
       // A table that exists and is deliberately NOT in isAnnotated: proves the
       // coverage check discriminates rather than passing everything.
       expect(predicateQueries(body, 'tenants.floor_plan_versions')).toBe(false)
+      expect(predicateQueries(body, 'tenants.status_plans')).toBe(false)
       expect(predicateQueries(body, 'public.rfi_annotations')).toBe(true)
     })
 
