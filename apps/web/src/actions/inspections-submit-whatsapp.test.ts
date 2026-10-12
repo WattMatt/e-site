@@ -26,7 +26,7 @@ vi.mock('@/lib/auth/require-role', () => ({ requireRole: vi.fn() }))
 vi.mock('@/lib/features', () => ({ requireFeature: vi.fn() }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: notify }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }))
+vi.mock('next/navigation', () => ({ redirect: vi.fn(), unstable_rethrow: (e: unknown) => { if ((e as Error)?.message === 'NEXT_REDIRECT') throw e } }))
 vi.mock('@/lib/whatsapp-forms/after-submit', () => ({ afterWebSubmitOfWhatsAppForm: afterWeb }))
 vi.mock('@/lib/inspections/submit-check', () => ({ submitBlocker: async () => blocker.value }))
 

@@ -23,6 +23,10 @@
 --    existing row in that state can still be reassigned out of it or abandoned. The name sorts
 --    after trg_inspections_transition_guard (00235), so the guard's refusals (status, role) are
 --    the ones a person sees first; this one speaks only to an otherwise allowed reassignment.
+-- 4. responses_update_verifier (00066) let the verifier flip answers while the inspection awaits
+--    verification. A flip is an answer: response_history records the verifier, and on a
+--    separate-verifier template certification_blockers() then refuses them for good. It now
+--    excludes those templates; on the others the verifier may still correct an answer.
 --
 -- certification_blockers() is left as it is: it stays the last line of defence.
 --
@@ -31,6 +35,8 @@
 -- function: inspections.enforce_separate_verifier()
 -- function: inspections.user_can_write_responses(uuid)
 -- trigger: trg_inspections_verifier_separation ON inspections.inspections
+-- policy: responses_update_verifier ON inspections.responses PERMISSIVE
+-- sql: (SELECT coalesce(qual, '') LIKE '%template_requires_separate_verifier%' FROM pg_policies WHERE schemaname = 'inspections' AND tablename = 'responses' AND policyname = 'responses_update_verifier')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%template_requires_separate_verifier%')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%pm.is_active%')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%user_effective_project_role%')
@@ -112,3 +118,16 @@ DROP TRIGGER IF EXISTS trg_inspections_verifier_separation ON inspections.inspec
 CREATE TRIGGER trg_inspections_verifier_separation
   BEFORE INSERT OR UPDATE OF verifier_id, assigned_to_id ON inspections.inspections
   FOR EACH ROW EXECUTE FUNCTION inspections.enforce_separate_verifier();
+
+DROP POLICY IF EXISTS responses_update_verifier ON inspections.responses;
+CREATE POLICY responses_update_verifier ON inspections.responses
+  FOR UPDATE TO authenticated
+  USING (
+    inspections.is_inspection_verifier(inspection_id)
+    AND EXISTS (
+      SELECT 1 FROM inspections.inspections i
+       WHERE i.id = responses.inspection_id
+         AND i.status = 'awaiting_verification'
+         AND NOT inspections.template_requires_separate_verifier(i.template_id)
+    )
+  );

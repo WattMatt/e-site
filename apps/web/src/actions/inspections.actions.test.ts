@@ -36,7 +36,7 @@ vi.mock('@/lib/auth/require-role', async (importOriginal) => ({
 vi.mock('@/lib/features', () => ({ requireFeature: requireFeatureMock }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
-vi.mock('next/navigation', () => ({ redirect: redirectMock }))
+vi.mock('next/navigation', () => ({ redirect: redirectMock, unstable_rethrow: (e: unknown) => { if ((e as Error)?.message === 'NEXT_REDIRECT') throw e } }))
 
 import { listProjectMembersAction, updateInspectionAssignmentAction } from './inspections.actions'
 
@@ -258,5 +258,12 @@ describe('updateInspectionAssignmentAction', () => {
 
     await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-a' })
     expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('lets a redirect through instead of reporting it as an error (paywall, expired session)', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'admin', previousAssignee: null }))
+    requireFeatureMock.mockImplementation(() => redirectMock())
+
+    await expect(updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })).rejects.toThrow('NEXT_REDIRECT')
   })
 })

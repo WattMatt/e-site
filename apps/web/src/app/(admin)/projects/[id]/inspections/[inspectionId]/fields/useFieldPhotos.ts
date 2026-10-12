@@ -233,7 +233,8 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
               'Delete not permitted — only the uploader or a project manager can remove a photo, and only while the inspection is editable.',
             )
           }
-          tally.removed(sectionId, fieldId)
+          // Already gone (second device, double tap): whoever deleted it reported it. Reporting it
+          // again would drop another photo of this field from the page's count.
           return // already gone server-side; keep the optimistic removal
         }
         tally.removed(sectionId, fieldId)

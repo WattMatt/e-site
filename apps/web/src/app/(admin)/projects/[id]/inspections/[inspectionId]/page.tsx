@@ -236,6 +236,7 @@ export default async function CapturePage({ params }: Props) {
           initialSignatures={signatures}
           status={inspection.status}
           verifierId={inspection.verifier_id}
+          separateVerifier={separateVerifier}
           currentUserId={user?.id ?? null}
           mode="capture"
           // The verifier of a separate-verifier inspection checks it; the database refuses their

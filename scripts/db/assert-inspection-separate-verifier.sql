@@ -79,6 +79,15 @@ BEGIN
 END $p$;
 GRANT EXECUTE ON FUNCTION pg_temp.try(text, text), pg_temp.who(text) TO authenticated, service_role;
 
+-- I4 / I5: submitted, each with one answer by C, to probe the verifier's flip while awaiting.
+SELECT set_config('x.i4', pg_temp.mk(current_setting('x.tcoc'), 'sepver probe 4', current_setting('x.c'), current_setting('x.pmu')), true);
+SELECT set_config('x.i5', pg_temp.mk(current_setting('x.tio'), 'sepver probe 5', current_setting('x.c'), current_setting('x.pmu')), true);
+INSERT INTO inspections.responses (inspection_id, section_id, field_id, pass_state, latest_responded_by)
+VALUES (current_setting('x.i4')::uuid, 's1', 'q1', 'pass', current_setting('x.c')::uuid),
+       (current_setting('x.i5')::uuid, 's1', 'q1', 'pass', current_setting('x.c')::uuid);
+UPDATE inspections.inspections SET status = 'awaiting_verification'
+ WHERE id IN (current_setting('x.i4')::uuid, current_setting('x.i5')::uuid);
+
 -- ── The inspector answers the CoC; the verifier tries to ──────────────────────────────────────
 SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('c:answer_coc', $$INSERT INTO inspections.responses (inspection_id, section_id, field_id, pass_state, latest_responded_by)
@@ -94,6 +103,10 @@ SELECT pg_temp.try('v:photo_coc', $$INSERT INTO inspections.photos (inspection_i
   VALUES (current_setting('x.i1')::uuid, 's1', 'q1', 'probe/sepver.jpg', auth.uid())$$);
 SELECT pg_temp.try('v:answer_io', $$INSERT INTO inspections.responses (inspection_id, section_id, field_id, pass_state, latest_responded_by)
   VALUES (current_setting('x.i2')::uuid, 's1', 'q1', 'pass', auth.uid())$$);
+SELECT pg_temp.try('v:flip_coc', $$UPDATE inspections.responses SET pass_state = 'fail', latest_responded_by = auth.uid()
+  WHERE inspection_id = current_setting('x.i4')::uuid AND field_id = 'q1'$$);
+SELECT pg_temp.try('v:flip_io', $$UPDATE inspections.responses SET pass_state = 'fail', latest_responded_by = auth.uid()
+  WHERE inspection_id = current_setting('x.i5')::uuid AND field_id = 'q1'$$);
 -- Assignment, as the PM: the contributor cannot become verifier, nor the verifier the inspector.
 SELECT pg_temp.try('pm:contributor_as_verifier', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid, assigned_to_id = current_setting('x.pmu')::uuid
   WHERE id = current_setting('x.i1')::uuid$$);
@@ -115,6 +128,10 @@ SELECT * FROM (VALUES
      (SELECT v FROM _o WHERE k = 'v:new_answer_coc') LIKE 'ERR %row-level security%'),
   ('the verifier cannot add a photo to a CoC inspection',
      (SELECT v FROM _o WHERE k = 'v:photo_coc') LIKE 'ERR %row-level security%'),
+  ('awaiting verification, the verifier cannot flip an answer on a CoC inspection',
+     (SELECT v FROM _o WHERE k = 'v:flip_coc') = '0'),
+  ('awaiting verification, the verifier may still correct an answer on an inspection-only template',
+     (SELECT v FROM _o WHERE k = 'v:flip_io') = '1'),
   ('on an inspection-only template the verifier may still answer',
      (SELECT v FROM _o WHERE k = 'v:answer_io') = '1'),
   ('someone who answered cannot be made verifier of a CoC inspection',

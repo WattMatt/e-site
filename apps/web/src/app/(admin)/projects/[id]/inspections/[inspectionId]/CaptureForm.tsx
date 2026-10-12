@@ -24,6 +24,8 @@ interface Props {
   initialSignatures?: CapturedSignature[]
   status?: string
   verifierId?: string | null
+  /** The template needs a verifier who did not fill it in (00248): the verifier gets no flip mode. */
+  separateVerifier?: boolean
   currentUserId: string | null
   mode: Mode
   readOnly?: boolean
@@ -38,6 +40,7 @@ export default function CaptureForm({
   initialSignatures,
   status,
   verifierId,
+  separateVerifier = false,
   currentUserId,
   mode,
   readOnly: readOnlyProp,
@@ -80,6 +83,9 @@ export default function CaptureForm({
   const isCertifiedOrAbandoned = status === 'certified' || status === 'abandoned'
   const isVerifier =
     currentUserId !== null && verifierId === currentUserId && status === 'awaiting_verification'
+  // Flipping an answer is an answer: on a separate-verifier template it would be recorded as the
+  // verifier's contribution and bar them from certifying (certification_blockers, 00235).
+  const canFlip = isVerifier && !separateVerifier
   const readOnly =
     readOnlyProp || isPreview || isCertifiedOrAbandoned || status === 'awaiting_verification'
 
@@ -92,8 +98,80 @@ export default function CaptureForm({
   // once uploaded (the rail used to count typed answers only, so photo sections read 0/4).
   const sectionStats = evaluation.sectionStats
 
-  const updateResponse = useCallback(
+  // Saves waiting out their debounce, and saves on the wire. Submit flushes both, so it never
+  // races the last answer (the server checks completeness against what is saved).
+  const pendingSaves = useRef<Map<string, () => Promise<void>>>(new Map())
+  const inflight = useRef<Set<Promise<void>>>(new Set())
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // Template defaults shown on open but not yet written: writing them makes the viewer a
+  // contributor (response_history), which on a separate-verifier template bars them from
+  // verifying, so they are written only with the person's first real edit or at Submit.
+  const deferredDefaults = useRef<Array<{ sectionId: string; fieldId: string; patch: Partial<InspectionResponse> }>>([])
+
+  const startSave = useCallback((key: string) => {
+    const run = pendingSaves.current.get(key)
+    if (!run) return
+    pendingSaves.current.delete(key)
+    const t = debouncers.current.get(key)
+    if (t) clearTimeout(t)
+    debouncers.current.delete(key)
+    const p = run().finally(() => inflight.current.delete(p))
+    inflight.current.add(p)
+  }, [])
+
+  const scheduleSave = useCallback(
     (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>) => {
+      const key = `${sectionId}:${fieldId}`
+      pendingSaves.current.set(key, async () => {
+        setSavingFields((prev) => new Set(prev).add(key))
+        try {
+          await upsertResponseAction({
+            inspectionId,
+            sectionId,
+            fieldId,
+            value: {
+              value_bool: patch.value_bool ?? null,
+              value_number: patch.value_number ?? null,
+              value_text: patch.value_text ?? null,
+              value_array: patch.value_array ?? null,
+              value_json: patch.value_json ?? null,
+              pass_state: patch.pass_state,
+              fail_reason: patch.fail_reason ?? null,
+            },
+          })
+        } catch (err) {
+          console.error('Autosave failed', err)
+          setSaveError('An answer did not save. Check your connection, then change it again.')
+        } finally {
+          setSavingFields((prev) => {
+            const n = new Set(prev)
+            n.delete(key)
+            return n
+          })
+        }
+      })
+      const existing = debouncers.current.get(key)
+      if (existing) clearTimeout(existing)
+      debouncers.current.set(key, setTimeout(() => startSave(key), 800))
+    },
+    [inspectionId, startSave],
+  )
+
+  const writeDeferredDefaults = useCallback(() => {
+    const due = deferredDefaults.current
+    deferredDefaults.current = []
+    for (const d of due) scheduleSave(d.sectionId, d.fieldId, d.patch)
+  }, [scheduleSave])
+
+  /** Writes everything still pending and waits for it. */
+  const flushSaves = useCallback(async () => {
+    writeDeferredDefaults()
+    for (const key of [...pendingSaves.current.keys()]) startSave(key)
+    await Promise.all([...inflight.current])
+  }, [startSave, writeDeferredDefaults])
+
+  const updateResponse = useCallback(
+    (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>, persist = true) => {
       setResponses((prev) => {
         const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
         if (idx >= 0) {
@@ -105,50 +183,22 @@ export default function CaptureForm({
       })
 
       if (isPreview) return
-
-      const key = `${sectionId}:${fieldId}`
-      const existing = debouncers.current.get(key)
-      if (existing) clearTimeout(existing)
-
-      debouncers.current.set(
-        key,
-        setTimeout(async () => {
-          setSavingFields((prev) => new Set(prev).add(key))
-          try {
-            await upsertResponseAction({
-              inspectionId,
-              sectionId,
-              fieldId,
-              value: {
-                value_bool: patch.value_bool ?? null,
-                value_number: patch.value_number ?? null,
-                value_text: patch.value_text ?? null,
-                value_array: patch.value_array ?? null,
-                value_json: patch.value_json ?? null,
-                pass_state: patch.pass_state,
-                fail_reason: patch.fail_reason ?? null,
-              },
-            })
-          } catch (err) {
-            console.error('Autosave failed', err)
-          } finally {
-            setSavingFields((prev) => {
-              const n = new Set(prev)
-              n.delete(key)
-              return n
-            })
-          }
-        }, 800),
-      )
+      if (!persist) {
+        deferredDefaults.current.push({ sectionId, fieldId, patch })
+        return
+      }
+      writeDeferredDefaults()
+      scheduleSave(sectionId, fieldId, patch)
     },
-    [inspectionId, isPreview],
+    [isPreview, scheduleSave, writeDeferredDefaults],
   )
 
-  // Seed template default_value into responses once on mount, so a field's
-  // default is both shown AND persisted to the DB (the fill widgets only show
-  // defaults; without this, an untouched default never lands in inspections.
-  // responses). Repeating-group sub-fields are seeded per entry by their own
-  // widgets, not here. Runs once; skipped in read-only/preview.
+  // Seed template default_value into responses once on mount, so a field's default is shown and
+  // counted, and later persisted to the DB (the fill widgets only show defaults; without this an
+  // untouched default never lands in inspections.responses). It is written with the person's first
+  // real edit or at Submit, never merely by opening the page (see deferredDefaults).
+  // Repeating-group sub-fields are seeded per entry by their own widgets, not here.
+  // Runs once; skipped in read-only/preview.
   const seededDefaultsRef = useRef(false)
   useEffect(() => {
     if (seededDefaultsRef.current) return
@@ -161,9 +211,9 @@ export default function CaptureForm({
       if (exists) return
       if (f.type === 'number') {
         if (typeof f.default_value !== 'number') return
-        updateResponse(sectionId, f.field_id, { value_number: f.default_value })
+        updateResponse(sectionId, f.field_id, { value_number: f.default_value }, false)
       } else {
-        updateResponse(sectionId, f.field_id, { value_text: String(f.default_value) })
+        updateResponse(sectionId, f.field_id, { value_text: String(f.default_value) }, false)
       }
     }
     for (const s of template.sections) {
@@ -195,6 +245,7 @@ export default function CaptureForm({
     setSubmitting(true)
     setSubmitError(null)
     try {
+      await flushSaves()
       const res = await submitInspectionAction(inspectionId, projectId)
       if (!res.ok) {
         setSubmitError(res.error)
@@ -298,8 +349,8 @@ export default function CaptureForm({
                       response={response}
                       inspectionId={inspectionId}
                       sectionId={section.section_id}
-                      readOnly={readOnly && !isVerifier}
-                      verifierFlipMode={isVerifier}
+                      readOnly={readOnly && !canFlip}
+                      verifierFlipMode={canFlip}
                       onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                       allResponses={responses}
                       onUpsert={(fid, patch) => updateResponse(section.section_id, fid, patch)}
@@ -356,8 +407,8 @@ export default function CaptureForm({
                             response={response}
                             inspectionId={inspectionId}
                             sectionId={section.section_id}
-                            readOnly={readOnly && !isVerifier}
-                            verifierFlipMode={isVerifier}
+                            readOnly={readOnly && !canFlip}
+                            verifierFlipMode={canFlip}
                             onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                           />
                           {savingFields.has(key) && (
@@ -412,7 +463,7 @@ export default function CaptureForm({
           </CardBody>
         </Card>
 
-        {!isPreview && !isCertifiedOrAbandoned && !isVerifier && (
+        {!isPreview && !isCertifiedOrAbandoned && !isVerifier && !readOnlyProp && (
           <Button
             onClick={onSubmit}
             disabled={status === 'awaiting_verification' || submitting}
@@ -426,6 +477,11 @@ export default function CaptureForm({
                   ? 'Tap again to submit'
                   : 'Submit for verification'}
           </Button>
+        )}
+        {saveError && (
+          <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--c-red)' }}>
+            {saveError}
+          </p>
         )}
         {submitError && (
           <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--c-red)' }}>

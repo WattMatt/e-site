@@ -186,9 +186,9 @@ export default async function DashboardPage() {
           {stats.openSnags > 0 && <div className="kpi-meta">Needs attention</div>}
         </Link>
 
-        <div className={`kpi-card ${awaiting.length > 0 ? 'kpi-warning' : ''}`}>
+        <div className={`kpi-card ${inspections.counts.awaiting > 0 ? 'kpi-warning' : ''}`}>
           <div className="kpi-label">Awaiting Verification</div>
-          <div className="kpi-value">{awaiting.length}</div>
+          <div className="kpi-value">{inspections.counts.awaiting}</div>
           {awaitingMine > 0 && <div className="kpi-meta">{awaitingMine} waiting on you</div>}
         </div>
 

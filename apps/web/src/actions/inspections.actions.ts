@@ -25,7 +25,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { redirect } from 'next/navigation'
+import { redirect, unstable_rethrow } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
@@ -270,6 +270,8 @@ export interface CreateInspectionInput {
 /** A refusal the person can read. Next.js replaces a thrown server-action message in production. */
 type ActionResult<T> = { ok: true; value: T } | { ok: false; error: string }
 function refused(e: unknown): { ok: false; error: string } {
+  // requireFeature / the role gates redirect (paywall, login) by throwing; let that through.
+  unstable_rethrow(e)
   const message = (e as { message?: unknown })?.message
   return { ok: false, error: typeof message === 'string' && message ? message : 'Something went wrong. Reload and try again.' }
 }
@@ -590,6 +592,7 @@ export async function submitInspectionAction(
     await submitInspection(inspectionId, projectId)
     return { ok: true }
   } catch (e) {
+    unstable_rethrow(e)
     const message = (e as { message?: unknown })?.message
     return { ok: false, error: typeof message === 'string' && message ? message : 'Submitting failed. Reload and try again.' }
   }
