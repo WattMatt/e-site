@@ -29,6 +29,7 @@
 -- @verify:begin
 -- function: inspections.template_requires_separate_verifier(uuid)
 -- function: inspections.enforce_separate_verifier()
+-- function: inspections.user_can_write_responses(uuid)
 -- trigger: trg_inspections_verifier_separation ON inspections.inspections
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%template_requires_separate_verifier%')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%pm.is_active%')

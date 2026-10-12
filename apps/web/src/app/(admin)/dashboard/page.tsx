@@ -7,12 +7,14 @@ import {
   getAwaitingVerification,
   getReInspectRequired,
   getStaleDraftInspections,
+  getInspectionOverview,
   SLA_DEFAULTS,
   ORG_WRITE_ROLES,
   type OrgRole,
 } from '@esite/shared'
 import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
+import InspectionsOverviewPanel from '@/components/inspections/InspectionsOverviewPanel'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag, Clock, ClipboardCheck, MessageSquareWarning, RotateCcw, FileEdit } from 'lucide-react'
@@ -34,7 +36,7 @@ export default async function DashboardPage() {
   const canCreateProject = ORG_WRITE_ROLES.includes((membership?.role ?? '') as OrgRole)
   const orgIds = orgId ? [orgId] : []
 
-  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, awaiting, reinspect, staleDrafts] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, awaiting, reinspect, staleDrafts, inspections] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0 }),
@@ -109,7 +111,9 @@ export default async function DashboardPage() {
     getAwaitingVerification(supabase as any, orgIds),
     getReInspectRequired(supabase as any, orgIds),
     getStaleDraftInspections(supabase as any, orgIds),
+    getInspectionOverview(supabase as any, { orgIds }, user?.id ?? null),
   ])
+  const awaitingMine = inspections.toVerify
 
   const activeOrders = ordersCountResult.count ?? 0
   const deadlines = deadlinesResult.count ?? 0
@@ -185,6 +189,7 @@ export default async function DashboardPage() {
         <div className={`kpi-card ${awaiting.length > 0 ? 'kpi-warning' : ''}`}>
           <div className="kpi-label">Awaiting Verification</div>
           <div className="kpi-value">{awaiting.length}</div>
+          {awaitingMine > 0 && <div className="kpi-meta">{awaitingMine} waiting on you</div>}
         </div>
 
         {isMarketplaceEnabled() && (
@@ -412,6 +417,13 @@ export default async function DashboardPage() {
               )}
             </Link>
           </div>
+        </div>
+      )}
+
+      {/* Inspections in every state, and what is waiting on the signed-in person */}
+      {inspections.counts.open + inspections.counts.awaiting + inspections.counts.sentBack + inspections.counts.certified > 0 && (
+        <div className="animate-fadeup animate-fadeup-2">
+          <InspectionsOverviewPanel overview={inspections} />
         </div>
       )}
 
