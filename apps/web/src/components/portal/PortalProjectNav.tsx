@@ -22,7 +22,7 @@ const TABS = [
   { slug: 'floor-plans',       label: 'Floor Plans' },
   { slug: 'handover',          label: 'Handover' },
   { slug: 'tenant-schedule',   label: 'Tenant Schedule' },
-  { slug: 'status-plans',      label: 'Status Plans' },
+  { slug: 'tenant-plans',      label: 'Tenant plans' },
   { slug: 'proposals',         label: 'Proposals' },
 ] as const
 
