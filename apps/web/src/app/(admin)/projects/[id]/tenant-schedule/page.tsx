@@ -17,6 +17,8 @@ import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { listProjectReportsAction } from '@/actions/project-reports.actions'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 import { loadOnPlanLinks } from '@/lib/status-plans/on-plan-links'
+import { loadTenantPlanCards } from '@/lib/status-plans/plan-cards'
+import { TenantPlansSection } from './_components/TenantPlansSection'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -35,6 +37,8 @@ export default async function TenantSchedulePage({ params }: Props) {
   if (!project) notFound()
   // Started now, awaited with the other reads' tail: loadOnPlanLinks never rejects.
   const onPlanPromise = loadOnPlanLinks(supabase, projectId)
+  // Started now as well; loadTenantPlanCards never rejects.
+  const planCardsPromise = loadTenantPlanCards(supabase, projectId)
 
   const orgId = project.organisation_id as string
   // opening_date is added by migration 00093; pre-apply select('*') simply omits it.
@@ -268,6 +272,7 @@ export default async function TenantSchedulePage({ params }: Props) {
   // Which status plan shows each shop (best-effort: {} on any error, so the
   // schedule never fails because of a plan).
   const onPlanByNode = await onPlanPromise
+  const planCards = await planCardsPromise
 
   return (
     <div className="animate-fadeup">
@@ -314,6 +319,9 @@ export default async function TenantSchedulePage({ params }: Props) {
           </p>
         )}
       </div>
+
+      {/* Tenant plans: the floor plan and the line diagram (spec 2026-10-12) */}
+      <TenantPlansSection projectId={projectId} cards={planCards} canWrite={canWrite} />
 
       {/* Fetch error */}
       {loadError && (
