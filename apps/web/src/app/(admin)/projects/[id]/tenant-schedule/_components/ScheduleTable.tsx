@@ -2,7 +2,7 @@
 
 import { useState, Fragment } from 'react'
 import Link from 'next/link'
-import { statusPlanHref } from '@/lib/status-plans/plan-urls'
+import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
 import type { OnPlanLink } from '@/lib/status-plans/on-plan-links'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -42,7 +42,7 @@ interface Props {
   legendHeaderByNode?: Record<string, LegendHeader>
   /** True for viewers without a write role — hides every mutating control. */
   readOnly?: boolean
-  /** node_id → the tenant-layout status plan showing this shop (status plans slice 2). */
+  /** node_id → where this shop sits on the tenant floor plan (tenant plans). */
   onPlanByNode?: Record<string, OnPlanLink>
 }
 
@@ -418,8 +418,8 @@ export function ScheduleTable({
                           </button>
                           {onPlanByNode[node.id] && (
                             <Link
-                              href={statusPlanHref(projectId, onPlanByNode[node.id]!.planId, onPlanByNode[node.id]!.shapeId)}
-                              title={`Shown on ${onPlanByNode[node.id]!.planName}`}
+                              href={tenantPlanHref(projectId, 'tenant_layout', { sheet: onPlanByNode[node.id]!.sheetId, shape: onPlanByNode[node.id]!.shapeId })}
+                              title={`Shown on the floor plan, ${onPlanByNode[node.id]!.sheetLabel}`}
                               style={{
                                 border: '1px solid var(--c-border)',
                                 borderRadius: 5,
