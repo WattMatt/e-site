@@ -140,6 +140,8 @@ function makeUpdateClient({
   role,
   orgRole = role,
   previousAssignee,
+  previousVerifier = 'u-verifier',
+  status = 'in_progress',
   updateError = null,
 }: {
   /** The caller's EFFECTIVE project role (user_effective_project_role). */
@@ -148,6 +150,8 @@ function makeUpdateClient({
   orgRole?: string
   previousAssignee: string | null
   updateError?: { message: string } | null
+  previousVerifier?: string | null
+  status?: string
 }) {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'caller-id' } } }) },
@@ -158,7 +162,8 @@ function makeUpdateClient({
     // schema('inspections').from('inspections') → select (current) + update
     schema: () => ({
       from: () => ({
-        select: () => qb({ data: { assigned_to_id: previousAssignee }, error: null }),
+        select: () =>
+          qb({ data: { assigned_to_id: previousAssignee, verifier_id: previousVerifier, status, target_label: 'MINISUB 1' }, error: null }),
         update: () => qb({ error: updateError }),
       }),
     }),
@@ -177,9 +182,9 @@ describe('updateInspectionAssignmentAction', () => {
     createClientMock.mockResolvedValue(makeUpdateClient({ role: 'contractor', previousAssignee: null }))
     requireFeatureMock.mockResolvedValue(undefined)
 
-    await expect(
-      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' }),
-    ).rejects.toThrow(/Forbidden/)
+    const res = await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' })
+    expect(res.ok).toBe(false)
+    expect(!res.ok && res.error).toMatch(/Forbidden/)
   })
 
   it('admits a member promoted to project_manager on the project, whatever their org role', async () => {
@@ -228,8 +233,30 @@ describe('updateInspectionAssignmentAction', () => {
     )
     requireFeatureMock.mockResolvedValue(undefined)
 
-    await expect(
-      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' }),
-    ).rejects.toThrow('boom')
+    expect(await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })).toEqual({ ok: false, error: 'boom' })
+  })
+
+  it('notifies a verifier swapped in while the inspection is already waiting on them', async () => {
+    createClientMock.mockResolvedValue(
+      makeUpdateClient({ role: 'admin', previousAssignee: 'u-a', previousVerifier: 'u-old-v', status: 'awaiting_verification' }),
+    )
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    expect(await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-a' })).toEqual({ ok: true, value: undefined })
+    expect(dispatchNotificationMock).toHaveBeenCalledTimes(1)
+    expect(dispatchNotificationMock.mock.calls[0][0]).toMatchObject({
+      userIds: ['u-verifier'],
+      type: 'inspection_awaiting_verification',
+    })
+  })
+
+  it('does not notify a new verifier before the inspection has been submitted', async () => {
+    createClientMock.mockResolvedValue(
+      makeUpdateClient({ role: 'admin', previousAssignee: 'u-a', previousVerifier: 'u-old-v', status: 'in_progress' }),
+    )
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-a' })
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
   })
 })

@@ -49,11 +49,12 @@ function makeClient(opts: {
   responses: Array<{ section_id: string; field_id: string; value_bool: boolean }>
   blocker?: string | null
   issued?: { coc_number: string } | null
+  assignee?: string | null
 }) {
   const update = vi.fn(() => qb({ data: opts.issued === undefined ? { coc_number: 'INS-KW-2026-0001' } : opts.issued, error: null }))
   const rpc = vi.fn(() => Promise.resolve({ data: opts.blocker ?? null, error: null }))
   const tables: Record<string, unknown> = {
-    inspections: { data: { id: 'i-1', status: 'awaiting_verification', verifier_id: 'v-1', organisation_id: 'o-1', template_id: 't-1' }, error: null },
+    inspections: { data: { id: 'i-1', status: 'awaiting_verification', verifier_id: 'v-1', organisation_id: 'o-1', template_id: 't-1', assigned_to_id: opts.assignee ?? null }, error: null },
     templates: { data: { deliverable_type: opts.deliverable ?? 'inspection_only', schema_json: TEMPLATE }, error: null },
     responses: { data: opts.responses, error: null },
     photos: { data: [], error: null },
@@ -159,5 +160,20 @@ describe('sendBackForReinspectionAction', () => {
       error: 'Re-inspection notes are required',
     })
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('tells the assigned inspector, even when the only contributor was the verifier', async () => {
+    const { client } = makeClient({ responses: [], assignee: 'a-1' })
+    createClientMock.mockResolvedValue(client)
+
+    expect(await sendBackForReinspectionAction({ inspectionId: 'i-1', projectId: 'p-1', notes: 'Relabel the CT' })).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(dispatchNotificationMock).toHaveBeenCalledTimes(1)
+    expect(dispatchNotificationMock.mock.calls[0][0]).toMatchObject({
+      userIds: ['a-1'],
+      type: 'inspection_re_inspect_required',
+    })
   })
 })

@@ -9,3 +9,4 @@ export {
   buildRepeatingGroupKey,
   listRepeatingGroupEntryIndices,
 } from './engine';
+export { requiresSeparateVerifier } from './verification';

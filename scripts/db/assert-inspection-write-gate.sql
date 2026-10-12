@@ -108,8 +108,14 @@ RESET ROLE;
 SELECT set_config('request.jwt.claims', '', true);
 UPDATE projects.project_members SET role = 'contractor'
  WHERE project_id = current_setting('x.kw')::uuid AND user_id = current_setting('x.c')::uuid;
-UPDATE inspections.inspections SET status = 'awaiting_verification', verifier_id = current_setting('x.c')::uuid
- WHERE id = current_setting('x.insp')::uuid;
+-- C also answered this inspection, which 00248 refuses for a separate-verifier template; this
+-- state exists only to probe the signature verifier arm on its own, so it is built with triggers off.
+DO $$ BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE inspections.inspections SET status = 'awaiting_verification', verifier_id = current_setting('x.c')::uuid
+   WHERE id = current_setting('x.insp')::uuid;
+  SET LOCAL session_replication_role = origin;
+END $$;
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('x.c'), 'role', 'authenticated')::text, true);
 SET LOCAL ROLE authenticated;
 SELECT pg_temp.probe('ver_active');

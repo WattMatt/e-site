@@ -267,7 +267,22 @@ export interface CreateInspectionInput {
   scheduledAt: string | null
 }
 
-export async function createInspectionAction(input: CreateInspectionInput): Promise<string> {
+/** A refusal the person can read. Next.js replaces a thrown server-action message in production. */
+type ActionResult<T> = { ok: true; value: T } | { ok: false; error: string }
+function refused(e: unknown): { ok: false; error: string } {
+  const message = (e as { message?: unknown })?.message
+  return { ok: false, error: typeof message === 'string' && message ? message : 'Something went wrong. Reload and try again.' }
+}
+
+export async function createInspectionAction(input: CreateInspectionInput): Promise<ActionResult<string>> {
+  try {
+    return { ok: true, value: await createInspection(input) }
+  } catch (e) {
+    return refused(e)
+  }
+}
+
+async function createInspection(input: CreateInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
   const user = await requirePmOrAbove(supabase, input.organisationId)
   await requireFeature(input.organisationId, 'inspections', supabase)
@@ -322,25 +337,39 @@ export interface UpdateInspectionAssignmentInput {
 }
 
 /**
- * Reassign an existing inspection's Inspector + Verifier. Allowed at ANY status
- * (per design 2026-06-02). PM+ only — identical gate to createInspectionAction.
- * Notifies the new Inspector only when they actually changed and aren't the actor.
+ * Reassign an existing inspection's Inspector + Verifier while it is open. PM+ only (the
+ * transition guard, 00235, decides). On a separate-verifier template the database refuses a
+ * verifier who is the inspector or has already answered (00248); that sentence is returned.
+ * Notifies the new Inspector when they changed, and a new Verifier when the inspection is
+ * already waiting on them; never the actor.
  */
 export async function updateInspectionAssignmentAction(
   input: UpdateInspectionAssignmentInput,
-): Promise<void> {
+): Promise<ActionResult<void>> {
+  try {
+    await updateInspectionAssignment(input)
+    return { ok: true, value: undefined }
+  } catch (e) {
+    return refused(e)
+  }
+}
+
+async function updateInspectionAssignment(input: UpdateInspectionAssignmentInput): Promise<void> {
   const supabase = (await createClient()) as AnyClient
   const user = await requireProjectPmOrAbove(supabase, input.projectId)
   await requireFeature(input.organisationId, 'inspections', supabase)
 
-  // Read the current assignee to decide whether a notification is warranted.
+  // Read the current assignment to decide which notifications are warranted.
   const { data: current } = await supabase
     .schema('inspections')
     .from('inspections')
-    .select('assigned_to_id')
+    .select('assigned_to_id, verifier_id, status, target_label')
     .eq('id', input.inspectionId)
     .single()
-  const previousAssignee = (current as { assigned_to_id: string | null } | null)?.assigned_to_id ?? null
+  const cur = current as
+    | { assigned_to_id: string | null; verifier_id: string | null; status: string | null; target_label: string | null }
+    | null
+  const previousAssignee = cur?.assigned_to_id ?? null
 
   const { error } = await supabase
     .schema('inspections')
@@ -360,6 +389,23 @@ export async function updateInspectionAssignmentAction(
       body: 'You are now the inspector on this inspection.',
       route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
       type: 'inspection_assigned',
+      entityType: 'inspection',
+      entityId: input.inspectionId,
+    })
+  }
+
+  // A verifier swapped in after submit would otherwise never hear that it is waiting on them.
+  if (
+    cur?.status === 'awaiting_verification' &&
+    input.verifierId !== cur.verifier_id &&
+    input.verifierId !== user.id
+  ) {
+    await dispatchNotification({
+      userIds: [input.verifierId],
+      title: 'Inspection awaiting your verification',
+      body: `"${cur.target_label ?? 'inspection'}" is ready for sign-off. You are now its verifier.`,
+      route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+      type: 'inspection_awaiting_verification',
       entityType: 'inspection',
       entityId: input.inspectionId,
     })

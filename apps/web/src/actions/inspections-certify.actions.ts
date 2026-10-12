@@ -249,7 +249,7 @@ async function sendBackForReinspection(input: SendBackInput): Promise<void> {
   const { data: insp } = await supabase
     .schema('inspections')
     .from('inspections')
-    .select('verifier_id, organisation_id')
+    .select('verifier_id, organisation_id, assigned_to_id')
     .eq('id', input.inspectionId)
     .single()
   if (!insp || insp.verifier_id !== user.id) {
@@ -265,11 +265,14 @@ async function sendBackForReinspection(input: SendBackInput): Promise<void> {
     .eq('status', 'awaiting_verification')
   if (error) throw error
 
-  // Notify all contributors that the inspection needs more work, with the
-  // verifier's notes. Verifier-self excluded (they wrote the notes).
+  // Notify the assigned inspector and every contributor that the inspection needs more work, with
+  // the verifier's notes. Verifier-self excluded (they wrote the notes). The assignee is named
+  // explicitly: on ZZ status-guard test the generator was sent back while its only contributor
+  // was the verifier, so the inspector it was assigned to heard nothing (2026-10-12).
   try {
     const contributors = await getInspectionContributors(supabase, input.inspectionId)
-    const recipients = contributors.filter((id) => id !== user.id)
+    const assignee = (insp as { assigned_to_id?: string | null }).assigned_to_id ?? null
+    const recipients = [...new Set([...(assignee ? [assignee] : []), ...contributors])].filter((id) => id !== user.id)
     if (recipients.length > 0) {
       await dispatchNotification({
         userIds: recipients,

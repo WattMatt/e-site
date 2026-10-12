@@ -8,7 +8,8 @@ import CaptureForm from './CaptureForm'
 import InspectionActions from './InspectionActions'
 import AssignmentEditor from './AssignmentEditor'
 import type { CapturedSignature } from './fields/photo-tally'
-import type { Template, Response as InspectionResponse } from '@esite/shared'
+import StatusBanner from './StatusBanner'
+import { requiresSeparateVerifier, type Template, type Response as InspectionResponse } from '@esite/shared'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Inspection' }
@@ -38,7 +39,7 @@ export default async function CapturePage({ params }: Props) {
     .schema('inspections')
     .from('inspections')
     .select(
-      'id, project_id, organisation_id, template_id, target_label, target_location, status, verifier_id, assigned_to_id, coc_number, scheduled_at',
+      'id, project_id, organisation_id, template_id, target_label, target_location, status, verifier_id, assigned_to_id, coc_number, scheduled_at, completed_at, certified_at, reinspection_notes, abandoned_reason',
     )
     .eq('id', inspectionId)
     .single()
@@ -103,6 +104,18 @@ export default async function CapturePage({ params }: Props) {
     return p ? p.full_name ?? p.email ?? uid.slice(0, 8) : uid.slice(0, 8)
   }
   const assigneeName = nameFrom(inspection.assigned_to_id)
+
+  // Who has entered answers: on a separate-verifier template none of them may verify (00248).
+  // Read with the service client because response_history is not readable to every member; the
+  // RLS-gated inspection read above already proves access.
+  const { data: historyRows } = await service
+    .schema('inspections')
+    .from('response_history')
+    .select('responded_by')
+    .eq('inspection_id', inspectionId)
+  const contributorIds = [
+    ...new Set(((historyRows ?? []) as Array<{ responded_by: string | null }>).map((h) => h.responded_by).filter((v): v is string => !!v)),
+  ]
   const verifierName = nameFrom(inspection.verifier_id)
 
   // The user's EFFECTIVE role on this project (a member promoted to project_manager counts), which
@@ -118,6 +131,12 @@ export default async function CapturePage({ params }: Props) {
   const photos = (photosRaw ?? []) as { section_id: string; field_id: string }[]
   const signatures = ((signaturesRaw ?? []) as CapturedSignature[]).filter((x) => x.section_id && x.field_id)
   const templateJson = template?.schema_json as Template | undefined
+  const separateVerifier = requiresSeparateVerifier(
+    template?.deliverable_type,
+    (template?.schema_json as { requires_separate_verifier?: unknown } | undefined)?.requires_separate_verifier,
+  )
+  const isOpen = !['certified', 'abandoned'].includes(inspection.status)
+  const isVerifier = !!user && inspection.verifier_id === user.id
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1280 }}>
@@ -173,9 +192,26 @@ export default async function CapturePage({ params }: Props) {
           assigneeName={assigneeName}
           verifierName={verifierName}
           members={members}
-          canEdit={canEdit}
+          canEdit={canEdit && isOpen}
+          separateVerifier={separateVerifier}
+          contributorIds={contributorIds}
         />
       </div>
+
+      <StatusBanner
+        status={inspection.status}
+        assigneeName={assigneeName}
+        verifierName={verifierName}
+        isVerifier={isVerifier}
+        canReassign={canEdit && isOpen}
+        separateVerifier={separateVerifier}
+        verifierHasAnswered={!!inspection.verifier_id && contributorIds.includes(inspection.verifier_id)}
+        completedAt={inspection.completed_at ?? null}
+        certifiedAt={inspection.certified_at ?? null}
+        cocNumber={inspection.coc_number ?? null}
+        reinspectionNotes={inspection.reinspection_notes ?? null}
+        abandonedReason={inspection.abandoned_reason ?? null}
+      />
 
       {!templateJson ? (
         <div
@@ -202,7 +238,9 @@ export default async function CapturePage({ params }: Props) {
           verifierId={inspection.verifier_id}
           currentUserId={user?.id ?? null}
           mode="capture"
-          readOnly={false}
+          // The verifier of a separate-verifier inspection checks it; the database refuses their
+          // answers and photos (00248), so the form does not offer them.
+          readOnly={isVerifier && separateVerifier}
         />
       )}
 
