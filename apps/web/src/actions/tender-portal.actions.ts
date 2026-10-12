@@ -37,7 +37,7 @@ import {
   returnAccessLink,
   sendTenderEmail,
 } from '@/lib/tender/access'
-import { validateProfile, type ProfileInput } from '@/lib/tender/profile'
+import { normaliseCidbGrade, validateProfile, type ProfileInput } from '@/lib/tender/profile'
 
 type Result<T> = { data: T } | { error: string }
 
@@ -456,7 +456,7 @@ export async function saveProfileAction(tenderId: string, p: ProfileInput): Prom
       company_name: p.companyName.trim(),
       registration_number: p.registrationNumber.trim(),
       vat_number: p.vatNumber.trim() || null,
-      cidb_grade: p.cidbGrade.trim().toUpperCase(),
+      cidb_grade: normaliseCidbGrade(p.cidbGrade),
       bbbee_level: p.bbbeeLevel.trim().toLowerCase(),
       contact_name: p.contactName.trim(),
       phone: p.phone.trim(),

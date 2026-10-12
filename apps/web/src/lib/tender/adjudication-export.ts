@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { Adjudication, AdjCompliance } from './adjudication'
+import { cidbLabel } from './profile'
 
 const MONEY = '# ##0.00'
 const FILL = {
@@ -74,7 +75,7 @@ export async function buildAdjudicationWorkbook(
     const p = meta.profiles?.[t.participantId] ?? null
     const r = s.addRow([
       t.rank, label[t.participantId], t.submittedAt ? new Date(t.submittedAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '',
-      t.total, v.vat, v.incl, t.vsEstimatePct ?? '', safeText(p?.cidb_grade ?? ''), safeText(p?.bbbee_level ?? ''),
+      t.total, v.vat, v.incl, t.vsEstimatePct ?? '', safeText(cidbLabel(p?.cidb_grade)), safeText(p?.bbbee_level ?? ''),
       ...a.bills.map((b) => t.byBill[b] ?? 0),
     ])
     moneyCols.forEach((c) => (r.getCell(c).numFmt = MONEY))

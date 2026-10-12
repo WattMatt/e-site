@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { loadAdjudication } from '@/lib/tender/load-adjudication'
 import { formatRand } from '../../_components/format'
 import { AdjudicationActions } from '../../_components/AdjudicationActions'
+import { cidbLabel } from '@/lib/tender/profile'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,7 +63,7 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
                     <tr key={t.participantId}>
                       <td>{t.rank}</td>
                       <td>{t.company}</td>
-                      <td>{profiles[t.participantId]?.cidb_grade ?? '—'}</td>
+                      <td>{cidbLabel(profiles[t.participantId]?.cidb_grade) || '—'}</td>
                       <td>{profiles[t.participantId]?.bbbee_level ?? '—'}</td>
                       <td style={{ textAlign: 'right' }}>{formatRand(t.total)}</td>
                       <td style={{ textAlign: 'right' }}>{t.vsEstimatePct == null ? '—' : `${t.vsEstimatePct > 0 ? '+' : ''}${t.vsEstimatePct} %`}</td>

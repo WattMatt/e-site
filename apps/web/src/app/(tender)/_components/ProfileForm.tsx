@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { saveProfileAction, type ParticipantProfile } from '@/actions/tender-portal.actions'
-import { BBBEE_LEVELS, validateProfile, type ProfileInput } from '@/lib/tender/profile'
+import { BBBEE_LEVELS, CIDB_NOT_APPLICABLE, validateProfile, type ProfileInput } from '@/lib/tender/profile'
 
 const LABELS: Record<keyof ProfileInput, string> = {
   companyName: 'Registered company name',
@@ -58,6 +58,25 @@ export function ProfileForm({ tenderId, initial }: { tenderId: string; initial: 
           <option value="">Choose…</option>
           {BBBEE_LEVELS.map((l) => <option key={l} value={l}>{l === 'non-compliant' ? 'Non-compliant' : `Level ${l}`}</option>)}
         </select>
+      ) : k === 'cidbGrade' ? (
+        <>
+          <input
+            value={v.cidbGrade === CIDB_NOT_APPLICABLE ? '' : v.cidbGrade}
+            disabled={v.cidbGrade === CIDB_NOT_APPLICABLE}
+            placeholder={v.cidbGrade === CIDB_NOT_APPLICABLE ? 'Not applicable' : 'e.g. 7EP, or 7EP, 6CE'}
+            onChange={(e) => setV({ ...v, cidbGrade: e.target.value })}
+            aria-invalid={!!errors[k]}
+          />
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              id="cidb-not-applicable"
+              checked={v.cidbGrade === CIDB_NOT_APPLICABLE}
+              onChange={(e) => setV({ ...v, cidbGrade: e.target.checked ? CIDB_NOT_APPLICABLE : '' })}
+            />
+            <label htmlFor="cidb-not-applicable">Not applicable (no CIDB grading)</label>
+          </span>
+        </>
       ) : (
         <input value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} aria-invalid={!!errors[k]} />
       )}
