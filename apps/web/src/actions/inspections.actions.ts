@@ -31,6 +31,7 @@ import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { dispatchNotification } from '@/lib/notifications'
 import { afterWebSubmitOfWhatsAppForm } from '@/lib/whatsapp-forms/after-submit'
+import { submitBlocker } from '@/lib/inspections/submit-check'
 import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -531,11 +532,29 @@ export async function deleteRepeatingGroupEntryAction(input: {
  * Move an inspection from in_progress (or re-inspect_required) to
  * awaiting_verification and notify the assigned verifier.
  */
+/**
+ * Returns { ok, error } rather than throwing: Next.js replaces a thrown server-action message with
+ * a generic sentence in production, so a refusal would never reach the person.
+ */
 export async function submitInspectionAction(
   inspectionId: string,
   projectId: string,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await submitInspection(inspectionId, projectId)
+    return { ok: true }
+  } catch (e) {
+    const message = (e as { message?: unknown })?.message
+    return { ok: false, error: typeof message === 'string' && message ? message : 'Submitting failed. Reload and try again.' }
+  }
+}
+
+async function submitInspection(inspectionId: string, projectId: string): Promise<void> {
   const supabase = (await createClient()) as AnyClient
+
+  // The browser runs the same completeness check; this one cannot be skipped by a stale tab.
+  const blocker = await submitBlocker(supabase, inspectionId)
+  if (blocker) throw new Error(blocker)
 
   const { data: moved, error } = await supabase
     .schema('inspections')

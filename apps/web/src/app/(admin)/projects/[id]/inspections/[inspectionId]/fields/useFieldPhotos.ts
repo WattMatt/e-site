@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { usePhotoTally } from './photo-tally'
 
 export interface FieldPhoto {
   id: string
@@ -94,6 +95,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
   const supabase = createClient()
   // Capture routes live under /projects/[id]/… — the param is the project id.
   const params = useParams<{ id?: string }>()
+  const tally = usePhotoTally()
   const [photos, setPhotos] = useState<FieldPhoto[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -188,13 +190,14 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
           ...prev,
           { id: (row as { id: string }).id, storage_path: path, signed_url: sig?.signedUrl ?? undefined },
         ])
+        tally.added(sectionId, fieldId)
       } catch (e) {
         setError((e as Error).message)
       } finally {
         setUploading(false)
       }
     },
-    [supabase, inspectionId, sectionId, fieldId, params],
+    [supabase, inspectionId, sectionId, fieldId, params, tally],
   )
 
   const remove = useCallback(
@@ -230,8 +233,10 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
               'Delete not permitted — only the uploader or a project manager can remove a photo, and only while the inspection is editable.',
             )
           }
+          tally.removed(sectionId, fieldId)
           return // already gone server-side; keep the optimistic removal
         }
+        tally.removed(sectionId, fieldId)
         // Row is gone; the file delete is best-effort (an orphaned object is
         // invisible — no photos row points at it).
         if (target) {
@@ -245,7 +250,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
         setError((e as Error).message)
       }
     },
-    [photos, supabase],
+    [photos, supabase, sectionId, fieldId, tally],
   )
 
   return { photos, uploading, error, upload, remove }

@@ -119,4 +119,13 @@ export interface EvaluationResult {
   missingRequired: { sectionId: string; fieldId: string }[];
   visibleFieldCount: number;
   answeredFieldCount: number;
+  /** Progress per section_id, counted by the same rules as the totals. Every template section has an entry. */
+  sectionStats: Record<string, SectionProgress>;
+}
+
+export interface SectionProgress {
+  answered: number;
+  total: number;
+  /** Required fields (or required photo/signature counts) still missing in this section. */
+  missing: number;
 }

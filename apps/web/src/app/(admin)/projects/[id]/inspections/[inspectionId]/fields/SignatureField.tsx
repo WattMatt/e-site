@@ -3,9 +3,12 @@
 import type { RendererProps } from '../FieldRenderer'
 import { useState } from 'react'
 import SignatureModal from '../SignatureModal'
+import { usePhotoTally } from './photo-tally'
 
 export default function SignatureField({ field, sectionId, inspectionId, readOnly }: RendererProps) {
   const [open, setOpen] = useState(false)
+  const { signatures, signed } = usePhotoTally()
+  const existing = signatures.find((x) => x.section_id === sectionId && x.field_id === field.field_id)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)' }}>
@@ -14,6 +17,12 @@ export default function SignatureField({ field, sectionId, inspectionId, readOnl
       </label>
       {field.help_text && (
         <p style={{ fontSize: 11, color: 'var(--c-text-dim)', margin: 0 }}>{field.help_text}</p>
+      )}
+      {existing && (
+        <p style={{ fontSize: 12, color: 'var(--c-green, #16a34a)', margin: 0 }}>
+          Signed by {existing.signatory_name ?? 'unknown'}
+          {existing.signed_at ? ` on ${new Date(existing.signed_at).toLocaleDateString('en-ZA')}` : ''}
+        </p>
       )}
       {!readOnly && (
         <button
@@ -30,7 +39,7 @@ export default function SignatureField({ field, sectionId, inspectionId, readOnl
             alignSelf: 'flex-start',
           }}
         >
-          ✍ Sign
+          {existing ? '✍ Sign again' : '✍ Sign'}
         </button>
       )}
       {open && (
@@ -40,6 +49,9 @@ export default function SignatureField({ field, sectionId, inspectionId, readOnl
           fieldId={field.field_id}
           sectionId={sectionId}
           onClose={() => setOpen(false)}
+          onSaved={(signatoryName) =>
+            signed({ section_id: sectionId, field_id: field.field_id, signatory_name: signatoryName, signed_at: new Date().toISOString() })
+          }
         />
       )}
     </div>

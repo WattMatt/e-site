@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import CaptureForm from './CaptureForm'
 import InspectionActions from './InspectionActions'
 import AssignmentEditor from './AssignmentEditor'
+import type { CapturedSignature } from './fields/photo-tally'
 import type { Template, Response as InspectionResponse } from '@esite/shared'
 
 export const dynamic = 'force-dynamic'
@@ -44,15 +45,14 @@ export default async function CapturePage({ params }: Props) {
   if (!inspection) notFound()
 
   // Cross-schema joins via PostgREST embeds are unreliable — batch them.
-  // photos load only section_id+field_id (engine uses them for min_count enforcement).
-  // Signatures intentionally omitted: inspections.signatures has `role` not
-  // section_id/field_id — signature_required validation is enforced at certify time
-  // via separate count of signatures-by-role. Wire signature attachments once a
-  // future migration adds section_id+field_id to the signatures table.
+  // Photos and signatures load by section_id+field_id: the engine counts them as the answer to
+  // their field (section progress, required checks). Signatures were left out before, so a
+  // required signature field could never count as done and blocked Submit.
   const [
     { data: template },
     { data: responsesRaw },
     { data: photosRaw },
+    { data: signaturesRaw },
     { data: { user } },
   ] = await Promise.all([
     supabase
@@ -72,6 +72,11 @@ export default async function CapturePage({ params }: Props) {
       .schema('inspections')
       .from('photos')
       .select('section_id, field_id')
+      .eq('inspection_id', inspectionId),
+    supabase
+      .schema('inspections')
+      .from('signatures')
+      .select('section_id, field_id, signatory_name, signed_at')
       .eq('inspection_id', inspectionId),
     supabase.auth.getUser(),
   ])
@@ -111,6 +116,7 @@ export default async function CapturePage({ params }: Props) {
 
   const responses = (responsesRaw ?? []) as InspectionResponse[]
   const photos = (photosRaw ?? []) as { section_id: string; field_id: string }[]
+  const signatures = ((signaturesRaw ?? []) as CapturedSignature[]).filter((x) => x.section_id && x.field_id)
   const templateJson = template?.schema_json as Template | undefined
 
   return (
@@ -191,6 +197,7 @@ export default async function CapturePage({ params }: Props) {
           template={templateJson}
           initialResponses={responses}
           initialPhotos={photos}
+          initialSignatures={signatures}
           status={inspection.status}
           verifierId={inspection.verifier_id}
           currentUserId={user?.id ?? null}

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { evaluateInspection, isFieldVisible } from '@esite/shared'
-import type { Template, Response as InspectionResponse, Section, SubSection, Field } from '@esite/shared'
+import type { Template, Response as InspectionResponse, Field } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -11,6 +11,7 @@ import { useArmedConfirm } from '@/lib/solar/useArmedConfirm'
 import { upsertResponseAction, submitInspectionAction } from '@/actions/inspections.actions'
 import FieldRenderer from './FieldRenderer'
 import CertifyModal from './CertifyModal'
+import { PhotoTallyContext, type PhotoTally, type CapturedSignature } from './fields/photo-tally'
 
 type Mode = 'capture' | 'preview'
 
@@ -20,6 +21,7 @@ interface Props {
   template: Template
   initialResponses: InspectionResponse[]
   initialPhotos?: { section_id: string; field_id: string }[]
+  initialSignatures?: CapturedSignature[]
   status?: string
   verifierId?: string | null
   currentUserId: string | null
@@ -33,6 +35,7 @@ export default function CaptureForm({
   template,
   initialResponses,
   initialPhotos,
+  initialSignatures,
   status,
   verifierId,
   currentUserId,
@@ -40,9 +43,29 @@ export default function CaptureForm({
   readOnly: readOnlyProp,
 }: Props) {
   const [responses, setResponses] = useState<InspectionResponse[]>(initialResponses)
-  // Photos are loaded server-side (no client-side mutation surface in this commit).
-  // signature_required validation is deferred — see page.tsx comment above the query.
-  const photos = initialPhotos ?? []
+  // Loaded on the server, then kept current by every photo/file/signature field through
+  // PhotoTallyContext, so section progress and the Submit check see an upload without a reload.
+  const [photos, setPhotos] = useState<{ section_id: string; field_id: string }[]>(initialPhotos ?? [])
+  const [signatures, setSignatures] = useState<CapturedSignature[]>(initialSignatures ?? [])
+  const photoTally = useMemo<PhotoTally>(
+    () => ({
+      signatures,
+      // The upload route replaces an earlier signature on the same field, so do the same here.
+      signed: (sig) =>
+        setSignatures((prev) => [
+          ...prev.filter((x) => !(x.section_id === sig.section_id && x.field_id === sig.field_id)),
+          sig,
+        ]),
+      added: (section_id, field_id) => setPhotos((prev) => [...prev, { section_id, field_id }]),
+      removed: (section_id, field_id) =>
+        setPhotos((prev) => {
+          const i = prev.findIndex((p) => p.section_id === section_id && p.field_id === field_id)
+          return i < 0 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]
+        }),
+    }),
+    [signatures],
+  )
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string>(template.sections[0]?.section_id ?? '')
   const [savingFields, setSavingFields] = useState<Set<string>>(new Set())
   const [showCertify, setShowCertify] = useState(false)
@@ -61,36 +84,13 @@ export default function CaptureForm({
     readOnlyProp || isPreview || isCertifiedOrAbandoned || status === 'awaiting_verification'
 
   const evaluation = useMemo(
-    () => evaluateInspection(template, responses, { photos }),
-    [template, responses, photos],
+    () => evaluateInspection(template, responses, { photos, signatures }),
+    [template, responses, photos, signatures],
   )
 
-  const sectionStats = useMemo(() => {
-    const stats = new Map<string, { answered: number; total: number; missing: number }>()
-    const tally = (s: Section, f: Field, subsection: SubSection | undefined, acc: { total: number; answered: number; missing: number }) => {
-      if (f.type === 'header' || f.type === 'computed') return
-      if (!isFieldVisible(f, responses, { section: s, subsection })) return
-      acc.total++
-      const r = responses.find((rr) => rr.section_id === s.section_id && rr.field_id === f.field_id)
-      const has =
-        r &&
-        (r.value_bool != null ||
-          r.value_number != null ||
-          (r.value_text?.length ?? 0) > 0 ||
-          (r.value_array?.length ?? 0) > 0)
-      if (has) acc.answered++
-      else if (f.required) acc.missing++
-    }
-    for (const s of template.sections) {
-      const acc = { total: 0, answered: 0, missing: 0 }
-      for (const f of s.fields ?? []) tally(s, f, undefined, acc)
-      for (const ss of s.subsections ?? []) {
-        for (const f of ss.fields) tally(s, f, ss, acc)
-      }
-      stats.set(s.section_id, acc)
-    }
-    return stats
-  }, [template, responses])
+  // One count for the rail and the summary: photo, file and signature fields count as answered
+  // once uploaded (the rail used to count typed answers only, so photo sections read 0/4).
+  const sectionStats = evaluation.sectionStats
 
   const updateResponse = useCallback(
     (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>) => {
@@ -176,6 +176,9 @@ export default function CaptureForm({
   const onSubmit = async () => {
     if (evaluation.missingRequired.length > 0) {
       const first = evaluation.missingRequired[0]
+      const n = evaluation.missingRequired.length
+      const where = template.sections.find((x) => x.section_id === first.sectionId)?.title ?? first.sectionId
+      setSubmitError(`${n} required ${n === 1 ? 'item is' : 'items are'} still missing. The first is in "${where}".`)
       setActiveSection(first.sectionId)
       const el = document.getElementById(`field-${first.sectionId}-${first.fieldId}`)
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -190,8 +193,13 @@ export default function CaptureForm({
     }
     submitConfirm.disarm()
     setSubmitting(true)
+    setSubmitError(null)
     try {
-      await submitInspectionAction(inspectionId, projectId)
+      const res = await submitInspectionAction(inspectionId, projectId)
+      if (!res.ok) {
+        setSubmitError(res.error)
+        return
+      }
       router.refresh()
     } finally {
       setSubmitting(false)
@@ -208,6 +216,7 @@ export default function CaptureForm({
         : 'warning'
 
   return (
+    <PhotoTallyContext.Provider value={photoTally}>
     <div className="stack-below-lg"
       style={{
         display: 'grid',
@@ -219,7 +228,7 @@ export default function CaptureForm({
       {/* Left rail — section nav */}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, position: 'sticky', top: 16 }}>
         {template.sections.map((s) => {
-          const st = sectionStats.get(s.section_id) ?? { answered: 0, total: 0, missing: 0 }
+          const st = sectionStats[s.section_id] ?? { answered: 0, total: 0, missing: 0 }
           const isActive = activeSection === s.section_id
           return (
             <button
@@ -418,6 +427,11 @@ export default function CaptureForm({
                   : 'Submit for verification'}
           </Button>
         )}
+        {submitError && (
+          <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--c-red)' }}>
+            {submitError}
+          </p>
+        )}
 
         {isVerifier && (
           <Button onClick={() => setShowCertify(true)} style={{ width: '100%' }}>
@@ -435,5 +449,6 @@ export default function CaptureForm({
         />
       )}
     </div>
+    </PhotoTallyContext.Provider>
   )
 }

@@ -21,12 +21,15 @@ export default function SignatureModal({
   fieldId,
   sectionId,
   onClose,
+  onSaved,
 }: {
   inspectionId: string
   role: 'inspector' | 'verifier' | 'client' | 'witness'
   fieldId?: string
   sectionId?: string
   onClose: () => void
+  /** Called once the signature is stored, with the signatory's name. */
+  onSaved?: (signatoryName: string) => void
 }) {
   const ref = useRef<SignatureCanvas>(null)
   const [name, setName] = useState('')
@@ -66,6 +69,7 @@ export default function SignatureModal({
         const t = await res.text()
         throw new Error(`Save failed (HTTP ${res.status}): ${t}`)
       }
+      onSaved?.(name.trim())
       onClose()
     } catch (e) {
       setError((e as Error).message)
