@@ -125,7 +125,7 @@ describe('acceptDetectedBlocksAction', () => {
 
   it('refuses malformed input before touching the database', async () => {
     const unreadable = { ok: false, error: 'These blocks could not be read. Run detection again.' }
-    expect(await acceptDetectedBlocksAction({ planId: 'not-a-uuid', blocks: [{ points: RECT, nodeId: null, detectedTag: null }] })).toEqual(unreadable)
+    expect(await acceptDetectedBlocksAction({ sheetId: 'not-a-uuid', blocks: [{ points: RECT, nodeId: null, detectedTag: null }] })).toEqual(unreadable)
     expect(await acceptDetectedBlocksAction({ sheetId: SHEET_ID, blocks: [{ points: [0, 0, 1, 1, 2, 2], nodeId: null, detectedTag: null }] })).toEqual(unreadable)
     expect(await acceptDetectedBlocksAction({ sheetId: SHEET_ID, blocks: [] })).toEqual(unreadable)
     expect(await acceptDetectedBlocksAction({ sheetId: SHEET_ID, blocks: [{ points: RECT, nodeId: null, detectedTag: 'X'.repeat(65) }] })).toEqual(unreadable)
