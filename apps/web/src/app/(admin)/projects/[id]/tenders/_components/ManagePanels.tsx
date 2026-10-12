@@ -41,7 +41,8 @@ const Feedback = ({ msg }: { msg: Msg }) =>
 
 export function RequirementsPanel({ tenderId, requirements, editable }: { tenderId: string; requirements: RequirementRow[]; editable: boolean }) {
   const { busy, msg, run } = useRunner()
-  const [draft, setDraft] = useState({ kind: 'document' as 'document' | 'declaration', label: '', detail: '', mandatory: true })
+  const [draft, setDraft] = useState({ kind: 'document' as 'document' | 'declaration', label: '', detail: '', mandatory: true, cidbCertificate: false })
+  const mentionsCidb = (label: string) => /\bcidb\b/i.test(label)
   return (
     <Card>
       <CardHeader><span className="data-panel-title">Documents and declarations required ({requirements.length})</span></CardHeader>
@@ -49,7 +50,8 @@ export function RequirementsPanel({ tenderId, requirements, editable }: { tender
         <ul style={{ margin: 0, fontSize: 14 }}>
           {requirements.map((r) => (
             <li key={r.id}>
-              {r.kind === 'declaration' ? 'Declaration: ' : 'Document: '}{r.label}{r.mandatory ? ' (required)' : ' (optional)'}{r.detail ? ` — ${r.detail}` : ''}{' '}
+              {r.kind === 'declaration' ? 'Declaration: ' : 'Document: '}{r.label}{r.mandatory ? ' (required)' : ' (optional)'}{r.detail ? ` — ${r.detail}` : ''}
+              {r.cidb_certificate && <span style={{ fontSize: 12 }}> · CIDB certificate: not needed from bidders with no CIDB grading</span>}{' '}
               {editable && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(() => removeRequirementAction(tenderId, r.id))}>Remove</button>}
             </li>
           ))}
@@ -60,10 +62,24 @@ export function RequirementsPanel({ tenderId, requirements, editable }: { tender
               <option value="document">Document to upload</option>
               <option value="declaration">Declaration to accept</option>
             </select>
-            <input aria-label="Label" placeholder="e.g. CIDB certificate" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+            <input
+              aria-label="Label"
+              placeholder="e.g. CIDB certificate"
+              value={draft.label}
+              onChange={(e) => {
+                const label = e.target.value
+                // Naming the CIDB certificate ticks the waiver box; WM can untick it.
+                setDraft({ ...draft, label, cidbCertificate: mentionsCidb(label) && !mentionsCidb(draft.label) ? true : draft.cidbCertificate })
+              }}
+            />
             <input aria-label="Detail" placeholder="Detail (optional)" value={draft.detail} onChange={(e) => setDraft({ ...draft, detail: e.target.value })} />
             <label style={{ fontSize: 13 }}><input type="checkbox" checked={draft.mandatory} onChange={(e) => setDraft({ ...draft, mandatory: e.target.checked })} /> required</label>
-            <Button disabled={busy || !draft.label.trim()} onClick={() => run(() => addRequirementAction(tenderId, draft)).then(() => setDraft({ ...draft, label: '', detail: '' }))}>Add</Button>
+            {draft.kind === 'document' && (
+              <label style={{ fontSize: 13 }}>
+                <input type="checkbox" checked={draft.cidbCertificate} onChange={(e) => setDraft({ ...draft, cidbCertificate: e.target.checked })} /> this is the CIDB certificate (not needed from bidders with no CIDB grading)
+              </label>
+            )}
+            <Button disabled={busy || !draft.label.trim()} onClick={() => run(() => addRequirementAction(tenderId, draft)).then(() => setDraft({ ...draft, label: '', detail: '', cidbCertificate: false }))}>Add</Button>
           </div>
         ) : (
           <p style={{ fontSize: 13, margin: '8px 0 0' }}>Frozen since the tender was issued. Use an addendum for changes.</p>

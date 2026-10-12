@@ -16,6 +16,7 @@ import ExcelJS from 'exceljs'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import type { AnyClient } from '@/lib/tender/gate'
 import { checkCompliance, type ComplianceResult, type RateCellType } from '@/lib/tender/compliance'
+import { CIDB_NOT_APPLICABLE } from '@/lib/tender/profile'
 import { compareUploadedBoq, type RoundTripResult, type StoredRow } from '@/lib/tender/excel-roundtrip'
 import { parseTenderWorkbook } from '@/lib/tender/parse-tender-workbook'
 import { sanitiseWorkbookForBidder, type BidderWorkbookItem } from '@/lib/tender/bidder-workbook'
@@ -41,6 +42,7 @@ interface Ctx {
   tender: { id: string; status: string; closing_at: string | null; package: string; title: string }
   participantId: string
   profileComplete: boolean
+  noCidbGrading: boolean
 }
 
 /** The caller must be a participant of this (issued) tender, in an email-proved session. */
@@ -54,12 +56,12 @@ async function participantCtx(tenderId: string): Promise<{ ok: true; ctx: Ctx } 
   if (!tender) return { ok: false, error: 'Tender not found' }
   const { data: part } = await sb
     .from('tender_participants')
-    .select('id, profile_completed_at')
+    .select('id, profile_completed_at, cidb_grade')
     .eq('tender_id', tenderId)
     .eq('user_id', user.id)
     .maybeSingle()
   if (!part) return { ok: false, error: 'Tender not found' }
-  return { ok: true, ctx: { supabase, userId: user.id, tender, participantId: part.id, profileComplete: !!part.profile_completed_at } }
+  return { ok: true, ctx: { supabase, userId: user.id, tender, participantId: part.id, profileComplete: !!part.profile_completed_at, noCidbGrading: part.cidb_grade === CIDB_NOT_APPLICABLE } }
 }
 
 /** Every BOQ row the bidder may see, paged past PostgREST's max_rows. */
@@ -79,7 +81,9 @@ export interface PricingState {
   tender: Ctx['tender']
   items: (StoredRow & { fixed_amount: number | null; heading_path: string[]; bill_code: string })[]
   lines: Record<string, { rate: number | null; not_priced: boolean; amount: number }>
-  requirements: { id: string; kind: 'document' | 'declaration'; label: string; detail: string | null; mandatory: boolean }[]
+  requirements: { id: string; kind: 'document' | 'declaration'; label: string; detail: string | null; mandatory: boolean; cidb_certificate: boolean }[]
+  /** The bidder answered CIDB grading "Not applicable": a CIDB-certificate requirement is waived. */
+  noCidbGrading: boolean
   documents: { id: string; requirement_id: string; file_name: string; size_bytes: number; uploaded_at: string }[]
   declarations: string[]
   submission: { id: string; status: string; submitted_at: string | null; submission_count: number } | null
@@ -131,6 +135,7 @@ export async function getPricingAction(tenderId: string): Promise<Result<Pricing
     uploadedRequirementIds: documents.map((d) => d.requirement_id),
     acceptedDeclarationIds: declarations,
     profileComplete: ctx.profileComplete,
+    noCidbGrading: ctx.noCidbGrading,
     unacknowledgedAddenda: clarifications.filter((c: { kind: string; published_at: string | null; acknowledged: boolean }) => c.kind === 'addendum' && c.published_at && !c.acknowledged).map((c: { id: string; title: string }) => ({ id: c.id, title: c.title })),
     tender: ctx.tender,
     now: new Date(),
@@ -141,6 +146,7 @@ export async function getPricingAction(tenderId: string): Promise<Result<Pricing
       items: typedItems,
       lines,
       requirements,
+      noCidbGrading: ctx.noCidbGrading,
       documents,
       declarations,
       submission: sub ? { id: sub.id, status: sub.status, submitted_at: sub.submitted_at, submission_count: sub.submission_count } : null,

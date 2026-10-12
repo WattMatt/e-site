@@ -310,7 +310,10 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
                     </label>
                   ) : (
                     <div>
-                      <strong>{req.label}</strong>{req.mandatory ? ' (required)' : ' (optional)'}{req.detail ? ` — ${req.detail}` : ''}
+                      <strong>{req.label}</strong>
+                      {req.cidb_certificate && state.noCidbGrading
+                        ? ' (not needed: you answered CIDB grading "Not applicable")'
+                        : req.mandatory ? ' (required)' : ' (optional)'}{req.detail ? ` — ${req.detail}` : ''}
                       <ul style={{ margin: '4px 0' }}>
                         {docs.map((d) => (
                           <li key={d.id}>

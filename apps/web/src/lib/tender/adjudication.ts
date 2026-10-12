@@ -38,6 +38,8 @@ export interface AdjRequirement {
   kind: 'document' | 'declaration'
   label: string
   mandatory: boolean
+  /** The CIDB certificate (00247): waived for a bidder whose CIDB grading is "N/A". */
+  cidb_certificate?: boolean
 }
 
 export interface AdjCompliance {
@@ -235,7 +237,11 @@ export function adjudicate(
         byBidder[b.participantId] = { ok, detail: ok ? 'accepted' : 'not accepted' }
       } else {
         const files = c?.documents[requirement.id] ?? []
-        byBidder[b.participantId] = { ok: files.length > 0, detail: files.length ? files.join(', ') : 'missing' }
+        if (!files.length && requirement.cidb_certificate && c?.profile?.cidb_grade === 'N/A') {
+          byBidder[b.participantId] = { ok: true, detail: 'not applicable (no CIDB grading)' }
+        } else {
+          byBidder[b.participantId] = { ok: files.length > 0, detail: files.length ? files.join(', ') : 'missing' }
+        }
       }
     }
     return { requirement, byBidder }

@@ -32,6 +32,8 @@ export interface ComplianceRequirement {
   kind: 'document' | 'declaration'
   label: string
   mandatory: boolean
+  /** The CIDB certificate (00247): not required from a bidder with no CIDB grading. */
+  cidb_certificate?: boolean
 }
 
 export interface ComplianceInput {
@@ -41,6 +43,8 @@ export interface ComplianceInput {
   uploadedRequirementIds: string[]
   acceptedDeclarationIds: string[]
   profileComplete: boolean
+  /** The bidder answered CIDB grading "Not applicable". */
+  noCidbGrading?: boolean
   unacknowledgedAddenda: { id: string; title: string }[]
   tender: { status: string; closing_at: string | null }
   now: Date
@@ -130,6 +134,7 @@ export function checkCompliance(input: ComplianceInput): ComplianceResult {
 
   for (const r of input.requirements) {
     if (!r.mandatory) continue
+    if (r.kind === 'document' && r.cidb_certificate && input.noCidbGrading) continue
     if (r.kind === 'document' && !input.uploadedRequirementIds.includes(r.id)) {
       issues.push({ kind: 'document', message: `Upload: ${r.label}.`, requirementId: r.id })
     }

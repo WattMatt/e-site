@@ -47,7 +47,7 @@ export async function loadAdjudication(tenderId: string): Promise<{ ok: true; da
       sb.from('tender_participants').select('id, company_name, cidb_grade, bbbee_level, registration_number, vat_number').eq('tender_id', tenderId).order('id').range(f, t)),
     readAll<{ id: string; participant_id: string; status: string; submitted_at: string | null; declarations: string[] }>((f, t) =>
       sb.from('tender_submissions').select('id, participant_id, status, submitted_at, declarations').eq('tender_id', tenderId).order('id').range(f, t)),
-    readAll<AdjRequirement>((f, t) => sb.from('tender_requirements').select('id, kind, label, mandatory').eq('tender_id', tenderId).order('sort_order').range(f, t)),
+    readAll<AdjRequirement>((f, t) => sb.from('tender_requirements').select('id, kind, label, mandatory, cidb_certificate').eq('tender_id', tenderId).order('sort_order').range(f, t)),
     sb.from('projects').select('name').eq('id', g.tender.project_id).maybeSingle(),
   ])
   if ('error' in items) return { ok: false, error: READ_FAILED }

@@ -22,6 +22,8 @@ export interface RequirementInput {
   label: string
   detail?: string | null
   mandatory: boolean
+  /** This document is the CIDB certificate: waived for a bidder with no CIDB grading. */
+  cidbCertificate?: boolean
 }
 
 export async function addRequirementAction(tenderId: string, r: RequirementInput): Promise<Result<true>> {
@@ -38,6 +40,7 @@ export async function addRequirementAction(tenderId: string, r: RequirementInput
     label: r.label.trim().slice(0, 300),
     detail: r.detail?.trim() || null,
     mandatory: !!r.mandatory,
+    cidb_certificate: r.kind === 'document' && !!r.cidbCertificate,
     sort_order: count ?? 0,
   })
   if (error) return { error: error.message }
@@ -62,7 +65,7 @@ export async function removeRequirementAction(tenderId: string, requirementId: s
   return { data: true }
 }
 
-export interface RequirementRow { id: string; kind: string; label: string; detail: string | null; mandatory: boolean }
+export interface RequirementRow { id: string; kind: string; label: string; detail: string | null; mandatory: boolean; cidb_certificate: boolean }
 
 export interface ClarificationRow {
   id: string
@@ -95,7 +98,7 @@ export async function getTenderManagementAction(tenderId: string): Promise<Resul
   if (!g.ok) return { error: g.error }
   const sb = g.supabase.schema('projects')
   const [{ data: reqs }, { data: clar }, { data: parts }, { data: subs }, { data: acks }] = await Promise.all([
-    sb.from('tender_requirements').select('id, kind, label, detail, mandatory').eq('tender_id', tenderId).order('sort_order'),
+    sb.from('tender_requirements').select('id, kind, label, detail, mandatory, cidb_certificate').eq('tender_id', tenderId).order('sort_order'),
     sb.from('tender_clarifications').select('id, kind, title, body, answer, published_at, created_at, participant_id').eq('tender_id', tenderId).order('created_at'),
     sb.from('tender_participants').select('id, company_name, profile_completed_at').eq('tender_id', tenderId).order('created_at'),
     // Status and time only. tender_submissions carries no prices by design.

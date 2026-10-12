@@ -127,4 +127,19 @@ describe('adjudicate', () => {
     ])
     expect(r3.checklist[0].byBidder.x.detail).toBe('cidb.pdf')
   })
+
+  it('shows the CIDB certificate as not applicable for a bidder with no CIDB grading, missing for others', () => {
+    const r4 = adjudicate(
+      items,
+      {},
+      [bid('x', {}), bid('y', {})],
+      [{ id: 'r1', kind: 'document', label: 'CIDB certificate', mandatory: true, cidb_certificate: true }],
+      [
+        { participantId: 'x', documents: {}, declarations: [], profile: { cidb_grade: 'N/A', bbbee_level: '2', registration_number: null, vat_number: null } },
+        { participantId: 'y', documents: {}, declarations: [], profile: { cidb_grade: '7EP', bbbee_level: '2', registration_number: null, vat_number: null } },
+      ],
+    )
+    expect(r4.checklist[0].byBidder.x).toEqual({ ok: true, detail: 'not applicable (no CIDB grading)' })
+    expect(r4.checklist[0].byBidder.y).toEqual({ ok: false, detail: 'missing' })
+  })
 })

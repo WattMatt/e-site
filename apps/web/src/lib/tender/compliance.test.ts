@@ -79,6 +79,17 @@ describe('checkCompliance', () => {
     ])
   })
 
+  it('does not ask a bidder with no CIDB grading for the CIDB certificate, and asks everyone else', () => {
+    const i = base()
+    i.requirements[0] = { ...i.requirements[0], cidb_certificate: true }
+    i.uploadedRequirementIds = []
+    expect(checkCompliance({ ...i, noCidbGrading: true }).issues).toEqual([])
+    expect(checkCompliance({ ...i, noCidbGrading: false }).issues.map((x) => x.requirementId)).toEqual(['r1'])
+    // Only the flagged requirement is waived: another required document still blocks.
+    i.requirements[1] = { ...i.requirements[1], mandatory: true }
+    expect(checkCompliance({ ...i, noCidbGrading: true }).issues.map((x) => x.requirementId)).toEqual(['r2'])
+  })
+
   it('blocks an incomplete profile, an unacknowledged addendum and a closed tender', () => {
     const i = base()
     i.profileComplete = false
