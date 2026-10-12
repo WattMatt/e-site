@@ -27,6 +27,7 @@ export default function CertifyModal({
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const onConfirm = async () => {
     setError(null)
@@ -44,6 +45,13 @@ export default function CertifyModal({
           : await sendBackForReinspectionAction({ inspectionId, projectId, notes })
       if (!result.ok) {
         setError(result.error)
+        return
+      }
+      // Certified, but the report did not generate: say so and where to fix it, rather than
+      // closing as if all went well (it used to be logged on the server only).
+      if (result.value && typeof result.value === 'object' && 'reportIssued' in result.value && !result.value.reportIssued) {
+        setNotice(`Certified as ${result.value.number}, but the report could not be generated. Open "View certificate" and press Regenerate.`)
+        router.refresh()
         return
       }
       onClose()
@@ -161,6 +169,11 @@ export default function CertifyModal({
           />
         )}
 
+        {notice && (
+          <div role="status" style={{ fontSize: 12, color: 'var(--c-amber)', border: '1px solid var(--c-amber)', borderRadius: 6, padding: 8 }}>
+            {notice}
+          </div>
+        )}
         {error && (
           <div
             style={{

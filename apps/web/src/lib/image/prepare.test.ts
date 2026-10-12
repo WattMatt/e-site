@@ -48,8 +48,7 @@ describe('prepareImageForUpload', () => {
     // jsdom has no <img> decoder: make it fail so only createImageBitmap or the HEIC path can succeed.
     vi.stubGlobal('Image', class { decoding = ''; src = ''; naturalWidth = 0; naturalHeight = 0; decode() { return Promise.reject(new Error('no')) } })
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
-      const c = this
-      return { fillRect: vi.fn(), drawImage: () => drawn.push({ w: c.width, h: c.height }), fillStyle: '', imageSmoothingQuality: '' } as unknown as CanvasRenderingContext2D
+      return { fillRect: vi.fn(), drawImage: () => drawn.push({ w: this.width, h: this.height }), fillStyle: '', imageSmoothingQuality: '' } as unknown as CanvasRenderingContext2D
     })
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((cb: BlobCallback, type?: string) =>
       cb(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3])], { type })),

@@ -114,7 +114,14 @@ export interface CertifyInspectionInput {
   cocNumber?: string
 }
 
-async function certifyInspection(input: CertifyInspectionInput): Promise<string> {
+/** What a certify produced: the issued number, and whether its report was generated and filed. */
+export interface CertifyOutcome {
+  number: string
+  /** False when the certificate stands but the report failed: the verifier is told to regenerate it. */
+  reportIssued: boolean
+}
+
+async function certifyInspection(input: CertifyInspectionInput): Promise<CertifyOutcome> {
   const supabase = (await createClient()) as AnyClient
   const {
     data: { user },
@@ -172,8 +179,10 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
 
   // Best-effort branded report → projects.reports + handover auto-file (Node
   // renderer; no glyph bug). The cert is a committed DB fact — a render/file
-  // failure logs but never blocks certification, and is retryable via
-  // regenerateInspectionReportAction.
+  // failure never blocks certification, is retryable via
+  // regenerateInspectionReportAction, and is now REPORTED back to the verifier
+  // (it used to be logged only, leaving a certified inspection with no report).
+  let reportIssued = false
   try {
     const result = await generateAndFileInspectionReport({
       inspectionId: input.inspectionId,
@@ -183,6 +192,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
     })
     if ('error' in result)
       console.warn('inspection report generate/file failed (cert still valid):', result.error)
+    else reportIssued = true
   } catch (e) {
     console.warn('inspection report generate/file threw (cert still valid):', (e as Error).message)
   }
@@ -227,7 +237,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
 
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
   revalidatePath(`/projects/${input.projectId}/inspections`)
-  return issuedNumber
+  return { number: issuedNumber, reportIssued }
 }
 
 // ─── sendBackForReinspectionAction ─────────────────────────────────────
@@ -318,7 +328,7 @@ function refusal(e: unknown): { ok: false; error: string } {
 
 export async function certifyInspectionAction(
   input: CertifyInspectionInput,
-): Promise<VerifierActionResult<string>> {
+): Promise<VerifierActionResult<CertifyOutcome>> {
   try {
     return { ok: true, value: await certifyInspection(input) }
   } catch (e) {

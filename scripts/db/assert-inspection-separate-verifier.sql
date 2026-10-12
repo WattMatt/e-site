@@ -21,8 +21,16 @@ SELECT set_config('x.pmu', (SELECT pm.user_id::text FROM projects.project_member
                                AND uo.role IN ('owner','admin','project_manager')
                                AND pm.user_id <> current_setting('x.c')::uuid
                              ORDER BY pm.created_at LIMIT 1), true);
+-- PM2 = a second owner/admin/PM on KINGSWALK: eligible to verify by role, so only "has answered"
+-- can refuse them (the contractor C would be refused for the role first, testing nothing).
+SELECT set_config('x.pm2', (SELECT pm.user_id::text FROM projects.project_members pm
+                             JOIN public.user_organisations uo ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
+                             WHERE pm.project_id = current_setting('x.kw')::uuid AND pm.is_active AND uo.is_active
+                               AND uo.role IN ('owner','admin','project_manager')
+                               AND pm.user_id NOT IN (current_setting('x.c')::uuid, current_setting('x.pmu')::uuid)
+                             ORDER BY pm.created_at LIMIT 1), true);
 DO $$ BEGIN
-  IF current_setting('x.kw', true) IS NULL OR current_setting('x.pmu', true) IS NULL THEN
+  IF current_setting('x.kw', true) IS NULL OR current_setting('x.pmu', true) IS NULL OR current_setting('x.pm2', true) IS NULL THEN
     RAISE EXCEPTION 'fixture precondition failed: KINGSWALK or a PM-level member is missing; the probes would be vacuous';
   END IF;
 END $$;
@@ -88,6 +96,10 @@ VALUES (current_setting('x.i4')::uuid, 's1', 'q1', 'pass', current_setting('x.c'
 UPDATE inspections.inspections SET status = 'awaiting_verification'
  WHERE id IN (current_setting('x.i4')::uuid, current_setting('x.i5')::uuid);
 
+-- PM2 answers I1 too (no session: the history trigger records latest_responded_by).
+INSERT INTO inspections.responses (inspection_id, section_id, field_id, pass_state, latest_responded_by)
+VALUES (current_setting('x.i1')::uuid, 's1', 'q9', 'pass', current_setting('x.pm2')::uuid);
+
 -- ── The inspector answers the CoC; the verifier tries to ──────────────────────────────────────
 SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('c:answer_coc', $$INSERT INTO inspections.responses (inspection_id, section_id, field_id, pass_state, latest_responded_by)
@@ -108,12 +120,15 @@ SELECT pg_temp.try('v:flip_coc', $$UPDATE inspections.responses SET pass_state =
 SELECT pg_temp.try('v:flip_io', $$UPDATE inspections.responses SET pass_state = 'fail', latest_responded_by = auth.uid()
   WHERE inspection_id = current_setting('x.i5')::uuid AND field_id = 'q1'$$);
 -- Assignment, as the PM: the contributor cannot become verifier, nor the verifier the inspector.
-SELECT pg_temp.try('pm:contributor_as_verifier', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid, assigned_to_id = current_setting('x.pmu')::uuid
+SELECT pg_temp.try('pm:contributor_as_verifier', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.pm2')::uuid
   WHERE id = current_setting('x.i1')::uuid$$);
 SELECT pg_temp.try('pm:verifier_as_inspector', $$UPDATE inspections.inspections SET assigned_to_id = current_setting('x.pmu')::uuid
   WHERE id = current_setting('x.i1')::uuid$$);
 SELECT pg_temp.try('pm:create_self_verified_coc', $$INSERT INTO inspections.inspections (organisation_id, project_id, template_id, target_node_type, target_label, assigned_to_id, verifier_id, status, created_by)
   VALUES (current_setting('x.org')::uuid, current_setting('x.kw')::uuid, current_setting('x.tcoc')::uuid, 'adhoc', 'sepver probe 4', auth.uid(), auth.uid(), 'assigned', auth.uid())$$);
+-- The verifier must hold a verifying role: the contractor C cannot be made verifier, on any template.
+SELECT pg_temp.try('pm:contractor_as_verifier', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid, assigned_to_id = NULL
+  WHERE id = current_setting('x.i2')::uuid$$);
 -- A row already in the bad state can still be edited, and fixed by reassigning.
 SELECT pg_temp.try('pm:edit_bad_row', $$UPDATE inspections.inspections SET target_label = 'sepver probe 3 renamed' WHERE id = current_setting('x.i3')::uuid$$);
 SELECT pg_temp.try('pm:fix_bad_row', $$UPDATE inspections.inspections SET assigned_to_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i3')::uuid$$);
@@ -140,6 +155,8 @@ SELECT * FROM (VALUES
      (SELECT v FROM _o WHERE k = 'pm:verifier_as_inspector') LIKE 'ERR %cannot be both the inspector and the verifier%'),
   ('a CoC inspection cannot be created with one person as inspector and verifier',
      (SELECT v FROM _o WHERE k = 'pm:create_self_verified_coc') LIKE 'ERR %cannot be both the inspector and the verifier%'),
+  ('a contractor cannot be made verifier, even on a template that allows self-verification',
+     (SELECT v FROM _o WHERE k = 'pm:contractor_as_verifier') LIKE 'ERR %the verifier must be an owner, admin or project manager%'),
   ('a row already in the bad state can still be edited without touching the assignment',
      (SELECT v FROM _o WHERE k = 'pm:edit_bad_row') = '1'),
   ('a row already in the bad state can be fixed by reassigning',

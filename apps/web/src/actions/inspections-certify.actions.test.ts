@@ -120,7 +120,7 @@ describe('certifyInspectionAction', () => {
 
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: 'ignored' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'conditional_pass', coc_number: null })
-    expect(issued).toEqual({ ok: true, value: 'INS-KW-2026-0001' })
+    expect(issued).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
   })
 
   it('sends the typed number, trimmed, for a CoC', async () => {
@@ -134,7 +134,7 @@ describe('certifyInspectionAction', () => {
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: '  ECB-77 ' })
     expect(rpc).toHaveBeenCalledWith('certification_blockers', { _inspection_id: 'i-1', _coc_number: 'ECB-77' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'pass', coc_number: 'ECB-77' })
-    expect(issued).toEqual({ ok: true, value: 'ECB-77' })
+    expect(issued).toEqual({ ok: true, value: { number: 'ECB-77', reportIssued: true } })
   })
 
   it('says so when nothing was certified (the inspection moved on)', async () => {
@@ -147,6 +147,21 @@ describe('certifyInspectionAction', () => {
     createClientMock.mockRejectedValue(new Error('connection reset'))
 
     expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: 'connection reset' })
+  })
+})
+
+describe('certifyInspectionAction — the report', () => {
+  const certifyWith = async (fileResult: unknown) => {
+    const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
+    createClientMock.mockResolvedValue(client)
+    fileReportMock.mockResolvedValue(fileResult)
+    return certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })
+  }
+  it('says the report was issued when it was', async () => {
+    expect(await certifyWith({ reportId: 'r-1' })).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
+  })
+  it('still certifies, but says so, when the report failed', async () => {
+    expect(await certifyWith({ error: 'storage down' })).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: false } })
   })
 })
 

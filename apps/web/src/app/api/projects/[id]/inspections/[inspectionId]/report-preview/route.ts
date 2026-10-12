@@ -13,6 +13,7 @@ import {
   type HandoffStorage,
 } from '@/lib/reports/pdf-handoff'
 import { randomBytes } from 'node:crypto'
+import { requireProjectAccess } from '@/lib/auth/require-project-access'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -96,17 +97,20 @@ export async function GET(
   // A report with many photos can pass Vercel's ~4.5 MB response cap even with every photo shrunk
   // (report-image.ts): hand those over through storage and a 10-minute signed URL.
   if (pdf.byteLength > INLINE_PDF_MAX_BYTES) {
+    // The file goes under the INSPECTION's own project and org, read through the caller's session,
+    // never under the project id in the URL.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: proj } = await (supabase as any).schema('projects').from('projects')
-      .select('organisation_id').eq('id', projectId).maybeSingle()
-    const orgId = (proj as { organisation_id?: string } | null)?.organisation_id
-    if (!orgId) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    // Access was proven by gatherInspectionReportData's gate above.
+    const { data: insp } = await (supabase as any).schema('inspections').from('inspections')
+      .select('project_id, organisation_id').eq('id', inspectionId).maybeSingle()
+    const own = insp as { project_id: string; organisation_id: string } | null
+    if (!own || own.project_id !== projectId) return NextResponse.json({ error: 'Inspection not found' }, { status: 404 })
+    const access = await requireProjectAccess(supabase, own.project_id)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
     const storage = createServiceClient().storage as unknown as HandoffStorage
-    const res = await pdfHandoffResponse(storage, inspectionPreviewPath(orgId, projectId, user.id, randomBytes(6).toString('hex')), new Uint8Array(pdf), {
+    const res = await pdfHandoffResponse(storage, inspectionPreviewPath(own.organisation_id, own.project_id, user.id, randomBytes(6).toString('hex')), new Uint8Array(pdf), {
       logTag: 'inspection-report-preview',
     })
-    if (res.status === 303) await pruneOldPreviews(storage, tenantSchedulePreviewFolder(orgId, projectId, user.id), 3, 'inspection-')
+    if (res.status === 303) await pruneOldPreviews(storage, tenantSchedulePreviewFolder(own.organisation_id, own.project_id, user.id), 3, 'inspection-')
     return res
   }
 
