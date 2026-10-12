@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * "Export sheet" — the plan as a PDF at the drawing's own size. fetch → blob (not a bare <a href>) so a
+ * "Export sheet" — the sheet on screen as a PDF at its own size. fetch → blob (not a bare <a href>) so a
  * refusal shows its sentence instead of downloading a JSON file named .pdf. A success is a 303 to a
  * storage signed URL, which fetch follows.
  * Props are strings only (page.tsx → client component must be JSON).
@@ -19,10 +19,10 @@ function downloadName(res: Response): string {
     const fromUrl = res.url ? new URL(res.url).searchParams.get('download') : null
     if (fromUrl) return fromUrl
   } catch { /* not a URL: fall through */ }
-  return /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'status-plan.pdf'
+  return /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'line-diagram-sheet.pdf'
 }
 
-export function ExportSheetButton({ projectId, planId }: { projectId: string; planId: string }) {
+export function ExportSheetButton({ projectId, planId, sheetId }: { projectId: string; planId: string; sheetId: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,7 +30,7 @@ export function ExportSheetButton({ projectId, planId }: { projectId: string; pl
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch(`/api/projects/${projectId}/status-plans/${planId}/sheet`)
+      const res = await fetch(`/api/projects/${projectId}/status-plans/${planId}/sheet?sheet=${encodeURIComponent(sheetId)}`)
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         setError(body.error ?? `Export failed (HTTP ${res.status}).`)
