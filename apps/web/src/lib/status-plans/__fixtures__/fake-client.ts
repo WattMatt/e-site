@@ -21,6 +21,20 @@ export interface FakeResponse {
   error?: { code?: string; message: string } | null
 }
 
+export interface FakeStorageCall {
+  bucket: string
+  op: 'createSignedUrl' | 'createSignedUploadUrl' | 'download' | 'remove'
+  args: unknown[]
+}
+
+export interface FakeClientOptions {
+  userId?: string | null
+  /** Objects `download` can return, by path. */
+  files?: Record<string, Uint8Array>
+  /** Make one storage operation answer with this error message. */
+  storageErrors?: Partial<Record<FakeStorageCall['op'], string>>
+}
+
 export type Responder = (call: FakeCall) => FakeResponse
 
 export const FAKE_USER_ID = '00000000-0000-4000-8000-000000000001'
@@ -34,8 +48,9 @@ export function queued(map: Record<string, FakeResponse[]>): Responder {
   }
 }
 
-export function fakeClient(respond: Responder, opts: { userId?: string | null } = {}) {
+export function fakeClient(respond: Responder, opts: FakeClientOptions = {}) {
   const calls: FakeCall[] = []
+  const storageCalls: FakeStorageCall[] = []
   const table = (schema: string) => (name: string) => {
     const call: FakeCall = { table: `${schema}.${name}`, op: 'select', ops: [] }
     calls.push(call)
@@ -65,13 +80,35 @@ export function fakeClient(respond: Responder, opts: { userId?: string | null } 
     schema: (s: string) => ({ from: table(s) }),
     from: table('public'),
     storage: {
-      from: (bucket: string) => ({
-        createSignedUrl: async (path: string) => ({ data: { signedUrl: `https://signed.test/${bucket}/${path}` }, error: null }),
-      }),
+      from: (bucket: string) => {
+        const err = (op: FakeStorageCall['op']) => (opts.storageErrors?.[op] ? { message: opts.storageErrors[op]! } : null)
+        return {
+          createSignedUrl: async (path: string, ...rest: unknown[]) => {
+            storageCalls.push({ bucket, op: 'createSignedUrl', args: [path, ...rest] })
+            const e = err('createSignedUrl')
+            return e ? { data: null, error: e } : { data: { signedUrl: `https://signed.test/${bucket}/${path}` }, error: null }
+          },
+          createSignedUploadUrl: async (path: string, ...rest: unknown[]) => {
+            storageCalls.push({ bucket, op: 'createSignedUploadUrl', args: [path, ...rest] })
+            const e = err('createSignedUploadUrl')
+            return e ? { data: null, error: e } : { data: { path, token: `tok:${path}`, signedUrl: `https://signed.test/upload/${bucket}/${path}` }, error: null }
+          },
+          download: async (path: string) => {
+            storageCalls.push({ bucket, op: 'download', args: [path] })
+            const f = opts.files?.[path]
+            return f && !err('download') ? { data: new Blob([new Uint8Array(f)]), error: null } : { data: null, error: { message: 'Object not found' } }
+          },
+          remove: async (paths: string[]) => {
+            storageCalls.push({ bucket, op: 'remove', args: [paths] })
+            const e = err('remove')
+            return e ? { data: null, error: e } : { data: paths.map((name) => ({ name })), error: null }
+          },
+        }
+      },
     },
     auth: { getUser: async () => ({ data: { user: userId ? { id: userId } : null } }) },
   }
-  return { client, calls }
+  return { client, calls, storageCalls }
 }
 
 /** The ops of the first call to `table` with `op`, for assertions. */
