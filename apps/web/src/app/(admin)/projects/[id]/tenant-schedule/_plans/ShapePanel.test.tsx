@@ -7,7 +7,7 @@ import { ShapePanel, type ShapePanelProps } from './ShapePanel'
 
 const NODE: PlanNode = { id: 'n1', code: 'DB-ZZ01', kind: 'tenant_db', shopNumber: 'ZZ01', shopName: 'Lantern Books', scheduledM2: 70, decommissioned: false }
 const OTHER: PlanNode = { ...NODE, id: 'n2', code: 'DB-ZZ02', shopNumber: 'ZZ02', shopName: 'Copper Kettle' }
-const SHAPE: CanvasShape = { id: 's1', shape: 'rect', points: [100, 100, 300, 100, 300, 260, 100, 260], nodeId: 'n1', areaType: null, detectedTag: null, source: 'manual', updatedAt: 't' }
+const SHAPE: CanvasShape = { id: 's1', sheetId: 'sh1', shape: 'rect', points: [100, 100, 300, 100, 300, 260, 100, 260], nodeId: 'n1', areaType: null, detectedTag: null, source: 'manual', updatedAt: 't' }
 const OPEN = { state: 'active', facts: { scope: 'awaited', layoutIssued: false, db: 'ordered', lights: null, boDate: '2026-05-01' } } as const
 
 function props(o: Partial<ShapePanelProps> = {}): ShapePanelProps {

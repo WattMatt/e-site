@@ -32,8 +32,8 @@ export type DetectNode = MatchableNode
 export interface DetectExistingShape { id: string; points: number[]; nodeId: string | null }
 
 export interface DetectBlocksPanelProps {
-  planId: string
-  /** 1-based, the plan's page. */
+  sheetId: string
+  /** 1-based page of the sheet's file. */
   pageIndex: number
   pdfUrl: string | null
   isPdf: boolean
@@ -61,7 +61,7 @@ const sectionTitle = { fontSize: 12, fontWeight: 600, margin: '10px 0 4px' } as 
 const rowStyle = { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: '4px 0', borderTop: '1px solid var(--c-border)', fontSize: 12 } as const
 
 export function DetectBlocksPanel({
-  planId, pageIndex, pdfUrl, isPdf, nodes, existingShapes, canEdit, onAccepted, onFocus,
+  sheetId, pageIndex, pdfUrl, isPdf, nodes, existingShapes, canEdit, onAccepted, onFocus,
 }: DetectBlocksPanelProps) {
   const [reading, setReading] = useState(false)
   const [outcome, setOutcome] = useState<DetectionOutcome | null>(null)
@@ -141,7 +141,7 @@ export function DetectBlocksPanel({
     setSaveError(null)
     try {
       const res = await acceptDetectedBlocksAction({
-        planId,
+        sheetId,
         blocks: items.map(({ row, nodeId }) => ({ points: row.block.points, nodeId, detectedTag: detectedTagFor(row.block) })),
       })
       if (!res.ok) { setSaveError(res.error); return }
