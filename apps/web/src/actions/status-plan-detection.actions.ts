@@ -1,7 +1,7 @@
 'use server'
 
 /**
- * Accept detected DB blocks onto a distribution-schematic status plan
+ * Accept detected DB blocks onto a line-diagram sheet
  * (spec 2026-10-09 §5, slice 3).
  *
  * Same rules as status-plan.actions.ts:
@@ -33,8 +33,9 @@ import type { ActionResult, CanvasShape } from '@/lib/status-plans/types'
 const MAX_BATCH = 500
 const UNREADABLE = 'These blocks could not be read. Run detection again.'
 const SIGNED_OUT = 'Your session has ended. Sign in again.'
-const NOT_ALLOWED = 'Only an owner, admin or project manager can change status plans on this project.'
+const NOT_ALLOWED = 'Only an owner, admin or project manager can change tenant plans on this project.'
 const PLAN_GONE = 'That plan no longer exists, or you cannot see it. Go back to the list and reload.'
+const SHEET_GONE = 'That sheet no longer exists. Reload the page.'
 
 const blockSchema = z.object({
   points: z.array(z.number().finite()).length(8),
@@ -42,7 +43,7 @@ const blockSchema = z.object({
   detectedTag: z.string().trim().max(DETECTED_TAG_MAX).nullable(),
 })
 const inputSchema = z.object({
-  planId: z.string().uuid(),
+  sheetId: z.string().uuid(),
   blocks: z.array(blockSchema).min(1).max(MAX_BATCH),
 })
 
@@ -65,18 +66,22 @@ export async function acceptDetectedBlocksAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: SIGNED_OUT }
 
+  const { data: sheet } = await supabase.schema('tenants').from('status_plan_sheets')
+    .select('id, status_plan_id').eq('id', parsed.data.sheetId).maybeSingle()
+  if (!sheet) return { ok: false, error: SHEET_GONE }
   const { data: plan } = await supabase.schema('tenants').from('status_plans')
-    .select('id, project_id, purpose').eq('id', parsed.data.planId).maybeSingle()
+    .select('id, project_id, purpose').eq('id', sheet.status_plan_id).maybeSingle()
   if (!plan) return { ok: false, error: PLAN_GONE }
   if (plan.purpose !== 'distribution_schematic') {
-    return { ok: false, error: 'Block detection is only for distribution schematic plans.' }
+    return { ok: false, error: 'Block detection is only for the line diagram.' }
   }
 
   const gate = await requireEffectiveRole(supabase, plan.project_id, ORG_WRITE_ROLES)
   if (!gate.ok) return { ok: false, error: NOT_ALLOWED }
 
   const rows = blocks.map((b) => ({
-    status_plan_id: parsed.data.planId,
+    status_plan_id: plan.id as string,
+    sheet_id: parsed.data.sheetId,
     shape: 'rect' as const,
     points: b.points,
     node_id: b.nodeId,
