@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { usePhotoTally } from './photo-tally'
+import { prepareImageForUpload } from '@/lib/image/prepare'
 
 export interface FieldPhoto {
   id: string
@@ -12,55 +13,6 @@ export interface FieldPhoto {
   taken_at?: string | null
   gps_lat?: number | null
   gps_lng?: number | null
-}
-
-/**
- * Downscale + re-encode a captured photo before upload.
- *
- * Uploads go straight from the browser to Supabase Storage (no Vercel
- * function in the byte path), but a raw tablet/phone camera photo (2-6 MB)
- * is still wasteful to store and slow to sync in the field. This mirrors
- * the mobile app's pre-upload step: resize to 2048 px wide and re-encode as
- * JPEG q0.85. `imageOrientation: 'from-image'` bakes EXIF rotation into the
- * pixels, so the result needs no orientation tag.
- *
- * Any failure (undecodable format, no canvas) falls back to the original file
- * so a capture is never silently dropped — the bucket's 10 MB cap is the
- * only hard limit on that path.
- */
-async function compressImage(file: File): Promise<File> {
-  const MAX_WIDTH = 2048
-  const QUALITY = 0.85
-
-  if (!file.type.startsWith('image/')) return file
-  if (typeof createImageBitmap !== 'function') return file
-
-  let bitmap: ImageBitmap | null = null
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-
-    const scale = Math.min(1, MAX_WIDTH / bitmap.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bitmap.width * scale)
-    canvas.height = Math.round(bitmap.height * scale)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', QUALITY),
-    )
-    // Keep the original if encoding failed or didn't actually shrink it.
-    if (!blob || blob.size >= file.size) return file
-
-    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {
-      type: 'image/jpeg',
-    })
-  } catch {
-    return file
-  } finally {
-    bitmap?.close()
-  }
 }
 
 /** Map raw storage/PostgREST failures to messages a field worker can act on. */
@@ -133,7 +85,9 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
       setUploading(true)
       setError(null)
       try {
-        const prepared = await compressImage(file)
+        // Any device's photo, HEIC included, becomes a JPEG every browser and report can use;
+        // one that cannot be read is refused with a sentence rather than stored as-is.
+        const { file: prepared, width, height } = await prepareImageForUpload(file)
 
         // Storage RLS keys off path segment [2] (the inspection id); the
         // leading project segment keeps paths consistent with historic
@@ -173,6 +127,8 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
             field_id: fieldId,
             storage_path: path,
             file_size_bytes: prepared.size,
+            width_px: width,
+            height_px: height,
             uploaded_by: user.id,
           })
           .select('id')
