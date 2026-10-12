@@ -12433,6 +12433,7 @@ export type Database = {
           node_id: string | null
           points: Json
           shape: string
+          sheet_id: string
           source: string
           status_plan_id: string
           updated_at: string
@@ -12447,6 +12448,7 @@ export type Database = {
           node_id?: string | null
           points: Json
           shape: string
+          sheet_id: string
           source?: string
           status_plan_id: string
           updated_at?: string
@@ -12460,6 +12462,7 @@ export type Database = {
           node_id?: string | null
           points?: Json
           shape?: string
+          sheet_id?: string
           source?: string
           status_plan_id?: string
           updated_at?: string
@@ -12472,60 +12475,122 @@ export type Database = {
             referencedRelation: "status_plans"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "status_plan_shapes_sheet_id_fkey"
+            columns: ["sheet_id"]
+            isOneToOne: false
+            referencedRelation: "status_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_plan_sheets: {
+        Row: {
+          calibration_metres: number | null
+          calibration_points: Json | null
+          created_at: string
+          created_by: string | null
+          file_name: string
+          file_path: string
+          id: string
+          label: string
+          mime: string
+          organisation_id: string
+          page_index: number
+          pixels_per_meter: number | null
+          replaced_at: string | null
+          replaced_from_path: string | null
+          revision: number
+          sort_order: number
+          status_plan_id: string
+          updated_at: string
+        }
+        Insert: {
+          calibration_metres?: number | null
+          calibration_points?: Json | null
+          created_at?: string
+          /** Hand-patched optional: bound to auth.uid() by trigger (00248). */
+          created_by?: string | null
+          file_name: string
+          file_path: string
+          id?: string
+          label: string
+          mime: string
+          /** Hand-patched optional: bound from the plan by trigger (00248). */
+          organisation_id?: string
+          page_index?: number
+          pixels_per_meter?: number | null
+          replaced_at?: string | null
+          replaced_from_path?: string | null
+          revision?: number
+          sort_order: number
+          status_plan_id: string
+          updated_at?: string
+        }
+        Update: {
+          calibration_metres?: number | null
+          calibration_points?: Json | null
+          created_at?: string
+          created_by?: string | null
+          file_name?: string
+          file_path?: string
+          id?: string
+          label?: string
+          mime?: string
+          organisation_id?: string
+          page_index?: number
+          pixels_per_meter?: number | null
+          replaced_at?: string | null
+          replaced_from_path?: string | null
+          revision?: number
+          sort_order?: number
+          status_plan_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_plan_sheets_status_plan_id_fkey"
+            columns: ["status_plan_id"]
+            isOneToOne: false
+            referencedRelation: "status_plans"
+            referencedColumns: ["id"]
+          },
         ]
       }
       status_plans: {
         Row: {
           created_at: string
           created_by: string | null
-          floor_plan_id: string
           id: string
           name: string
           organisation_id: string
-          page_index: number
           project_id: string
           purpose: string
-          source_file_path: string
           updated_at: string
         }
         Insert: {
           created_at?: string
-          /** Hand-patched optional: bound to auth.uid() by trigger (00245). */
+          /** Hand-patched optional: bound to auth.uid() by trigger (00245/00248). */
           created_by?: string | null
-          floor_plan_id: string
           id?: string
           name: string
-          /** Hand-patched optional: bound from the drawing by trigger (00245). */
+          /** Hand-patched optional: bound from the project by trigger (00248). */
           organisation_id?: string
-          page_index: number
           project_id: string
           purpose: string
-          /** Hand-patched optional: stamped from the drawing by trigger (00245). */
-          source_file_path?: string
           updated_at?: string
         }
         Update: {
           created_at?: string
           created_by?: string | null
-          floor_plan_id?: string
           id?: string
           name?: string
           organisation_id?: string
-          page_index?: number
           project_id?: string
           purpose?: string
-          source_file_path?: string
           updated_at?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "status_plans_floor_plan_id_fkey"
-            columns: ["floor_plan_id"]
-            isOneToOne: false
-            referencedRelation: "floor_plans"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {
