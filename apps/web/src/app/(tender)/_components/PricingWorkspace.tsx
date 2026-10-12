@@ -1,11 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { createClient } from '@/lib/supabase/client'
 import { parseRate } from '@/lib/tender/parse-rate'
+import { BillTabs, type BillTab } from '@/components/tender/BillTabs'
 import {
   acknowledgeAddendumAction,
   askQuestionAction,
@@ -34,6 +35,7 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
   const items = useMemo(() => state.items.filter((i) => i.kind !== 'total'), [state.items])
   const sheets = useMemo(() => Array.from(new Set(items.map((i) => i.sheet_name))), [items])
   const [sheet, setSheet] = useState(sheets[0])
+  const tabsTop = useRef<HTMLDivElement>(null)
   const [rates, setRates] = useState<Record<string, string>>(() =>
     Object.fromEntries(Object.entries(state.lines).map(([id, l]) => [id, l.rate == null ? '' : String(l.rate)])),
   )
@@ -154,6 +156,18 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
     })
 
   const rows = items.filter((i) => i.sheet_name === sheet)
+  // Per bill: items that need an answer (priced / rate-only, as the submit check
+  // counts them) and how many have one; shown on the bill tabs.
+  const billTabs: BillTab[] = sheets.map((s) => {
+    const need = items.filter((i) => i.sheet_name === s && i.kind === 'item' && (i.rate_cell_type === 'priced' || i.rate_cell_type === 'rate_only'))
+    const done = need.filter((i) => {
+      const r = parseRate(rates[i.id] ?? '')
+      return !!notPriced[i.id] || (r.ok && r.value != null)
+    }).length
+    return { key: s, progress: { done, total: need.length } }
+  })
+  const sheetIndex = sheets.indexOf(sheet)
+  const nextSheet = sheetIndex >= 0 && sheetIndex < sheets.length - 1 ? sheets[sheetIndex + 1] : null
   const submitted = state.submission?.status === 'submitted'
   // A submitted bid is locked: any change would quietly return it to draft, so
   // changing it is an explicit step (Withdraw to edit), then submit again.
@@ -209,12 +223,10 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
               <ul style={{ margin: 0 }}>{excelMsg.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
             </div>
           )}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }} role="tablist" aria-label="Bills">
-            {sheets.map((s) => (
-              <button key={s} role="tab" aria-selected={s === sheet} onClick={() => setSheet(s)} className={s === sheet ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>{s}</button>
-            ))}
+          <div ref={tabsTop} style={{ marginBottom: 8 }}>
+            <BillTabs tabs={billTabs} active={sheet} onSelect={setSheet} label="Bills of the BOQ" panelId="boq-bill" />
           </div>
-          <div style={{ overflowX: 'auto' }}>
+          <div id="boq-bill" role="tabpanel" aria-labelledby={`boq-bill-tab-${Math.max(0, sheetIndex)}`} style={{ overflowX: 'auto' }}>
             <table className="data-table" style={{ width: '100%', fontSize: 13 }}>
               <thead><tr><th>Item</th><th style={{ textAlign: 'left' }}>Description</th><th>Unit</th><th>Qty</th><th>Rate (R)</th><th>Amount</th></tr></thead>
               <tbody>
@@ -274,6 +286,19 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
               </tbody>
             </table>
           </div>
+          {nextSheet && (
+            <div className="bill-tab-next">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setSheet(nextSheet)
+                  tabsTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}
+              >
+                Next: {nextSheet} →
+              </Button>
+            </div>
+          )}
           {open && (
             <div style={{ position: 'sticky', bottom: 0, background: 'var(--c-panel, #fff)', padding: '8px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
               {editable && <Button isLoading={busy} disabled={dirty.size === 0} onClick={saveRates}>Save rates{dirty.size ? ` (${dirty.size})` : ''}</Button>}

@@ -1758,3 +1758,71 @@ body {
 /* A mouse-driven screen has no rear camera to open; the library control covers it. */
 @media (pointer: fine) { .photo-take { display: none; } }
 
+
+/* ── Tender BOQ bill tabs (components/tender/BillTabs.tsx) ─────────────────
+   One row of card-like tabs: a lettered badge, the bill's name and, for a
+   bidder, a pricing progress bar. Scrolls sideways on a phone. */
+.bill-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+.bill-tab {
+  flex: 0 0 auto;
+  min-width: 148px;
+  max-width: 240px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--c-border-mid);
+  border-radius: 10px;
+  background: var(--c-panel);
+  color: var(--c-text);
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+.bill-tab:hover { border-color: var(--c-border-hi); background: var(--c-elevated); }
+.bill-tab:focus-visible { outline: 2px solid var(--c-amber); outline-offset: 2px; }
+.bill-tab.is-active {
+  border: 2px solid var(--c-amber);
+  padding: 9px 11px;
+  background: var(--c-amber-dim);
+  box-shadow: 0 1px 0 var(--c-amber-mid);
+}
+.bill-tab-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bill-tab-code {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border-mid);
+  color: var(--c-text);
+}
+.bill-tab.is-active .bill-tab-code { background: var(--c-amber); border-color: var(--c-amber); color: var(--c-on-amber); }
+.bill-tab.is-complete .bill-tab-code { background: var(--c-green); border-color: var(--c-green); color: var(--c-on-green, #fff); }
+.bill-tab-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bill-tab.is-active .bill-tab-name { font-weight: 700; }
+.bill-tab-note { font-size: 12px; color: var(--c-text-mid); }
+.bill-tab.is-complete .bill-tab-note { color: var(--c-green); font-weight: 600; }
+.bill-tab-bar { display: block; height: 4px; border-radius: 999px; background: var(--c-border); overflow: hidden; }
+.bill-tab-bar > span { display: block; height: 100%; background: var(--c-amber); border-radius: 999px; transition: width 200ms ease; }
+.bill-tab.is-complete .bill-tab-bar > span { background: var(--c-green); }
+.bill-tab-next { display: flex; justify-content: flex-end; margin-top: 10px; }

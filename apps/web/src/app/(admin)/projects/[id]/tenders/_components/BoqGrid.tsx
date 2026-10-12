@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react'
 import { setRateCellTypeAction, type TenderItem } from '@/actions/tender.actions'
 import { RATE_CELL_TYPES, type RateCellType } from '@/lib/tender/types'
 import { formatRand, RATE_CELL_TYPE_LABELS } from './format'
+import { BillTabs, type BillTab } from '@/components/tender/BillTabs'
 
 export function BoqGrid({
   tenderId,
@@ -25,6 +26,12 @@ export function BoqGrid({
   const [pending, start] = useTransition()
   const hasEstimate = Object.keys(estimate).length > 0
   const rows = items.filter((i) => i.sheet_name === sheet)
+  // Per bill: item count and, when WM's estimate is imported, its subtotal.
+  const billTabs: BillTab[] = sheets.map((s) => {
+    const its = items.filter((i) => i.sheet_name === s && i.kind === 'item')
+    const est = hasEstimate ? its.reduce((sum, i) => sum + (estimate[i.id]?.amount ?? 0), 0) : null
+    return { key: s, note: `${its.length} item${its.length === 1 ? '' : 's'}${est != null ? ` · est. ${formatRand(est)}` : ''}` }
+  })
 
   const fixedOf = (i: TenderItem) => (i.id in fixed ? fixed[i.id] : i.fixed_amount)
   const typeOf = (i: TenderItem) => types[i.id] ?? i.rate_cell_type
@@ -61,19 +68,7 @@ export function BoqGrid({
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="tablist" aria-label="Sheets">
-        {sheets.map((s) => (
-          <button
-            key={s}
-            role="tab"
-            aria-selected={s === sheet}
-            onClick={() => setSheet(s)}
-            className={s === sheet ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
+      <BillTabs tabs={billTabs} active={sheet} onSelect={setSheet} label="Bills of the BOQ" panelId="wm-boq-bill" />
       {error && <p role="alert" style={{ color: 'var(--c-red)', fontSize: 13, margin: 0 }}>{error}</p>}
       {missingFixed.length > 0 && (
         <p role="status" style={{ color: 'var(--c-amber)', fontSize: 13, margin: 0 }}>
@@ -81,7 +76,7 @@ export function BoqGrid({
           {missingFixed.length > 5 ? ', …' : ''}). Set each amount before the tender is issued.
         </p>
       )}
-      <div style={{ overflowX: 'auto' }}>
+      <div id="wm-boq-bill" role="tabpanel" aria-labelledby={`wm-boq-bill-tab-${Math.max(0, sheets.indexOf(sheet))}`} style={{ overflowX: 'auto' }}>
         <table className="data-table" style={{ width: '100%', fontSize: 13 }}>
           <thead>
             <tr>
