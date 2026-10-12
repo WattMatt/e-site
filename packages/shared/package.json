@@ -19,7 +19,8 @@
     "./solar-reports": "./src/solar/reports/index.ts",
     "./solar-operations": "./src/solar/operations/index.ts",
     "./solar-operations/client": "./src/solar/operations/client.ts",
-    "./whatsapp-forms": "./src/whatsapp-forms/index.ts"
+    "./whatsapp-forms": "./src/whatsapp-forms/index.ts",
+    "./status-plans": "./src/status-plans/index.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",

@@ -775,7 +775,7 @@ function decideTarget(
  * A drawing is "annotated" when anything is pinned to its active file's
  * geometry: RFI annotations, QC markup lineage, snag pins, a measure
  * calibration (drawing-level OR per-page), a traced cable-route leg, a zone
- * polygon, a saved markup layer, a Solar schematic, meter card or supply line, or a Solar roof source or layout object. Annotated drawings are never auto-adopted — a layout change
+ * polygon, a saved markup layer, a Solar schematic, meter card or supply line, a Solar roof source or layout object, or a status plan. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
  *
  * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
@@ -926,6 +926,19 @@ async function isAnnotated(
     .limit(1)
     .maybeSingle()
   if (loe || layoutObject) return true
+
+  // A status plan (00245): shop masks and DB-block rectangles in raw image
+  // pixels of THIS file's page. The plan's source_file_path records the file
+  // it was drawn on and the plan page warns when they diverge, but, as for
+  // markup layers, not adopting silently is the actual protection.
+  const { data: statusPlan, error: spe } = await supabase
+    .schema('tenants')
+    .from('status_plans')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (spe || statusPlan) return true
 
   return false
 }

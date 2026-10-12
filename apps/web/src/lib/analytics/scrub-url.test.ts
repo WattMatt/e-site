@@ -1,7 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
-vi.mock('posthog-js', () => ({ default: {} }))
-import { scrubUrl } from './AnalyticsProvider'
+import { scrubUrl } from './scrub-url'
 
 describe('scrubUrl (tender secrets never reach analytics)', () => {
   it('removes the invitation token, the single-use sign-in and the address', () => {

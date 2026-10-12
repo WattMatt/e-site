@@ -95,3 +95,30 @@ describe('tariff pickers', () => {
     expect(await A.listPublishedLicenseesAction(P)).toEqual({ error: 'Your role (inspector) is not allowed to perform this action' })
   })
 })
+
+describe('measured tenant benchmarks', () => {
+  const S = '88888888-2222-3333-4444-555555555555'
+  it.each([
+    ['refresh', () => A.refreshTenantBenchmarksAction(P, S)],
+    ['basis', () => A.setTenantEstimateBasisAction(P, S, 'generic')],
+  ])('%s: a contractor is refused before anything is read or written', async (_n, call) => {
+    state.role = 'contractor'
+    expect(await call()).toEqual({ error: 'Your role (contractor) is not allowed to perform this action' })
+    expect(writes()).toEqual([])
+  })
+  it('basis: only a tenant-schedule source of this project can be switched', async () => {
+    state.tables['projects.load_profile_sources'] = [{ id: S, project_id: P, kind: 'admd', params: {} }]
+    expect(await A.setTenantEstimateBasisAction(P, S, 'generic')).toEqual({ error: 'That tenant-schedule estimate is not in this project.' })
+    expect(writes()).toEqual([])
+  })
+  it('basis: switching to generic keeps the stored benchmarks and the other settings', async () => {
+    state.tables['projects.load_profile_sources'] = [{ id: S, project_id: P, kind: 'tenant_schedule', params: { commonAreaPct: 10, basis: 'measured', benchmarks: { version: 1 } } }]
+    expect(await A.setTenantEstimateBasisAction(P, S, 'generic')).toEqual({ ok: true })
+    const w = writes()
+    expect(w).toHaveLength(1)
+    expect(w[0]).toMatchObject({ table: 'projects.load_profile_sources', op: 'update', payload: { params: { commonAreaPct: 10, basis: 'generic', benchmarks: { version: 1 } } } })
+  })
+  it('basis: rejects an unknown basis', async () => {
+    expect(await A.setTenantEstimateBasisAction(P, S, 'guess' as never)).toEqual({ error: 'Check the values.' })
+  })
+})

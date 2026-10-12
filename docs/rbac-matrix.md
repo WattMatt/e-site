@@ -71,6 +71,8 @@ membership.
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/tenant-schedule` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/status-plans` (status plans list + "New status plan": drawing → page → purpose → name; added 2026-10-09, slice 2). Read through the caller's session (RLS `status_plans_select` + `site_scope`). The New control renders only for `ORG_WRITE_ROLES` (`requireEffectiveRole(…).ok`) | W | W | W | R | R | R | → `/portal` |
+| `/projects/[id]/status-plans/[planId]` (status plan canvas + side panel + legend; `?shape=` selects a shape — the tenant schedule's "On plan ↗" link). Editing (draw, reshape, link, area type, delete, rename, delete plan, re-anchor, Set scale) needs `ORG_WRITE_ROLES`; every other project role gets the same page read-only. `client_viewer` never reaches `(admin)` routes; the portal read-only view is slice 4 | W | W | W | R | R | R | → `/portal` |
 | `/projects/[id]/load-profile` (E8; **not** Solar-gated) | W | W | W | R | R | R | — |
 | `/load-profiles` · `/load-profiles/[site]` (workspace: the org's Solar meter library by site; read-only; Solar RLS decides which meters are visible) | R | R | R | R | R | — | — |
 | `/projects/[id]/floor-plans` | W | W | W | W | R | — | R |
@@ -338,6 +340,8 @@ above therefore documents legacy per-page gates only; the client's actual surfac
 | `/portal/[projectId]/floor-plans` | R | → `/dashboard` |
 | `/portal/[projectId]/handover` | R | → `/dashboard` |
 | `/portal/[projectId]/tenant-schedule` | R | → `/dashboard` |
+| `/portal/[projectId]/status-plans` (list; each plan opens as an A3 PDF in a new tab) | R²¹ | → `/dashboard` |
+| `GET /api/portal/[projectId]/status-plans/[planId]/pdf` | R²¹ | 404 (`requirePortalAccess`) |
 | `/portal/[projectId]/proposals` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
 | `/portal/[projectId]/proposals/[proposalId]` | Rᵉ + Accept / Decline / Download | → `/dashboard` |
 
@@ -412,6 +416,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/tenant-schedule/legend-card/pdf` | R | R | R | R | R | — | R⁸ |
+| `GET /api/projects/[id]/tenant-schedule/report-preview` · `POST /api/projects/[id]/tenant-schedule/reports` (`?tenantPlans=1` / `?schematicPlans=1` append the status plans — spec 2026-10-09 §8) | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ |
+| `GET /api/projects/[id]/status-plans/[planId]/sheet` (Export sheet — the plan at the drawing's own size) | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ |
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/cable-schedule/export/excel` | R | R | R | R¹ | R¹ | R¹ | R¹ |
@@ -459,6 +465,15 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 > **Billing reads (migration `00187`).** `billing.invoices`' SELECT policy was named `"Org admins can view invoices"` and qualified on `organisation_id = ANY (get_user_org_ids())`, which is bare `is_active` membership — no role predicate. `billing` is PostgREST-exposed and `authenticated` holds table SELECT, so all 27 WM members (12 contractors, 3 `client_viewer`s, most of them staff at other firms) could `GET /rest/v1/invoices` with `Accept-Profile: billing` and read every amount paid and every Paystack reference — the reads that turned the callback replay into a one-click attack. `00187` replaces it with an owner/admin qual plus a **RESTRICTIVE** gate on `public.user_is_org_admin()` so a future permissive policy cannot reopen it, and revokes `anon`'s pointless grant. Verified on prod in a rolled-back transaction: org admin 3 rows, contractor/`client_viewer`/non-member 0, `anon` `permission denied`. **`billing.subscriptions` is deliberately left at org-member read** and merely renamed to `subscriptions_select_org_member` so the name stops lying: `PaymentStatusBanner` and `checkProjectQuota` read `status`/`tier` from it on the **user client at every role**, so an admin-only qual would delete the "account paused" warning for the 12 contractors and impose a false 1-project cap. See the Known gaps entry.
 
 > **²⁰ Medium-Voltage — TWO conditions, and role is the weaker one.** Every MV surface requires (a) `ORG_WRITE_ROLES` (owner/admin/project_manager) **and** (b) the per-USER R2 000/yr entitlement, `public.user_has_mv_access(auth.uid())`. `POST /api/medium-voltage/study` runs the heavy Z-bus + earth-fault solve and caches per-node `fault_results`; it is gated with `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org, refused on non-DRAFT revisions, and then returns **`402`** without a subscription. Discrimination/coordination compute is deferred to Phase 4b.
+
+> ²¹ **Status plans in PDF (slice 4, 2026-10-09).**
+> - **Report routes.** Their existing view-level gate is unchanged (`gatherTenantScheduleReportData` → `projectService.getById` under RLS + `site_scope`, so any project member of any role — the cells follow what RLS admits; `client_viewer` reaches them by API only, as the admin page bounces a client viewer to `/portal`). When `?tenantPlans=1` / `?schematicPlans=1` is present, `lib/status-plans/report-appendix.ts` adds `requireProjectAccess` (as the caller, site-scoped) before anything is read; preview and save share that helper, so they cannot differ. A plan that cannot be drawn, or a failed load, becomes a "Not included" line on the appendix divider — never a 500.
+> - **Export sheet.** Gated by `requireProjectAccess` alone (checked with `.ok`), the same set that can open the plan page. The button renders on distribution schematics only (spec §8); the route serves tenant layouts too.
+> - **Portal PDF.** `requirePortalAccess` (client_viewer in the active org AND an active `project_members` row on THIS project), then the plan rows through the viewer's session.
+> - **Reads.** Plan, shape, drawing, page-scale and node rows go through the caller's session (`00245` SELECT, which admits every project role including client_viewer). Order and scope facts and the drawing bytes in the `drawings` bucket use the service client, only after the gate.
+> - **Delivery, not streaming.** The report preview, Export sheet and portal PDF are never sent in the response body (Vercel refuses a response over ~4.5 MB; an A0 drawing plus its appendix can pass that). After the gate, the route uploads the PDF with the service client to the service-only `reports` bucket (`00207`) at a fixed, overwritten path and answers **303** to a signed URL valid 10 minutes: `{org}/{project}/status-plans/{plan}/sheet.pdf` (signed as a download under the sheet's file name), `{org}/{project}/status-plans/{plan}/portal.pdf` (inline), `{org}/{project}/previews/{user}/tenant-schedule.pdf` (per user, so two people previewing different options never receive each other's file). The preview reads the project's org through the caller's session before any service-client use. No `projects.reports` row is written for these files; a refusal or failure is still a JSON sentence with its status.
+> - **No row writes on any of these paths** apart from the existing report save. The saved report's `summary` gains `statusPlans` / `statusPlansNotIncluded` counts.
+> - Colours are computed at render time for the South African date, so a saved report version is a snapshot of that day.
 >
 > Until 2026-09-11 condition (b) existed **only in five `page.tsx` files** (finding #20 of the payments audit): `grep -r 'requireMvAccess\|hasMvAccess' apps/web/src/actions apps/web/src/app/api` returned nothing, so the compute route and all the MV server actions were role-gated and nothing more. Route handlers and server actions are directly invocable and sit outside `(admin)/layout.tsx`; this repo has shipped that exact class twice before (PR #135, PR #162).
 >
@@ -807,6 +822,22 @@ Read-only actions require project access (any project member). Write/export acti
 
 > **Added 2026-09-14.** Route tracing writes to the cable schedule, so every action here gates on `ORG_WRITE_ROLES` — narrower than the drawing viewer's own `MARKUP_WRITE_ROLES`, which admits `contractor`. ¹⁴ **Moved 2026-09-22.** Tracing no longer happens on the drawing viewer at all: the measure page (`/projects/[id]/cables/[revisionId]/measure`) carries its own canvas, gated on `ORG_WRITE_ROLES` at the page. The viewer keeps `MARKUP_WRITE_ROLES` for markup and RFIs and only DRAWS saved routes; pressing one is a link to the measure page, rendered only when the caller may measure and a DRAFT revision exists. `calibrateFloorPlanAction` shares this gate because a drawing's scale is what every route on the sheet is measured against — note that the markup toolbar's own calibration path (a direct `tenants.floor_plans` update, since `00035`) remains open to contractors; narrowing it is an owner decision, not a side effect of this feature. Reads of an exported sheet (`projects.reports` kind `cable_route_sheet`) are OPEN to every project role, like the schedule's own cost-redacted PDF/CSV exports (`lib/reports/report-kind-access.ts`). Both gates in this file were **inert** from 2026-09-11 to 2026-09-14 (`if (!allowed)` on a result object — see `lib/auth/role-gate-call-sites.contract.test.ts`). ¹⁵ `cable_schedule.route_history` (`00199`) is readable by whoever can read the route (the `00192` `route_select` shape, so a `client_viewer` needs a `project_members` row) and INSERT-only for schedule editors — it carries no UPDATE or DELETE policy at all. `00200` binds a history row's `supply_id`/`revision_id`/`organisation_id` from its route by trigger (whatever the client sent is discarded) and adds the `00193`-shaped RESTRICTIVE INSERT/UPDATE/DELETE gate on `user_can_edit_revision(revision_id)`, so the table now passes `packages/db`'s cable-schedule write-role contract test like every other `cable_schedule` table. `tenants.floor_plan_page_scales` (`00199`) mirrors `tenants.floor_plans`. Saves carry the route's `updated_at` as a concurrency token; a stale write is refused, not merged.
 
+### Status plans (`status-plan.actions.ts`, slice 2, migration `00245`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `createStatusPlanAction` | W | W | W | — | — | — | — |
+| `renameStatusPlanAction` | W | W | W | — | — | — | — |
+| `deleteStatusPlanAction` | W | W | W | — | — | — | — |
+| `reanchorStatusPlanAction` | W | W | W | — | — | — | — |
+| `createStatusPlanShapeAction` | W | W | W | — | — | — | — |
+| `updateStatusPlanShapeAction` | W | W | W | — | — | — | — |
+| `deleteStatusPlanShapeAction` | W | W | W | — | — | — | — |
+| `calibrateFloorPlanAction` (reused by the status plan canvas's **Set scale**) | W | W | W | — | — | — | — |
+| `acceptDetectedBlocksAction` (`status-plan-detection.actions.ts`, slice 3: bulk-insert accepted DB blocks, `source = 'detected'`; distribution-schematic plans only) | W | W | W | — | — | — | — |
+
+> **Added 2026-10-09 (status plans slice 2).** Every action gates on `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` and reads `.ok`, resolving the project from the plan (or the shape's plan) on the server; the RESTRICTIVE per-verb policies of `00245` are the database backstop. Actions return `{ ok, error }` and never throw for a refusal; Postgres codes `23514`/`23505`/`23503`/`42501` become sentences (`lib/status-plans/write-errors.ts`), and a raw message is never shown. Shape update and delete are **conditional on the row's `updated_at`** in the same statement; zero rows back is reported as "changed by someone else" (or "deleted by someone else") with a Reload control, never merged. `organisation_id`, `source_file_path` and `created_by` are never sent: the slice-1 triggers bind them. `reanchorStatusPlanAction` writes the drawing's *current* `file_path`, read on the server. Shape actions do not revalidate the canvas page (the result is folded into client state). `acceptDetectedBlocksAction` (slice 3) follows the same gate, refuses any plan that is not `distribution_schematic`, checks every block's outline with `pointsError` before any database call, and inserts the batch in ONE statement (all-or-nothing; refusals say "Nothing was added"). The Detect blocks panel renders only for `ORG_WRITE_ROLES` and reads the drawing's text in the browser; nothing is written without a click. Reads are not actions: both pages read through the caller's session, so RLS + `site_scope` decide visibility. The tenant schedule's "On plan ↗" link (`loadOnPlanLinks`) reads the same way and degrades to no link on any error.
+
 ### Work items (`work-items.actions.ts`)
 
 Cells describe the `task` type — the only client-insertable type in Q1 (migration `00196`). Each action resolves the write set from the registry (`projects.work_item_types.write_roles`, mirrored in `WORK_ITEM_TYPES`) by the row's `item_type`, so for a mirrored type the four write-role columns follow that type's set: `contractor` is in the write set for `rfi`, `snag`, `qc_defect`, `diary_action`, `form_action` and `task`, and NOT for `inspection` or `order_followup` (those are `ORG_WRITE_ROLES`).
@@ -850,6 +881,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `saveLoadProfileSettingsAction` (reference year, PF, NMD, tariff) | W | W | W | — | — | — | — |
 | `listPublishedLicenseesAction` · `listPublishedTariffsAction` (tariff pickers) | R | R | R | — | — | — | — |
 | `listLibraryMetersAction` · `addLibraryMetersAction` (Solar library meters as sources; Solar RLS decides which meters are visible) | W | W | W | — | — | — | — |
+| `refreshTenantBenchmarksAction` · `setTenantEstimateBasisAction` (tenant-schedule estimate from the library's measured stores of each brand, per m²; reads Solar library meters through the caller's session) | W | W | W | — | — | — | — |
 | `GET /api/projects/[id]/load-profile/export?format=xlsx\|pdf` | R | R | R | R | R | R | — |
 | `GET /api/load-profiles/[site]/export?format=xlsx\|pdf` (workspace site profile) | R | R | R | R | R | — | — |
 
@@ -920,6 +952,16 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | `closeTenderAction` (issued → closed, only after the closing time) / `markAdjudicatedAction` (closed → adjudicated) | W | W | W | — | — | — | — | — |
 
 > Bids are read through the caller's own session, so the sealed policies of `00244` are the real gate: nothing is shown until `tender_seal_lifted` (closing passed, tender neither draft nor cancelled) **and** the caller passes `projects.user_can_open_tender` (today the same owner/admin/PM set as `user_can_manage_tender`; the single place to narrow it when the owner decides who at WM may open tenders). Adjudication also waits for the tender to be **closed**, and compares submitted bids only. Every read pages past PostgREST's `max_rows`; a submitted bid with a missing rate is refused, never ranked.
+
+### Status plans (`tenants.status_plans`, `tenants.status_plan_shapes`, migration `00245`)
+
+| Surface | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| Read a status plan and its shapes (RLS `status_plans_select` / `status_plan_shapes_select`) | R | R | R | R | R | R | R |
+| Create, rename, re-anchor or delete a plan (RLS) | W | W | W | — | — | — | — |
+| Draw, move, link, unlink or delete a shape (RLS) | W | W | W | — | — | — | — |
+
+> **Added 2026-10-09 (status plans slice 1, data only).** Slice 2 added the pages `/projects/[id]/status-plans` and `/projects/[id]/status-plans/[planId]` and `status-plan.actions.ts` (see Page routes and Server actions above); writes gate on `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` (`.ok`) and every other project role gets the same page read-only. The database already enforces this table: read = every project member (`user_has_project_access`), **client_viewer included** (a status plan is a progress picture made to be shown); write = `ORG_WRITE_ROLES` through a PERMISSIVE membership policy plus a **RESTRICTIVE per-verb** role gate (never `FOR ALL`, the `00205`/`00206` trap), and the generated `site_scope` policy on both tables. `organisation_id` and `source_file_path` are bound from the drawing by trigger; `project_id` must match the drawing's; a plan's drawing, page and purpose are fixed; a shape's node must be on the plan's project and not soft-deleted, and a tenant layout links `tenant_db` nodes only. Nothing derived (colour, status, area) is stored. Proven by `scripts/db/assert-status-plans-roles.sql` (impersonation, red first). Cloud-sync's `isAnnotated()` treats a drawing with a status plan as annotated, so it is never silently swapped for a newer Dropbox revision.
 
 ## Public / unauthenticated
 

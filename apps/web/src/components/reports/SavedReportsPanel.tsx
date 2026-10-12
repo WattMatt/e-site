@@ -50,6 +50,8 @@ const SUMMARY_LABELS: Record<string, string> = {
   page: '^page',
   boards: 'boards',
   lines: 'lines',
+  statusPlans: 'status plans',
+  statusPlansNotIncluded: 'plans not included',
   received: 'received',
   overdue: 'overdue',
   receivedPct: '% received',
@@ -70,13 +72,15 @@ const SUMMARY_LABELS: Record<string, string> = {
 const HIDDEN_SUMMARY_KEYS = new Set(['revisionId', 'runId', 'familyId'])
 /** Figures whose null is meaningful ("no guarantee to compare against") and print as n/a, never dropped or 0. */
 const NULL_AS_NA_KEYS = new Set(['variancePct'])
+/** Counts where 0 is noise ("0 plans not included"), so they are dropped, unlike the other figures. */
+const HIDE_ZERO_KEYS = new Set(['statusPlans', 'statusPlansNotIncluded'])
 
 /** "48 boards · 31 received · 6 overdue", or null when there is no summary. */
 function summaryLine(rep: ProjectReportRow): string | null {
   const summary = rep.summary
   if (!summary || typeof summary !== 'object') return null
   const parts = Object.entries(summary)
-    .filter(([k, v]) => !HIDDEN_SUMMARY_KEYS.has(k) && (NULL_AS_NA_KEYS.has(k) ? v !== undefined : v !== null && v !== undefined && v !== ''))
+    .filter(([k, v]) => !HIDDEN_SUMMARY_KEYS.has(k) && !(HIDE_ZERO_KEYS.has(k) && Number(v) === 0) && (NULL_AS_NA_KEYS.has(k) ? v !== undefined : v !== null && v !== undefined && v !== ''))
     .map(([k, v]) => {
       const label = SUMMARY_LABELS[k] ?? k
       if (v === null) return `${label.replace(/^[%^]\s*/, '')} n/a`

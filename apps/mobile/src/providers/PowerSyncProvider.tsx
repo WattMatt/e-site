@@ -4,6 +4,7 @@ import { PowerSyncContext } from '@powersync/react-native'
 import { powerSyncDb } from '../lib/powersync/database'
 import { SupabaseConnector } from '../lib/powersync/connector'
 import { supabase } from '../lib/supabase'
+import { POWERSYNC_ENABLED } from '../lib/powersync/config'
 import { track, ANALYTICS_EVENTS } from '../lib/analytics'
 
 const connector = new SupabaseConnector(supabase)
@@ -14,6 +15,10 @@ export function PowerSyncProvider({ children }: { children: React.ReactNode }) {
   const wasDownloadingRef = useRef(false)
 
   useEffect(() => {
+    // No PowerSync instance configured for this build: keep the local SQLite
+    // file (the photo and answer outboxes live in it) but never connect.
+    if (!POWERSYNC_ENABLED) return
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session && !connectedRef.current) {
         powerSyncDb.connect(connector)

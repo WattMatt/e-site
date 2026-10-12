@@ -57,15 +57,11 @@ export function applySaveToRun(
 }
 
 /**
- * The scale in force on a page of the sheet: the page's own (00199) when it
- * has one, else the drawing-level scale on page 1 only. Page 2+ without its
- * own scale is UNSCALED, and a leg traced there is refused by the server.
+ * The scale in force on a page of the sheet. Lives in lib/sheet so status
+ * plans read the same rule; a leg traced on an unscaled page is refused by
+ * the server.
  */
-export function pageScaleFor(sheet: Pick<ActiveSheet, 'pixels_per_meter' | 'page_scales'>, page: number): number | null {
-  const own = sheet.page_scales.find((s) => s.pageIndex === page)
-  if (own) return own.pixelsPerMeter
-  return page === 1 ? sheet.pixels_per_meter : null
-}
+export { pageScaleFor } from '@/lib/sheet/page-scale'
 
 /** Record a calibration the canvas just saved, on the sheet the page holds. */
 export function applyCalibrationToSheet(

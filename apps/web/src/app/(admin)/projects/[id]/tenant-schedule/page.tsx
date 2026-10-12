@@ -16,6 +16,7 @@ import type { NodeOrderData } from '../equipment-schedule/_components/NodeOrderC
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { listProjectReportsAction } from '@/actions/project-reports.actions'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
+import { loadOnPlanLinks } from '@/lib/status-plans/on-plan-links'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -32,6 +33,8 @@ export default async function TenantSchedulePage({ params }: Props) {
     .getById(supabase as never, projectId)
     .catch(() => null)
   if (!project) notFound()
+  // Started now, awaited with the other reads' tail: loadOnPlanLinks never rejects.
+  const onPlanPromise = loadOnPlanLinks(supabase, projectId)
 
   const orgId = project.organisation_id as string
   // opening_date is added by migration 00093; pre-apply select('*') simply omits it.
@@ -262,6 +265,9 @@ export default async function TenantSchedulePage({ params }: Props) {
   // actions enforce, so the UI never hides a control the server would accept.
   const writeGuard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
   const canWrite = writeGuard.ok
+  // Which status plan shows each shop (best-effort: {} on any error, so the
+  // schedule never fails because of a plan).
+  const onPlanByNode = await onPlanPromise
 
   return (
     <div className="animate-fadeup">
@@ -344,6 +350,7 @@ export default async function TenantSchedulePage({ params }: Props) {
             legendCircuitsByNode={legendCircuitsByNode}
             legendHeaderByNode={legendHeaderByNode}
             readOnly={!canWrite}
+            onPlanByNode={onPlanByNode}
           />
         </CardBody>
       </Card>

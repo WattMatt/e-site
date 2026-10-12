@@ -4,6 +4,14 @@ import path from 'path'
 
 import { buildContentSecurityPolicy } from './src/lib/security/csp'
 
+// Custom cacheGroups below match on module PATH, which also catches CSS that
+// lives in node_modules (next/font's generated CSS, maplibre-gl.css). A CSS
+// module captured into `vendors` puts a .css file in the root main-app chunk
+// group, and Next emits every root main file as a <script> tag — the browser
+// then refuses /_next/static/css/<hash>.css as a script (strict MIME). Restrict
+// every custom group to JavaScript modules and leave CSS to Next's own chunking.
+const JS_ONLY = /^javascript\//
+
 const config: NextConfig = {
   transpilePackages: ['@esite/shared', '@esite/db'],
   // Point Next.js at the monorepo root so file tracing works correctly
@@ -96,6 +104,7 @@ const config: NextConfig = {
               chunks: 'all' as const,
               priority: 30,
               reuseExistingChunk: true,
+              type: JS_ONLY,
             },
             // TanStack Query — used on every page
             reactQuery: {
@@ -104,6 +113,7 @@ const config: NextConfig = {
               chunks: 'all' as const,
               priority: 25,
               reuseExistingChunk: true,
+              type: JS_ONLY,
             },
             // Sentry + PostHog — async only (loaded after hydration)
             observability: {
@@ -112,6 +122,7 @@ const config: NextConfig = {
               chunks: 'async' as const,
               priority: 20,
               reuseExistingChunk: true,
+              type: JS_ONLY,
             },
             // three + react-three-fiber — async only: the Solar layout 3D preview
             // loads them through next/dynamic when opened. Without this group the
@@ -123,6 +134,7 @@ const config: NextConfig = {
               chunks: 'async' as const,
               priority: 35,
               reuseExistingChunk: true,
+              type: JS_ONLY,
             },
             // Remaining third-party code
             vendors: {
@@ -131,6 +143,7 @@ const config: NextConfig = {
               chunks: 'all' as const,
               priority: 10,
               reuseExistingChunk: true,
+              type: JS_ONLY,
             },
           },
         },

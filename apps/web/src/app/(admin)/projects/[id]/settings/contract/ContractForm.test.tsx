@@ -123,6 +123,36 @@ describe('ContractForm', () => {
     })
   })
 
+  it('clearing the contract value saves null instead of failing with NaN', async () => {
+    mockUpdateContractAction.mockResolvedValueOnce({ ok: true })
+
+    const { ContractForm } = await import('./ContractForm')
+    render(<ContractForm projectId="proj-uuid" project={baseProject} settings={baseSettings} />)
+
+    await userEvent.clear(screen.getByPlaceholderText('0.00'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockUpdateContractAction).toHaveBeenCalledWith(
+        'proj-uuid',
+        expect.objectContaining({ contractValue: null }),
+      )
+    })
+    expect(screen.queryByText(/Expected number, received nan/i)).toBeNull()
+  })
+
+  it('a cleared retention % is refused with a sentence, not "received nan"', async () => {
+    const { ContractForm } = await import('./ContractForm')
+    render(<ContractForm projectId="proj-uuid" project={baseProject} settings={baseSettings} />)
+
+    await userEvent.clear(screen.getByPlaceholderText('5'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Enter a retention % (0 if none)')).toBeTruthy()
+    expect(screen.queryByText(/received nan/i)).toBeNull()
+    expect(mockUpdateContractAction).not.toHaveBeenCalled()
+  })
+
   it('shows error banner when the action returns { error }', async () => {
     mockUpdateContractAction.mockResolvedValueOnce({ error: 'Permission denied' })
 

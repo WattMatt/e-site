@@ -15,6 +15,8 @@
 // transactional consistency with the synced inspection rows.
 
 import { powerSyncDb } from '../lib/powersync/database'
+import { supabase } from '../lib/supabase'
+import { createInspectionRemote, type SchemaClient } from './inspection-remote'
 
 export type AttachmentBucket =
   | 'inspection-photos'
@@ -106,6 +108,28 @@ export async function pendingCount(): Promise<number> {
   return row?.c ?? 0
 }
 
+/**
+ * Photo slots captured on this device that have not reached the server yet
+ * (still pending, or failed but still being retried). The capture screen adds
+ * them to the server's photos when it checks a field's min_count; a photo that
+ * has exhausted its retries is NOT counted, since it will never arrive.
+ */
+export async function pendingPhotoSlots(
+  inspectionId: string,
+): Promise<{ section_id: string; field_id: string }[]> {
+  const rs = await powerSyncDb.execute(
+    `SELECT section_id, field_id FROM attachment_uploads
+     WHERE inspection_id = ? AND bucket = 'inspection-photos'
+       AND (status IN ('pending','uploading') OR (status = 'failed' AND retry_count < 5))`,
+    [inspectionId],
+  )
+  const r = rs.rows as { _array?: Array<Record<string, unknown>> } | Array<Record<string, unknown>> | undefined
+  const rows = (Array.isArray((r as { _array?: unknown[] })?._array)
+    ? (r as { _array: Array<Record<string, unknown>> })._array
+    : Array.isArray(r) ? r : []) as Array<Record<string, unknown>>
+  return rows.map((p) => ({ section_id: String(p.section_id ?? ''), field_id: String(p.field_id ?? '') }))
+}
+
 export async function nextPending(): Promise<PendingAttachment | null> {
   const rs = await powerSyncDb.execute(
     `SELECT * FROM attachment_uploads
@@ -132,16 +156,19 @@ export async function markFailed(id: string, err: string): Promise<void> {
 }
 
 /**
- * Look up the project_id for an inspection from the locally synced
- * inspections table. The worker uses this to replace the
- * `__placeholder__` segment of remote_path when uploading photos.
+ * Look up the project_id for an inspection. The worker uses this to replace
+ * the `__placeholder__` segment of remote_path when uploading photos.
+ * The locally synced inspections table is tried first, but it is empty while
+ * no PowerSync instance is configured, so fall back to Supabase.
  */
 export async function lookupProjectId(inspectionId: string): Promise<string | null> {
   const rs = await powerSyncDb.execute(
     `SELECT project_id FROM inspections WHERE id = ? LIMIT 1`,
     [inspectionId],
   )
-  return firstRow<{ project_id: string | null }>(rs)?.project_id ?? null
+  const local = firstRow<{ project_id: string | null }>(rs)?.project_id
+  if (local) return local
+  return createInspectionRemote(supabase as unknown as SchemaClient).projectIdFor(inspectionId)
 }
 
 // PowerSync's QueryResult exposes `rows._array` at runtime but isn't typed

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useStatus } from '@powersync/react-native'
 import { colors, fontSize, fontWeight, spacing } from '../theme'
+import { POWERSYNC_ENABLED } from '../lib/powersync/config'
 
 export function SyncStatusBanner() {
   const status = useStatus()
@@ -14,6 +15,8 @@ export function SyncStatusBanner() {
     status.dataFlowStatus.downloading ||
     status.dataFlowStatus.uploading
 
+  // Without a sync instance there is no "offline" to report.
+  if (!POWERSYNC_ENABLED) return null
   if (!offline && !syncing) return null
 
   const palette = offline

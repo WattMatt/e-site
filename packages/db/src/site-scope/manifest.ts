@@ -30,6 +30,7 @@ export const RESOLVERS: Resolver[] = [
   { name: 'gcr_zone',         table: 'gcr.zones',                   via: { column: 'project_id' } },
   { name: 'snag',             table: 'field.snags',                 via: { column: 'project_id' } },
   { name: 'floor_plan',       table: 'tenants.floor_plans',         via: { column: 'project_id' } },
+  { name: 'status_plan',      table: 'tenants.status_plans',        via: { column: 'project_id' } },
   { name: 'variation_order',  table: 'projects.variation_orders',   via: { column: 'project_id' } },
   { name: 'valuation',        table: 'projects.valuations',         via: { column: 'project_id' } },
   { name: 'qc_report',        table: 'projects.qc_reports',         via: { column: 'project_id' } },
@@ -58,6 +59,7 @@ export const GATED: Gated[] = [
     'projects.work_item_attachments', 'projects.boq_imports', 'tenants.cloud_sync_runs', 'cable_schedule.revisions',
     'field.site_forms', 'inspections.inspections', 'tenants.floor_plan_markups', 'projects.load_profiles',
     'projects.load_profile_sources', 'projects.work_items', 'projects.tenders', 'projects.project_settings',
+    'tenants.status_plans',
   ].map(direct),
   // ── children ──
   child('projects.site_diary_attachments', 'site_diary_entry', 'diary_entry_id'),
@@ -81,6 +83,7 @@ export const GATED: Gated[] = [
   child('field.snag_photos', 'snag', 'snag_id'),
   child('tenants.floor_plan_zones', 'floor_plan', 'floor_plan_id'),
   child('tenants.floor_plan_page_scales', 'floor_plan', 'floor_plan_id'),
+  child('tenants.status_plan_shapes', 'status_plan', 'status_plan_id'),
   child('projects.variation_lines', 'variation_order', 'variation_order_id'),
   child('projects.valuation_lines', 'valuation', 'valuation_id'),
   child('projects.qc_comments', 'qc_report', 'report_id'),
@@ -104,4 +107,7 @@ export const GATED: Gated[] = [
   // an arm for the tender's own participant (a tenderer is never a project
   // member), which this generator does not express. The coverage check
   // (scripts/db/assert-site-scope-coverage.sql) still requires every one.
+  // Status plans (00245) are in this manifest like any generated table, and
+  // their migration carries the generator's text byte for byte; a contract
+  // test (status-plans-site-scope.contract.test.ts) holds the two together.
 ]

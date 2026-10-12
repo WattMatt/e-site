@@ -3,7 +3,9 @@
  * data into the KPI numbers and per-shop rows the PDF renders. Fully unit-tested.
  */
 
-export type OrderStatus = 'by_tenant' | 'required' | 'ordered' | 'received'
+import type { NodeOrderStatus, ScopeState as SharedScopeState } from '@esite/shared/status-plans'
+
+export type OrderStatus = NodeOrderStatus
 
 const ORDER_LABEL: Record<OrderStatus, string> = {
   by_tenant: 'By tenant',
@@ -18,7 +20,7 @@ export function orderStateLabel(status: OrderStatus | null): string {
 }
 
 /** Per-tenant scope-of-work state for the report column. */
-export type ScopeState = 'awaited' | 'received' | 'not_required'
+export type ScopeState = SharedScopeState
 
 const SCOPE_LABEL: Record<ScopeState, string> = {
   awaited: 'Awaited',
@@ -85,6 +87,37 @@ export interface ReportKpis {
   bo: { upcoming: number; overdue: number; noDate: number }
 }
 
+/** One shop's progress facts. `ShopRow` carries the same five fields. */
+export interface ShopProgress {
+  db: OrderStatus | null
+  lights: OrderStatus | null
+  scope: ScopeState
+  layoutIssued: boolean
+  boDate: string | null
+}
+
+export type ShopFactsInput = Pick<ComputeInput, 'scopeTypeIdByKey' | 'detailsByNode' | 'orderStatusByNodeScope' | 'boByNode'>
+
+/**
+ * The single per-shop read. The report rows, status plans and any screen use
+ * this, so they cannot disagree about a shop.
+ */
+export function shopProgressFor(input: ShopFactsInput, nodeId: string): ShopProgress {
+  const det = input.detailsByNode.get(nodeId)
+  const stateFor = (scopeTypeId: string | null): OrderStatus | null =>
+    scopeTypeId ? input.orderStatusByNodeScope.get(`${nodeId}:${scopeTypeId}`) ?? null : null
+  // not_required (explicit landlord-covered override) wins over the
+  // document-derived received/awaited state.
+  const scope: ScopeState = det?.scopeNotRequired ? 'not_required' : det?.scopeReceived ? 'received' : 'awaited'
+  return {
+    db: stateFor(input.scopeTypeIdByKey.db),
+    lights: stateFor(input.scopeTypeIdByKey.lighting),
+    scope,
+    layoutIssued: det?.layoutIssued ?? false,
+    boDate: input.boByNode.get(nodeId)?.effectiveDate ?? null,
+  }
+}
+
 const LANDLORD = new Set<OrderStatus>(['required', 'ordered', 'received'])
 const ORDERED = new Set<OrderStatus>(['ordered', 'received'])
 
@@ -93,18 +126,11 @@ function pct(part: number, whole: number): number {
 }
 
 export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; shopRows: ShopRow[] } {
-  const { activeNodes, decommissionedCount, scopeTypeIdByKey, detailsByNode, orderStatusByNodeScope, boByNode, today } = input
-
-  const stateFor = (nodeId: string, scopeTypeId: string | null): OrderStatus | null =>
-    scopeTypeId ? orderStatusByNodeScope.get(`${nodeId}:${scopeTypeId}`) ?? null : null
+  const { activeNodes, decommissionedCount, detailsByNode, today } = input
 
   const shopRows: ShopRow[] = activeNodes
     .map((n) => {
-      const det = detailsByNode.get(n.id)
-      const boDate = boByNode.get(n.id)?.effectiveDate ?? null
-      // not_required (explicit landlord-covered override) wins over the
-      // document-derived received/awaited state.
-      const scope: ScopeState = det?.scopeNotRequired ? 'not_required' : det?.scopeReceived ? 'received' : 'awaited'
+      const p = shopProgressFor(input, n.id)
       return {
         shopNumber: n.shopNumber,
         tenantName: n.shopName,
@@ -112,12 +138,12 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
         breakerA: n.breakerA,
         poleConfig: n.poleConfig,
         loadA: n.loadA,
-        db: stateFor(n.id, scopeTypeIdByKey.db),
-        lights: stateFor(n.id, scopeTypeIdByKey.lighting),
-        scope,
-        layoutIssued: det?.layoutIssued ?? false,
-        boDate,
-        boOverdue: boDate ? boDate < today : false,
+        db: p.db,
+        lights: p.lights,
+        scope: p.scope,
+        layoutIssued: p.layoutIssued,
+        boDate: p.boDate,
+        boOverdue: p.boDate ? p.boDate < today : false,
       }
     })
     .sort((a, b) => a.shopNumber.localeCompare(b.shopNumber, undefined, { numeric: true, sensitivity: 'base' }))

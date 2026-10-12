@@ -353,3 +353,19 @@ export async function getPortalEquipmentMaterials(projectId: string): Promise<Un
     { showDecommissioned: false },
   )
 }
+
+/** Status plans (spec 2026-10-09 §7) — read via the USER client: 00245's SELECT admits client_viewer. */
+export async function listPortalStatusPlans(projectId: string) {
+  const supabase = await createClient()
+  const { data } = await (supabase as any)
+    .schema('tenants')
+    .from('status_plans')
+    .select('id, name, purpose, page_index, updated_at, floor_plans(name)')
+    .eq('project_id', projectId)
+    .order('purpose')
+    .order('name')
+  return (data ?? []) as Array<{
+    id: string; name: string; purpose: 'tenant_layout' | 'distribution_schematic'; page_index: number; updated_at: string
+    floor_plans: { name: string | null } | null
+  }>
+}

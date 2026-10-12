@@ -9,6 +9,9 @@ import { ObservabilityBoot } from '../src/components/ObservabilityBoot'
 import { SyncStatusBanner } from '../src/components/SyncStatusBanner'
 import { ensureSchema as ensureAttachmentQueueSchema } from '../src/inspections/attachment-queue'
 import { startUploadWorker, stopUploadWorker } from '../src/inspections/upload-worker'
+import { ensureOutboxSchema } from '../src/inspections/response-outbox'
+import { startOutboxWorker, stopOutboxWorker } from '../src/inspections/outbox-worker'
+import { powerSyncExecutor } from '../src/lib/powersync/executor'
 
 export default function RootLayout() {
   useEffect(() => {
@@ -17,8 +20,12 @@ export default function RootLayout() {
     // idempotent; worker is a singleton (re-calling startUploadWorker
     // is a no-op once running).
     void ensureAttachmentQueueSchema().then(() => startUploadWorker())
+    // Inspection answers + submissions — drains the local inspection_outbox
+    // straight to Supabase as the signed-in user (see response-outbox.ts).
+    void ensureOutboxSchema(powerSyncExecutor).then(() => startOutboxWorker())
     return () => {
       stopUploadWorker()
+      stopOutboxWorker()
     }
   }, [])
 

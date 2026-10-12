@@ -1,17 +1,13 @@
 /**
  * gatherTenantScheduleReportData — I/O seam for the tenant schedule report.
  * Cookie client gates project access; service client does the privileged reads
- * and logo downloads. Pure number-crunching is delegated to the compute module.
+ * and logo downloads. Per-shop facts come from loadTenantShopFacts, the same
+ * loader status plans use, so the report and the plans cannot drift.
  */
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { projectService, listNodes, computeBoDate } from '@esite/shared'
-import {
-  computeReportModel,
-  type ComputeInput,
-  type OrderStatus,
-  type ReportKpis,
-  type ShopRow,
-} from './tenant-schedule-report-compute'
+import { projectService } from '@esite/shared'
+import { loadTenantShopFacts } from '@/lib/tenant-schedule/shop-facts'
+import { computeReportModel, type ReportKpis, type ShopRow } from './tenant-schedule-report-compute'
 
 const LOGO_BUCKET = 'report-logos'
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -55,60 +51,18 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
   // 2. Service client for privileged reads (RLS bypassed — caller is gated above).
   const service = createServiceClient()
 
-  // 3. Tenant nodes (active + decommissioned carry a `status`).
-  const allNodes = await listNodes(service as never, projectId, { kind: 'tenant_db' })
-  const activeNodesRaw = allNodes.filter((n) => (n as { status?: string }).status !== 'decommissioned')
-  const decommissionedCount = allNodes.length - activeNodesRaw.length
-  const nodeIds = activeNodesRaw.map((n) => n.id)
-
-  // 4. Parallel reads: scope types, tenant_details (scope/layout + BO), node_orders, project/org logo rows.
-  const [typesRes, detailsRes, ordersRes, projRes] = await Promise.all([
-    (service as any).schema('structure').from('scope_item_types')
-      .select('id, key').eq('organisation_id', orgId),
-    nodeIds.length
-      ? (service as any).schema('structure').from('tenant_details')
-          .select('node_id, scope_status, scope_not_required, layout_status, bo_period_days, bo_date_override').in('node_id', nodeIds)
-      : Promise.resolve({ data: [] }),
-    nodeIds.length
-      ? (service as any).schema('structure').from('node_orders')
-          .select('node_id, scope_item_type_id, status').in('node_id', nodeIds).not('scope_item_type_id', 'is', null)
-      : Promise.resolve({ data: [] }),
+  // 3. Per-shop facts (the shared loader) + the project row for branding, in parallel.
+  const [facts, projRes] = await Promise.all([
+    loadTenantShopFacts(service, { projectId, orgId, openingDate }),
     (service as any).schema('projects').from('projects')
       .select('name, client_logo_url, project_logo_url, report_accent_color').eq('id', projectId).maybeSingle(),
   ])
-
-  const types = (typesRes.data ?? []) as Array<{ id: string; key: string }>
-  const scopeTypeIdByKey = {
-    db: types.find((t) => t.key === 'db')?.id ?? null,
-    lighting: types.find((t) => t.key === 'lighting')?.id ?? null,
-  }
-
-  const detailsByNode: ComputeInput['detailsByNode'] = new Map()
-  const boByNode: ComputeInput['boByNode'] = new Map()
-  for (const d of (detailsRes.data ?? []) as Array<{
-    node_id: string; scope_status: string | null; scope_not_required: boolean | null; layout_status: string | null
-    bo_period_days: number | null; bo_date_override: string | null
-  }>) {
-    detailsByNode.set(d.node_id, {
-      scopeReceived: d.scope_status === 'received',
-      scopeNotRequired: d.scope_not_required === true,
-      layoutIssued: d.layout_status === 'issued',
-    })
-    boByNode.set(d.node_id, {
-      effectiveDate: computeBoDate(openingDate, d.bo_period_days ?? null, d.bo_date_override ?? null),
-    })
-  }
-
-  const orderStatusByNodeScope: ComputeInput['orderStatusByNodeScope'] = new Map()
-  for (const o of (ordersRes.data ?? []) as Array<{ node_id: string; scope_item_type_id: string; status: OrderStatus }>) {
-    orderStatusByNodeScope.set(`${o.node_id}:${o.scope_item_type_id}`, o.status)
-  }
 
   const proj = projRes.data as {
     name: string | null; client_logo_url: string | null; project_logo_url: string | null; report_accent_color: string | null
   } | null
 
-  // 5. Org row + logos.
+  // 4. Org row + logos.
   const { data: orgData } = await (service as any).from('organisations')
     .select('name, logo_url, report_accent_color').eq('id', orgId).maybeSingle()
   const org = orgData as { name: string | null; logo_url: string | null; report_accent_color: string | null } | null
@@ -119,30 +73,8 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
     proj?.project_logo_url ? downloadToDataUri(service, LOGO_BUCKET, proj.project_logo_url) : Promise.resolve(null),
   ])
 
-  // 6. Compute + assemble.
-  const { kpis, shopRows } = computeReportModel({
-    activeNodes: activeNodesRaw.map((n) => ({
-      id: n.id,
-      shopNumber: (n as { shop_number?: string | null }).shop_number ?? (n as { code?: string }).code ?? '—',
-      shopName: (n as { shop_name?: string | null }).shop_name ?? (n as { name?: string | null }).name ?? '—',
-      glaM2: (n as { shop_area_m2?: number | null }).shop_area_m2 ?? null,
-      // Incoming-supply electrical: a manual node breaker wins; otherwise the
-      // value derived from the cable schedule (persisted incomer_* columns).
-      breakerA:
-        (n as { breaker_rating_a?: number | null }).breaker_rating_a ??
-        (n as { incomer_breaker_a?: number | null }).incomer_breaker_a ?? null,
-      poleConfig:
-        (n as { pole_config?: string | null }).pole_config ??
-        (n as { incomer_pole_config?: string | null }).incomer_pole_config ?? null,
-      loadA: (n as { incomer_load_a?: number | null }).incomer_load_a ?? null,
-    })),
-    decommissionedCount,
-    scopeTypeIdByKey,
-    detailsByNode,
-    orderStatusByNodeScope,
-    boByNode,
-    today: new Date().toISOString().slice(0, 10),
-  })
+  // 5. Compute + assemble.
+  const { kpis, shopRows } = computeReportModel({ ...facts, today: new Date().toISOString().slice(0, 10) })
 
   const projectName = (proj?.name as string | null) ?? (project.name as string) ?? '—'
   return {

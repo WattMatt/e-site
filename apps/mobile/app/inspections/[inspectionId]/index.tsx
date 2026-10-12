@@ -2,15 +2,20 @@
 //
 // Capture screen — port of the web inspection capture page to RN.
 //
-// Reads inspection + template + responses from the locally synced
-// PowerSync tables. Field changes write to local SQLite (responses
-// table); PowerSync's CRUD layer auto-flushes those mutations upstream
-// when connectivity returns.
+// Reads the inspection, its template, saved answers and photo slots from
+// Supabase as the signed-in user, then lays this device's unsent answers over
+// them (src/inspections/response-outbox.ts).
 //
-// Submit: flip status to 'awaiting_verification' via PowerSync write
-// to the local inspections table (also auto-syncs upstream).
+// Each answer is written to the local outbox first, so it survives no signal
+// and app restarts, and the outbox worker uploads it to inspections.responses
+// with the same upsert the web uses. Submit queues one more outbox row that
+// uploads only after every earlier answer has landed, and sends ONLY status +
+// completed_at (the DB status guard refuses a wider contributor update).
+//
+// Nothing here writes to PowerSync's synced tables: its upload hook is a no-op,
+// and a stuck local write freezes every later download on the device.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -22,7 +27,6 @@ import {
   View,
 } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
-import { usePowerSync } from '@powersync/react-native'
 import {
   type Response,
   type Template,
@@ -31,99 +35,101 @@ import {
 } from '@esite/shared'
 import { useAuth } from '../../../src/providers/AuthProvider'
 import { Renderer, type FieldChangePatch } from '../../../src/inspections/FieldRenderers'
+import { pendingPhotoSlots } from '../../../src/inspections/attachment-queue'
+import {
+  type OutboxItem,
+  enqueueResponse,
+  enqueueSubmit,
+  listForInspection,
+  mergeOutboxIntoResponses,
+  toResponseValues,
+} from '../../../src/inspections/response-outbox'
+import {
+  drainNow,
+  inspectionRemote,
+  kickOutbox,
+  onOutboxChange,
+} from '../../../src/inspections/outbox-worker'
+import { powerSyncExecutor } from '../../../src/lib/powersync/executor'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../../src/theme'
 
-type LocalInspection = {
+type LoadedInspection = {
   id: string
   template_id: string
   target_label: string | null
   status: string
 }
 
-type LocalTemplate = {
-  id: string
-  name: string
-  schema_json: string | Record<string, unknown>
-}
+// Statuses in which a contributor may still answer (mirrors
+// inspections.user_can_write_responses).
+const ANSWERABLE_STATUSES = ['assigned', 'in_progress', 're-inspect_required']
 
 export default function MobileCaptureScreen() {
   const { inspectionId } = useLocalSearchParams<{ inspectionId: string }>()
-  const db = usePowerSync()
   const { session } = useAuth()
   const userId = session?.user.id ?? ''
 
-  const [inspection, setInspection] = useState<LocalInspection | null>(null)
+  const [inspection, setInspection] = useState<LoadedInspection | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
   const [responses, setResponses] = useState<Response[]>([])
-  // Photos table (section_id+field_id) used for min_count enforcement at
-  // evaluation time. Signatures intentionally omitted: local schema mirrors
-  // server schema where signatures store `role` not section_id/field_id.
+  const responsesRef = useRef<Response[]>([])
+  // Photo slots (section_id+field_id) used for min_count enforcement: the
+  // server's photos plus this device's photos still waiting to upload.
+  // Signatures intentionally omitted: they store `role`, not section/field.
   const [photos, setPhotos] = useState<{ section_id: string; field_id: string }[]>([])
+  const [outbox, setOutbox] = useState<OutboxItem[]>([])
   const [activeSection, setActiveSection] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+
+  const applyResponses = (next: Response[]) => {
+    responsesRef.current = next
+    setResponses(next)
+  }
+
+  const refreshOutbox = useCallback(async () => {
+    if (!inspectionId) return
+    try {
+      setOutbox(await listForInspection(powerSyncExecutor, inspectionId))
+    } catch (e) {
+      console.warn('[capture] outbox read failed', e)
+    }
+  }, [inspectionId])
+
+  useEffect(() => onOutboxChange(() => void refreshOutbox()), [refreshOutbox])
 
   useEffect(() => {
     if (!inspectionId) return
     let cancelled = false
     setLoading(true)
+    setLoadError(null)
     ;(async () => {
       try {
-        const inspRs = await db.execute(
-          `SELECT id, template_id, target_label, status FROM inspections WHERE id = ?`,
-          [inspectionId],
-        )
-        const insp =
-          (inspRs.rows?._array?.[0] as LocalInspection | undefined) ??
-          ((inspRs.rows as unknown as LocalInspection[])?.[0] as LocalInspection | undefined)
-        if (!insp) {
-          if (!cancelled) setLoading(false)
+        const bundle = await inspectionRemote.loadCaptureBundle(inspectionId)
+        if (!bundle) {
+          if (!cancelled) setInspection(null)
           return
         }
-
-        const tmplRs = await db.execute(
-          `SELECT id, name, schema_json FROM templates WHERE id = ?`,
-          [insp.template_id],
-        )
-        const tmplRow =
-          (tmplRs.rows?._array?.[0] as LocalTemplate | undefined) ??
-          ((tmplRs.rows as unknown as LocalTemplate[])?.[0] as LocalTemplate | undefined)
-        const schemaJson = tmplRow
-          ? typeof tmplRow.schema_json === 'string'
-            ? (JSON.parse(tmplRow.schema_json) as Template)
-            : (tmplRow.schema_json as unknown as Template)
+        const raw = bundle.template?.schema_json
+        const schemaJson = raw
+          ? typeof raw === 'string'
+            ? (JSON.parse(raw) as Template)
+            : (raw as Template)
           : null
-
-        const respRs = await db.execute(
-          `SELECT section_id, field_id, value_bool, value_number, value_text,
-                  value_array, value_json, pass_state, fail_reason
-           FROM responses WHERE inspection_id = ?`,
-          [inspectionId],
-        )
-        const rawResps =
-          (respRs.rows?._array as Array<Record<string, unknown>> | undefined) ??
-          ((respRs.rows as unknown as Array<Record<string, unknown>>) ?? [])
-        const resps: Response[] = rawResps.map(hydrateResponseRow)
-
-        // Photos — metadata only; engine uses section_id+field_id for min_count
-        const photoRs = await db.execute(
-          `SELECT section_id, field_id FROM inspection_photos WHERE inspection_id = ?`,
-          [inspectionId],
-        )
-        const rawPhotos =
-          (photoRs.rows?._array as Array<Record<string, unknown>> | undefined) ??
-          ((photoRs.rows as unknown as Array<Record<string, unknown>>) ?? [])
-        const photoMeta = rawPhotos.map((p) => ({
-          section_id: String(p.section_id ?? ''),
-          field_id: String(p.field_id ?? ''),
-        }))
+        const queued = await listForInspection(powerSyncExecutor, inspectionId)
+        const localPhotos = await pendingPhotoSlots(inspectionId)
 
         if (cancelled) return
-        setInspection(insp)
+        setInspection(bundle.inspection)
         setTemplate(schemaJson)
-        setResponses(resps)
-        setPhotos(photoMeta)
+        applyResponses(mergeOutboxIntoResponses(bundle.responses as unknown as Response[], queued))
+        setOutbox(queued)
+        setPhotos([...bundle.photos, ...localPhotos])
         setActiveSection(schemaJson?.sections?.[0]?.section_id ?? '')
+      } catch (e) {
+        if (!cancelled) setLoadError((e as Error).message ?? String(e))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -131,7 +137,7 @@ export default function MobileCaptureScreen() {
     return () => {
       cancelled = true
     }
-  }, [db, inspectionId])
+  }, [inspectionId, reloadKey])
 
   const ev = useMemo(
     () => (template ? evaluateInspection(template, responses, { photos }) : null),
@@ -139,51 +145,40 @@ export default function MobileCaptureScreen() {
   )
 
   const updateResponse = async (sectionId: string, fieldId: string, patch: FieldChangePatch) => {
-    setResponses((prev) => {
-      const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
-      const next = [...prev]
-      if (idx === -1) {
-        next.push({ section_id: sectionId, field_id: fieldId, ...patch } as Response)
-      } else {
-        next[idx] = { ...next[idx], ...patch } as Response
-      }
-      return next
-    })
+    if (!inspectionId) return
+    const prev = responsesRef.current
+    const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
+    const current: Response = idx === -1 ? { section_id: sectionId, field_id: fieldId } : prev[idx]
+    const row = { ...current, ...patch, section_id: sectionId, field_id: fieldId } as Response
+    const next = [...prev]
+    if (idx === -1) next.push(row)
+    else next[idx] = row
+    applyResponses(next)
 
-    // Persist to local SQLite — UNIQUE on (inspection_id, section_id, field_id)
-    // would be ideal upstream, but for now we DELETE+INSERT for safety so the
-    // INSERT OR REPLACE shape matches whatever the eventual constraint is.
-    await db.writeTransaction(async (tx) => {
-      await tx.execute(
-        `DELETE FROM responses WHERE inspection_id = ? AND section_id = ? AND field_id = ?`,
-        [inspectionId, sectionId, fieldId],
-      )
-      await tx.execute(
-        `INSERT INTO responses (
-           inspection_id, section_id, field_id,
-           value_bool, value_number, value_text, value_array, value_json,
-           pass_state, fail_reason,
-           latest_responded_by, latest_responded_at
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-        [
-          inspectionId,
-          sectionId,
-          fieldId,
-          patch.value_bool === undefined ? null : patch.value_bool === null ? null : patch.value_bool ? 1 : 0,
-          patch.value_number ?? null,
-          patch.value_text ?? null,
-          patch.value_array != null ? JSON.stringify(patch.value_array) : null,
-          patch.value_json != null ? JSON.stringify(patch.value_json) : null,
-          patch.pass_state ?? null,
-          patch.fail_reason ?? null,
-          userId || null,
-        ],
-      )
-    })
+    if (!userId) {
+      Alert.alert('Answer not saved', 'Your session has ended. Sign in again to keep capturing.')
+      return
+    }
+    try {
+      // The WHOLE merged row, so a later partial edit never blanks an earlier
+      // column (e.g. setting fail_reason after pass_state).
+      await enqueueResponse(powerSyncExecutor, {
+        inspectionId,
+        sectionId,
+        fieldId,
+        responderId: userId,
+        values: toResponseValues(row),
+        respondedAt: new Date().toISOString(),
+      })
+      await refreshOutbox()
+      kickOutbox()
+    } catch (e) {
+      Alert.alert('Answer not saved on this device', (e as Error).message ?? 'Unknown error')
+    }
   }
 
   const onSubmit = async () => {
-    if (!template || !ev) return
+    if (!template || !ev || !inspectionId) return
     if (ev.missingRequired.length > 0) {
       Alert.alert(
         'Required fields missing',
@@ -191,19 +186,45 @@ export default function MobileCaptureScreen() {
       )
       return
     }
+    const refused = outbox.filter((i) => i.kind === 'response' && i.status === 'rejected')
+    if (refused.length > 0) {
+      Alert.alert(
+        'Some answers were refused',
+        `${refused.length} answer${refused.length === 1 ? ' was' : 's were'} refused by the server: ${refused[0].lastError ?? 'unknown reason'}. Change ${refused.length === 1 ? 'it' : 'them'} before submitting.`,
+      )
+      return
+    }
+    if (!userId) {
+      Alert.alert('Not submitted', 'Your session has ended. Sign in again, then submit.')
+      return
+    }
     setSubmitting(true)
     try {
-      await db.execute(
-        `UPDATE inspections
-         SET status = 'awaiting_verification',
-             completed_at = datetime('now'),
-             updated_at = datetime('now')
-         WHERE id = ?`,
-        [inspectionId],
-      )
-      Alert.alert('Submitted', 'Inspection sent for verification.', [
-        { text: 'OK', onPress: () => router.back() },
-      ])
+      await enqueueSubmit(powerSyncExecutor, {
+        inspectionId,
+        responderId: userId,
+        completedAt: new Date().toISOString(),
+      })
+      // Two passes: the first may be a drain the worker had already started
+      // before the submission was queued.
+      await drainNow().catch(() => null)
+      await drainNow().catch(() => null)
+      const left = await listForInspection(powerSyncExecutor, inspectionId)
+      setOutbox(left)
+      const submitRow = left.find((i) => i.kind === 'submit')
+      if (!submitRow) {
+        Alert.alert('Submitted', 'Inspection sent for verification.', [
+          { text: 'OK', onPress: () => router.back() },
+        ])
+      } else if (submitRow.status === 'rejected') {
+        Alert.alert('Not submitted', submitRow.lastError ?? 'The server refused the submission.')
+      } else {
+        Alert.alert(
+          'Saved on this device',
+          'There is no connection right now. Your answers and the submission will upload automatically; the inspection shows as submitted once the server confirms.',
+          [{ text: 'OK', onPress: () => router.back() }],
+        )
+      }
     } catch (e) {
       Alert.alert('Submission failed', (e as Error).message ?? 'Unknown error')
     } finally {
@@ -219,15 +240,37 @@ export default function MobileCaptureScreen() {
     )
   }
 
+  if (loadError) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorText}>
+          Could not load this inspection. Check your connection and try again.
+        </Text>
+        <Text style={styles.errorDetail}>{loadError}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={() => setReloadKey((k) => k + 1)}>
+          <Text style={styles.submitText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    )
+  }
+
   if (!inspection || !template) {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>
-          Inspection not found locally. It may not be assigned to your org or your device hasn{"’"}t synced yet.
+          {inspection
+            ? 'This inspection’s template could not be loaded.'
+            : 'Inspection not found. It may have been removed, or it is not on a project you can access.'}
         </Text>
       </View>
     )
   }
+
+  const answerable = ANSWERABLE_STATUSES.includes(inspection.status)
+  const refused = outbox.filter((i) => i.status === 'rejected')
+  const waiting = outbox.filter((i) => i.status !== 'rejected')
+  const submitQueued = waiting.some((i) => i.kind === 'submit')
+  const lastAttemptError = waiting.find((i) => i.status === 'failed')?.lastError ?? null
 
   const section = template.sections.find((s) => s.section_id === activeSection)
 
@@ -240,6 +283,33 @@ export default function MobileCaptureScreen() {
         </Text>
         <Text style={styles.subtitle}>{template.name}</Text>
       </View>
+
+      {/* Upload state — what has not reached the server, and why */}
+      {!answerable && (
+        <View style={[styles.notice, styles.noticeInfo]} testID="capture-not-answerable">
+          <Text style={styles.noticeText}>
+            This inspection is {inspection.status.replace(/_/g, ' ')}; answers can no longer be changed.
+          </Text>
+        </View>
+      )}
+      {refused.length > 0 && (
+        <View style={[styles.notice, styles.noticeError]} testID="capture-refused">
+          <Text style={styles.noticeText}>
+            {refused.length} change{refused.length === 1 ? ' was' : 's were'} refused by the server:{' '}
+            {refused[0].lastError ?? 'unknown reason'}
+          </Text>
+        </View>
+      )}
+      {waiting.length > 0 && (
+        <View style={[styles.notice, styles.noticeWarn]} testID="capture-waiting">
+          <Text style={styles.noticeText}>
+            {submitQueued
+              ? 'Submission waiting to upload'
+              : `${waiting.length} change${waiting.length === 1 ? '' : 's'} waiting to upload`}
+            {lastAttemptError ? ` — last attempt: ${lastAttemptError}` : ''}
+          </Text>
+        </View>
+      )}
 
       {/* Section tabs */}
       <ScrollView
@@ -320,46 +390,20 @@ export default function MobileCaptureScreen() {
             {ev?.overallResult ? ` · ${ev.overallResult}` : ''}
           </Text>
         </View>
-        <TouchableOpacity
-          onPress={onSubmit}
-          disabled={submitting}
-          style={[styles.submitBtn, submitting && { opacity: 0.5 }]}
-        >
-          <Text style={styles.submitText}>{submitting ? 'Submitting...' : 'Submit'}</Text>
-        </TouchableOpacity>
+        {answerable && (
+          <TouchableOpacity
+            onPress={onSubmit}
+            disabled={submitting || submitQueued}
+            style={[styles.submitBtn, (submitting || submitQueued) && { opacity: 0.5 }]}
+          >
+            <Text style={styles.submitText}>
+              {submitting ? 'Submitting...' : submitQueued ? 'Queued' : 'Submit'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   )
-}
-
-function hydrateResponseRow(row: Record<string, unknown>): Response {
-  const arr = row.value_array
-  const json = row.value_json
-  return {
-    section_id: String(row.section_id ?? ''),
-    field_id: String(row.field_id ?? ''),
-    value_bool:
-      row.value_bool === null || row.value_bool === undefined
-        ? null
-        : Boolean(row.value_bool),
-    value_number: row.value_number == null ? null : Number(row.value_number),
-    value_text: row.value_text == null ? null : String(row.value_text),
-    value_array:
-      typeof arr === 'string' && arr.length
-        ? (safeParse(arr) as string[] | null) ?? null
-        : null,
-    value_json: typeof json === 'string' && json.length ? safeParse(json) : null,
-    pass_state: (row.pass_state as Response['pass_state']) ?? undefined,
-    fail_reason: row.fail_reason == null ? null : String(row.fail_reason),
-  }
-}
-
-function safeParse(s: string): unknown {
-  try {
-    return JSON.parse(s)
-  } catch {
-    return null
-  }
 }
 
 const styles = StyleSheet.create({
@@ -372,6 +416,31 @@ const styles = StyleSheet.create({
     backgroundColor: colors.base,
   },
   errorText: { color: colors.textMid, fontSize: fontSize.md, textAlign: 'center' },
+  errorDetail: {
+    color: colors.textMid,
+    fontSize: fontSize.small,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  retryBtn: {
+    marginTop: spacing.lg,
+    backgroundColor: colors.amber,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+  },
+  notice: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  noticeInfo: { backgroundColor: colors.elevated, borderColor: colors.borderMid },
+  noticeWarn: { backgroundColor: colors.amberDim, borderColor: colors.amberMid },
+  noticeError: { backgroundColor: colors.redDim, borderColor: colors.redMid },
+  noticeText: { color: colors.text, fontSize: fontSize.small },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,

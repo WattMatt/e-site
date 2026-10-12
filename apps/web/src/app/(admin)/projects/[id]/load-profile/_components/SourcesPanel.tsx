@@ -15,6 +15,7 @@ import type { ParsedPart } from '@/lib/load-profile/pipeline'
 import type { LoadProfileView, LoadRole, SourceView } from '@/lib/load-profile/view-types'
 import { formatNumber } from '@/components/charts/scale'
 import type { ArchetypeOption } from './LoadProfileClient'
+import { TenantEstimatePanel } from './TenantEstimatePanel'
 
 async function sha256OfBlob(b: Blob): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', await b.arrayBuffer())
@@ -201,6 +202,9 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
       )}
 
       {view.compositionNote && <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '6px 0 0' }}>{view.compositionNote}</p>}
+      {view.sources.filter((s) => s.kind === 'tenant_schedule' && s.tenantEstimate).map((s) => (
+        <TenantEstimatePanel key={s.id} projectId={view.projectId} source={s} est={s.tenantEstimate!} canEdit={view.canEdit} />
+      ))}
       {view.canEdit && (
         <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
           <div
@@ -296,11 +300,11 @@ export function SourcesPanel({ view, archetypes }: { view: LoadProfileView; arch
           {form === 'tenant' && (
             <div style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
               <p style={{ margin: '0 0 6px' }}>
-                {view.tenants.withArea} of {view.tenants.count} tenants have a shop area ({formatNumber(view.tenants.totalAreaM2)} m²). Each becomes area × the category&apos;s W/m² × an archetype shape (the Solar model).
+                {view.tenants.withArea} of {view.tenants.count} tenants have a shop area ({formatNumber(view.tenants.totalAreaM2)} m²). Each tenant whose brand has measured stores in your Solar meter library is estimated from them per m², scaled to its own area; the rest use the category&apos;s generic W/m² and daily pattern. Reading the library can take up to a minute.
               </p>
               <label>Common area + <input aria-label="Common area percent" type="number" min={0} max={100} value={commonArea} onChange={(e) => setCommonArea(e.target.value)} style={{ width: 60 }} /> %</label>
               <button className="btn btn-primary" style={{ marginLeft: 8 }} disabled={busy || view.tenants.withArea === 0}
-                onClick={() => void run(addSyntheticSourceAction(view.projectId, { kind: 'tenant_schedule', label: 'Tenant schedule estimate', params: { commonAreaPct: Number(commonArea) } }))}>Add estimate</button>
+                onClick={() => void run(addSyntheticSourceAction(view.projectId, { kind: 'tenant_schedule', label: 'Tenant schedule estimate', params: { commonAreaPct: Number(commonArea), basis: 'measured' } }))}>{busy ? 'Reading the library…' : 'Add estimate'}</button>
             </div>
           )}
 
