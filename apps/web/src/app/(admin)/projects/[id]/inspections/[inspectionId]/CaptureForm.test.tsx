@@ -70,4 +70,29 @@ describe('CaptureForm', () => {
     render(<CaptureForm {...props} currentUserId="u-v" separateVerifier readOnly />)
     expect(screen.queryByRole('button', { name: /submit for verification/i })).toBeNull()
   })
+
+  it('names what is still required, so a form missing only its signature does not look complete (MINISUB 1)', () => {
+    const t = {
+      ...template,
+      sections: [
+        { section_id: 's1', title: 'Board', fields: [{ field_id: 'rating', label: 'Rating', type: 'text', required: true }] },
+        { section_id: 's2', title: 'Critical safety checks', fields: [{ field_id: 'inspector_signature', label: 'Inspector signature', type: 'signature', required: true }] },
+      ],
+    } as unknown as Template
+    render(<CaptureForm {...props} template={t} initialResponses={[{ section_id: 's1', field_id: 'rating', value_text: '63 A' }]} />)
+    expect(screen.getByText('Still required: 1')).toBeTruthy()
+    expect(screen.getByText('Inspector signature')).toBeTruthy()
+    expect(screen.getByText(/· Sign$/)).toBeTruthy()
+  })
+
+  it('a captured signature counts, so the same form is complete', () => {
+    const t = {
+      ...template,
+      sections: [{ section_id: 's2', title: 'Critical safety checks', fields: [{ field_id: 'inspector_signature', label: 'Inspector signature', type: 'signature', required: true }] }],
+    } as unknown as Template
+    render(<CaptureForm {...props} template={t} initialSignatures={[{ section_id: 's2', field_id: 'inspector_signature', signatory_name: 'Ernst', signed_at: '2026-10-12T12:00:00Z' }]} />)
+    expect(screen.queryByText(/Still required/)).toBeNull()
+    expect(screen.getByText('1/1')).toBeTruthy()
+  })
 })
+

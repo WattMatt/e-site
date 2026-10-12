@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { evaluateInspection, isFieldVisible } from '@esite/shared'
+import { evaluateInspection, isFieldVisible, describeMissing } from '@esite/shared'
 import type { Template, Response as InspectionResponse, Field } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -93,6 +93,23 @@ export default function CaptureForm({
     () => evaluateInspection(template, responses, { photos, signatures }),
     [template, responses, photos, signatures],
   )
+
+  // Every gap, named, with what completes it: shown in the summary so "Submit refuses a finished
+  // form" can never happen silently.
+  const missingItems = useMemo(
+    () => describeMissing(template, evaluation.missingRequired, { photos, signatures }),
+    [template, evaluation.missingRequired, photos, signatures],
+  )
+  const jumpTo = useCallback((sectionId: string, fieldId: string) => {
+    setActiveSection(sectionId)
+    // The section renders on the next paint; look for the entry after it.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`field-${sectionId}-${fieldId}`) ?? document.getElementById(`field-${sectionId}-${fieldId.split('[')[0]}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el?.classList.add('ring-required')
+      setTimeout(() => el?.classList.remove('ring-required'), 2500)
+    })
+  }, [])
 
   // One count for the rail and the summary: photo, file and signature fields count as answered
   // once uploaded (the rail used to count typed answers only, so photo sections read 0/4).
@@ -228,12 +245,8 @@ export default function CaptureForm({
       const first = evaluation.missingRequired[0]
       const n = evaluation.missingRequired.length
       const where = template.sections.find((x) => x.section_id === first.sectionId)?.title ?? first.sectionId
-      setSubmitError(`${n} required ${n === 1 ? 'item is' : 'items are'} still missing. The first is in "${where}".`)
-      setActiveSection(first.sectionId)
-      const el = document.getElementById(`field-${first.sectionId}-${first.fieldId}`)
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el?.classList.add('ring-required')
-      setTimeout(() => el?.classList.remove('ring-required'), 2500)
+      setSubmitError(`${n} required ${n === 1 ? 'item is' : 'items are'} still missing (listed under Still required). The first is in "${where}".`)
+      jumpTo(first.sectionId, first.fieldId)
       return
     }
     if (!projectId) return
@@ -449,9 +462,24 @@ export default function CaptureForm({
               <div style={{ color: 'var(--c-text-mid)' }}>
                 Answered: {evaluation.answeredFieldCount} / {evaluation.visibleFieldCount}
               </div>
-              {evaluation.missingRequired.length > 0 && (
-                <div style={{ color: 'var(--c-red)' }}>
-                  Required missing: {evaluation.missingRequired.length}
+              {missingItems.length > 0 && (
+                <div>
+                  <div style={{ color: 'var(--c-red)', marginBottom: 4 }}>Still required: {missingItems.length}</div>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {missingItems.map((m) => (
+                      <li key={`${m.sectionId}:${m.fieldId}`}>
+                        <button
+                          type="button"
+                          onClick={() => jumpTo(m.sectionId, m.fieldId)}
+                          style={{ all: 'unset', cursor: 'pointer', display: 'block', fontSize: 12, color: 'var(--c-text)' }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{m.label}</span>
+                          <span style={{ color: 'var(--c-red)' }}> · {m.need}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-dim)' }}>{m.sectionTitle}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {evaluation.failedFields.length > 0 && (
