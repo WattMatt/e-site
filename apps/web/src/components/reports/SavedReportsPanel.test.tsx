@@ -64,24 +64,24 @@ describe('SavedReportsPanel', () => {
 
   it('labels status plan counts, and hides a zero count', async () => {
     await renderPanel({ reports: [{ ...ROW, summary: { statusPlans: 3, statusPlansNotIncluded: 1 } } as ProjectReportRow] })
-    const line = screen.getByText(/status plans/).textContent ?? ''
-    expect(line).toContain('3 status plans')
-    expect(line).toContain('1 plans not included')
+    const line = screen.getByText(/plan sheets/).textContent ?? ''
+    expect(line).toContain('3 plan sheets')
+    expect(line).toContain('1 sheets not included')
     expect(line).not.toContain('statusPlans')
   })
 
   it('hides zero status plan entries entirely (an all-included report says nothing about omissions)', async () => {
     await renderPanel({ reports: [{ ...ROW, summary: { statusPlans: 2, statusPlansNotIncluded: 0 } } as ProjectReportRow] })
-    const line = screen.getByText(/status plans/).textContent ?? ''
-    expect(line).toContain('2 status plans')
+    const line = screen.getByText(/plan sheets/).textContent ?? ''
+    expect(line).toContain('2 plan sheets')
     expect(line).not.toMatch(/not included/)
   })
 
   it('a report whose plans were all left out says so without a "0 status plans"', async () => {
     await renderPanel({ reports: [{ ...ROW, summary: { statusPlans: 0, statusPlansNotIncluded: 4 } } as ProjectReportRow] })
-    const line = screen.getByText(/plans not included/).textContent ?? ''
-    expect(line).toContain('4 plans not included')
-    expect(line).not.toMatch(/0 status plans/)
+    const line = screen.getByText(/sheets not included/).textContent ?? ''
+    expect(line).toContain('4 sheets not included')
+    expect(line).not.toMatch(/0 plan sheets/)
   })
 
   it('renders a row with version label and status', async () => {

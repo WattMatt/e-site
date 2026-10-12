@@ -72,7 +72,7 @@ describe('renderTenantScheduleReport — status plan appendix', () => {
     const out = await renderWith({ load: { inputs: [planInput(await drawingPdf())], omitted: [] }, generatedOn: '2026-06-20' })
     expect(Buffer.isBuffer(out)).toBe(true)
     expect(await pages(out)).toBe(base + 2)
-    expect(squash(extractPdfText(out))).toContain('Appendix—Tenantstatusplans')
+    expect(squash(extractPdfText(out))).toContain('Appendix—Tenantplans')
   })
   it('an unreadable drawing still ships the report, listed on the divider', async () => {
     const base = await pages(await render(baseData))
@@ -95,7 +95,7 @@ describe('renderTenantScheduleReport — final size limit', () => {
     expect(out.length).toBeLessThanOrEqual(limit)
     expect(await pages(out)).toBe((await pages(base)) + 1) // divider only, no plan page
     const text = squash(extractPdfText(out))
-    expect(text).toContain('Appendix—Tenantstatusplans')
+    expect(text).toContain('Appendix—Tenantplans')
     expect(text).toContain('Groundfloortenants')
     expect(text).toContain('Other')
     expect(outcome).toEqual({

@@ -56,7 +56,7 @@ describe('appendStatusPlansToReport', () => {
     expect(await sizes(out)).toEqual([[595, 842], [595, 842], [595, 842], a3, a3])
     expect(await pageText(out, 0)).toContain('REPORTPAGE1')
     const divider = await pageText(out, 2)
-    expect(divider).toContain('Appendix—Tenantstatusplans')
+    expect(divider).toContain('Appendix—Tenantplans')
     expect(divider.indexOf('Alphatenants')).toBeLessThan(divider.indexOf('Bravoschematic'))
     expect(divider).toContain('Charlie')
     expect(divider).toContain('couldnotberead(Objectnotfound)')
