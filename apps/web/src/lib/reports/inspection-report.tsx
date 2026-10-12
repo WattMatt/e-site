@@ -8,6 +8,8 @@ import type {
   ReportSummary,
   ReportSection,
   ReportGroup,
+  ReportFieldRow,
+  ReportPhotoField,
 } from './inspection-report-data'
 import { Cover, pageStyles as s } from './components'
 import {
@@ -235,24 +237,68 @@ function Summary({ summary, accent }: SummaryProps) {
 // SectionContent — renders rows, groups, photoFields for one ReportSection
 // ---------------------------------------------------------------------------
 
-function SectionContent({ section, accent }: { section: ReportSection; accent: string }) {
+/** A section's blocks in order. `small` marks one that fits well inside a page (one entry, or at
+ *  most one row of photos), the only kind its heading may be bound to. */
+function sectionBlocks(section: ReportSection, accent: string): Array<{ node: React.ReactNode; small: boolean }> {
+  const oneRow = (n: number) => n <= spacing.photoGridCols
+  return [
+    // Non-group rows in template order, each with the photos taken against it
+    ...section.rows.map((row) => ({
+      node: <EntryWithPhotos key={row.fieldId} row={row} accent={accent} />,
+      small: oneRow(row.photos?.photos.length ?? 0),
+    })),
+    // Repeating groups
+    ...section.groups.map((group) => ({ node: <GroupBlock key={group.fieldId} group={group} accent={accent} />, small: false })),
+    // Photo fields
+    ...photoFieldBlocks(section.photoFields).map((pf) => ({ node: <PhotoGrid key={pf.fieldId} field={pf} accent={accent} />, small: oneRow(pf.photos.length) })),
+  ]
+}
+
+/**
+ * Consecutive photo fields holding one photo each print as one grid, three across, each photo
+ * captioned with its field ("Board (Open)", "Meter"). One block per field left most of every page
+ * empty on a photo-only audit (Shoprite: 13 pages for 27 photos).
+ */
+function photoFieldBlocks(fields: ReportPhotoField[]): ReportPhotoField[] {
+  const out: ReportPhotoField[] = []
+  let run: ReportPhotoField[] = []
+  const flush = () => {
+    if (run.length === 1) out.push(run[0])
+    else if (run.length > 1) {
+      out.push({
+        sectionId: run[0].sectionId,
+        fieldId: run.map((f) => f.fieldId).join('+'),
+        label: '',
+        photos: run.map((f) => ({ ...f.photos[0], caption: f.photos[0].caption ? `${f.label} · ${f.photos[0].caption}` : f.label })),
+        omittedCount: 0,
+      })
+    }
+    run = []
+  }
+  for (const f of fields) {
+    if (f.photos.length === 1 && f.omittedCount === 0) run.push(f)
+    else {
+      flush()
+      out.push(f)
+    }
+  }
+  flush()
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// EntryWithPhotos — an entry and the photos taken against it, kept on one page
+// when they fit one photo row (a check at a page foot with its photo overleaf
+// reads as two unrelated things).
+// ---------------------------------------------------------------------------
+
+function EntryWithPhotos({ row, accent }: { row: ReportFieldRow; accent: string }) {
+  if (!row.photos) return <ResultRow row={row} />
   return (
-    <>
-      {/* Non-group rows in template order */}
-      {section.rows.map((row) => (
-        <ResultRow key={row.fieldId} row={row} />
-      ))}
-
-      {/* Repeating groups */}
-      {section.groups.map((group) => (
-        <GroupBlock key={group.fieldId} group={group} />
-      ))}
-
-      {/* Photo fields */}
-      {section.photoFields.map((pf) => (
-        <PhotoGrid key={pf.fieldId} field={pf} accent={accent} />
-      ))}
-    </>
+    <View wrap={row.photos.photos.length > spacing.photoGridCols}>
+      <ResultRow row={row} />
+      <PhotoGrid field={row.photos} accent={accent} />
+    </View>
   )
 }
 
@@ -260,7 +306,7 @@ function SectionContent({ section, accent }: { section: ReportSection; accent: s
 // GroupBlock — group label sub-heading + per-entry rows
 // ---------------------------------------------------------------------------
 
-function GroupBlock({ group }: { group: ReportGroup }) {
+function GroupBlock({ group, accent }: { group: ReportGroup; accent: string }) {
   return (
     <View>
       <Text style={ss.groupLabel}>{group.label}</Text>
@@ -268,7 +314,7 @@ function GroupBlock({ group }: { group: ReportGroup }) {
         <View key={entry.index}>
           <Text style={ss.groupEntryLabel}>Entry {entry.index + 1}</Text>
           {entry.rows.map((row) => (
-            <ResultRow key={row.fieldId} row={row} />
+            <EntryWithPhotos key={row.fieldId} row={row} accent={accent} />
           ))}
         </View>
       ))}
@@ -290,7 +336,7 @@ export function InspectionReportDocument({ data, branding }: InspectionReportDoc
 
   const auditRows = data.audit.map((a) => [
     formatWhen(a.at),
-    a.fieldId ?? a.sectionId ?? '—',
+    a.fieldLabel ?? a.fieldId ?? a.sectionId ?? '—',
     a.by,
   ])
 
@@ -321,9 +367,16 @@ export function InspectionReportDocument({ data, branding }: InspectionReportDoc
 
         {/* Per-section content: rows → groups → photoFields */}
         {data.sections.map((section) => (
-          <Section key={section.sectionId} title={section.title} accent={accent}>
-            <SectionContent section={section} accent={accent} />
-          </Section>
+          // The section's first block travels with its heading (see Section's `lead`).
+          (() => {
+            const blocks = sectionBlocks(section, accent)
+            const lead = blocks[0]?.small ? blocks[0].node : undefined
+            return (
+              <Section key={section.sectionId} title={section.title} accent={accent} lead={lead}>
+                {(lead ? blocks.slice(1) : blocks).map((b) => b.node)}
+              </Section>
+            )
+          })()
         ))}
 
         {/* Annexures */}

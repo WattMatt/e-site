@@ -180,6 +180,24 @@ export default async function CapturePage({ params }: Props) {
             )}
           </div>
         </div>
+        {/* The report is available at every stage: a preview while open, the issued certificate once
+            certified. No page linked to either before (2026-10-12). */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <a
+            href={`/api/projects/${projectId}/inspections/${inspectionId}/report-preview`}
+            target="_blank"
+            rel="noopener"
+            className="btn-primary-amber"
+            style={{ textDecoration: 'none', background: 'transparent', color: 'var(--c-amber)', border: '1px solid var(--c-amber)' }}
+          >
+            {inspection.status === 'certified' ? 'Report (live preview)' : 'Preview report'}
+          </a>
+          {inspection.status === 'certified' && (
+            <Link href={`/projects/${projectId}/inspections/${inspectionId}/report`} className="btn-primary-amber" style={{ textDecoration: 'none' }}>
+              View certificate
+            </Link>
+          )}
+        </div>
       </div>
 
       <div style={{ marginBottom: 16 }}>

@@ -18,6 +18,10 @@ vi.mock('@/lib/auth/require-role', () => ({
   requireEffectiveRole: requireEffectiveRoleMock,
 }))
 
+// The real image step (sharp) is proven in report-image.test.ts; here the fixtures are a few
+// bytes, so pass them through as if re-encoded.
+vi.mock('./report-image', () => ({ toReportJpeg: async (b: Uint8Array) => Buffer.from(b) }))
+
 import { gatherInspectionReportData } from './inspection-report-data'
 
 // ─── Chainable + awaitable query-builder stub ───────────────────────────────
@@ -506,31 +510,46 @@ describe('gatherInspectionReportData — photo vs file routing', () => {
     expect(photoField.omittedCount).toBe(total - cap) // === 1
   })
 
-  it('treats an orphan photo row (no matching template field) as an annexure', async () => {
+  it('prints a photo taken against an entry under that entry, from the PHOTOS bucket', async () => {
+    // Inline capture on a pass/fail check: 44 of the 132 photos on ZZ status-guard test.
+    const buckets: string[] = []
+    setup({
+      storageCapture: buckets,
+      serviceOver: {
+        'inspections.photos': {
+          data: [{ id: 'e-1', section_id: 'sec-1', field_id: 'pf_ok', storage_path: 'p/i/sec-1/pf_ok/1.jpg', original_path: null, caption: null, uploaded_by: 'user-insp' }],
+          error: null,
+        },
+      },
+    })
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const row = data.sections[0].rows.find((r) => r.fieldId === 'pf_ok')!
+    expect(row.photos?.label).toBe('Photos: Earth OK?')
+    expect(row.photos?.photos).toHaveLength(1)
+    expect(row.photos?.photos[0].dataUri).toMatch(/^data:image\/jpeg;base64,/)
+    expect(data.annexures).toHaveLength(0)
+    expect(buckets).toContain('inspection-photos')
+    expect(buckets).not.toContain('inspection-attachments')
+  })
+
+  it('a photo whose field the template no longer has is still printed, under "Other photos"', async () => {
     setup({
       serviceOver: {
         'inspections.photos': {
           data: [
-            {
-              id: 'orphan-1',
-              section_id: 'sec-1',
-              field_id: 'does_not_exist',
-              storage_path: 'o/blob.bin',
-              original_path: null,
-              caption: 'blob.bin',
-              uploaded_by: 'user-insp',
-            },
+            { id: 'orphan-1', section_id: 'sec-1', field_id: 'does_not_exist', storage_path: 'o/blob.jpg', original_path: null, caption: 'blob.jpg', uploaded_by: 'user-insp' },
+            { id: 'orphan-2', section_id: 'gone-section', field_id: 'x', storage_path: 'o/blob2.jpg', original_path: null, caption: null, uploaded_by: 'user-insp' },
           ],
           error: null,
         },
       },
     })
     const data = await gatherInspectionReportData(INSPECTION_ID)
-    // not in any photoFields
-    const anyPhoto = data.sections.some((s) => s.photoFields.some((f) => f.photos.length > 0))
-    expect(anyPhoto).toBe(false)
-    // present as an attachment annexure instead
-    expect(data.annexures.some((a) => a.source === 'attachment' && a.name === 'blob.bin')).toBe(true)
+    const inSection = data.sections[0].photoFields.find((f) => f.label === 'Other photos')
+    expect(inSection?.photos).toHaveLength(1)
+    const closing = data.sections.find((s) => s.title === 'Other photos')
+    expect(closing?.photoFields[0].photos).toHaveLength(1)
+    expect(data.annexures).toHaveLength(0)
   })
 })
 

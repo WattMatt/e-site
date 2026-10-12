@@ -22,6 +22,7 @@
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { toReportJpeg } from './report-image'
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 // (These EXACTLY match the local prop interfaces in interior.tsx; Task 4
@@ -36,6 +37,8 @@ export interface ReportFieldRow {
   failReason?: string | null
   sansRef?: string | null
   value?: string
+  /** Photos taken against this entry (inline capture), printed under it. */
+  photos?: ReportPhotoField
 }
 export interface ReportGroup {
   fieldId: string
@@ -79,6 +82,8 @@ export interface ReportAuditEntry {
   at: string | null                // ISO
   sectionId: string | null
   fieldId: string | null
+  /** The entry's label from the template (a group entry reads "Group #n · Sub"); null if unknown. */
+  fieldLabel?: string | null
   by: string                       // resolved name, or short-uuid fallback
 }
 export interface ReportSummary {
@@ -157,6 +162,41 @@ async function downloadToDataUri(
   } catch {
     return null
   }
+}
+
+/**
+ * A stored photo as a small JPEG data URI for the PDF (toReportJpeg: rotation applied, long edge
+ * capped, transparency white), or null when it cannot be downloaded or read.
+ */
+async function downloadPhotoForReport(
+  service: AnyService,
+  bucket: string,
+  storagePath: string,
+): Promise<string | null> {
+  try {
+    const { data, error } = await (service as any).storage.from(bucket).download(storagePath)
+    if (error || !data) return null
+    const jpeg = await toReportJpeg(new Uint8Array(await data.arrayBuffer()))
+    return jpeg ? `data:image/jpeg;base64,${jpeg.toString('base64')}` : null
+  } catch {
+    return null
+  }
+}
+
+/** Runs at most `n` of the given tasks at once. */
+function concurrencyLimit(n: number) {
+  let active = 0
+  const queue: Array<() => void> = []
+  const next = () => {
+    if (active >= n || queue.length === 0) return
+    active++
+    queue.shift()!()
+  }
+  return <T>(task: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      queue.push(() => task().then(resolve, reject).finally(() => { active--; next() }))
+      next()
+    })
 }
 
 /** Issue a short-lived signed URL, or null on any failure. */
@@ -452,21 +492,43 @@ export async function gatherInspectionReportData(
     }
   }
 
-  // 6. Route photo rows → photoFields vs annexures (no MIME column; the field
-  //    type is the only discriminator. An orphan row → annexure, safer than
-  //    embedding an arbitrary blob as an image).
+  // 6. Route photo rows. A `file` field's upload lives in the attachments bucket and is annexed.
+  //    Everything else is a photo in the photos bucket: a photo field's, one taken against an
+  //    entry (inline capture on a pass/fail check, a reading, a text answer), or one whose field
+  //    is no longer in the template. Entry photos used to be sent to the annexure list and
+  //    looked up in the ATTACHMENTS bucket, so they came out blank: 83 of the 132 photos on ZZ
+  //    status-guard test (2026-10-12).
   const photoFieldBuckets = new Map<string, any[]>() // "sectionId|fieldId" → photo rows
   const fileAnnexureRows: any[] = []
   for (const ph of photoList) {
     const type = fieldTypeByKey.get(key(ph.section_id, ph.field_id))
-    if (type === 'photo') {
+    if (type === 'file') {
+      fileAnnexureRows.push(ph)
+    } else {
       const k = key(ph.section_id, ph.field_id)
       if (!photoFieldBuckets.has(k)) photoFieldBuckets.set(k, [])
       photoFieldBuckets.get(k)!.push(ph)
-    } else {
-      // 'file' OR orphan → annexure
-      fileAnnexureRows.push(ph)
     }
+  }
+  const consumedPhotoKeys = new Set<string>()
+  // Downloads + re-encodes run 8 at a time across the whole report: one at a time, a 30-photo
+  // inspection took ~40 s to render (measured on ZZ status-guard test, 2026-10-12).
+  const limit = concurrencyLimit(8)
+  const renderPhotoField = async (sectionId: string, fieldId: string, label: string): Promise<ReportPhotoField | null> => {
+    const k = key(sectionId, fieldId)
+    const rowsForField = photoFieldBuckets.get(k) ?? []
+    consumedPhotoKeys.add(k)
+    if (rowsForField.length === 0) return null
+    const rendered = rowsForField.slice(0, MAX_PHOTOS_PER_FIELD)
+    const photos: ReportPhoto[] = await Promise.all(
+      rendered.map((ph) =>
+        limit(async () => ({
+          dataUri: await downloadPhotoForReport(service, PHOTO_BUCKET, ph.original_path ?? ph.storage_path),
+          caption: buildCaption(ph, nameLookup),
+        })),
+      ),
+    )
+    return { sectionId, fieldId, label, photos, omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD) }
   }
 
   // 7. Build the section model.
@@ -516,65 +578,43 @@ export async function gatherInspectionReportData(
       handleField(field, field.field_id)
     }
 
-    // Photo fields for this section — download + caption each photo.
-    // Pass A: top-level photo fields (flattenSectionFields intentionally does NOT
-    // recurse into repeating_group sub-fields, so those are handled in Pass B).
-    for (const field of flattenSectionFields(section)) {
-      if (field.type !== 'photo') continue
-      const k = key(section.section_id, field.field_id)
-      const rowsForField = photoFieldBuckets.get(k) ?? []
-      const rendered = rowsForField.slice(0, MAX_PHOTOS_PER_FIELD)
-      const photos: ReportPhoto[] = await Promise.all(
-        rendered.map(async (ph) => {
-          const pathForSigning = ph.original_path ?? ph.storage_path
-          const dataUri = await downloadToDataUri(service, PHOTO_BUCKET, pathForSigning)
-          return { dataUri, caption: buildCaption(ph, nameLookup) }
-        }),
-      )
-      photoFields.push({
-        sectionId: section.section_id,
-        fieldId: field.field_id,
-        label: String(field.label ?? field.field_id),
-        photos,
-        omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD),
-      })
-    }
+    // Photos taken against an entry print under that entry's row.
+    await Promise.all(
+      [...rows, ...groups.flatMap((g) => g.entries.flatMap((e) => e.rows))].map(async (row) => {
+        const pf = await renderPhotoField(section.section_id, row.fieldId, `Photos: ${row.label}`)
+        if (pf) row.photos = pf
+      }),
+    )
 
-    // Pass B: repeating_group photo sub-fields.
-    // The photo-routing step (step 6) correctly placed these rows into
-    // photoFieldBuckets under their synthetic keys (e.g. "sec-1|grp[0].ph").
-    // But Pass A never visits those keys because flattenSectionFields skips
-    // group sub-fields. Drain them here, one ReportPhotoField per (group, entry,
-    // photo-sub-field) triple, with an entry-aware label.
+    // Photo fields: top-level ones, then repeating-group photo sub-fields (flattenSectionFields
+    // does not recurse into a group), one grid per (group, entry, photo sub-field).
     for (const field of flattenSectionFields(section)) {
+      if (field.type === 'photo') {
+        const pf = await renderPhotoField(section.section_id, field.field_id, String(field.label ?? field.field_id))
+        photoFields.push(pf ?? { sectionId: section.section_id, fieldId: field.field_id, label: String(field.label ?? field.field_id), photos: [], omittedCount: 0 })
+        continue
+      }
       if (field.type !== 'repeating_group') continue
       const groupLabel = String(field.label ?? field.field_id)
       const indices = collectGroupEntryIndices(field.field_id, responseList, section.section_id)
       for (const sub of (field.fields ?? []) as FlatField[]) {
         if (sub.type !== 'photo') continue
-        const subLabel = String(sub.label ?? sub.field_id)
         for (const i of indices) {
           const synthetic = `${field.field_id}[${i}].${sub.field_id}`
-          const k = key(section.section_id, synthetic)
-          const rowsForField = photoFieldBuckets.get(k) ?? []
-          if (rowsForField.length === 0) continue
-          const rendered = rowsForField.slice(0, MAX_PHOTOS_PER_FIELD)
-          const photos: ReportPhoto[] = await Promise.all(
-            rendered.map(async (ph) => {
-              const pathForSigning = ph.original_path ?? ph.storage_path
-              const dataUri = await downloadToDataUri(service, PHOTO_BUCKET, pathForSigning)
-              return { dataUri, caption: buildCaption(ph, nameLookup) }
-            }),
-          )
-          photoFields.push({
-            sectionId: section.section_id,
-            fieldId: synthetic,
-            label: `${groupLabel} — Entry ${i + 1}: ${subLabel}`,
-            photos,
-            omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD),
-          })
+          const pf = await renderPhotoField(section.section_id, synthetic, `${groupLabel} — Entry ${i + 1}: ${String(sub.label ?? sub.field_id)}`)
+          if (pf) photoFields.push(pf)
         }
       }
+    }
+
+    // Anything left in this section (a photo whose field the template no longer has, or one on a
+    // signature/header): printed, never dropped.
+    for (const k of [...photoFieldBuckets.keys()]) {
+      if (consumedPhotoKeys.has(k) || !k.startsWith(`${section.section_id}|`)) continue
+      const fieldId = k.slice(section.section_id.length + 1)
+      const label = fieldLabelByKey.get(k)
+      const pf = await renderPhotoField(section.section_id, fieldId, label ? `Photos: ${label}` : 'Other photos')
+      if (pf) photoFields.push(pf)
     }
 
     reportSections.push({
@@ -586,6 +626,18 @@ export async function gatherInspectionReportData(
     })
   }
 
+  // Photos under a section the template no longer has: their own closing section, never dropped.
+  const strayPhotoFields: ReportPhotoField[] = []
+  for (const k of [...photoFieldBuckets.keys()]) {
+    if (consumedPhotoKeys.has(k)) continue
+    const [sectionId, ...rest] = k.split('|')
+    const pf = await renderPhotoField(sectionId, rest.join('|'), 'Other photos')
+    if (pf) strayPhotoFields.push(pf)
+  }
+  if (strayPhotoFields.length > 0) {
+    reportSections.push({ sectionId: '_other_photos', title: 'Other photos', rows: [], groups: [], photoFields: strayPhotoFields })
+  }
+
   // 8. File-field annexures (source:'attachment') — signed URL + image thumbnail.
   const attachmentAnnexures: ReportAnnexure[] = await Promise.all(
     fileAnnexureRows.map(async (ph) => {
@@ -593,7 +645,7 @@ export async function gatherInspectionReportData(
       const href = await signedUrl(service, ATTACHMENT_BUCKET, ph.storage_path)
       const isImage = IMAGE_EXT_RE.test(name) || IMAGE_EXT_RE.test(String(ph.storage_path ?? ''))
       const thumbnailDataUri = isImage
-        ? await downloadToDataUri(service, ATTACHMENT_BUCKET, ph.storage_path)
+        ? await downloadPhotoForReport(service, ATTACHMENT_BUCKET, ph.storage_path)
         : null
       return { name, source: 'attachment' as const, href, thumbnailDataUri }
     }),
@@ -616,11 +668,23 @@ export async function gatherInspectionReportData(
     })),
   )
 
-  // 10. Audit appendix (response_history, already ordered).
+  // 10. Audit appendix (response_history, already ordered). Entries are named as on the form, not
+  //     by their internal field ids.
+  function auditLabel(sectionId: string | null, fieldId: string | null): string | null {
+    if (!sectionId || !fieldId) return null
+    const direct = fieldLabelByKey.get(key(sectionId, fieldId))
+    if (direct) return direct
+    const m = fieldId.match(/^(.+)\[(\d+)\]\.(.+)$/)
+    if (!m) return null
+    const group = fieldLabelByKey.get(key(sectionId, m[1])) ?? m[1]
+    const sub = fieldLabelByKey.get(key(sectionId, fieldId)) ?? m[3]
+    return `${group} #${Number(m[2]) + 1} · ${sub}`
+  }
   const audit: ReportAuditEntry[] = historyList.map((h) => ({
     at: (h.responded_at as string | null) ?? null,
     sectionId: (h.section_id as string | null) ?? null,
     fieldId: (h.field_id as string | null) ?? null,
+    fieldLabel: auditLabel(h.section_id as string | null, h.field_id as string | null),
     by: resolveName(h.responded_by),
   }))
 

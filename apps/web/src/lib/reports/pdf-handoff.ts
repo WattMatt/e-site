@@ -34,9 +34,16 @@ export const tenantSchedulePreviewFolder = (orgId: string, projectId: string, us
 export const tenantSchedulePreviewPath = (orgId: string, projectId: string, userId: string, nonce: string) =>
   `${tenantSchedulePreviewFolder(orgId, projectId, userId)}/tenant-schedule-${nonce}.pdf`
 
-/** Best-effort: keep the newest `keep` previews in a user's folder (the nonce makes each request a new object). Never throws. */
+/** An inspection report preview: same per-user folder, its own file prefix. */
+export const inspectionPreviewPath = (orgId: string, projectId: string, userId: string, nonce: string) =>
+  `${tenantSchedulePreviewFolder(orgId, projectId, userId)}/inspection-${nonce}.pdf`
+
+/** Below this a preview goes back in the response body; above it, through storage (Vercel caps ~4.5 MB). */
+export const INLINE_PDF_MAX_BYTES = 4 * 1024 * 1024
+
+/** Best-effort: keep the newest `keep` previews with this prefix in a user's folder (the nonce makes each request a new object). Never throws. */
 export async function pruneOldPreviews(
-  storage: { from: (bucket: string) => unknown }, folder: string, keep = 3,
+  storage: { from: (bucket: string) => unknown }, folder: string, keep = 3, prefix = 'tenant-schedule-',
 ): Promise<void> {
   try {
     const bucket = storage.from(PDF_HANDOFF_BUCKET) as {
@@ -45,7 +52,7 @@ export async function pruneOldPreviews(
     }
     const { data, error } = await bucket.list(folder, { limit: 100, sortBy: { column: 'created_at', order: 'desc' } })
     if (error || !data) return
-    const old = data.map((f) => f.name).filter((n) => /^tenant-schedule-.+\.pdf$/.test(n)).slice(keep)
+    const old = data.map((f) => f.name).filter((n) => n.startsWith(prefix) && n.endsWith('.pdf')).slice(keep)
     if (old.length === 0) return
     const { error: rmErr } = await bucket.remove(old.map((n) => `${folder}/${n}`))
     if (rmErr) console.error('[pdf-handoff] old previews could not be removed')
