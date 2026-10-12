@@ -167,6 +167,17 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
     expect(body).toContain('pixels_per_meter')
   })
 
+  it('the status_plans exemption is true: a later migration drops its drawing column', () => {
+    // The exemption above is a claim about the schema. This reads the corpus and
+    // fails if no migration actually removes floor_plan_id from status_plans.
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()
+    const drops = files.filter((f) => {
+      const sql = stripSqlComments(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))
+      return /ALTER\s+TABLE\s+tenants\.status_plans\b[\s\S]*?DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?floor_plan_id\b/i.test(sql)
+    })
+    expect(drops, 'no migration drops tenants.status_plans.floor_plan_id, so the exemption is false').toHaveLength(1)
+  })
+
   it('fails closed on a query error', () => {
     // The contract is structural, not textual: every lookup must be able to
     // exit "annotated", and the ONLY way out the bottom is a single
