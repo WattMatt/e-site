@@ -86,7 +86,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 | `apps/edge-functions/supabase/migrations/00245_status_plans.sql` | `@verify` block loses the four directives naming dropped objects (block only) |
 | `packages/db/src/site-scope/manifest.ts`, `fixed.sql.ts` | Gate `status_plan_sheets`; add `tenant-plan-files` to `SITE_BUCKETS` |
 | `scripts/db/site-scope/site_scoped_access.sql` | Regenerated |
-| `scripts/db/assert-status-plans-roles.sql` | Rewritten for the post-00248 state (77 assertions) |
+| `scripts/db/assert-status-plans-roles.sql` | Rewritten for the post-00248 state (91 assertions) |
 | `packages/db/src/types.ts` | `status_plans` columns, `status_plan_sheets`, `status_plan_shapes.sheet_id` |
 | `packages/shared/src/status-plans/types.ts` (+ test) | Labels, default names, bucket constants, row types |
 | `apps/web/src/lib/status-plans/{types,canvas-shape,write-errors,plan-urls,load-plan-page,on-plan-links,plan-render-data,render-plan-page,appendix,report-appendix}.ts` (+ tests) | Sheets |
@@ -7735,7 +7735,7 @@ TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh scripts/db/fix
 TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh "$M" "$A"
 ```
 
-Expected: the first run is `✗ assert-status-plans-roles.sql aborted` (the seed names `status_plan_sheets` / a plan without `floor_plan_id`), exit 1. The second prints 77 `✓` lines and `✓ 77 assertion(s) green across 1 file(s) — transactions rolled back, nothing persisted`. A red `FIXTURE:` row means the fixture is wrong (e.g. no contractor on a project without status plans), not the migration.
+Expected: the first run is `✗ assert-status-plans-roles.sql aborted` (the seed names `status_plan_sheets` / a plan without `floor_plan_id`), exit 1. The second prints 91 `✓` lines and `✓ 91 assertion(s) green across 1 file(s) — transactions rolled back, nothing persisted`. A red `FIXTURE:` row means the fixture is wrong (e.g. no contractor on a project without status plans), not the migration.
 
 - [ ] **Step 5: Mutations — every arm must be able to fail**
 

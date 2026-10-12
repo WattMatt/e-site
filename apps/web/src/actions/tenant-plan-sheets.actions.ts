@@ -67,6 +67,7 @@ const PLAN_GONE = 'That plan no longer exists, or you cannot see it. Reload the 
 const SHEET_GONE = 'This sheet has been deleted by someone else — reload the page.'
 const SHEET_STALE = 'This sheet was changed by someone else — reload to see it.'
 const NOT_THIS_PLAN = 'That upload does not belong to this plan. Upload the file again.'
+const FILE_REMOVE_FAILED = 'Could not remove the sheet\'s file, so the sheet was kept. Try again.'
 const PREPARE_FAILED = 'Could not prepare the upload. Try again.'
 
 type Fail = { ok: false; error: string; conflict?: boolean }
@@ -154,6 +155,20 @@ async function removeUnreferencedFiles(supabase: any, planId: string, paths: Arr
     const { error } = await supabase.storage.from(TENANT_PLAN_BUCKET).remove([path])
     if (error) console.error('[tenant-plans] could not remove an unused sheet file', error.message)
   }
+}
+
+/** The paths among these that no OTHER sheet of the plan shows or remembers; null when that could not be read. */
+async function filesOnlyThisSheetUses(supabase: any, planId: string, sheetId: string, paths: Array<string | null>): Promise<string[] | null> {
+  const out: string[] = []
+  for (const path of new Set(paths.filter((p): p is string => !!p))) {
+    const [a, b] = await Promise.all([
+      supabase.schema('tenants').from('status_plan_sheets').select('id').eq('status_plan_id', planId).neq('id', sheetId).eq('file_path', path).limit(1),
+      supabase.schema('tenants').from('status_plan_sheets').select('id').eq('status_plan_id', planId).neq('id', sheetId).eq('replaced_from_path', path).limit(1),
+    ])
+    if (a.error || b.error) return null
+    if ((a.data ?? []).length === 0 && (b.data ?? []).length === 0) out.push(path)
+  }
+  return out
 }
 
 const fileSchema = z.object({
@@ -416,15 +431,27 @@ export async function deleteTenantPlanSheetAction(input: { sheetId: string; expe
   if ('ok' in ctx) return ctx
   if (!(await mayWrite(supabase, ctx.plan.project_id))) return fail(NOT_ALLOWED)
 
+  // Files go FIRST: if the row went first and the removal then failed, the file would be orphaned
+  // with nothing left to find it by. A shared file (page 2 of the same PDF) stays.
+  if (ctx.sheet.updated_at !== parsed.data.expectedUpdatedAt) return fail(SHEET_STALE, true)
+  const toRemove = await filesOnlyThisSheetUses(supabase, ctx.plan.id, ctx.sheet.id, [ctx.sheet.file_path, ctx.sheet.replaced_from_path])
+  if (toRemove === null) return fail(FILE_REMOVE_FAILED)
+  if (toRemove.length > 0) {
+    const { error: removeError } = await supabase.storage.from(TENANT_PLAN_BUCKET).remove(toRemove)
+    if (removeError) {
+      console.error('[tenant-plans] could not remove the sheet file', removeError.message)
+      return fail(FILE_REMOVE_FAILED)
+    }
+  }
+
   const { data, error } = await supabase.schema('tenants').from('status_plan_sheets')
     .delete()
     .eq('id', parsed.data.sheetId)
     .eq('updated_at', parsed.data.expectedUpdatedAt)
-    .select('id, file_path, replaced_from_path')
+    .select('id')
     .maybeSingle()
   if (error) return fail(statusPlanWriteError(error, 'sheet'))
   if (!data) return staleOrGone(supabase, parsed.data.sheetId)
-  await removeUnreferencedFiles(supabase, ctx.plan.id, [data.file_path as string, (data.replaced_from_path as string | null) ?? null])
   revalidatePath(tenantScheduleHref(ctx.plan.project_id))
   return { ok: true, data: { id: parsed.data.sheetId } }
 }

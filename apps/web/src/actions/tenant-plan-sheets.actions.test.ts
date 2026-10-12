@@ -72,11 +72,11 @@ let calls: FakeCall[]
 let storageCalls: FakeStorageCall[]
 function setup(
   map: Record<string, FakeResponse[]>,
-  opts: { files?: Record<string, Uint8Array>; userId?: string | null; echoInsert?: boolean } = {},
+  opts: { files?: Record<string, Uint8Array>; userId?: string | null; echoInsert?: boolean; storageErrors?: Partial<Record<FakeStorageCall['op'], string>> } = {},
 ) {
   const q = queued(map)
   const respond = (c: FakeCall) => (opts.echoInsert && c.table === 'tenants.status_plan_sheets' && c.op === 'insert' ? echoSheetInsert(c) : q(c))
-  const f = fakeClient(respond, { files: opts.files, userId: opts.userId })
+  const f = fakeClient(respond, { files: opts.files, userId: opts.userId, storageErrors: opts.storageErrors })
   calls = f.calls
   storageCalls = f.storageCalls
   createClientMock.mockResolvedValue(f.client)
@@ -327,6 +327,39 @@ describe('deleteTenantPlanSheetAction', () => {
     })
     expect((await deleteTenantPlanSheetAction({ sheetId: SH, expectedUpdatedAt: TS })).ok).toBe(true)
     expect(ops('remove')).toEqual([])
+  })
+
+  it('removes the file BEFORE it deletes the row, and never the other sheets\' files', async () => {
+    setup({
+      'tenants.status_plan_sheets:select': [{ data: sheetRow({ replaced_from_path: path(SH, 0) }) }, { data: [] }],
+      'tenants.status_plans:select': [{ data: PLAN }],
+      'tenants.status_plan_sheets:delete': [{ data: { id: SH } }],
+    })
+    expect((await deleteTenantPlanSheetAction({ sheetId: SH, expectedUpdatedAt: TS })).ok).toBe(true)
+    expect(ops('remove').map((c) => c.args[0])).toEqual([[path(SH), path(SH, 0)]])
+    expect(calls.filter((c) => c.op === 'select' && c.ops.some((o) => o[0] === 'neq' && (o[1] as unknown[])[1] === SH)).length).toBeGreaterThan(0)
+  })
+
+  it('a failed file removal keeps the row and says so', async () => {
+    setup({
+      'tenants.status_plan_sheets:select': [{ data: sheetRow() }, { data: [] }],
+      'tenants.status_plans:select': [{ data: PLAN }],
+      'tenants.status_plan_sheets:delete': [{ data: { id: SH } }],
+    }, { storageErrors: { remove: 'boom' } })
+    const res = await deleteTenantPlanSheetAction({ sheetId: SH, expectedUpdatedAt: TS })
+    expect(res.ok).toBe(false)
+    expect(calls.some((c) => c.op === 'delete')).toBe(false)
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('a stale timestamp removes nothing and deletes nothing', async () => {
+    setup({
+      'tenants.status_plan_sheets:select': [{ data: sheetRow() }, { data: [] }],
+      'tenants.status_plans:select': [{ data: PLAN }],
+    })
+    expect(await deleteTenantPlanSheetAction({ sheetId: SH, expectedUpdatedAt: TS2 })).toMatchObject({ ok: false, conflict: true })
+    expect(ops('remove')).toEqual([])
+    expect(calls.some((c) => c.op === 'delete')).toBe(false)
   })
 
   it('a sheet already gone says so', async () => {
