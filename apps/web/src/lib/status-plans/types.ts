@@ -29,6 +29,38 @@ export interface PreparedUpload {
   mime: TenantPlanMime
 }
 
+/** How the floor plan colours its shops: by progress (default) or by the main board that feeds them. */
+export type ColourBy = 'status' | 'board'
+
+/** A main board in the floor plan's board mode, with its fixed colour. */
+export interface PlanFeedBoard {
+  id: string
+  name: string
+  colour: string
+}
+
+/**
+ * The feed graph as the floor plan needs it (spec 2026-10-13 §1), computed on the server.
+ * `byNode` answers every tenant DB on the plan: its board and the others at the same
+ * distance, or null when no supply path reaches a main board.
+ */
+export type PlanFeed =
+  | {
+      state: 'ok'
+      /** The cable schedule revision the feed was read from, e.g. "Rev 2". */
+      revisionCode: string
+      /** Sorted by name; colours follow that order. */
+      boards: PlanFeedBoard[]
+      byNode: Record<string, { boardId: string; also: string[] } | null>
+    }
+  | {
+      state: 'unavailable'
+      /** The sentence the floor plan shows, e.g. "Main board view unavailable — …". */
+      reason: string
+      /** The same reason as a "not included" fragment for PDFs. */
+      omission: string
+    }
+
 /** One sheet of a plan, as the strip, the legend and the actions return it. */
 export interface SheetSummary {
   id: string
