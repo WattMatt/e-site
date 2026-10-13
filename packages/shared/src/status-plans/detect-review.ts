@@ -28,7 +28,7 @@ export interface ReviewRow {
   nodeId: string | null
   /** Boards to offer first in the picker. */
   candidateIds: string[]
-  /** A candidate the picker starts on (a dots-only match); null otherwise. */
+  /** A candidate the picker starts on (a dots-only or unconfirmed match); null otherwise. */
   preselectId: string | null
   /** Why a person is needed; null for matched rows. */
   reason: string | null
@@ -78,6 +78,10 @@ function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: Read
   switch (match.state) {
     case 'no_tag':
       return { ...base, category: 'no_tag', nodeId: null, candidateIds: [], reason: block.tag ? `"${block.tag}" in NO: is not a board tag; choose the board.` : 'This block has no NO: value.' }
+    case 'unconfirmed': {
+      const one = match.candidateIds.length === 1 && !used.has(match.candidateIds[0]!) ? match.candidateIds[0]! : null
+      return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, preselectId: one, reason: `NO: reads "${match.text}" — confirm the board.` }
+    }
     case 'part_of':
       return { ...base, category: 'part_of', nodeId: null, candidateIds: [], reason: `Part of ${match.tag} — not a separate board.` }
     case 'matched':

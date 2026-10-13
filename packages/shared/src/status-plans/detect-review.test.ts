@@ -119,6 +119,24 @@ describe('reviewDetection', () => {
     expect(r.rows[0]).toMatchObject({ category: 'matched', nodeId: 'a' })
   })
 
+  it('a tag followed by words that are not a known phrase needs a person, the tag\'s board preselected', () => {
+    const nodes: MatchableNode[] = [
+      { id: 'mb', kind: 'rmu', code: 'MAIN BOARD 6.1', shop_number: null, name: 'MAIN BOARD 6.1' },
+      { id: 'd5', kind: 'tenant_db', code: 'DB-05', shop_number: null, name: 'Five' },
+    ]
+    const items = [
+      ...blockItems({ x: 100, y: 100, values: ['MB-6.1 GEN', 'x', '', '', '', '', ''] }),
+      ...blockItems({ x: 400, y: 100, values: ['DB-05 METER ROOM', 'FIVE', '', '', '', '', ''] }),
+    ]
+    const r = reviewDetection(detectBlocks(items), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'needs_you', nodeId: null, candidateIds: ['mb'], preselectId: 'mb', reason: 'NO: reads "MB-6.1 GEN" — confirm the board.' })
+    expect(r.rows[1]).toMatchObject({ category: 'needs_you', nodeId: null, candidateIds: ['d5'], preselectId: 'd5', reason: 'NO: reads "DB-05 METER ROOM" — confirm the board.' })
+    expect(r.counts.matched).toBe(0)
+    // A board already on the plan is offered but not preselected.
+    const onPlan = reviewDetection(detectBlocks(items.slice(0, items.length / 2)), nodes, [{ id: 's', points: [5000, 5000, 5001, 5000, 5001, 5001, 5000, 5001], nodeId: 'mb' }])
+    expect(onPlan.rows[0]).toMatchObject({ category: 'needs_you', candidateIds: ['mb'], preselectId: null })
+  })
+
   it('one part-of row reads singular', () => {
     const items = blockItems({ x: 100, y: 100, values: ['MB-6.1 CHECK METER', 'x', '', '', '', '', ''] })
     expect(detectionSummary(reviewDetection(detectBlocks(items), [], []))).toBe('Scanned this sheet — 1 block: 0 matched · 0 need you · 1 part of a main board')
