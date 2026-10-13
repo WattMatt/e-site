@@ -23,6 +23,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { toReportJpeg } from './report-image'
+import { toWinAnsiSafe } from './winansi-text'
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 // (These EXACTLY match the local prop interfaces in interior.tsx; Task 4
@@ -719,7 +720,7 @@ export async function gatherInspectionReportData(
               (sub.type === 'number' && resp?.pass_state === 'fail')
             if (isFail) {
               failed.push({
-                label: `${section.title} → ${field.label ?? field.field_id} [entry ${i + 1}] → ${sub.label ?? sub.field_id}`,
+                label: `${section.title} · ${field.label ?? field.field_id} [entry ${i + 1}] · ${sub.label ?? sub.field_id}`,
                 sansRef: sub.sans_ref ?? null,
               })
             }
@@ -742,7 +743,7 @@ export async function gatherInspectionReportData(
         (field.type === 'number' && resp?.pass_state === 'fail')
       if (isFail) {
         failed.push({
-          label: `${section.title} → ${field.label ?? field.field_id}`,
+          label: `${section.title} · ${field.label ?? field.field_id}`,
           sansRef: field.sans_ref ?? null,
         })
       }
@@ -784,7 +785,7 @@ export async function gatherInspectionReportData(
       : Promise.resolve(null),
   ])
 
-  return {
+  return pdfSafeStrings({
     inspectionId,
     summary,
     sections: reportSections,
@@ -800,5 +801,24 @@ export async function gatherInspectionReportData(
       projectMarkDataUri,
       projectSubtitle: (inspection.target_label as string | null) ?? '',
     },
+  })
+}
+
+/**
+ * Every string the report draws goes through toWinAnsiSafe: react-pdf's standard fonts are
+ * WinAnsi-only and silently draw the WRONG glyph for anything else (Ω as ©, ≤ as "d", → as ’).
+ * 42 active production templates carry → ≤ ≥ Ω in labels and thresholds (2026-10-13), and answers
+ * are free text. Images and links (data URIs, signed URLs) are left exactly as they are.
+ */
+function pdfSafeStrings<T>(value: T, key = ''): T {
+  if (typeof value === 'string') {
+    return (/DataUri$|^dataUri$|^href$/.test(key) ? value : toWinAnsiSafe(value)) as T
   }
+  if (Array.isArray(value)) return value.map((v) => pdfSafeStrings(v, key)) as T
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = pdfSafeStrings(v, k)
+    return out as T
+  }
+  return value
 }

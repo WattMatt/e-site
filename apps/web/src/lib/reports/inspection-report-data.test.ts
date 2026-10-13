@@ -384,7 +384,7 @@ describe('gatherInspectionReportData — §6 field mapping', () => {
     // number with unit + pass_when threshold + pass-state
     expect(byId['num_r'].kind).toBe('value')
     expect(byId['num_r'].value).toContain('0.42')
-    expect(byId['num_r'].value).toContain('Ω')
+    expect(byId['num_r'].value).toContain('Ohm') // Ω would print as © (WinAnsi), so the unit is spelled out
     expect(byId['num_r'].value).toContain('< 1.0')
     expect(byId['num_r'].value).toContain('pass')
 
@@ -781,5 +781,32 @@ describe('gatherInspectionReportData — summary tally + failed list', () => {
     setup({ inspectionRow: baseInspectionRow({ coc_number: null }) })
     const without = await gatherInspectionReportData(INSPECTION_ID)
     expect(without.summary.documentNumber).toBe('— pending —')
+  })
+})
+
+// ─── WinAnsi: react-pdf draws Ω as ©, ≤ as "d", → as ’ unless the text is mapped first ─────────
+
+describe('gatherInspectionReportData — every drawn string is WinAnsi-safe', () => {
+  it('maps symbols from templates and answers, and leaves images alone', async () => {
+    const tpl = JSON.parse(JSON.stringify(TEMPLATE_ROW))
+    const fields = tpl.data.schema_json.sections[0].fields
+    fields.find((f: { field_id: string }) => f.field_id === 'pf_bad').label = 'Loop ≤ 0.2 Ω → bond'
+    setup({ serviceOver: { 'inspections.templates': tpl } })
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const row = data.sections[0].rows.find((r) => r.fieldId === 'pf_bad')!
+    expect(row.label).toBe('Loop <= 0.2 Ohm -> bond')
+    expect(data.summary.failed.some((f) => f.label.includes('Loop <= 0.2 Ohm'))).toBe(true)
+    // nothing the report draws carries a character outside WinAnsi
+    const drawn: string[] = []
+    const walk = (v: unknown, k = ''): void => {
+      if (typeof v === 'string') { if (!/DataUri$|^dataUri$|^href$/.test(k)) drawn.push(v) }
+      else if (Array.isArray(v)) v.forEach((x) => walk(x, k))
+      else if (v && typeof v === 'object') Object.entries(v).forEach(([kk, vv]) => walk(vv, kk))
+    }
+    walk(data)
+    expect(drawn.filter((t) => /[^\x00-\xFF€‚-„†-•…‰‹›ŒœŠšŸŽžƒˆ˜–—‘’“”™]/.test(t))).toEqual([])
+    // images untouched
+    const photo = data.sections[0].photoFields.flatMap((f) => f.photos)[0]
+    if (photo?.dataUri) expect(photo.dataUri.startsWith('data:image/')).toBe(true)
   })
 })

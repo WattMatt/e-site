@@ -248,7 +248,9 @@ export default function AssignmentForm({
               onChange={(e) => setAssignedToId(e.target.value)}
             >
               <option value="">— unassigned (anyone on the project can pick it up) —</option>
-              {members.map((m) => (
+              {/* A client viewer can read but never answer (RLS), so they are not offered as inspector:
+                    the inspection would be assigned to someone who can never start it. */}
+                {members.filter((m) => m.role !== 'client_viewer').map((m) => (
                 <option key={m.user_id} value={m.user_id}>
                   {labelFor(m)}
                   {m.role ? ` (${m.role})` : ''}
