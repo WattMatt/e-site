@@ -107,4 +107,11 @@ describe('GET status plan Export sheet', () => {
     expect(res2.status).toBe(422)
     expect((await res2.json()).error).toBe('This sheet could not be exported: the drawing PDF is password-protected.')
   })
+
+  it('?colour=board exports the floor plan by main board; default is status', async () => {
+    await GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${PLAN}/sheet?sheet=${SHEET}&colour=board`), { params: Promise.resolve({ id: PID, planId: PLAN }) })
+    expect(m.load.mock.calls[0]![1]).toMatchObject({ colourBy: 'board' })
+    await call()
+    expect(m.load.mock.calls[1]![1]).toMatchObject({ colourBy: 'status' })
+  })
 })

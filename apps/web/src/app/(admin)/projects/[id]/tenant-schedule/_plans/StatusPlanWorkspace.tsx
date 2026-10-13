@@ -32,6 +32,7 @@ import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
 import type { ActionResult, CanvasShape, ColourBy, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
+import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
@@ -215,6 +216,9 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
             <button type="button" aria-label="Colour by main board" aria-pressed={colourBy === 'board'} onClick={() => setColourBy('board')}>Main board</button>
           </span>
         )}
+        <span style={purpose === 'tenant_layout' ? undefined : { marginLeft: 'auto' }}>
+          <ExportSheetButton projectId={projectId} planId={plan.id} sheetId={sheet.id} colour={purpose === 'tenant_layout' ? colourBy : 'status'} />
+        </span>
       </div>
 
       {purpose === 'tenant_layout' && colourBy === 'board' && props.feed?.state === 'unavailable' && (
