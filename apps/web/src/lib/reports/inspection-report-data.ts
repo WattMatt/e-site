@@ -24,6 +24,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { toReportJpeg } from './report-image'
 import { toWinAnsiSafe } from './winansi-text'
+import { evaluateField, type Field as EngineField } from '@esite/shared'
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 // (These EXACTLY match the local prop interfaces in interior.tsx; Task 4
@@ -279,9 +280,11 @@ function passStateToPill(
 function formatNumberValue(field: FlatField, resp: any): string {
   if (resp?.value_number == null) return ''
   const unit = field.unit ? ` ${field.unit}` : ''
-  const threshold = field.pass_when
-    ? `  (threshold ${field.pass_when} · ${resp.pass_state ?? 'not_checked'})`
-    : ''
+  // A reading's pass/fail is not stored (the number field saves only its value; the screen
+  // evaluates it live), so the report evaluates it the same way. Printing the stored state showed
+  // every reading as "not_checked", a failed one included (walkthrough, 2026-10-13).
+  const state = field.pass_when ? evaluateField(field as unknown as EngineField, resp).passState : null
+  const threshold = field.pass_when ? `  (threshold ${field.pass_when} · ${state ?? 'not_checked'})` : ''
   return `${resp.value_number}${unit}${threshold}`
 }
 

@@ -6,16 +6,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // database; the database's sentence is surfaced; only the computed result and (for a CoC) the
 // typed number are sent; the issued number is read back rather than allocated here.
 
-const { createClientMock, requireFeatureMock, dispatchNotificationMock, revalidatePathMock, fileReportMock } =
+const { createClientMock, createServiceClientMock, requireFeatureMock, dispatchNotificationMock, revalidatePathMock, fileReportMock } =
   vi.hoisted(() => ({
     createClientMock: vi.fn(),
+    createServiceClientMock: vi.fn(),
     requireFeatureMock: vi.fn(),
     dispatchNotificationMock: vi.fn(),
     revalidatePathMock: vi.fn(),
     fileReportMock: vi.fn(),
   }))
 
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock, createServiceClient: createServiceClientMock }))
 vi.mock('@/lib/features', () => ({ requireFeature: requireFeatureMock }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
@@ -73,8 +74,23 @@ function makeClient(opts: {
   return { client, update, rpc }
 }
 
+/** Records every filter, so a test can prove the lookup is scoped to the project's org and active rows. */
+function makeService(data: Record<string, unknown>) {
+  const filters: Array<[string, string, unknown]> = []
+  const q = (table: string): any => {
+    const p: any = Promise.resolve({ data: data[table] ?? [], error: null })
+    p.select = () => q(table)
+    p.eq = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
+    p.in = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
+    p.maybeSingle = () => Promise.resolve({ data: data[table] ?? null, error: null })
+    return p
+  }
+  return { client: { from: q, schema: () => ({ from: q }) }, filters }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  createServiceClientMock.mockReturnValue(makeService({}).client)
   requireFeatureMock.mockResolvedValue(undefined)
   fileReportMock.mockResolvedValue({ ok: true })
 })
@@ -190,5 +206,41 @@ describe('sendBackForReinspectionAction', () => {
       userIds: ['a-1'],
       type: 'inspection_re_inspect_required',
     })
+  })
+})
+
+describe('certify tells the people who manage the project', () => {
+  it('org owners/admins/PMs and project-scoped PMs on the project, never the certifier or a contractor', async () => {
+    const svc = makeService({
+      projects: { organisation_id: 'o-1' },
+      project_members: [
+        { user_id: 'v-1', role: 'project_manager' }, // the certifier
+        { user_id: 'olivia', role: 'project_manager' },
+        { user_id: 'pm-site', role: 'project_manager' }, // a contractor company made PM on this project
+        { user_id: 'carl', role: 'contractor' },
+        { user_id: 'owner-2', role: 'inspector' },
+      ],
+      user_organisations: [
+        { user_id: 'v-1', role: 'admin' },
+        { user_id: 'olivia', role: 'owner' },
+        { user_id: 'pm-site', role: 'contractor' },
+        { user_id: 'carl', role: 'contractor' },
+        { user_id: 'owner-2', role: 'admin' },
+      ],
+    })
+    createServiceClientMock.mockReturnValue(svc.client)
+    const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
+    createClientMock.mockResolvedValue(client)
+
+    const out = await certifyInspectionAction({ projectId: 'p-1', inspectionId: 'i-1' })
+    expect(out.ok).toBe(true)
+    const sent = dispatchNotificationMock.mock.calls.find((c) => c[0].type === 'inspection_certified')![0]
+    expect([...sent.userIds].sort()).toEqual(['olivia', 'owner-2', 'pm-site'])
+    expect(svc.filters).toEqual(expect.arrayContaining([
+      ['project_members', 'project_id', 'p-1'],
+      ['project_members', 'is_active', true],
+      ['user_organisations', 'organisation_id', 'o-1'],
+      ['user_organisations', 'is_active', true],
+    ]))
   })
 })

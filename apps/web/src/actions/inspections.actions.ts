@@ -39,7 +39,7 @@ type AnyClient = SupabaseClient<any, any, any>
 
 // ─── helpers ────────────────────────────────────────────────────────────
 
-async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
+async function requirePmOrAbove(supabase: AnyClient, orgId: string, refusal = 'Forbidden: project_manager or above only') {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
@@ -52,7 +52,7 @@ async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
     .single()
 
   if (!data || !['owner', 'admin', 'project_manager'].includes(data.role as string)) {
-    throw new Error('Forbidden: project_manager or above only')
+    throw new Error(refusal)
   }
   return user
 }
@@ -286,14 +286,21 @@ export async function createInspectionAction(input: CreateInspectionInput): Prom
 
 async function createInspection(input: CreateInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
-  const user = await requirePmOrAbove(supabase, input.organisationId)
-  await requireFeature(input.organisationId, 'inspections', supabase)
+  // The PROJECT's organisation, never the one the form sent: the form used to send the caller's
+  // first organisation, so a member of two organisations was checked against the wrong one.
+  const organisationId = await getOrgIdForProject(supabase, input.projectId)
+  const user = await requirePmOrAbove(
+    supabase,
+    organisationId,
+    "Only an owner, admin or project manager of this project's organisation can create inspections.",
+  )
+  await requireFeature(organisationId, 'inspections', supabase)
 
   const { data, error } = await supabase
     .schema('inspections')
     .from('inspections')
     .insert({
-      organisation_id: input.organisationId,
+      organisation_id: organisationId,
       project_id: input.projectId,
       template_id: input.templateId,
       target_node_type: input.targetNodeType,

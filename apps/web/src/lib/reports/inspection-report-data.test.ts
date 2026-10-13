@@ -810,3 +810,15 @@ describe('gatherInspectionReportData — every drawn string is WinAnsi-safe', ()
     if (photo?.dataUri) expect(photo.dataUri.startsWith('data:image/')).toBe(true)
   })
 })
+
+describe('gatherInspectionReportData — readings are judged against their threshold', () => {
+  it('a reading inside its limit prints pass and one outside prints fail, whatever was stored', async () => {
+    const pass = { section_id: 'sec-1', field_id: 'num_r', value_number: 0.42 } // limit < 1.0, no stored pass_state
+    setup({ serviceOver: { 'inspections.responses': { data: [pass], error: null } } })
+    let data = await gatherInspectionReportData(INSPECTION_ID)
+    expect(data.sections[0].rows.find((r) => r.fieldId === 'num_r')!.value).toBe('0.42 Ohm  (threshold < 1.0 · pass)')
+    setup({ serviceOver: { 'inspections.responses': { data: [{ ...pass, value_number: 3.5 }], error: null } } })
+    data = await gatherInspectionReportData(INSPECTION_ID)
+    expect(data.sections[0].rows.find((r) => r.fieldId === 'num_r')!.value).toBe('3.5 Ohm  (threshold < 1.0 · fail)')
+  })
+})

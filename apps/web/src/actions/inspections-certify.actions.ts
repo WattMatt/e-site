@@ -16,7 +16,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
 import { requireFeature } from '@/lib/features'
 import { generateAndFileInspectionReport } from '@/lib/reports/file-inspection-report'
@@ -51,32 +51,38 @@ async function getInspectionContributors(
 }
 
 /**
- * Returns the user_ids of project_members whose org-level role is
- * owner / admin / project_manager. Two-step query because PostgREST embed
- * across `projects` and `public` schemas is unreliable (PGRST200 — see
- * Session 22 cable-schedule notes).
+ * The people who manage this project: active project members whose role in the project's own
+ * organisation is owner / admin / project_manager, or who were made project manager on the
+ * project itself.
+ *
+ * Read with the service client, after the database has already accepted the caller's move. Read
+ * through the caller's session, `user_organisations` shows only the caller's own row (RLS), so
+ * the list was the certifier alone, who is then left out as the actor: no project manager was
+ * ever told an inspection was certified (walkthrough, 2026-10-13). Two queries because a
+ * PostgREST embed across `projects` and `public` is unreliable (PGRST200).
  */
-async function getProjectManagerIds(
-  supabase: AnyClient,
-  projectId: string,
-): Promise<string[]> {
-  const { data: members } = await supabase
-    .schema('projects')
-    .from('project_members')
-    .select('user_id')
-    .eq('project_id', projectId)
-  const memberIds = ((members ?? []) as Array<{ user_id: string }>)
-    .map((m) => m.user_id)
-    .filter(Boolean)
-  if (memberIds.length === 0) return []
+async function getProjectManagerIds(projectId: string): Promise<string[]> {
+  const service = createServiceClient() as AnyClient
+  const [{ data: project }, { data: members }] = await Promise.all([
+    service.schema('projects').from('projects').select('organisation_id').eq('id', projectId).maybeSingle(),
+    service.schema('projects').from('project_members').select('user_id, role').eq('project_id', projectId).eq('is_active', true),
+  ])
+  const rows = (members ?? []) as Array<{ user_id: string; role: string | null }>
+  const orgId = (project as { organisation_id?: string } | null)?.organisation_id
+  if (rows.length === 0 || !orgId) return []
 
-  const { data: roles } = await supabase
+  const { data: roles } = await service
     .from('user_organisations')
     .select('user_id, role')
-    .in('user_id', memberIds)
-  return ((roles ?? []) as Array<{ user_id: string; role: string }>)
-    .filter((r) => ['owner', 'admin', 'project_manager'].includes(r.role))
-    .map((r) => r.user_id)
+    .eq('organisation_id', orgId)
+    .eq('is_active', true)
+    .in('user_id', rows.map((m) => m.user_id))
+  const orgManagers = new Set(
+    ((roles ?? []) as Array<{ user_id: string; role: string }>)
+      .filter((r) => ['owner', 'admin', 'project_manager'].includes(r.role))
+      .map((r) => r.user_id),
+  )
+  return [...new Set(rows.filter((m) => m.role === 'project_manager' || orgManagers.has(m.user_id)).map((m) => m.user_id))]
 }
 
 /**
@@ -218,7 +224,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
   // remains valid even if the recipient queries fail.
   try {
     const contributors = await getInspectionContributors(supabase, input.inspectionId)
-    const pms = await getProjectManagerIds(supabase, input.projectId)
+    const pms = await getProjectManagerIds(input.projectId)
     const recipients = [...new Set([...contributors, ...pms].filter((id) => id !== user.id))]
     if (recipients.length > 0) {
       await dispatchNotification({
