@@ -68,7 +68,7 @@ const DECLARED_EXEMPT: Record<string, string> = {
     'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
     'is the only reason discovery finds it.',
   'tenants.floor_plan_zones':
-    'Retired unused: 00251 drops the table. Created in 00006 for spatial snag pinning, never written ' +
+    'Unused, being retired (branch feat/retire-floor-plan-zones drops it once PR #281 lands). Created in 00006 for spatial snag pinning, never written ' +
     'by any UI, 0 rows in production on 2026-10-13. 00006\'s CREATE TABLE still names floor_plan_id, ' +
     'which is the only reason discovery finds it.',
 }
