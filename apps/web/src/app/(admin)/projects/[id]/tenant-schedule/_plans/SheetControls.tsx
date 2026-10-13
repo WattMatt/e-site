@@ -18,6 +18,8 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
 import { navigateTo } from '@/lib/status-plans/navigate'
+import { readUploadBytes, uploadFailedMessage } from '@/lib/status-plans/upload-file'
+import { captureError } from '@/lib/sentry'
 import type { PlanSheet, SheetSummary } from '@/lib/status-plans/types'
 
 export interface SheetControlsProps {
@@ -61,11 +63,22 @@ export function SheetControls({ projectId, purpose, sheet, shapeCount, onChanged
   })
 
   const replace = (file: File) => guarded(async () => {
-    const prep = await prepareTenantPlanSheetReplaceAction({ sheetId: sheet.id, file: { name: file.name, size: file.size, type: file.type } })
+    const read = await readUploadBytes(file, file.type || 'application/octet-stream')
+    if (!read.ok) {
+      captureError(read.cause ?? new Error('tenant plan file unreadable'), { stage: 'tenant-plan-read', file: file.name, size: file.size })
+      setError(read.error)
+      return
+    }
+    const prep = await prepareTenantPlanSheetReplaceAction({ sheetId: sheet.id, file: { name: file.name, size: read.blob.size, type: file.type } })
     if (!prep.ok) { setError(prep.error); return }
+    const body = new Blob([read.blob], { type: prep.data.mime })
     const { error: upErr } = await createClient().storage.from(TENANT_PLAN_BUCKET)
-      .uploadToSignedUrl(prep.data.path, prep.data.token, file, { contentType: prep.data.mime })
-    if (upErr) { setError(`Uploading ${file.name} failed. Try again.`); return }
+      .uploadToSignedUrl(prep.data.path, prep.data.token, body, { contentType: prep.data.mime })
+    if (upErr) {
+      captureError(upErr, { stage: 'tenant-plan-replace', file: file.name, size: body.size })
+      setError(uploadFailedMessage(file.name, upErr))
+      return
+    }
     const res = await replaceTenantPlanSheetAction({
       sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt, path: prep.data.path, fileName: file.name,
       mime: prep.data.mime, pageIndex: Math.max(1, Number.parseInt(page, 10) || 1),
