@@ -145,7 +145,7 @@ export default function CertifyModal({
         )}
         {mode === 'certify' && deliverableType !== 'coc' && (
           <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>
-            A {deliverableType === 'inspection_only' ? 'INS' : 'FAT'} number will be
+            {deliverableType === 'inspection_only' ? 'An INS' : 'A FAT'} number will be
             auto-allocated for this inspection.
           </p>
         )}
