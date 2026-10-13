@@ -124,6 +124,7 @@
 -- policy: site_scope ON public.rfi_annotations RESTRICTIVE
 -- policy: site_scope ON gcr.zone_generators RESTRICTIVE
 -- policy: site_scope ON field.snag_photos RESTRICTIVE
+-- policy: site_scope ON tenants.floor_plan_zones RESTRICTIVE
 -- policy: site_scope ON tenants.floor_plan_page_scales RESTRICTIVE
 -- policy: site_scope ON tenants.status_plan_shapes RESTRICTIVE
 -- policy: site_scope ON tenants.status_plan_sheets RESTRICTIVE
@@ -568,6 +569,10 @@ DROP POLICY IF EXISTS site_scope ON field.snag_photos;
 CREATE POLICY site_scope ON field.snag_photos AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_snag(snag_id)))
   WITH CHECK (public.user_has_project_access(public.site_project_of_snag(snag_id)));
+DROP POLICY IF EXISTS site_scope ON tenants.floor_plan_zones;
+CREATE POLICY site_scope ON tenants.floor_plan_zones AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_floor_plan(floor_plan_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_floor_plan(floor_plan_id)));
 DROP POLICY IF EXISTS site_scope ON tenants.floor_plan_page_scales;
 CREATE POLICY site_scope ON tenants.floor_plan_page_scales AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_floor_plan(floor_plan_id)))

@@ -121,6 +121,7 @@
 -- policy: site_scope ON public.rfi_annotations RESTRICTIVE
 -- policy: site_scope ON gcr.zone_generators RESTRICTIVE
 -- policy: site_scope ON field.snag_photos RESTRICTIVE
+-- policy: site_scope ON tenants.floor_plan_zones RESTRICTIVE
 -- policy: site_scope ON tenants.floor_plan_page_scales RESTRICTIVE
 -- policy: site_scope ON projects.variation_lines RESTRICTIVE
 -- policy: site_scope ON projects.valuation_lines RESTRICTIVE

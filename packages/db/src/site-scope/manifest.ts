@@ -81,6 +81,7 @@ export const GATED: Gated[] = [
   child('public.rfi_annotations', 'rfi', 'rfi_id'),
   child('gcr.zone_generators', 'gcr_zone', 'zone_id'),
   child('field.snag_photos', 'snag', 'snag_id'),
+  child('tenants.floor_plan_zones', 'floor_plan', 'floor_plan_id'),
   child('tenants.floor_plan_page_scales', 'floor_plan', 'floor_plan_id'),
   child('tenants.status_plan_shapes', 'status_plan', 'status_plan_id'),
   child('tenants.status_plan_sheets', 'status_plan', 'status_plan_id'),
