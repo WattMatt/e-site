@@ -1,3 +1,4 @@
+import { MAIN_BOARD_PALETTE, boardColours, boardShapeStyle, FEED_UNKNOWN_LABEL, FEED_UNKNOWN_STYLE } from './palette'
 import { describe, it, expect } from 'vitest'
 import {
   COLOURS,
@@ -85,5 +86,65 @@ describe('legends and colours', () => {
   it('hexToRgb01 converts for pdf-lib', () => {
     expect(hexToRgb01('#2E9E4F')).toEqual({ r: 46 / 255, g: 158 / 255, b: 79 / 255 })
     expect(() => hexToRgb01('green')).toThrow('not a #RRGGBB colour: green')
+  })
+})
+
+
+function luminance(hex: string): number {
+  const { r, g, b } = hexToRgb01(hex)
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+const contrastWithWhite = (hex: string) => 1.05 / (luminance(hex) + 0.05)
+const rgbDistance = (a: string, b: string) => {
+  const x = hexToRgb01(a)
+  const y = hexToRgb01(b)
+  return 255 * Math.hypot(x.r - y.r, x.g - y.g, x.b - y.b)
+}
+
+describe('main-board palette', () => {
+  it('has 12 distinct #RRGGBB colours', () => {
+    expect(MAIN_BOARD_PALETTE).toHaveLength(12)
+    expect(new Set(MAIN_BOARD_PALETTE).size).toBe(12)
+    for (const c of MAIN_BOARD_PALETTE) expect(c).toMatch(/^#[0-9A-F]{6}$/)
+  })
+  it('never looks like a status colour (green complete, orange in progress, red overdue)', () => {
+    for (const c of MAIN_BOARD_PALETTE) {
+      for (const s of [COLOURS.complete, COLOURS.inProgress, COLOURS.overdue]) {
+        expect(rgbDistance(c, s), `${c} vs ${s}`).toBeGreaterThanOrEqual(80)
+      }
+    }
+  })
+  it('stays clear of every other plan colour, and of each other', () => {
+    for (const c of MAIN_BOARD_PALETTE) {
+      for (const o of Object.values(COLOURS)) expect(rgbDistance(c, o), `${c} vs ${o}`).toBeGreaterThanOrEqual(60)
+    }
+    for (let i = 0; i < MAIN_BOARD_PALETTE.length; i++) {
+      for (let j = i + 1; j < MAIN_BOARD_PALETTE.length; j++) {
+        expect(rgbDistance(MAIN_BOARD_PALETTE[i]!, MAIN_BOARD_PALETTE[j]!)).toBeGreaterThanOrEqual(60)
+      }
+    }
+  })
+  it('each colour reads against the white label halo (contrast ≥ 3:1)', () => {
+    for (const c of MAIN_BOARD_PALETTE) expect(contrastWithWhite(c), c).toBeGreaterThanOrEqual(3)
+  })
+  it('assigns colours by sorted board name, whatever order the boards arrive in; the 13th wraps', () => {
+    const a = boardColours([{ id: 'b', name: 'MB 2.1' }, { id: 'a', name: 'MB 1.1' }])
+    const b = boardColours([{ id: 'a', name: 'MB 1.1' }, { id: 'b', name: 'MB 2.1' }])
+    expect(a).toEqual(b)
+    expect(a).toEqual({ a: MAIN_BOARD_PALETTE[0], b: MAIN_BOARD_PALETTE[1] })
+    const many = Array.from({ length: 13 }, (_, i) => ({ id: `m${i}`, name: `MB ${i + 1}` }))
+    expect(boardColours(many).m12).toBe(MAIN_BOARD_PALETTE[0])
+  })
+  it('a board-coloured shop is a plain translucent fill: no hatch, no dash', () => {
+    const s = boardShapeStyle('#1F5FBF')
+    expect(s).toMatchObject({ fill: '#1F5FBF', stroke: '#1F5FBF', hatches: [], dash: null, strikeLabel: false })
+    expect(s.fillOpacity).toBeGreaterThan(0)
+    expect(boardShapeStyle('#1F5FBF', true).strikeLabel).toBe(true)
+  })
+  it('a shop with no feed is grey and dashed, never a board colour', () => {
+    expect(FEED_UNKNOWN_LABEL).toBe('Feed not in the cable schedule')
+    expect(FEED_UNKNOWN_STYLE.dash).toEqual([10, 6])
+    expect(MAIN_BOARD_PALETTE as readonly string[]).not.toContain(FEED_UNKNOWN_STYLE.fill)
   })
 })
