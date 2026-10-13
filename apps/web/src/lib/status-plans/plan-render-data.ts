@@ -28,12 +28,14 @@ import {
 import { loadTenantShopFacts } from '@/lib/tenant-schedule/shop-facts'
 import { readAll } from '@/lib/tender/read-all'
 import { shopLinkFor } from './shop-link'
+import { loadProjectFeedGraph, planFeedFrom } from './feed-graph'
+import { boardLegendEntries, boardLegendRows, boardView, type PlanFeedOk } from './board-view'
 import { loadProjectDbOrderStatus } from './project-db-orders'
 import { SHAPE_COLUMNS, toCanvasShape } from './canvas-shape'
 import { SHEET_COLUMNS } from './sheet-row'
 import { legendSummary, resolveShapeView, type ShapeViewContext } from './shape-view'
 import { planTitle, type PlanSource, type RenderShape, type StatusPlanRenderInput } from './render-plan-page'
-import type { CanvasShape, PlanNode } from './types'
+import type { CanvasShape, ColourBy, PlanNode } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -64,6 +66,12 @@ export interface LoadPlanRenderArgs {
   maxSourceBytes?: number
   /** Σ unique sheet files in this output. */
   maxTotalBytes?: number
+  /**
+   * 'board' colours FLOOR PLAN sheets by the main board feeding each shop (spec 2026-10-13 §1);
+   * line diagram sheets are unaffected. Default 'status'. The feed is read with clients.db (the
+   * caller's session), never the service client.
+   */
+  colourBy?: ColourBy
 }
 export interface PlanOmission { title: string; reason: string }
 export interface PlanRenderLoadResult {
@@ -167,6 +175,15 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     distribution_schematic: new Map(allNodes.map((n) => [n.id, n])),
   }
 
+  const byBoard = args.colourBy === 'board'
+  let feed: PlanFeedOk | null = null
+  let feedOmission = 'the cable schedule could not be read'
+  if (byBoard && kept.some((r) => r.plan.purpose === 'tenant_layout')) {
+    const pf = planFeedFrom(await loadProjectFeedGraph(clients.db, args.projectId), [...nodesFor.tenant_layout.keys()])
+    if (pf.state === 'ok') feed = pf
+    else feedOmission = pf.omission
+  }
+
   let shopLinks: Record<string, ShopLink> = {}
   if (kept.some((r) => r.plan.purpose === 'tenant_layout')) {
     const facts = await loadTenantShopFacts(clients.facts, { projectId: args.projectId, orgId, openingDate })
@@ -182,7 +199,12 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
   const inputs: StatusPlanRenderInput[] = []
 
   for (const { plan, row } of kept) {
-    const title = planTitle(plan.name, plan.purpose, row.label)
+    const boardSheet = byBoard && plan.purpose === 'tenant_layout'
+    // Feed unavailable: the sheet is still exported, in status colours, and says why in its title strip.
+    const planName = !boardSheet ? plan.name
+      : feed ? `${plan.name} by main board (cable schedule ${feed.revisionCode})`
+      : `${plan.name} by main board (Main board view unavailable: ${feedOmission} — shown by status)`
+    const title = planTitle(planName, plan.purpose, row.label)
     const kind = sourceKindFor(row.file_path)
     if (!kind) { omitted.push({ title, reason: 'the sheet is not a PDF, PNG or JPEG file' }); continue }
 
@@ -224,8 +246,11 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
       pixelsPerMeter: ppm,
     }
     const shapes = shapesBySheet.get(row.id) ?? []
-    const views = shapes.map((s) => resolveShapeView(s, ctx))
+    const base = shapes.map((s) => resolveShapeView(s, ctx))
+    const f = boardSheet ? feed : null
+    const views = f ? base.map((v, i) => boardView(v, shapes[i]!.nodeId, f)) : base
     const summary = legendSummary(views, plan.purpose)
+    const board = f ? boardLegendEntries(boardLegendRows(views, f)) : null
     const rendered: RenderShape[] = shapes.map((s, i) => ({
       points: s.points, style: views[i]!.style, labelLines: views[i]!.labelLines, invalid: views[i]!.invalid,
     }))
@@ -241,10 +266,10 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     if (plan.purpose === 'tenant_layout' && ppm == null) warnings.push('This sheet has no scale, so areas are not measured.')
 
     inputs.push({
-      planId: plan.id, sheetId: row.id, planName: plan.name, sheetLabel: row.label, purpose: plan.purpose,
+      planId: plan.id, sheetId: row.id, planName, sheetLabel: row.label, purpose: plan.purpose,
       drawingName: row.file_name, pageIndex: Number(row.page_index), generatedOn: args.today, source, shapes: rendered,
-      legend: plan.purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND,
-      counts: summary.counts,
+      legend: board ? board.legend : plan.purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND,
+      counts: board ? board.counts : summary.counts,
       measured: plan.purpose === 'tenant_layout' && ppm != null ? { totalM2: summary.totalM2, unmeasured: summary.unmeasured } : null,
       warnings,
     })

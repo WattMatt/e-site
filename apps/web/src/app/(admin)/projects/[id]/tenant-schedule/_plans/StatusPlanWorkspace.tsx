@@ -17,20 +17,22 @@
  */
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PURPOSE_LABEL, type AreaType } from '@esite/shared/status-plans'
+import { PURPOSE_LABEL, boundingBox, type AreaType, type Box } from '@esite/shared/status-plans'
 import {
   createStatusPlanShapeAction,
   deleteStatusPlanShapeAction,
   updateStatusPlanShapeAction,
 } from '@/actions/status-plan.actions'
 import { reanchorTenantPlanSheetAction } from '@/actions/tenant-plan-sheets.actions'
+import { boardLegendRows, boardView } from '@/lib/status-plans/board-view'
 import { legendSummary, needsAttention, resolveShapeView, type ShapeView } from '@/lib/status-plans/shape-view'
 import { buildNodeOptions } from '@/lib/status-plans/node-options'
 import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
 import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
-import type { ActionResult, CanvasShape, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
+import type { ActionResult, CanvasShape, ColourBy, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
+import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
@@ -62,6 +64,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const [sheet, setSheet] = useState<PlanSheet>(props.sheet)
   const [sheets, setSheets] = useState<SheetSummary[]>(props.sheets)
   const [selectedId, setSelectedId] = useState<string | null>(props.initialShapeId)
+  const [colourBy, setColourBy] = useState<ColourBy>(props.initialColourBy)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ text: string; conflict: boolean } | null>(null)
   const [armedShape, setArmedShape] = useState<string | null>(null)
@@ -73,14 +76,16 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     return () => clearTimeout(t)
   }, [armedShape])
 
-  // ?sheet=&shape= mirror the view without a navigation.
+  // ?sheet=&shape=&colour= mirror the view without a navigation.
   useEffect(() => {
     try {
-      window.history.replaceState(window.history.state, '', tenantPlanHref(projectId, purpose, { sheet: sheet.id, shape: selectedId }))
+      window.history.replaceState(window.history.state, '', tenantPlanHref(projectId, purpose, {
+        sheet: sheet.id, shape: selectedId, colour: purpose === 'tenant_layout' ? colourBy : null,
+      }))
     } catch {
       /* a sandboxed frame may refuse; the selection still works */
     }
-  }, [projectId, purpose, sheet.id, selectedId])
+  }, [projectId, purpose, sheet.id, selectedId, colourBy])
 
   /** A sheet row changed on the server (rename, re-anchor, scale): keep the strip and the canvas in step. */
   const applySheet = useCallback((s: SheetSummary) => {
@@ -92,20 +97,31 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const nodesById = useMemo(() => new Map(props.nodes.map((n) => [n.id, n])), [props.nodes])
   const scaleBySheet = useMemo(() => new Map(sheets.map((s) => [s.id, s.pixelsPerMeter])), [sheets])
   const pixelsPerMeter = sheet.pixelsPerMeter
+  // Board mode applies on top of the status view (spec 2026-10-13 §1). An unavailable feed keeps status colours.
+  const okFeed = props.feed?.state === 'ok' ? props.feed : null
+  const boardOn = purpose === 'tenant_layout' && colourBy === 'board' && okFeed !== null
   const views = useMemo(() => {
     const out: Record<string, ShapeView> = {}
     for (const s of shapes) {
-      out[s.id] = resolveShapeView(s, {
+      const base = resolveShapeView(s, {
         purpose, nodesById, shopLinks: props.shopLinks, dbOrders: props.dbOrders, today,
         pixelsPerMeter: scaleBySheet.get(s.sheetId) ?? null,
       })
+      out[s.id] = boardOn && okFeed ? boardView(base, s.nodeId, okFeed) : base
     }
     return out
-  }, [shapes, purpose, nodesById, props.shopLinks, props.dbOrders, today, scaleBySheet])
+  }, [shapes, purpose, nodesById, props.shopLinks, props.dbOrders, today, scaleBySheet, boardOn, okFeed])
   const sheetShapes = useMemo(() => shapes.filter((s) => s.sheetId === sheet.id), [shapes, sheet.id])
   const sheetSummary = useMemo(() => legendSummary(sheetShapes.map((s) => views[s.id]!), purpose), [sheetShapes, views, purpose])
   const planSummary = useMemo(() => legendSummary(shapes.map((s) => views[s.id]!), purpose), [shapes, views, purpose])
   const attention = useMemo(() => needsAttention(sheetShapes, views), [sheetShapes, views])
+  const boardLegend = useMemo(() => (boardOn && okFeed
+    ? {
+        rows: boardLegendRows(sheetShapes.map((s) => views[s.id]!), okFeed),
+        planRows: boardLegendRows(shapes.map((s) => views[s.id]!), okFeed),
+        revisionCode: okFeed.revisionCode,
+      }
+    : null), [boardOn, okFeed, sheetShapes, shapes, views])
   const selected = sheetShapes.find((s) => s.id === selectedId) ?? null
   const detectNodes = useMemo(() => props.nodes.map(toDetectNode), [props.nodes])
   const options = useMemo(() => buildNodeOptions(props.nodes, shapes, selectedId, purpose), [props.nodes, shapes, selectedId, purpose])
@@ -165,6 +181,19 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     setArmedShape(null)
   }, [])
 
+  // ── Show on drawing (spec 2026-10-13 §2) ─────────────────────────────────
+  const focusSeq = useRef(0)
+  const [focus, setFocus] = useState<{ box: Box; nonce: number } | null>(null)
+  const showBox = useCallback((box: Box) => {
+    focusSeq.current += 1
+    setFocus({ box, nonce: focusSeq.current })
+  }, [])
+  const showShape = useCallback((shapeId: string) => {
+    onSelect(shapeId)
+    const s = shapesRef.current.find((x) => x.id === shapeId)
+    if (s && s.points.length >= 6) showBox(boundingBox(s.points))
+  }, [onSelect, showBox])
+
   function reanchor() {
     void run(() => reanchorTenantPlanSheetAction({ sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt }), applySheet)
   }
@@ -182,6 +211,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         existingShapes={sheetShapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId }))}
         canEdit={canEdit}
         onAccepted={(added) => setShapes((prev) => [...prev, ...added])}
+        onFocus={showBox}
       />
     </div>
   ) : null
@@ -193,7 +223,23 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         <span style={{ fontSize: 13, color: 'var(--c-text-dim)' }}>
           {sheet.label} · {sheet.fileName}{sheet.isPdf ? ` · page ${sheet.pageIndex}` : ''}
         </span>
+        {purpose === 'tenant_layout' && (
+          <span role="group" aria-label="Colour by" style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 12 }}>
+            <span style={{ color: 'var(--c-text-dim)' }}>Colour by</span>
+            <button type="button" aria-label="Colour by status" aria-pressed={colourBy === 'status'} onClick={() => setColourBy('status')}>Status</button>
+            <button type="button" aria-label="Colour by main board" aria-pressed={colourBy === 'board'} onClick={() => setColourBy('board')}>Main board</button>
+          </span>
+        )}
+        <span style={purpose === 'tenant_layout' ? undefined : { marginLeft: 'auto' }}>
+          <ExportSheetButton projectId={projectId} planId={plan.id} sheetId={sheet.id} colour={purpose === 'tenant_layout' ? colourBy : 'status'} />
+        </span>
       </div>
+
+      {purpose === 'tenant_layout' && colourBy === 'board' && props.feed?.state === 'unavailable' && (
+        <div role="status" className="data-panel" style={{ padding: '8px 12px', fontSize: 12, borderColor: 'var(--c-amber)' }}>
+          {props.feed.reason} Shops keep their status colours.
+        </div>
+      )}
 
       <SheetStrip projectId={projectId} purpose={purpose} sheets={sheets} currentId={sheet.id} canEdit={canEdit} />
       {canEdit && (
@@ -229,6 +275,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       <div className="stack-below-lg" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 12, alignItems: 'start' }}>
         <StatusPlanCanvas
           sheet={sheet}
+          focus={focus}
           pageIndex={sheet.pageIndex}
           purpose={purpose}
           shapes={sheetShapes}
@@ -263,12 +310,14 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           />
           <PlanLegend
             purpose={purpose}
+            onShowShape={showShape}
             summary={sheetSummary}
             planSummary={planSummary}
             sheetCount={sheets.length}
             hasScale={pixelsPerMeter !== null}
             attention={attention}
             onSelectShape={onSelect}
+            board={boardLegend}
           />
         </aside>
       </div>

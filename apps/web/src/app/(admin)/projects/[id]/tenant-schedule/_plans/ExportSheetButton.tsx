@@ -7,6 +7,7 @@
  * Props are strings only (page.tsx → client component must be JSON).
  */
 import { useState } from 'react'
+import type { ColourBy } from '@/lib/status-plans/types'
 import { Button } from '@/components/ui/Button'
 
 /**
@@ -19,10 +20,10 @@ function downloadName(res: Response): string {
     const fromUrl = res.url ? new URL(res.url).searchParams.get('download') : null
     if (fromUrl) return fromUrl
   } catch { /* not a URL: fall through */ }
-  return /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'line-diagram-sheet.pdf'
+  return /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'tenant-plan-sheet.pdf'
 }
 
-export function ExportSheetButton({ projectId, planId, sheetId }: { projectId: string; planId: string; sheetId: string }) {
+export function ExportSheetButton({ projectId, planId, sheetId, colour = 'status' }: { projectId: string; planId: string; sheetId: string; colour?: ColourBy }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,7 +31,8 @@ export function ExportSheetButton({ projectId, planId, sheetId }: { projectId: s
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch(`/api/projects/${projectId}/status-plans/${planId}/sheet?sheet=${encodeURIComponent(sheetId)}`)
+      const colourParam = colour === 'board' ? '&colour=board' : ''
+      const res = await fetch(`/api/projects/${projectId}/status-plans/${planId}/sheet?sheet=${encodeURIComponent(sheetId)}${colourParam}`)
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         setError(body.error ?? `Export failed (HTTP ${res.status}).`)

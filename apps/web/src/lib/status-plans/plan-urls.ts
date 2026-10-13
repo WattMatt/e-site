@@ -1,5 +1,6 @@
 /** Routes and file helpers for tenant plans. Pure; safe on client and server. */
 import type { StatusPlanPurpose } from '@esite/shared/status-plans'
+import type { ColourBy } from './types'
 
 export const isPdfPath = (p: string): boolean => /\.pdf$/i.test(p)
 
@@ -13,18 +14,24 @@ export function tenantScheduleHref(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}/tenant-schedule`
 }
 
-/** A tenant plan, optionally on one sheet and with one shape selected (?sheet= &shape=). */
+/** A tenant plan, optionally on one sheet, with one shape selected, and in board mode (?sheet= &shape= &colour=board). */
 export function tenantPlanHref(
   projectId: string,
   purpose: StatusPlanPurpose,
-  opts: { sheet?: string | null; shape?: string | null } = {},
+  opts: { sheet?: string | null; shape?: string | null; colour?: ColourBy | null } = {},
 ): string {
   const base = `${tenantScheduleHref(projectId)}/${TENANT_PLAN_SEGMENT[purpose]}`
   const q = new URLSearchParams()
   if (opts.sheet) q.set('sheet', opts.sheet)
   if (opts.shape) q.set('shape', opts.shape)
+  if (opts.colour === 'board') q.set('colour', 'board')
   const s = q.toString().replace(/\+/g, '%20')
   return s ? `${base}?${s}` : base
+}
+
+/** ?colour=board → board mode; anything else (absent, misspelt) → status. */
+export function parseColourBy(v: string | null | undefined): ColourBy {
+  return v === 'board' ? 'board' : 'status'
 }
 
 /** "2.pdf" from a storage path. */

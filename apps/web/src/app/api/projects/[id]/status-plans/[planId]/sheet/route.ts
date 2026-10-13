@@ -4,6 +4,8 @@
  * caller, site-scoped) — the same set that can open the plan page. Plan rows are read through the
  * caller's session; facts and drawing bytes with the service client, only after the gate.
  *
+ * ?colour=board exports a floor plan sheet coloured by feeding main board (the feed is read through the caller's session).
+ *
  * app/api/* sits outside (admin)/layout.tsx, so this route gates itself.
  *
  * The PDF is never streamed in the response (an A0 sheet can pass Vercel's ~4.5 MB limit): it is
@@ -12,6 +14,7 @@
  */
 import { type NextRequest, NextResponse } from 'next/server'
 import { STATUS_PLAN_PURPOSES } from '@esite/shared/status-plans'
+import type { ColourBy } from '@/lib/status-plans/types'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireProjectAccess } from '@/lib/auth/require-project-access'
 import { loadStatusPlanRenderInputs, MAX_STATUS_PLAN_SOURCE_BYTES, type PlanRenderLoadResult, type StorageLike } from '@/lib/status-plans/plan-render-data'
@@ -38,6 +41,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const sheetId = req.nextUrl.searchParams.get('sheet') ?? ''
   if (!isPlanId(sheetId)) return NextResponse.json({ error: 'Sheet not found' }, { status: 404 })
 
+  const colourBy: ColourBy = req.nextUrl.searchParams.get('colour') === 'board' ? 'board' : 'status'
+
   const access = await requireProjectAccess(supabase, id)
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
@@ -48,7 +53,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     service = createServiceClient()
     load = await loadStatusPlanRenderInputs(
       { db: supabase, facts: service, storage: service.storage as unknown as StorageLike },
-      { projectId: id, today, purposes: STATUS_PLAN_PURPOSES, planIds: [planId], sheetIds: [sheetId], maxSheets: 1, maxSourceBytes: MAX_STATUS_PLAN_SOURCE_BYTES },
+      { projectId: id, today, purposes: STATUS_PLAN_PURPOSES, planIds: [planId], sheetIds: [sheetId], maxSheets: 1, maxSourceBytes: MAX_STATUS_PLAN_SOURCE_BYTES, colourBy },
     )
   } catch (err) {
     console.error('[status-plans/sheet] load error', err)

@@ -34,4 +34,12 @@ describe('@esite/shared/status-plans public surface', () => {
     expect(sp.BLOCK_LABELS).toEqual(['NO', 'NAME', 'AREA', 'RATING', 'CABLE', 'SERIAL', 'CT'])
     expect(sp.DETECTED_TAG_MAX).toBe(64)
   })
+
+  it('exports the main-board surface (follow-ups 2026-10-13)', () => {
+    for (const name of ['feedingMainBoard', 'feedsFor', 'compareBoardNames', 'boardColours', 'boardShapeStyle']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.FEED_MAX_HOPS).toBe(12)
+    expect(sp.MAIN_BOARD_PALETTE).toHaveLength(12)
+  })
 })

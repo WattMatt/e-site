@@ -7,6 +7,7 @@
 import { AREA_TYPE_LABEL, AREA_TYPES, type AreaType } from './types'
 import { SHOP_STATUS_LABEL, type ShopStatus, type ShopStatusResult } from './shop-status'
 import { DB_BLOCK_STATUS_LABEL, type DbBlockStatus } from './db-block-status'
+import { compareBoardNames, type FeedBoard } from './feed'
 
 export const COLOURS = {
   complete: '#2E9E4F',
@@ -100,6 +101,32 @@ const DB_BLOCK: Record<DbBlockStatus, ShapeStyle> = {
 export function dbBlockStyle(s: DbBlockStatus): ShapeStyle {
   return DB_BLOCK[s]
 }
+
+/**
+ * Floor plan by main board (spec 2026-10-13 §1). Twelve categorical colours that never
+ * reuse a status colour and each read against the white label halo (≥ 3:1). A board's
+ * colour follows its place in the boards sorted by name, so the same board keeps the
+ * same colour on screen, in PDFs and between sessions. A 13th board wraps.
+ */
+export const MAIN_BOARD_PALETTE = [
+  '#1F5FBF', '#C000B0', '#00838F', '#7744BB', '#998800', '#773355',
+  '#0022FF', '#DD6699', '#9977FF', '#EE33FF', '#004D40', '#3E2723',
+] as const
+
+export function boardColours(boards: readonly FeedBoard[]): Record<string, string> {
+  return Object.fromEntries(
+    [...boards].sort(compareBoardNames).map((b, i) => [b.id, MAIN_BOARD_PALETTE[i % MAIN_BOARD_PALETTE.length]!]),
+  )
+}
+
+/** A shop filled with its feeding board's colour. No hatch: overdue is not drawn in this mode. */
+export function boardShapeStyle(colour: string, strikeLabel = false): ShapeStyle {
+  return style({ fill: colour, fillOpacity: 0.45, stroke: colour, strikeLabel })
+}
+
+export const FEED_UNKNOWN_LABEL = 'Feed not in the cable schedule'
+/** A linked shop whose supply path reaches no main board. */
+export const FEED_UNKNOWN_STYLE: ShapeStyle = style({ fill: COLOURS.unlinked, fillOpacity: 0.35, stroke: COLOURS.neutral, dash: [10, 6] })
 
 export const TENANT_LEGEND: readonly LegendEntry[] = [
   { key: 'complete', label: SHOP_STATUS_LABEL.complete, style: tenantShapeStyle({ status: 'complete', overdue: false }) },

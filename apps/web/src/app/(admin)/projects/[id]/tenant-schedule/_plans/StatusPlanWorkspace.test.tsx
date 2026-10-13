@@ -15,9 +15,10 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
+      {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
@@ -64,6 +65,8 @@ function props(o: Partial<StatusPlanPageProps> = {}): StatusPlanPageProps {
     today: '2026-06-20',
     canEdit: true,
     initialShapeId: null,
+    feed: null,
+    initialColourBy: 'status',
     ...o,
   }
 }
@@ -185,5 +188,52 @@ describe('StatusPlanWorkspace', () => {
     render(<StatusPlanWorkspace {...props()} />)
     fireEvent.click(screen.getByText('stub-select-s1'))
     expect(spy.mock.calls.at(-1)?.[2]).toBe('/projects/p1/tenant-schedule/floor-plan?sheet=sh1&shape=s1')
+  })
+
+  const FEED_OK = {
+    state: 'ok' as const, revisionCode: 'Rev 2',
+    boards: [{ id: 'mb1', name: 'MB 1.1', colour: '#1F5FBF' }],
+    byNode: { n1: { boardId: 'mb1', also: [] } },
+  }
+
+  it('Colour by: Main board re-colours the legend and mirrors ?colour=board', () => {
+    const replace = vi.spyOn(window.history, 'replaceState')
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK })} />)
+    expect(legendRow('Complete')).toBe('Complete1')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by main board' }))
+    expect(legendRow('MB 1.1')!.endsWith('1')).toBe(true)
+    expect(screen.queryByText('Complete')).toBeNull()
+    expect(String(replace.mock.calls.at(-1)![2])).toContain('colour=board')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by status' }))
+    expect(legendRow('Complete')).toBe('Complete1')
+    expect(String(replace.mock.calls.at(-1)![2])).not.toContain('colour=')
+  })
+
+  it('opens in board mode from ?colour=board', () => {
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK, initialColourBy: 'board' })} />)
+    expect((screen.getByRole('button', { name: 'Colour by main board' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+    expect(legendRow('MB 1.1')).toBeTruthy()
+  })
+
+  it('an unreadable cable schedule says so in board mode and keeps the status colours', () => {
+    const feed = { state: 'unavailable' as const, reason: 'Main board view unavailable — the cable schedule could not be read.', omission: 'x' }
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed, initialColourBy: 'board' })} />)
+    expect(screen.getByText(/Main board view unavailable — the cable schedule could not be read\./)).toBeTruthy()
+    expect(legendRow('Complete')).toBe('Complete1')
+  })
+
+  it('a line diagram has no colour switch', () => {
+    render(<StatusPlanWorkspace {...schematic()} />)
+    expect(screen.queryByRole('button', { name: 'Colour by main board' })).toBeNull()
+  })
+
+  it('Show on a needs-attention row selects the shape and focuses its box; Show again re-triggers', () => {
+    // A link to a board that is not live: "needs attention".
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'gone' }] })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('selected:s1')
+    expect(canvasText()).toContain('focus:100,100,300,260#1')
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('focus:100,100,300,260#2')
   })
 })

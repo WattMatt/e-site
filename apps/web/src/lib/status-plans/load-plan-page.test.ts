@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { MAIN_BOARD_PALETTE } from '@esite/shared/status-plans'
 import { fakeClient, queued, opsOf, type FakeResponse } from './__fixtures__/fake-client'
 import { jsonUnsafePath } from './json-safe'
 
@@ -10,6 +11,11 @@ const { requireEffectiveRoleMock, loadTenantShopFactsMock, loadProjectDbOrderSta
 }))
 vi.mock('@/lib/auth/require-role', () => ({ requireEffectiveRole: (...a: unknown[]) => requireEffectiveRoleMock(...a) }))
 vi.mock('@/lib/tenant-schedule/shop-facts', () => ({ loadTenantShopFacts: (...a: unknown[]) => loadTenantShopFactsMock(...a) }))
+const { feedGraphMock } = vi.hoisted(() => ({ feedGraphMock: vi.fn() }))
+vi.mock('@/lib/status-plans/feed-graph', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/status-plans/feed-graph')>('@/lib/status-plans/feed-graph')
+  return { ...actual, loadProjectFeedGraph: (...a: unknown[]) => feedGraphMock(...a) }
+})
 vi.mock('@/lib/status-plans/project-db-orders', () => ({ loadProjectDbOrderStatus: (...a: unknown[]) => loadProjectDbOrderStatusMock(...a) }))
 
 import { loadTenantPlanPage, pickSheet } from './load-plan-page'
@@ -56,6 +62,7 @@ beforeEach(() => {
   requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'owner' })
   loadTenantShopFactsMock.mockResolvedValue(FACTS)
   loadProjectDbOrderStatusMock.mockResolvedValue({ m1: 'ordered' })
+  feedGraphMock.mockResolvedValue({ ok: false, reason: 'no_revision' })
 })
 
 describe('loadTenantPlanPage', () => {
@@ -133,5 +140,43 @@ describe('pickSheet', () => {
     expect((pickSheet(sheets, [], 'b', null) as { id: string }).id).toBe('b')
     expect((pickSheet(sheets, [{ id: 's', sheetId: 'b' }] as never[], 'zz', 's') as { id: string }).id).toBe('b')
     expect((pickSheet(sheets, [], null, null) as { id: string }).id).toBe('a')
+  })
+})
+
+describe('feed and colour mode (follow-ups 2026-10-13)', () => {
+  it('a floor plan carries the feed for its tenant DBs; ?colour=board opens in board mode', async () => {
+    feedGraphMock.mockResolvedValue({
+      ok: true, revisionId: 'rev-2', revisionCode: 'Rev 2',
+      edges: [{ from: 'mb', to: 'n1' }], boards: [{ id: 'mb', name: 'MB-1.1' }],
+    })
+    const { client } = fakeClient(queued(tables()))
+    const data = await loadTenantPlanPage(client, args({ colourBy: 'board' }))
+    if (data?.kind !== 'plan') throw new Error('expected a plan')
+    expect(feedGraphMock).toHaveBeenCalledWith(client, 'p1')
+    expect(data.props.initialColourBy).toBe('board')
+    expect(data.props.feed).toEqual({
+      state: 'ok', revisionCode: 'Rev 2',
+      boards: [{ id: 'mb', name: 'MB-1.1', colour: MAIN_BOARD_PALETTE[0] }],
+      byNode: { n1: { boardId: 'mb', also: [] } },
+    })
+    expect(jsonUnsafePath(data.props)).toBeNull()
+  })
+
+  it('without ?colour= the floor plan opens on status; an unreadable feed is carried, not thrown', async () => {
+    feedGraphMock.mockResolvedValue({ ok: false, reason: 'unreadable' })
+    const { client } = fakeClient(queued(tables()))
+    const data = await loadTenantPlanPage(client, args())
+    if (data?.kind !== 'plan') throw new Error('expected a plan')
+    expect(data.props.initialColourBy).toBe('status')
+    expect(data.props.feed).toMatchObject({ state: 'unavailable', reason: 'Main board view unavailable — the cable schedule could not be read.' })
+  })
+
+  it('a line diagram reads no feed and is always status', async () => {
+    const { client } = fakeClient(queued(tables({ 'tenants.status_plans:select': [{ data: { ...PLAN_ROW, purpose: 'distribution_schematic' } }] })))
+    const data = await loadTenantPlanPage(client, args({ purpose: 'distribution_schematic', colourBy: 'board' }))
+    if (data?.kind !== 'plan') throw new Error('expected a plan')
+    expect(feedGraphMock).not.toHaveBeenCalled()
+    expect(data.props.feed).toBeNull()
+    expect(data.props.initialColourBy).toBe('status')
   })
 })

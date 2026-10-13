@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { classifyWheel, isPanPress } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
-import { DEFAULT_FIT_KEYS, fitTransform, viewportKeyAction, zoomAbout } from './viewport-math'
+import { DEFAULT_FIT_KEYS, fitToBox, fitTransform, viewportKeyAction, zoomAbout, type ViewBox } from './viewport-math'
 
 /**
  * Zoom, pan and fit for a sheet drawn on a Konva Stage — shared by the markup
@@ -94,6 +94,17 @@ export function useSheetViewport({
     setScale(t.scale)
     setOffset(t.offset)
   }, [imageW, imageH, viewport])
+
+  /** "Show": zoom so `box` (image space) fills `fill` of the view, centred. A no-op (returns false) until laid out. */
+  const fitToBoxView = useCallback((box: ViewBox, fill?: number): boolean => {
+    const t = fitToBox(viewport, box, fill)
+    if (!t) return false
+    scaleRef.current = t.scale
+    offsetRef.current = t.offset
+    setScale(t.scale)
+    setOffset(t.offset)
+    return true
+  }, [viewport])
 
   // First-load auto-fit
   useEffect(() => {
@@ -339,6 +350,7 @@ export function useSheetViewport({
     scale,
     offset,
     fitToView,
+    fitToBox: fitToBoxView,
     zoomIn,
     zoomOut,
     setOffsetFromStage,

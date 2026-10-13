@@ -3,7 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { loadTenantPlanPage } from '@/lib/status-plans/load-plan-page'
-import { tenantScheduleHref } from '@/lib/status-plans/plan-urls'
+import { parseColourBy, tenantScheduleHref } from '@/lib/status-plans/plan-urls'
 import { StatusPlanWorkspace } from '../_plans/StatusPlanWorkspace'
 import { TenantPlanEmpty } from '../_plans/TenantPlanEmpty'
 
@@ -14,8 +14,8 @@ export const metadata: Metadata = { title: 'Tenant floor plan' }
 
 interface Props {
   params: Promise<{ id: string }>
-  /** ?sheet= picks the sheet; ?shape= selects a shape (the tenant schedule's "On plan" link). */
-  searchParams: Promise<{ sheet?: string; shape?: string }>
+  /** ?sheet= picks the sheet; ?shape= selects a shape (the tenant schedule's "On plan" link); ?colour=board opens "Colour by: Main board". */
+  searchParams: Promise<{ sheet?: string; shape?: string; colour?: string }>
 }
 
 /**
@@ -26,10 +26,11 @@ interface Props {
  */
 export default async function TenantFloorPlanPage({ params, searchParams }: Props) {
   const { id: projectId } = await params
-  const { sheet, shape } = await searchParams
+  const { sheet, shape, colour } = await searchParams
   const supabase = await createClient()
   const data = await loadTenantPlanPage(supabase, {
     projectId, purpose: 'tenant_layout', requestedSheetId: sheet ?? null, requestedShapeId: shape ?? null,
+    colourBy: parseColourBy(colour),
   })
   if (!data) notFound()
 

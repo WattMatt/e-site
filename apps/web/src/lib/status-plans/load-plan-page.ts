@@ -25,10 +25,11 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { readAll } from '@/lib/tender/read-all'
 import { loadTenantShopFacts } from '@/lib/tenant-schedule/shop-facts'
 import { shopLinkFor } from './shop-link'
+import { loadProjectFeedGraph, planFeedFrom } from './feed-graph'
 import { loadProjectDbOrderStatus } from './project-db-orders'
 import { SHAPE_COLUMNS, toCanvasShape } from './canvas-shape'
 import { SHEET_COLUMNS, toSheetSummary } from './sheet-row'
-import type { CanvasShape, PlanNode, SheetSummary, StatusPlanPageProps, TenantPlanEmptyProps } from './types'
+import type { CanvasShape, ColourBy, PlanFeed, PlanNode, SheetSummary, StatusPlanPageProps, TenantPlanEmptyProps } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -48,6 +49,8 @@ export interface PlanPageRaw {
   today: string
   canEdit: boolean
   requestedShapeId: string | null
+  feed: PlanFeed | null
+  colourBy: ColourBy
 }
 
 export function buildStatusPlanPageProps(raw: PlanPageRaw): StatusPlanPageProps {
@@ -65,6 +68,8 @@ export function buildStatusPlanPageProps(raw: PlanPageRaw): StatusPlanPageProps 
     today: raw.today,
     canEdit: raw.canEdit,
     initialShapeId: selectable ? raw.requestedShapeId : null,
+    feed: raw.feed,
+    initialColourBy: raw.plan.purpose === 'tenant_layout' ? raw.colourBy : 'status',
   }
 }
 
@@ -94,7 +99,14 @@ export type TenantPlanPageData =
 
 export async function loadTenantPlanPage(
   client: unknown,
-  args: { projectId: string; purpose: StatusPlanPurpose; requestedSheetId: string | null; requestedShapeId: string | null },
+  args: {
+    projectId: string
+    purpose: StatusPlanPurpose
+    requestedSheetId: string | null
+    requestedShapeId: string | null
+    /** ?colour= on the floor plan. */
+    colourBy?: ColourBy
+  },
 ): Promise<TenantPlanPageData | null> {
   const db = client as any
 
@@ -151,9 +163,12 @@ export async function loadTenantPlanPage(
 
   let shopLinks: Record<string, ShopLink> = {}
   let dbOrders: Record<string, NodeOrderStatus> = {}
+  let feed: PlanFeed | null = null
   if (plan.purpose === 'tenant_layout') {
     const facts = await loadTenantShopFacts(client, { projectId: args.projectId, orgId, openingDate })
     shopLinks = Object.fromEntries(nodes.map((n) => [n.id, shopLinkFor(facts, n.id)]))
+    // Read as the caller (RLS on cable_schedule); never throws: a failure is carried as 'unavailable'.
+    feed = planFeedFrom(await loadProjectFeedGraph(client, args.projectId), nodes.map((n) => n.id))
   } else {
     dbOrders = await loadProjectDbOrderStatus(client, { projectId: args.projectId, orgId })
   }
@@ -173,6 +188,8 @@ export async function loadTenantPlanPage(
       today: johannesburgDate(new Date()),
       canEdit,
       requestedShapeId: args.requestedShapeId,
+      feed,
+      colourBy: args.colourBy ?? 'status',
     }),
   }
 }

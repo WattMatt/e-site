@@ -33,9 +33,9 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
   const seqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Spec §8: tenant layout plans default ON, distribution schematics OFF. Preview and Save use the
+  // Spec §8: tenant layout plans default ON, distribution schematics OFF, "Floor plan by main board" OFF (spec 2026-10-13 §1). Preview and Save use the
   // same choice, so the saved version is exactly what was previewed.
-  const [plans, setPlans] = useState<StatusPlanAppendixOptions>({ tenantLayout: true, schematic: false })
+  const [plans, setPlans] = useState<StatusPlanAppendixOptions>({ tenantLayout: true, schematic: false, byBoard: false })
   const previewUrl = (o: StatusPlanAppendixOptions) => `/api/projects/${projectId}/tenant-schedule/report-preview${appendixQuery(o)}`
 
   function revokeBlob() {
@@ -145,6 +145,10 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)' }}>
                 <input type="checkbox" checked={plans.schematic} onChange={() => togglePlans('schematic')} disabled={loading || saving} />
                 Line diagram
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)' }}>
+                <input type="checkbox" checked={plans.byBoard} onChange={() => togglePlans('byBoard')} disabled={loading || saving} />
+                Floor plan by main board
               </label>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
                 {saved && <span style={{ fontSize: 12, color: 'var(--c-green)' }}>Saved to project ✓</span>}
