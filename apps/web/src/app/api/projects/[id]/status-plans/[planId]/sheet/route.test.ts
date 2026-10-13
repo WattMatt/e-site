@@ -22,9 +22,10 @@ import { StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
 
 const PID = 'proj-1'
 const PLAN = '9c1a98b5-6ef3-4388-865f-417d3f5d7465'
-const call = () => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${PLAN}/sheet`), { params: Promise.resolve({ id: PID, planId: PLAN }) })
-const callWith = (planId: string) => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${planId}/sheet`), { params: Promise.resolve({ id: PID, planId }) })
-const input = { planId: PLAN, planName: 'Main board 3.1 / Level 2', pageIndex: 1, generatedOn: '2026-10-09' }
+const SHEET = '0b6f8a2e-3c1d-4e5f-9a7b-1c2d3e4f5a6b'
+const call = () => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${PLAN}/sheet?sheet=${SHEET}`), { params: Promise.resolve({ id: PID, planId: PLAN }) })
+const callWith = (planId: string) => GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${planId}/sheet?sheet=${SHEET}`), { params: Promise.resolve({ id: PID, planId }) })
+const input = { planId: PLAN, sheetId: SHEET, planName: 'Main board 3.1 / Level 2', sheetLabel: 'Sheet 1 of 3', pageIndex: 1, generatedOn: '2026-10-09' }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -59,17 +60,24 @@ describe('GET status plan Export sheet', () => {
     const res = await call()
     const [clients, args] = m.load.mock.calls[0]!
     expect(clients.storage.tag).toBe('storage')
-    expect(args).toMatchObject({ projectId: PID, planIds: [PLAN], purposes: ['tenant_layout', 'distribution_schematic'], maxPlans: 1 })
+    expect(args).toMatchObject({ projectId: PID, planIds: [PLAN], sheetIds: [SHEET], purposes: ['tenant_layout', 'distribution_schematic'], maxSheets: 1 })
     expect(m.render).toHaveBeenCalledWith(input, 'source')
     // Uploaded (overwrite) at the plan's deterministic path, then a 303 to a 10-minute signed URL
     // that downloads under the sheet's file name.
-    expect(m.upload).toHaveBeenCalledWith(`org-1/${PID}/status-plans/${PLAN}/sheet.pdf`, expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
+    expect(m.upload).toHaveBeenCalledWith(`org-1/${PID}/status-plans/${PLAN}/${SHEET}/sheet.pdf`, expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
     const [path, ttl, opts] = m.sign.mock.calls[0]!
-    expect(path).toBe(`org-1/${PID}/status-plans/${PLAN}/sheet.pdf`)
+    expect(path).toBe(`org-1/${PID}/status-plans/${PLAN}/${SHEET}/sheet.pdf`)
     expect(ttl).toBe(600)
-    expect(opts.download).toMatch(/^main-board-3-1-level-2-p1-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(opts.download).toMatch(/^main-board-3-1-level-2-sheet-1-of-3-\d{4}-\d{2}-\d{2}\.pdf$/)
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toBe('https://ref.supabase.co/storage/v1/object/sign/reports/x?token=t')
+  })
+  it('a missing or malformed ?sheet= → 404, nothing is read', async () => {
+    for (const q of ['', '?sheet=nope']) {
+      const res = await GET(new NextRequest(`http://localhost/api/projects/${PID}/status-plans/${PLAN}/sheet${q}`), { params: Promise.resolve({ id: PID, planId: PLAN }) })
+      expect(res.status).toBe(404)
+    }
+    expect(m.load).not.toHaveBeenCalled()
   })
   it('a storage failure → 500 with a sentence', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})

@@ -70,9 +70,15 @@ export interface RenderShape {
 
 export interface StatusPlanRenderInput {
   planId: string
+  /** The sheet this page draws (one input per sheet). */
+  sheetId: string
+  /** The sheet's label, e.g. "Sheet 2 of 3 (E-300)" or "Level 1". */
+  sheetLabel: string
   planName: string
   purpose: StatusPlanPurpose
+  /** The sheet's file name. */
   drawingName: string
+  /** 1-based page within that file. */
   pageIndex: number
   /** yyyy-mm-dd — colours are computed for this day (spec §8: a saved report is a snapshot). */
   generatedOn: string
@@ -107,9 +113,9 @@ const AMBER = rgb(0.71, 0.45, 0.04)
 
 const T = (s: string) => winAnsiSafe(s)
 
-/** "Ground floor (Tenant layout, page 2)" — how a plan is named in not-included lines and dividers. */
-export function planTitle(name: string, purpose: StatusPlanPurpose, pageIndex: number): string {
-  return `${name} (${PURPOSE_LABEL[purpose]}, page ${pageIndex})`
+/** "Floor plan (Tenant floor plan, Level 1)" — how a sheet is named in not-included lines and dividers. */
+export function planTitle(name: string, purpose: StatusPlanPurpose, sheetLabel: string): string {
+  return `${name} (${PURPOSE_LABEL[purpose]}, ${sheetLabel})`
 }
 
 /** Enough finite points to draw a polygon. Anything else is skipped rather than thrown on. */
@@ -329,7 +335,7 @@ function drawTitleStrip(page: PDFPage, input: StatusPlanRenderInput, r: Frame, f
   page.drawText(T(input.planName), { x: r.x, y, size: 11, font: fonts.bold, color: INK, maxWidth: r.width })
   y -= 12
   page.drawText(
-    T(`${PURPOSE_LABEL[input.purpose]} · ${input.drawingName} · page ${input.pageIndex} · generated ${input.generatedOn}`),
+    T(`${PURPOSE_LABEL[input.purpose]} · ${input.sheetLabel} · ${input.drawingName}${input.source.kind === 'pdf' ? ` p${input.pageIndex}` : ''} · generated ${input.generatedOn}`),
     { x: r.x, y, size: 7.5, font: fonts.regular, color: MUTED, maxWidth: r.width },
   )
   for (const w of input.warnings.slice(0, 2)) {
@@ -416,6 +422,34 @@ export async function renderStatusPlanPdf(input: StatusPlanRenderInput, layout: 
   doc.setProducer('E-Site')
   const fonts = { regular: await doc.embedFont(StandardFonts.Helvetica), bold: await doc.embedFont(StandardFonts.HelveticaBold) }
   await drawStatusPlanPage(doc, input, layout, fonts)
+  await pruneUnreachableObjects(doc)
+  return doc.save()
+}
+
+/**
+ * Every sheet of a plan as one PDF, one page per sheet (the portal). A sheet
+ * that cannot be drawn is skipped; when none can, the first reason is thrown
+ * as a StatusPlanSourceError.
+ */
+export async function renderStatusPlanSheetsPdf(inputs: readonly StatusPlanRenderInput[], layout: PlanLayout): Promise<Uint8Array> {
+  if (inputs.length === 0) throw new StatusPlanSourceError('there is no sheet to draw')
+  const doc = await PDFDocument.create()
+  doc.setTitle(T(inputs[0]!.planName))
+  doc.setProducer('E-Site')
+  const fonts = { regular: await doc.embedFont(StandardFonts.Helvetica), bold: await doc.embedFont(StandardFonts.HelveticaBold) }
+  let first: StatusPlanSourceError | null = null
+  let drawn = 0
+  for (const input of inputs) {
+    const before = doc.getPageCount()
+    try {
+      await drawStatusPlanPage(doc, input, layout, fonts)
+      drawn++
+    } catch (e) {
+      while (doc.getPageCount() > before) doc.removePage(doc.getPageCount() - 1)
+      first ??= e instanceof StatusPlanSourceError ? e : new StatusPlanSourceError('a sheet could not be drawn')
+    }
+  }
+  if (drawn === 0) throw first ?? new StatusPlanSourceError('no sheet could be drawn')
   await pruneUnreachableObjects(doc)
   return doc.save()
 }

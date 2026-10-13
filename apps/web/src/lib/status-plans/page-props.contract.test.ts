@@ -6,12 +6,12 @@ import { resolve, dirname } from 'node:path'
  * PAGE → CLIENT PROPS MUST BE JSON. A function passed from a page.tsx to a
  * 'use client' component passes tsc AND next build and fails only at render
  * (PR #201). The runtime half of this guard is load-plan-page.test.ts
- * (jsonUnsafePath on the assembled props); this half reads the two pages and
- * fails if any client component they render is handed an arrow function,
- * a function expression or a server action by name.
+ * (jsonUnsafePath on the assembled props); this half reads the two tenant plan
+ * routes and fails if any client component they render is handed an arrow
+ * function, a function expression or a server action by name.
  */
-const ROUTE = resolve(__dirname, '../../app/(admin)/projects/[id]/status-plans')
-const PAGES = [resolve(ROUTE, 'page.tsx'), resolve(ROUTE, '[planId]/page.tsx')]
+const BASE = resolve(__dirname, '../../app/(admin)/projects/[id]/tenant-schedule')
+const PAGES = [resolve(BASE, 'floor-plan/page.tsx'), resolve(BASE, 'line-diagram/page.tsx')]
 
 function clientComponents(src: string, dir: string): string[] {
   const out: string[] = []
@@ -42,9 +42,9 @@ function openingTags(src: string, name: string): string[] {
   return tags
 }
 
-describe('status plan pages hand their client components JSON only', () => {
+describe('tenant plan routes hand their client components JSON only', () => {
   for (const page of PAGES) {
-    it(page.slice(ROUTE.length) || '/page.tsx', () => {
+    it(page.slice(BASE.length), () => {
       const src = readFileSync(page, 'utf8')
       const names = clientComponents(src, dirname(page))
       expect(names.length, 'expected the page to render a client component').toBeGreaterThan(0)
@@ -54,9 +54,11 @@ describe('status plan pages hand their client components JSON only', () => {
         for (const tag of tags) expect(tag, `${n} receives a function`).not.toMatch(/=>|\bfunction\b|Action\b/)
       }
     })
-  }
 
-  it('the canvas page spreads the assembled props and adds nothing', () => {
-    expect(openingTags(readFileSync(PAGES[1]!, 'utf8'), 'StatusPlanWorkspace')).toEqual(['<StatusPlanWorkspace {...props} />'])
-  })
+    it(`${page.slice(BASE.length)} spreads the assembled props and adds nothing`, () => {
+      const src = readFileSync(page, 'utf8')
+      expect(openingTags(src, 'StatusPlanWorkspace')).toEqual(['<StatusPlanWorkspace {...data.props} />'])
+      expect(openingTags(src, 'TenantPlanEmpty')).toEqual(['<TenantPlanEmpty {...data.empty} />'])
+    })
+  }
 })

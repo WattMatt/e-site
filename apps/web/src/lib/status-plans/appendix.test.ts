@@ -23,7 +23,7 @@ async function drawing(): Promise<Uint8Array> {
 }
 function plan(id: string, name: string, purpose: StatusPlanRenderInput['purpose'], bytes: Uint8Array): StatusPlanRenderInput {
   return {
-    planId: id, planName: name, purpose, drawingName: 'Drawing', pageIndex: 1, generatedOn: '2026-10-09',
+    planId: id, planName: name, purpose, drawingName: 'Drawing', sheetId: `sh-${id}`, sheetLabel: 'Sheet 1 of 1', pageIndex: 1, generatedOn: '2026-10-09',
     source: { kind: 'pdf', bytes, pageIndex: 1 }, shapes: [], counts: {}, measured: null, warnings: [],
     legend: purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND,
   }
@@ -56,7 +56,7 @@ describe('appendStatusPlansToReport', () => {
     expect(await sizes(out)).toEqual([[595, 842], [595, 842], [595, 842], a3, a3])
     expect(await pageText(out, 0)).toContain('REPORTPAGE1')
     const divider = await pageText(out, 2)
-    expect(divider).toContain('Appendix—Tenantstatusplans')
+    expect(divider).toContain('Appendix—Tenantplans')
     expect(divider.indexOf('Alphatenants')).toBeLessThan(divider.indexOf('Bravoschematic'))
     expect(divider).toContain('Charlie')
     expect(divider).toContain('couldnotberead(Objectnotfound)')

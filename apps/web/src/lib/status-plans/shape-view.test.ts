@@ -9,7 +9,7 @@ import type { CanvasShape, PlanNode } from './types'
 const RECT = [100, 100, 300, 100, 300, 260, 100, 260]
 const shape = (o: Partial<CanvasShape>): CanvasShape => ({
   id: 's1', shape: 'rect', points: RECT, nodeId: null, areaType: null,
-  detectedTag: null, source: 'manual', updatedAt: 't', ...o,
+  detectedTag: null, source: 'manual', updatedAt: 't', sheetId: 'sh1', ...o,
 })
 const node = (o: Partial<PlanNode>): PlanNode => ({
   id: 'n1', code: 'DB-ZZ01', kind: 'tenant_db', shopNumber: 'ZZ01', shopName: 'Lantern Books',

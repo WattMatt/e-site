@@ -1,47 +1,49 @@
 /**
- * Status plans → render inputs for the PDF renderer (report appendix, Export sheet, portal).
+ * Tenant plans → render inputs for the PDF renderer (report appendix, Export sheet, portal).
+ * ONE INPUT PER SHEET (spec 2026-10-12 §5).
  *
  * Reads:
- *   clients.db      — the CALLER's session client: project, plans, shapes, drawings, page scales and
- *                     nodes under RLS + site_scope (00245 opens SELECT to every project role).
+ *   clients.db      — the CALLER's session client: project, plans, sheets, shapes and nodes under
+ *                     RLS + site_scope (00245/00249 open SELECT to every project role).
  *   clients.facts   — order / scope facts (loadTenantShopFacts, loadProjectDbOrderStatus); the service
  *                     client, passed ONLY after the route's project gate, as the tenant report does.
- *   clients.storage — drawing bytes from the `drawings` bucket (service client).
+ *   clients.storage — sheet bytes from the tenant-plan-files bucket (service client).
  *
- * What a shape looks like is decided by shape-view.ts (resolveShapeView / legendSummary), fed exactly
- * the inputs load-plan-page.ts gives the canvas — tenant layouts see tenant_db nodes only, schematics
- * every live node — so the PDF and the screen cannot disagree. Rows go through toCanvasShape, which
- * keeps an outline that fails today's checks (invalidReason) instead of throwing.
+ * What a shape looks like is decided by shape-view.ts, fed exactly the inputs load-plan-page.ts gives
+ * the canvas (floor plans see tenant_db nodes only, line diagrams every live node; each sheet its own
+ * scale), so the PDF and the screen cannot disagree. Rows go through toCanvasShape, which keeps an
+ * outline that fails today's checks (invalidReason) instead of throwing.
  *
- * Never throws for one drawing: a missing, unreadable, unsupported or over-budget drawing becomes a
- * "not included" line with a sentence. It throws only when the plan list (or the facts it needs)
- * cannot be read; the callers turn that into a single "not included" line too, never a 500.
+ * Never throws for one sheet: a missing, unreadable or over-budget file becomes a "not included" line
+ * with a sentence. It throws only when the plan or sheet list (or the facts it needs) cannot be read;
+ * the callers turn that into a single "not included" line too, never a 500.
  *
- * Colours are computed for `today` at render time (spec §8): a saved report is a snapshot.
+ * Colours are computed for `today` at render time: a saved report is a snapshot.
  */
 import {
-  SCHEMATIC_LEGEND, TENANT_LEGEND, statusPlanFromRow,
-  type NodeOrderStatus, type ShopLink, type StatusPlan, type StatusPlanPurpose, type StatusPlanRow, type StatusPlanShapeRow,
+  SCHEMATIC_LEGEND, TENANT_LEGEND, TENANT_PLAN_BUCKET, statusPlanFromRow,
+  type NodeOrderStatus, type ShopLink, type StatusPlan, type StatusPlanPurpose, type StatusPlanRow,
+  type StatusPlanShapeRow, type StatusPlanSheetRow,
 } from '@esite/shared/status-plans'
 import { loadTenantShopFacts } from '@/lib/tenant-schedule/shop-facts'
-import { pageScaleFor, type PageScaleRow } from '@/lib/sheet/page-scale'
 import { readAll } from '@/lib/tender/read-all'
 import { shopLinkFor } from './shop-link'
 import { loadProjectDbOrderStatus } from './project-db-orders'
 import { SHAPE_COLUMNS, toCanvasShape } from './canvas-shape'
-import { fileLabel } from './plan-urls'
+import { SHEET_COLUMNS } from './sheet-row'
 import { legendSummary, resolveShapeView, type ShapeViewContext } from './shape-view'
 import { planTitle, type PlanSource, type RenderShape, type StatusPlanRenderInput } from './render-plan-page'
 import type { CanvasShape, PlanNode } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export const DRAWINGS_BUCKET = 'drawings'
-export const MAX_STATUS_PLANS_PER_REPORT = 20
+export const TENANT_PLAN_FILES = TENANT_PLAN_BUCKET
+export const MAX_PLAN_SHEETS_PER_REPORT = 20
 /**
- * One drawing file, and Σ unique drawing files for one appendix. Both sit well under the `reports`
- * bucket's 50 MiB file_size_limit (00117): the finished PDF carries the sources (vector pages are
- * copied, not rasterised), so the handoff also re-checks the final bytes (pdf-handoff.ts).
+ * One sheet file, and Σ unique files for one appendix. Both sit under the `reports` bucket's 50 MiB
+ * file_size_limit (00117): the finished PDF carries the sources (vector pages are copied, not
+ * rasterised), so the handoff also re-checks the final bytes (pdf-handoff.ts). A sheet file may be up
+ * to 50 MB in its own bucket; one over this cap is listed as "not included" with the reason.
  */
 export const MAX_STATUS_PLAN_SOURCE_BYTES = 40 * 1024 * 1024
 export const MAX_STATUS_PLAN_TOTAL_BYTES = 40 * 1024 * 1024
@@ -56,33 +58,34 @@ export interface LoadPlanRenderArgs {
   today: string
   purposes: readonly StatusPlanPurpose[]
   planIds?: readonly string[]
-  maxPlans?: number
-  /** Per drawing file. */
+  sheetIds?: readonly string[]
+  maxSheets?: number
+  /** Per sheet file. */
   maxSourceBytes?: number
-  /** Σ unique drawing files in this appendix. */
+  /** Σ unique sheet files in this output. */
   maxTotalBytes?: number
 }
 export interface PlanOmission { title: string; reason: string }
 export interface PlanRenderLoadResult {
   inputs: StatusPlanRenderInput[]
   omitted: PlanOmission[]
-  /** The project's organisation, read as the caller — set whenever the project row was visible. */
+  /** The project's organisation, read as the caller — set whenever there was something to render. */
   organisationId?: string
 }
 
-const PLAN_COLUMNS = 'id, project_id, organisation_id, floor_plan_id, page_index, purpose, name, source_file_path, created_by, created_at, updated_at'
+const PLAN_COLUMNS = 'id, project_id, organisation_id, purpose, name, created_by, created_at, updated_at'
 const PURPOSE_ORDER: Record<StatusPlanPurpose, number> = { tenant_layout: 0, distribution_schematic: 1 }
 
-interface DrawingRow { id: string; name: string | null; file_path: string; pixels_per_meter: number | string | null }
+export interface SheetRef { plan: StatusPlan; row: StatusPlanSheetRow }
 
-export function orderPlans<T extends Pick<StatusPlan, 'purpose' | 'name' | 'pageIndex'>>(plans: readonly T[]): T[] {
-  return [...plans].sort((a, b) =>
-    PURPOSE_ORDER[a.purpose] - PURPOSE_ORDER[b.purpose]
-    || a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' })
-    || a.pageIndex - b.pageIndex)
+/** Floor plan sheets, then line diagram sheets; within a plan, strip order. */
+export function orderSheets(refs: readonly SheetRef[]): SheetRef[] {
+  return [...refs].sort((a, b) =>
+    PURPOSE_ORDER[a.plan.purpose] - PURPOSE_ORDER[b.plan.purpose]
+    || Number(a.row.sort_order) - Number(b.row.sort_order))
 }
 
-/** What pdf-lib can embed. WebP, SVG and CAD files are drawable on screen but not here. */
+/** What pdf-lib can embed. The 00249 trigger only admits these three. */
 export function sourceKindFor(path: string): 'pdf' | 'png' | 'jpg' | null {
   if (/\.pdf$/i.test(path)) return 'pdf'
   if (/\.png$/i.test(path)) return 'png'
@@ -94,7 +97,7 @@ const num = (v: unknown): number | null => (v === null || v === undefined || v =
 
 export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, args: LoadPlanRenderArgs): Promise<PlanRenderLoadResult> {
   const db = clients.db as any
-  const maxPlans = args.maxPlans ?? MAX_STATUS_PLANS_PER_REPORT
+  const maxSheets = args.maxSheets ?? MAX_PLAN_SHEETS_PER_REPORT
   const maxSingle = args.maxSourceBytes ?? MAX_STATUS_PLAN_SOURCE_BYTES
   const maxTotal = args.maxTotalBytes ?? MAX_STATUS_PLAN_TOTAL_BYTES
   const empty: PlanRenderLoadResult = { inputs: [], omitted: [] }
@@ -110,44 +113,43 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     .eq('project_id', args.projectId).in('purpose', [...args.purposes])
   if (args.planIds) planQ = planQ.in('id', [...args.planIds])
   const { data: planRows, error: planErr } = await planQ
-  if (planErr) throw new Error(`status plans could not be read: ${planErr.message}`)
-  const ordered = orderPlans(((planRows ?? []) as StatusPlanRow[]).map(statusPlanFromRow))
-  if (ordered.length === 0) return empty
+  if (planErr) throw new Error(`tenant plans could not be read: ${planErr.message}`)
+  const plans = ((planRows ?? []) as StatusPlanRow[]).map(statusPlanFromRow)
+  if (plans.length === 0) return empty
+  const planById = new Map(plans.map((p) => [p.id, p]))
+
+  let sheetQ = db.schema('tenants').from('status_plan_sheets').select(SHEET_COLUMNS).in('status_plan_id', plans.map((p) => p.id))
+  if (args.sheetIds) sheetQ = sheetQ.in('id', [...args.sheetIds])
+  const { data: sheetRows, error: sheetErr } = await sheetQ
+  if (sheetErr) throw new Error(`tenant plan sheets could not be read: ${sheetErr.message}`)
+  const refs = orderSheets(((sheetRows ?? []) as StatusPlanSheetRow[])
+    .filter((row) => planById.has(row.status_plan_id))
+    .map((row) => ({ plan: planById.get(row.status_plan_id)!, row })))
+  if (refs.length === 0) return empty
 
   const omitted: PlanOmission[] = []
-  const plans = ordered.slice(0, maxPlans)
-  for (const p of ordered.slice(maxPlans)) {
-    omitted.push({ title: planTitle(p.name, p.purpose, p.pageIndex), reason: `more than ${maxPlans} plans — export the rest from the status plans page` })
+  const kept = refs.slice(0, maxSheets)
+  for (const r of refs.slice(maxSheets)) {
+    omitted.push({ title: planTitle(r.plan.name, r.plan.purpose, r.row.label), reason: `more than ${maxSheets} sheets — export the rest from the plan page` })
   }
 
-  const fpIds = [...new Set(plans.map((p) => p.floorPlanId))]
-  const [fpRes, scaleRes, shapesRes, nodesRes] = await Promise.all([
-    db.schema('tenants').from('floor_plans').select('id, name, file_path, pixels_per_meter').in('id', fpIds),
-    db.schema('tenants').from('floor_plan_page_scales').select('floor_plan_id, page_index, pixels_per_meter').in('floor_plan_id', fpIds),
+  const [shapesRes, nodesRes] = await Promise.all([
     readAll<StatusPlanShapeRow>((from, to) =>
       db.schema('tenants').from('status_plan_shapes').select(SHAPE_COLUMNS)
-        .in('status_plan_id', plans.map((p) => p.id)).order('created_at').order('id').range(from, to)),
+        .in('sheet_id', kept.map((r) => r.row.id)).order('created_at').order('id').range(from, to)),
     readAll<any>((from, to) =>
       db.schema('structure').from('nodes')
         .select('id, code, kind, shop_number, shop_name, name, shop_area_m2, status')
         .eq('project_id', args.projectId).is('deleted_at', null).order('id').range(from, to)),
   ])
-  if ('error' in shapesRes) throw new Error(`status plan shapes could not be read: ${shapesRes.error}`)
+  if ('error' in shapesRes) throw new Error(`tenant plan shapes could not be read: ${shapesRes.error}`)
   if ('error' in nodesRes) throw new Error(`project boards could not be read: ${nodesRes.error}`)
 
-  const fpById = new Map(((fpRes.data ?? []) as DrawingRow[]).map((r) => [r.id, r]))
-  const scalesByFp = new Map<string, PageScaleRow[]>()
-  for (const s of (scaleRes.data ?? []) as Array<{ floor_plan_id: string; page_index: number; pixels_per_meter: number | string }>) {
-    const list = scalesByFp.get(s.floor_plan_id) ?? []
-    list.push({ pageIndex: Number(s.page_index), pixelsPerMeter: Number(s.pixels_per_meter) })
-    scalesByFp.set(s.floor_plan_id, list)
-  }
-
-  const shapesByPlan = new Map<string, CanvasShape[]>()
+  const shapesBySheet = new Map<string, CanvasShape[]>()
   for (const r of shapesRes.data) {
-    const list = shapesByPlan.get(r.status_plan_id) ?? []
+    const list = shapesBySheet.get(r.sheet_id) ?? []
     list.push(toCanvasShape(r))
-    shapesByPlan.set(r.status_plan_id, list)
+    shapesBySheet.set(r.sheet_id, list)
   }
 
   // The same node sets load-plan-page.ts hands the canvas.
@@ -166,12 +168,12 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
   }
 
   let shopLinks: Record<string, ShopLink> = {}
-  if (plans.some((p) => p.purpose === 'tenant_layout')) {
+  if (kept.some((r) => r.plan.purpose === 'tenant_layout')) {
     const facts = await loadTenantShopFacts(clients.facts, { projectId: args.projectId, orgId, openingDate })
     shopLinks = Object.fromEntries([...nodesFor.tenant_layout.keys()].map((id) => [id, shopLinkFor(facts, id)]))
   }
   let dbOrders: Record<string, NodeOrderStatus> = {}
-  if (plans.some((p) => p.purpose === 'distribution_schematic')) {
+  if (kept.some((r) => r.plan.purpose === 'distribution_schematic')) {
     dbOrders = await loadProjectDbOrderStatus(clients.facts, { projectId: args.projectId, orgId })
   }
 
@@ -179,41 +181,40 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
   let totalBytes = 0
   const inputs: StatusPlanRenderInput[] = []
 
-  for (const plan of plans) {
-    const title = planTitle(plan.name, plan.purpose, plan.pageIndex)
-    const fp = fpById.get(plan.floorPlanId)
-    if (!fp) { omitted.push({ title, reason: 'the drawing is no longer available' }); continue }
-    const kind = sourceKindFor(fp.file_path)
-    if (!kind) { omitted.push({ title, reason: `the drawing is not a PDF, PNG or JPEG file (${fileLabel(fp.file_path)})` }); continue }
+  for (const { plan, row } of kept) {
+    const title = planTitle(plan.name, plan.purpose, row.label)
+    const kind = sourceKindFor(row.file_path)
+    if (!kind) { omitted.push({ title, reason: 'the sheet is not a PDF, PNG or JPEG file' }); continue }
 
-    let file = files.get(fp.file_path)
+    let file = files.get(row.file_path)
     if (!file) {
-      const { data, error } = await clients.storage.from(DRAWINGS_BUCKET).download(fp.file_path)
+      const { data, error } = await clients.storage.from(TENANT_PLAN_FILES).download(row.file_path)
       if (error || !data) {
-        file = { error: 'the drawing file could not be read' }
+        file = { error: 'the sheet file could not be read' }
       } else {
         const bytes = new Uint8Array(await data.arrayBuffer())
         if (bytes.byteLength > maxSingle) {
-          omitted.push({ title, reason: 'the drawing file is over the size cap for a report — export this plan from its page' })
-          files.set(fp.file_path, { error: 'the drawing file is over the size cap for a report — export this plan from its page' })
+          const reason = 'the sheet file is over the size cap for a report — export this sheet from its page'
+          omitted.push({ title, reason })
+          files.set(row.file_path, { error: reason })
           continue
         }
         if (totalBytes + bytes.byteLength > maxTotal) {
-          omitted.push({ title, reason: 'the size cap for one PDF was reached — export this plan from its page' })
-          continue // not cached: a smaller later drawing may still fit
+          omitted.push({ title, reason: 'the size cap for one PDF was reached — export this sheet from its page' })
+          continue // not cached: a smaller later file may still fit
         }
         totalBytes += bytes.byteLength
         file = { bytes }
       }
-      files.set(fp.file_path, file)
+      files.set(row.file_path, file)
     }
     if ('error' in file) { omitted.push({ title, reason: file.error }); continue }
 
-    // `key` = the storage path: plans sharing a drawing page embed it once per output PDF.
+    // `key` = the storage path: sheets sharing a file embed it once per output PDF.
     const source: PlanSource = kind === 'pdf'
-      ? { kind, bytes: file.bytes, pageIndex: plan.pageIndex, key: fp.file_path }
-      : { kind, bytes: file.bytes, key: fp.file_path }
-    const ppm = pageScaleFor({ pixels_per_meter: num(fp.pixels_per_meter), page_scales: scalesByFp.get(fp.id) ?? [] }, plan.pageIndex)
+      ? { kind, bytes: file.bytes, pageIndex: Number(row.page_index), key: row.file_path }
+      : { kind, bytes: file.bytes, key: row.file_path }
+    const ppm = num(row.pixels_per_meter)
     const ctx: ShapeViewContext = {
       purpose: plan.purpose,
       nodesById: nodesFor[plan.purpose],
@@ -222,7 +223,7 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
       today: args.today,
       pixelsPerMeter: ppm,
     }
-    const shapes = shapesByPlan.get(plan.id) ?? []
+    const shapes = shapesBySheet.get(row.id) ?? []
     const views = shapes.map((s) => resolveShapeView(s, ctx))
     const summary = legendSummary(views, plan.purpose)
     const rendered: RenderShape[] = shapes.map((s, i) => ({
@@ -230,18 +231,18 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
     }))
 
     const warnings: string[] = []
-    if (fp.file_path !== plan.sourceFilePath) {
-      warnings.push(`The drawing file changed since this plan was drawn (${fileLabel(plan.sourceFilePath)} -> ${fileLabel(fp.file_path)}); shapes may not line up.`)
+    if (row.replaced_at) {
+      warnings.push(`This sheet's file was replaced (revision ${row.revision}) since its shapes were checked; they may not line up.`)
     }
     const invalid = views.filter((v) => v.invalid).length
     if (invalid) {
       warnings.push(`${invalid} shape${invalid === 1 ? ' needs' : 's need'} redrawing: outlined in red where readable, not coloured or counted.`)
     }
-    if (plan.purpose === 'tenant_layout' && ppm == null) warnings.push('This page has no scale, so areas are not measured.')
+    if (plan.purpose === 'tenant_layout' && ppm == null) warnings.push('This sheet has no scale, so areas are not measured.')
 
     inputs.push({
-      planId: plan.id, planName: plan.name, purpose: plan.purpose, drawingName: fp.name ?? fileLabel(fp.file_path),
-      pageIndex: plan.pageIndex, generatedOn: args.today, source, shapes: rendered,
+      planId: plan.id, sheetId: row.id, planName: plan.name, sheetLabel: row.label, purpose: plan.purpose,
+      drawingName: row.file_name, pageIndex: Number(row.page_index), generatedOn: args.today, source, shapes: rendered,
       legend: plan.purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND,
       counts: summary.counts,
       measured: plan.purpose === 'tenant_layout' && ppm != null ? { totalM2: summary.totalM2, unmeasured: summary.unmeasured } : null,

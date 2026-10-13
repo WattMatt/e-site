@@ -50,7 +50,7 @@ describe('pdfHandoffResponse', () => {
 
 describe('handoff paths: org first (the bucket convention), deterministic, one per purpose', () => {
   it('names each file', () => {
-    expect(statusPlanSheetPath('o', 'p', 'pl')).toBe('o/p/status-plans/pl/sheet.pdf')
+    expect(statusPlanSheetPath('o', 'p', 'pl', 'sh')).toBe('o/p/status-plans/pl/sh/sheet.pdf')
     expect(statusPlanPortalPath('o', 'p', 'pl')).toBe('o/p/status-plans/pl/portal.pdf')
     // Per user + per request: overlapping previews never receive each other's file.
     expect(tenantSchedulePreviewPath('o', 'p', 'u', 'ab12')).toBe('o/p/previews/u/tenant-schedule-ab12.pdf')

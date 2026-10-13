@@ -38,7 +38,7 @@ export async function loadReportAppendix(a: {
     return {
       ok: true,
       appendix: {
-        load: { inputs: [], omitted: [{ title: 'Tenant status plans', reason: 'the plans could not be loaded — generate the report again' }] },
+        load: { inputs: [], omitted: [{ title: 'Tenant plans', reason: 'the plans could not be loaded — generate the report again' }] },
         generatedOn: a.today,
       },
     }

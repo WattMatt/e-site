@@ -62,6 +62,11 @@ const DECLARED_EXEMPT: Record<string, string> = {
     'The sync ledger itself — one row per file version seen in cloud storage. It records ' +
     'the adopt rather than being invalidated by it; treating it as annotation would freeze ' +
     'every synced drawing forever.',
+  'tenants.status_plans':
+    'No longer anchored to a drawing. The tenant plans migration (00249) drops floor_plan_id, ' +
+    'page_index and source_file_path; a plan\'s sheets are files in the tenant-plan-files bucket, ' +
+    'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
+    'is the only reason discovery finds it.',
 }
 
 /**
@@ -162,6 +167,17 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
     expect(body).toContain('pixels_per_meter')
   })
 
+  it('the status_plans exemption is true: a later migration drops its drawing column', () => {
+    // The exemption above is a claim about the schema. This reads the corpus and
+    // fails if no migration actually removes floor_plan_id from status_plans.
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()
+    const drops = files.filter((f) => {
+      const sql = stripSqlComments(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))
+      return /ALTER\s+TABLE\s+tenants\.status_plans\b[\s\S]*?DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?floor_plan_id\b/i.test(sql)
+    })
+    expect(drops, 'no migration drops tenants.status_plans.floor_plan_id, so the exemption is false').toHaveLength(1)
+  })
+
   it('fails closed on a query error', () => {
     // The contract is structural, not textual: every lookup must be able to
     // exit "annotated", and the ONLY way out the bottom is a single
@@ -209,6 +225,7 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
       // A table that exists and is deliberately NOT in isAnnotated: proves the
       // coverage check discriminates rather than passing everything.
       expect(predicateQueries(body, 'tenants.floor_plan_versions')).toBe(false)
+      expect(predicateQueries(body, 'tenants.status_plans')).toBe(false)
       expect(predicateQueries(body, 'public.rfi_annotations')).toBe(true)
     })
 

@@ -1,5 +1,5 @@
 /**
- * "Appendix — Tenant status plans" for the tenant schedule report (spec §8), appended with pdf-lib
+ * "Appendix — Tenant plans" for the tenant schedule report (spec §8), appended with pdf-lib
  * after react-pdf has rendered the report — the same shape as cable route sheets
  * (lib/cable-schedule/route-sheets.ts appendRouteSheetsToPdf).
  *
@@ -8,7 +8,6 @@
  * while embedding. One bad drawing never fails the report.
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
-import { PURPOSE_LABEL } from '@esite/shared/status-plans'
 import { winAnsiSafe } from '@/lib/pdf/winansi'
 import { pruneUnreachableObjects } from '@/lib/pdf/prune-unreachable'
 import { drawStatusPlanPage, planTitle, StatusPlanSourceError, type PlanFonts, type StatusPlanRenderInput } from './render-plan-page'
@@ -74,18 +73,18 @@ function drawDivider(page: PDFPage, included: StatusPlanRenderInput[], notInclud
   const layout = dividerLayout(included.length, notIncluded.length)
   let y = A4_H - margin
   page.drawRectangle({ x: 0, y: A4_H - 6, width: A4_W, height: 6, color: rgb(0.95, 0.6, 0.1) })
-  page.drawText(T('Appendix — Tenant status plans'), { x: margin, y: y - 22, size: 18, font: fonts.bold, color: rgb(0.05, 0.05, 0.05) })
+  page.drawText(T('Appendix — Tenant plans'), { x: margin, y: y - 22, size: 18, font: fonts.bold, color: rgb(0.05, 0.05, 0.05) })
   y -= 44
   page.drawText(
-    T(`Each plan is the project drawing with its shops and boards coloured from the tenant schedule as it stood on ${generatedOn}. Colours are computed when the report is generated, so this report is a snapshot of that day.`),
+    T(`Each page is one sheet of the tenant floor plan or the line diagram, with its shops and boards coloured from the tenant schedule as it stood on ${generatedOn}. Colours are computed when the report is generated, so this report is a snapshot of that day.`),
     { x: margin, y, size: 9, font: fonts.regular, color: rgb(0.35, 0.35, 0.35), maxWidth: A4_W - margin * 2, lineHeight: 12 },
   )
   y -= 44
   const cols = [
     { title: '#', x: margin, w: 18 },
-    { title: 'Plan', x: margin + 22, w: 230 },
-    { title: 'Kind', x: margin + 256, w: 110 },
-    { title: 'Drawing', x: margin + 370, w: 120 },
+    { title: 'Plan', x: margin + 22, w: 140 },
+    { title: 'Sheet', x: margin + 166, w: 170 },
+    { title: 'File', x: margin + 340, w: 150 },
     { title: 'Page', x: margin + 494, w: 30 },
   ]
   for (const c of cols) page.drawText(T(c.title), { x: c.x, y, size: 8.5, font: fonts.bold })
@@ -93,15 +92,15 @@ function drawDivider(page: PDFPage, included: StatusPlanRenderInput[], notInclud
   page.drawLine({ start: { x: margin, y }, end: { x: A4_W - margin, y }, thickness: 0.6, color: rgb(0.7, 0.7, 0.7) })
   y -= 14
   included.slice(0, layout.includedShown).forEach((p, i) => {
-    const cells = [String(i + 1), p.planName, PURPOSE_LABEL[p.purpose], p.drawingName, String(p.pageIndex)]
+    const cells = [String(i + 1), p.planName, p.sheetLabel, p.drawingName, String(p.pageIndex)]
     cells.forEach((cell, j) => page.drawText(fit(cell, fonts.regular, 8.5, cols[j]!.w), { x: cols[j]!.x, y, size: 8.5, font: fonts.regular }))
     y -= INCLUDED_ROW
   })
   if (layout.includedMore > 0) {
-    page.drawText(T(`…and ${layout.includedMore} more plans, on the pages that follow.`), { x: margin, y, size: 8.5, font: fonts.regular })
+    page.drawText(T(`…and ${layout.includedMore} more sheets, on the pages that follow.`), { x: margin, y, size: 8.5, font: fonts.regular })
     y -= INCLUDED_ROW
   }
-  if (included.length === 0) { page.drawText(T('No plan could be included.'), { x: margin, y, size: 9, font: fonts.regular }); y -= INCLUDED_ROW }
+  if (included.length === 0) { page.drawText(T('No sheet could be included.'), { x: margin, y, size: 9, font: fonts.regular }); y -= INCLUDED_ROW }
 
   if (notIncluded.length > 0) {
     y -= 12
@@ -131,7 +130,7 @@ export async function appendStatusPlansToPdf(
       included.push(input)
     } catch (e) {
       while (pdf.getPageCount() > before) pdf.removePage(pdf.getPageCount() - 1)
-      notIncluded.push({ title: planTitle(input.planName, input.purpose, input.pageIndex), reason: e instanceof StatusPlanSourceError ? e.message : 'the plan could not be drawn' })
+      notIncluded.push({ title: planTitle(input.planName, input.purpose, input.sheetLabel), reason: e instanceof StatusPlanSourceError ? e.message : 'the plan could not be drawn' })
     }
   }
   drawDivider(pdf.insertPage(dividerAt, [A4_W, A4_H]), included, notIncluded, fonts, generatedOn)

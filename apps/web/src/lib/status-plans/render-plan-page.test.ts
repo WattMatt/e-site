@@ -7,7 +7,7 @@ import { isWinAnsiSafe } from '@/lib/pdf/winansi'
 import { squash } from '@/test/pdf-text'
 import { pdfStreams, pdfAllText, paintedPaths, cmBeforeDo, samePoints, near, drawnText } from '@/test/pdf-ops'
 import {
-  renderStatusPlanPdf, drawStatusPlanPage, StatusPlanSourceError, A3_LANDSCAPE,
+  renderStatusPlanPdf, renderStatusPlanSheetsPdf, planTitle, drawStatusPlanPage, StatusPlanSourceError, A3_LANDSCAPE,
   type StatusPlanRenderInput, type RenderShape,
 } from './render-plan-page'
 
@@ -34,7 +34,7 @@ function shape(over: Partial<RenderShape> = {}): RenderShape {
 
 function input(bytes: Uint8Array, over: Partial<StatusPlanRenderInput> = {}): StatusPlanRenderInput {
   return {
-    planId: 'p1', planName: 'Ground floor tenants', purpose: 'tenant_layout', drawingName: 'Tenant layout',
+    planId: 'p1', planName: 'Ground floor tenants', purpose: 'tenant_layout', drawingName: 'Tenant layout', sheetId: 'sh1', sheetLabel: 'Sheet 1 of 1',
     pageIndex: 1, generatedOn: '2026-10-09', source: { kind: 'pdf', bytes, pageIndex: 1 },
     shapes: [shape()], legend: TENANT_LEGEND, counts: {}, measured: null, warnings: [], ...over,
   }
@@ -292,5 +292,32 @@ describe('raster drawings', () => {
     expect(m!.slice(0, 4)).toEqual([400, 0, 0, 200])
     const want: Array<[number, number]> = [[100, height - 50], [300, height - 50], [300, height - 150], [100, height - 150]]
     expect(paintedPaths(pageStream(out)).some((p) => p.paint === 'S' && p.closed && samePoints(p.points, want))).toBe(true)
+  })
+})
+
+describe('renderStatusPlanSheetsPdf — every sheet of a plan (portal)', () => {
+  it('one page per sheet, in order', async () => {
+    const src = await sourcePdf({ pages: 2 })
+    const out = await renderStatusPlanSheetsPdf([
+      input(src, { sheetId: 'a', sheetLabel: 'Ground floor', source: { kind: 'pdf', bytes: src, pageIndex: 1 } }),
+      input(src, { sheetId: 'b', sheetLabel: 'Level 1', source: { kind: 'pdf', bytes: src, pageIndex: 2 } }),
+    ], 'a3')
+    const doc = await PDFDocument.load(out)
+    expect(doc.getPageCount()).toBe(2)
+    expect(squash(drawnText(out))).toContain('Groundfloor')
+    expect(squash(drawnText(out))).toContain('Level1')
+  })
+
+  it('a sheet that cannot be drawn is skipped; none drawable throws the reason', async () => {
+    const good = await sourcePdf()
+    const bad = new TextEncoder().encode('not a pdf')
+    const out = await renderStatusPlanSheetsPdf([input(bad), input(good)], 'a3')
+    expect((await PDFDocument.load(out)).getPageCount()).toBe(1)
+    await expect(renderStatusPlanSheetsPdf([input(bad)], 'a3')).rejects.toBeInstanceOf(StatusPlanSourceError)
+    await expect(renderStatusPlanSheetsPdf([], 'a3')).rejects.toBeInstanceOf(StatusPlanSourceError)
+  })
+
+  it('names a sheet by plan, tool and sheet label', () => {
+    expect(planTitle('Floor plan', 'tenant_layout', 'Level 1')).toBe('Floor plan (Tenant floor plan, Level 1)')
   })
 })

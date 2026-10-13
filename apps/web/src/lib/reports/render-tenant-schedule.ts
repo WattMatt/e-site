@@ -40,7 +40,7 @@ export async function renderTenantScheduleReport(
       inputs: [],
       omitted: [
         ...appendix.load.omitted,
-        ...appendix.load.inputs.map((i) => ({ title: planTitle(i.planName, i.purpose, i.pageIndex), reason })),
+        ...appendix.load.inputs.map((i) => ({ title: planTitle(i.planName, i.purpose, i.sheetLabel), reason })),
       ],
     }
     try {

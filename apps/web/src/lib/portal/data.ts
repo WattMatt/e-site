@@ -354,18 +354,23 @@ export async function getPortalEquipmentMaterials(projectId: string): Promise<Un
   )
 }
 
-/** Status plans (spec 2026-10-09 §7) — read via the USER client: 00245's SELECT admits client_viewer. */
-export async function listPortalStatusPlans(projectId: string) {
+/**
+ * Tenant plans (spec 2026-10-12 §2) — read via the USER client: 00245/00249 SELECT admits
+ * client_viewer. A plan with no sheet yet is left out ("where they exist").
+ */
+export async function listPortalTenantPlans(projectId: string) {
   const supabase = await createClient()
   const { data } = await (supabase as any)
     .schema('tenants')
     .from('status_plans')
-    .select('id, name, purpose, page_index, updated_at, floor_plans(name)')
+    .select('id, name, purpose, updated_at, status_plan_sheets(id)')
     .eq('project_id', projectId)
-    .order('purpose')
-    .order('name')
-  return (data ?? []) as Array<{
-    id: string; name: string; purpose: 'tenant_layout' | 'distribution_schematic'; page_index: number; updated_at: string
-    floor_plans: { name: string | null } | null
+  const rows = (data ?? []) as Array<{
+    id: string; name: string; purpose: 'tenant_layout' | 'distribution_schematic'; updated_at: string
+    status_plan_sheets: Array<{ id: string }> | null
   }>
+  return rows
+    .map((r) => ({ id: r.id, name: r.name, purpose: r.purpose, updated_at: r.updated_at, sheets: (r.status_plan_sheets ?? []).length }))
+    .filter((r) => r.sheets > 0)
+    .sort((a, b) => (a.purpose === b.purpose ? 0 : a.purpose === 'tenant_layout' ? -1 : 1))
 }

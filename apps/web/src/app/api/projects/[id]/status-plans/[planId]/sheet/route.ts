@@ -1,5 +1,5 @@
 /**
- * "Export sheet": one status plan as a PDF at the drawing's own size (spec §8), with the source page
+ * "Export sheet": one sheet of a tenant plan (?sheet=) as a PDF at its own size (spec §8), with the source page
  * embedded as vector. Read-level: any role that can see the project (requireProjectAccess runs as the
  * caller, site-scoped) — the same set that can open the plan page. Plan rows are read through the
  * caller's session; facts and drawing bytes with the service client, only after the gate.
@@ -7,7 +7,7 @@
  * app/api/* sits outside (admin)/layout.tsx, so this route gates itself.
  *
  * The PDF is never streamed in the response (an A0 sheet can pass Vercel's ~4.5 MB limit): it is
- * uploaded to the service-only `reports` bucket at a per-plan path (overwritten each export) and the
+ * uploaded to the service-only `reports` bucket at a per-sheet path (overwritten each export) and the
  * route answers 303 to a 10-minute signed URL that downloads under the sheet's file name.
  */
 import { type NextRequest, NextResponse } from 'next/server'
@@ -25,16 +25,18 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'status-plan'
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'sheet'
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; planId: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string; planId: string }> }) {
   const { id, planId } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
   if (!isPlanId(planId)) return NextResponse.json({ error: 'Status plan not found' }, { status: 404 })
+  const sheetId = req.nextUrl.searchParams.get('sheet') ?? ''
+  if (!isPlanId(sheetId)) return NextResponse.json({ error: 'Sheet not found' }, { status: 404 })
 
   const access = await requireProjectAccess(supabase, id)
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
@@ -46,7 +48,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     service = createServiceClient()
     load = await loadStatusPlanRenderInputs(
       { db: supabase, facts: service, storage: service.storage as unknown as StorageLike },
-      { projectId: id, today, purposes: STATUS_PLAN_PURPOSES, planIds: [planId], maxPlans: 1, maxSourceBytes: MAX_STATUS_PLAN_SOURCE_BYTES },
+      { projectId: id, today, purposes: STATUS_PLAN_PURPOSES, planIds: [planId], sheetIds: [sheetId], maxSheets: 1, maxSourceBytes: MAX_STATUS_PLAN_SOURCE_BYTES },
     )
   } catch (err) {
     console.error('[status-plans/sheet] load error', err)
@@ -57,7 +59,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const reason = load.omitted[0]?.reason
     return reason
       ? NextResponse.json({ error: `This sheet could not be exported: ${reason}.` }, { status: 422 })
-      : NextResponse.json({ error: 'Status plan not found' }, { status: 404 })
+      : NextResponse.json({ error: 'Sheet not found' }, { status: 404 })
   }
 
   let bytes: Uint8Array
@@ -71,8 +73,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Sheet render failed' }, { status: 500 })
   }
 
-  return pdfHandoffResponse(service.storage as unknown as HandoffStorage, statusPlanSheetPath(load.organisationId, id, input.planId), bytes, {
-    download: `${slug(input.planName)}-p${input.pageIndex}-${today}.pdf`,
+  return pdfHandoffResponse(service.storage as unknown as HandoffStorage, statusPlanSheetPath(load.organisationId, id, input.planId, input.sheetId), bytes, {
+    download: `${slug(input.planName)}-${slug(input.sheetLabel)}-${today}.pdf`,
     logTag: 'status-plans/sheet',
   })
 }

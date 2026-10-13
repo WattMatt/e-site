@@ -26,7 +26,7 @@ export interface HandoffStorage {
   }
 }
 
-export const statusPlanSheetPath = (orgId: string, projectId: string, planId: string) => `${orgId}/${projectId}/status-plans/${planId}/sheet.pdf`
+export const statusPlanSheetPath = (orgId: string, projectId: string, planId: string, sheetId: string) => `${orgId}/${projectId}/status-plans/${planId}/${sheetId}/sheet.pdf`
 export const statusPlanPortalPath = (orgId: string, projectId: string, planId: string) => `${orgId}/${projectId}/status-plans/${planId}/portal.pdf`
 /** Per user, so two people previewing different appendix options at once never get each other's file. */
 export const tenantSchedulePreviewFolder = (orgId: string, projectId: string, userId: string) => `${orgId}/${projectId}/previews/${userId}`

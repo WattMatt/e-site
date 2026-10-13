@@ -45,8 +45,8 @@ describe('TenantScheduleReportButton', () => {
     await userEvent.click(screen.getByRole('button', { name: /generate report/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(fetchMock.mock.calls[0]![0]).toBe(`/api/projects/${PROJECT_ID}/tenant-schedule/report-preview?tenantPlans=1`)
-    expect((screen.getByRole('checkbox', { name: /tenant status plans/i }) as HTMLInputElement).checked).toBe(true)
-    expect((screen.getByRole('checkbox', { name: /distribution schematics/i }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('checkbox', { name: /tenant floor plan/i }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: /line diagram/i }) as HTMLInputElement).checked).toBe(false)
   })
 
   it('ticking schematics re-renders, and Save carries the same choice', async () => {
@@ -55,8 +55,8 @@ describe('TenantScheduleReportButton', () => {
     render(<TenantScheduleReportButton projectId={PROJECT_ID} />)
     await userEvent.click(screen.getByRole('button', { name: /generate report/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect((screen.getByRole('checkbox', { name: /distribution schematics/i }) as HTMLInputElement).disabled).toBe(false))
-    await userEvent.click(screen.getByRole('checkbox', { name: /distribution schematics/i }))
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: /line diagram/i }) as HTMLInputElement).disabled).toBe(false))
+    await userEvent.click(screen.getByRole('checkbox', { name: /line diagram/i }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(fetchMock.mock.calls[1]![0]).toBe(`/api/projects/${PROJECT_ID}/tenant-schedule/report-preview?tenantPlans=1&schematicPlans=1`)
     await waitFor(() => expect((screen.getByRole('button', { name: /save to project/i }) as HTMLButtonElement).disabled).toBe(false))

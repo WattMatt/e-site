@@ -18,7 +18,7 @@ describe('PlanLegend', () => {
 
   it('without a scale says how to get one instead of a total', () => {
     render(<PlanLegend purpose="tenant_layout" summary={summary} hasScale={false} attention={[]} onSelectShape={vi.fn()} />)
-    expect(screen.getByText(/Set the page scale to measure areas/)).toBeTruthy()
+    expect(screen.getByText(/Set this sheet.s scale to measure areas/)).toBeTruthy()
   })
 
   it('needs-attention rows select their shape', () => {
@@ -32,5 +32,17 @@ describe('PlanLegend', () => {
     render(<PlanLegend purpose="distribution_schematic" summary={{ counts: { required: 4 }, totalM2: 0, unmeasured: 0 }} hasScale attention={[]} onSelectShape={vi.fn()} />)
     expect(legendRow('Required')).toBe('Required4')
     expect(screen.queryByText(/Total measured/)).toBeNull()
+  })
+  it('with several sheets, each row shows this sheet then all sheets, and the plan total area', () => {
+    const plan = { ...summary, counts: { ...summary.counts, complete: 5 }, totalM2: 4000, unmeasured: 1 }
+    render(<PlanLegend purpose="tenant_layout" summary={summary} planSummary={plan} sheetCount={3} hasScale attention={[]} onSelectShape={vi.fn()} />)
+    expect(legendRow('Complete')).toBe('Complete25')
+    expect(screen.getByText('this sheet · all 3')).toBeTruthy()
+    expect(screen.getByText(/All sheets: Measured GLA: 4000\.0 m²/)).toBeTruthy()
+  })
+
+  it('one sheet: no second column', () => {
+    render(<PlanLegend purpose="tenant_layout" summary={summary} planSummary={summary} sheetCount={1} hasScale attention={[]} onSelectShape={vi.fn()} />)
+    expect(legendRow('Complete')).toBe('Complete2')
   })
 })
