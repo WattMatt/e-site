@@ -111,7 +111,7 @@ export const GATED: Gated[] = [
   // Status plans (00245) are in this manifest like any generated table, and
   // their migration carries the generator's text byte for byte; a contract
   // test (status-plans-site-scope.contract.test.ts) holds the two together.
-  // status_plan_sheets (00248, tenant plans) likewise, held by
+  // status_plan_sheets (00249, tenant plans) likewise, held by
   // tenant-plans-site-scope.contract.test.ts, which also pins the
   // site_scope_objects text that adds the tenant-plan-files bucket.
 ]

@@ -355,7 +355,7 @@ export async function getPortalEquipmentMaterials(projectId: string): Promise<Un
 }
 
 /**
- * Tenant plans (spec 2026-10-12 §2) — read via the USER client: 00245/00248 SELECT admits
+ * Tenant plans (spec 2026-10-12 §2) — read via the USER client: 00245/00249 SELECT admits
  * client_viewer. A plan with no sheet yet is left out ("where they exist").
  */
 export async function listPortalTenantPlans(projectId: string) {

@@ -12509,14 +12509,14 @@ export type Database = {
           calibration_metres?: number | null
           calibration_points?: Json | null
           created_at?: string
-          /** Hand-patched optional: bound to auth.uid() by trigger (00248). */
+          /** Hand-patched optional: bound to auth.uid() by trigger (00249). */
           created_by?: string | null
           file_name: string
           file_path: string
           id?: string
           label: string
           mime: string
-          /** Hand-patched optional: bound from the plan by trigger (00248). */
+          /** Hand-patched optional: bound from the plan by trigger (00249). */
           organisation_id?: string
           page_index?: number
           pixels_per_meter?: number | null
@@ -12570,11 +12570,11 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          /** Hand-patched optional: bound to auth.uid() by trigger (00245/00248). */
+          /** Hand-patched optional: bound to auth.uid() by trigger (00245/00249). */
           created_by?: string | null
           id?: string
           name: string
-          /** Hand-patched optional: bound from the project by trigger (00248). */
+          /** Hand-patched optional: bound from the project by trigger (00249). */
           organisation_id?: string
           project_id: string
           purpose: string

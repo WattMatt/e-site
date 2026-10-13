@@ -3,7 +3,7 @@
 /**
  * Upload one or more files to a tenant plan (spec 2026-10-12 §3). The browser
  * uploads straight to the private bucket with server-issued signed URLs, so a
- * 60 MB A0 never passes through a Vercel function; the server then registers
+ * 50 MB A0 never passes through a Vercel function; the server then registers
  * the sheets (a PDF of N pages becomes N sheets, files appended in order).
  * Props are strings only.
  */

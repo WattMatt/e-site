@@ -3,7 +3,7 @@
  * (spec 2026-10-12 §3). Server-side: the sheet actions import it; pdf-lib is
  * loaded only to count pages.
  *
- * The path pattern is the one the 00248 trigger and bucket policy enforce:
+ * The path pattern is the one the 00249 trigger and bucket policy enforce:
  *   {org}/{project}/{plan}/{folder}/{revision}.{pdf|png|jpg}
  * where folder is the id of the first sheet the file was uploaded for. A PDF
  * of N pages is N sheets sharing one path.
@@ -37,7 +37,7 @@ export function mimeForFile(name: string, type: string): TenantPlanMime | null {
 export function fileProblem(f: { name: string; size: number; type: string }): string | null {
   if (!mimeForFile(f.name, f.type)) return `${f.name} is not a PDF, PNG or JPEG.`
   if (!(f.size > 0)) return `${f.name} is empty.`
-  if (f.size > TENANT_PLAN_MAX_BYTES) return `${f.name} is larger than 60 MB.`
+  if (f.size > TENANT_PLAN_MAX_BYTES) return `${f.name} is larger than 50 MB.`
   return null
 }
 

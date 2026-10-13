@@ -4,7 +4,7 @@
  *
  * Reads:
  *   clients.db      — the CALLER's session client: project, plans, sheets, shapes and nodes under
- *                     RLS + site_scope (00245/00248 open SELECT to every project role).
+ *                     RLS + site_scope (00245/00249 open SELECT to every project role).
  *   clients.facts   — order / scope facts (loadTenantShopFacts, loadProjectDbOrderStatus); the service
  *                     client, passed ONLY after the route's project gate, as the tenant report does.
  *   clients.storage — sheet bytes from the tenant-plan-files bucket (service client).
@@ -43,7 +43,7 @@ export const MAX_PLAN_SHEETS_PER_REPORT = 20
  * One sheet file, and Σ unique files for one appendix. Both sit under the `reports` bucket's 50 MiB
  * file_size_limit (00117): the finished PDF carries the sources (vector pages are copied, not
  * rasterised), so the handoff also re-checks the final bytes (pdf-handoff.ts). A sheet file may be up
- * to 60 MB in its own bucket; one over this cap is listed as "not included" with the reason.
+ * to 50 MB in its own bucket; one over this cap is listed as "not included" with the reason.
  */
 export const MAX_STATUS_PLAN_SOURCE_BYTES = 40 * 1024 * 1024
 export const MAX_STATUS_PLAN_TOTAL_BYTES = 40 * 1024 * 1024
@@ -85,7 +85,7 @@ export function orderSheets(refs: readonly SheetRef[]): SheetRef[] {
     || Number(a.row.sort_order) - Number(b.row.sort_order))
 }
 
-/** What pdf-lib can embed. The 00248 trigger only admits these three. */
+/** What pdf-lib can embed. The 00249 trigger only admits these three. */
 export function sourceKindFor(path: string): 'pdf' | 'png' | 'jpg' | null {
   if (/\.pdf$/i.test(path)) return 'pdf'
   if (/\.png$/i.test(path)) return 'png'

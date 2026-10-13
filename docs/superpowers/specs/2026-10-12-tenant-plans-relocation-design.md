@@ -40,7 +40,7 @@ Each is the existing canvas workspace plus a **sheet strip** for stepping betwee
 
 - **New private storage bucket `tenant-plan-files`**:
   - path `{org}/{project}/{plan_id}/{sheet_id}/{revision}.{pdf|png|jpg}`
-  - PDF, PNG and JPEG only, 60 MB limit
+  - PDF, PNG and JPEG only, 50 MB limit
   - not visible in the Drawings register or Dropbox sync
   - untouched by markup
 - **Storage RLS:**

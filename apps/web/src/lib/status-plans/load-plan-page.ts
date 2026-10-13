@@ -1,6 +1,6 @@
 /**
  * Everything a tenant plan route needs, read through the CALLER'S session:
- * RLS and site scope (00238, 00245, 00248) are the read gate, so a project the
+ * RLS and site scope (00238, 00245, 00249) are the read gate, so a project the
  * caller may not see answers null and the page 404s. No service client; the
  * sheet's signed URL is minted through the session too (the bucket's read
  * policy admits every project member).

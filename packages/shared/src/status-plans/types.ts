@@ -1,7 +1,7 @@
 /**
  * Status plans — shared shapes (spec 2026-10-09 §4).
  *
- * A status plan is a project's tenant floor plan or line diagram; its sheets are uploaded files (00248). Its shapes
+ * A status plan is a project's tenant floor plan or line diagram; its sheets are uploaded files (00249). Its shapes
  * store geometry + link + type ONLY: image-space pixels of the page at the
  * fixed scale-2 raster (apps/web/src/lib/sheet), flat [x0, y0, x1, y1, …].
  * Status, colour, hatch and area are derived, never stored.
@@ -37,10 +37,10 @@ export const DEFAULT_PLAN_NAME: Record<StatusPlanPurpose, string> = {
   distribution_schematic: 'Line diagram',
 }
 
-/** The private bucket that holds every sheet's file (00248). */
+/** The private bucket that holds every sheet's file (00249). */
 export const TENANT_PLAN_BUCKET = 'tenant-plan-files'
-/** Mirrors the bucket's file_size_limit (60 MB). */
-export const TENANT_PLAN_MAX_BYTES = 60 * 1024 * 1024
+/** Mirrors the bucket's file_size_limit (50 MB). */
+export const TENANT_PLAN_MAX_BYTES = 50 * 1024 * 1024
 /** Mirrors status_plan_sheets_mime_check and the bucket's allowed_mime_types. */
 export const TENANT_PLAN_MIMES = ['application/pdf', 'image/png', 'image/jpeg'] as const
 export type TenantPlanMime = (typeof TENANT_PLAN_MIMES)[number]
@@ -92,7 +92,7 @@ export function pointsError(shape: ShapeKind, points: unknown): string | null {
   return null
 }
 
-/** tenants.status_plans as PostgREST returns it (after 00248). */
+/** tenants.status_plans as PostgREST returns it (after 00249). */
 export interface StatusPlanRow {
   id: string
   project_id: string

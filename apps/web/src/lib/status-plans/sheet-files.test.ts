@@ -44,8 +44,8 @@ describe('file types and sizes', () => {
   it('says what is wrong with a file, by name', () => {
     expect(fileProblem({ name: 'a.dwg', size: 10, type: '' })).toBe('a.dwg is not a PDF, PNG or JPEG.')
     expect(fileProblem({ name: 'a.pdf', size: 0, type: 'application/pdf' })).toBe('a.pdf is empty.')
-    expect(fileProblem({ name: 'a.pdf', size: 60 * 1024 * 1024 + 1, type: 'application/pdf' })).toBe('a.pdf is larger than 60 MB.')
-    expect(fileProblem({ name: 'a.pdf', size: 60 * 1024 * 1024, type: 'application/pdf' })).toBeNull()
+    expect(fileProblem({ name: 'a.pdf', size: 50 * 1024 * 1024 + 1, type: 'application/pdf' })).toBe('a.pdf is larger than 50 MB.')
+    expect(fileProblem({ name: 'a.pdf', size: 50 * 1024 * 1024, type: 'application/pdf' })).toBeNull()
   })
   it('limits per upload and per plan', () => {
     expect(MAX_FILES_PER_UPLOAD).toBe(20)

@@ -142,7 +142,7 @@ describe('prepareTenantPlanUploadAction', () => {
     expect(await prepareTenantPlanUploadAction({ projectId: P, purpose: 'tenant_layout', files: [{ name: 'E-100.dwg', size: 10, type: '' }] }))
       .toEqual({ ok: false, error: 'E-100.dwg is not a PDF, PNG or JPEG.' })
     expect(await prepareTenantPlanUploadAction({ projectId: P, purpose: 'tenant_layout', files: [{ name: 'big.pdf', size: 61 * 1024 * 1024, type: 'application/pdf' }] }))
-      .toEqual({ ok: false, error: 'big.pdf is larger than 60 MB.' })
+      .toEqual({ ok: false, error: 'big.pdf is larger than 50 MB.' })
     expect(calls).toEqual([])
   })
 

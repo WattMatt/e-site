@@ -4,7 +4,7 @@
 
 **Goal:** Move status plans out of the shared Drawings register and the "Status plans" sidebar entry into the Tenant Schedule as two dedicated tools, **Floor plan** (`tenant_layout`) and **Line diagram** (`distribution_schematic`), each with its own uploaded files (a private `tenant-plan-files` bucket), any number of sheets, and the existing masking / hatching / detection / PDF engine re-pointed from "a page of a drawing" to "a sheet of this plan".
 
-**Architecture:** One migration (`00248_tenant_plans.sql`, number re-checked at apply time) changes `tenants.status_plans` in place (production holds 0 rows; the migration refuses to run over data): it drops `floor_plan_id` / `page_index` / `source_file_path`, binds `organisation_id` from the project, and adds `UNIQUE (project_id, purpose)`. A new `tenants.status_plan_sheets` table holds one row per sheet (file path in the new bucket, page within that file, revision, replaced flag, per-sheet scale). `status_plan_shapes` gains `sheet_id NOT NULL` with a trigger that keeps the sheet inside the shape's plan, so "a board appears once per plan" still spans every sheet. Row security repeats the 00245 per-verb pattern, the new table joins the site-scope manifest, and the bucket gets read/insert/delete policies keyed on the path's project segment plus the generated `site_scope_objects` treatment. The browser uploads straight to storage through server-issued signed upload URLs; server actions register sheets (counting PDF pages with pdf-lib) and replace / re-anchor / rename / delete / calibrate them, every one returning `{ ok, error }`. The canvas workspace moves under `tenant-schedule/_plans/` and is served by two routes, `/projects/[id]/tenant-schedule/floor-plan` and `/line-diagram`, with a sheet strip (`?sheet=`). Report appendix, Export sheet and the portal iterate sheets. **`cloud-sync-project` must drop its `status_plans` lookup and be deployed before the migration is applied** (Task A1 and the runbook).
+**Architecture:** One migration (`00249_tenant_plans.sql`, number re-checked at apply time) changes `tenants.status_plans` in place (production holds 0 rows; the migration refuses to run over data): it drops `floor_plan_id` / `page_index` / `source_file_path`, binds `organisation_id` from the project, and adds `UNIQUE (project_id, purpose)`. A new `tenants.status_plan_sheets` table holds one row per sheet (file path in the new bucket, page within that file, revision, replaced flag, per-sheet scale). `status_plan_shapes` gains `sheet_id NOT NULL` with a trigger that keeps the sheet inside the shape's plan, so "a board appears once per plan" still spans every sheet. Row security repeats the 00245 per-verb pattern, the new table joins the site-scope manifest, and the bucket gets read/insert/delete policies keyed on the path's project segment plus the generated `site_scope_objects` treatment. The browser uploads straight to storage through server-issued signed upload URLs; server actions register sheets (counting PDF pages with pdf-lib) and replace / re-anchor / rename / delete / calibrate them, every one returning `{ ok, error }`. The canvas workspace moves under `tenant-schedule/_plans/` and is served by two routes, `/projects/[id]/tenant-schedule/floor-plan` and `/line-diagram`, with a sheet strip (`?sheet=`). Report appendix, Export sheet and the portal iterate sheets. **`cloud-sync-project` must drop its `status_plans` lookup and be deployed before the migration is applied** (Task A1 and the runbook).
 
 **Tech Stack:** Postgres 17 (Supabase), PL/pgSQL triggers, PostgREST RLS, Supabase Storage (signed upload URLs); Next.js 15 App Router (server components, server actions), React 19, Konva; pdf-lib; pdfjs-dist; TypeScript; vitest (`web`, `@esite/shared`, `@esite/db`); Deno edge function (`cloud-sync-project`); pnpm + Turborepo.
 
@@ -28,7 +28,7 @@ These come from `CLAUDE.md`; each was paid for by a real incident.
 8. **Page → client component props are JSON only** (no functions, Maps, Dates). Pinned by `page-props.contract.test.ts`.
 9. **`requireEffectiveRole` returns an object: read `.ok`.** A truthiness check gates nothing.
 10. **Run all three suites** (`web`, `@esite/shared`, `@esite/db`) before calling anything green.
-11. **Migration number is claimed at apply time.** `origin/main` already holds `00246_tender_cidb_not_applicable.sql` and `00247_tender_cidb_certificate_waiver.sql`, so this plan writes `00248_tenant_plans.sql`. Tests find it by the pattern `^\d{5}_tenant_plans\.sql$`, never by number. Task F7 Step 1 and the runbook re-check.
+11. **Migration number is claimed at apply time.** `origin/main` already holds `00246_tender_cidb_not_applicable.sql` and `00247_tender_cidb_certificate_waiver.sql`, so this plan writes `00249_tenant_plans.sql`. Tests find it by the pattern `^\d{5}_tenant_plans\.sql$`, never by number. Task F7 Step 1 and the runbook re-check.
 12. **Worktree hygiene:** `pnpm install` in this worktree; never symlink another worktree's `node_modules`. Tests and builds run with `TMPDIR` on the SSD.
 
 Shell setup used by every command below:
@@ -53,7 +53,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 | Path | Responsibility |
 |---|---|
-| `apps/edge-functions/supabase/migrations/00248_tenant_plans.sql` | Plan columns dropped, `status_plan_sheets`, `sheet_id` on shapes, bucket + storage RLS, site scope, `@verify` |
+| `apps/edge-functions/supabase/migrations/00249_tenant_plans.sql` | Plan columns dropped, `status_plan_sheets`, `sheet_id` on shapes, bucket + storage RLS, site scope, `@verify` |
 | `packages/db/src/__tests__/security/tenant-plans-site-scope.contract.test.ts` | Migration carries the generator's `site_scope` (sheets) and `site_scope_objects` text byte for byte |
 | `apps/web/src/lib/status-plans/sheet-files.ts` (+ `.test.ts`) | Pure + pdf-lib helpers: storage paths, mime, default labels, PDF page count, size limits |
 | `apps/web/src/lib/status-plans/sheet-row.ts` (+ `.test.ts`) | `SHEET_COLUMNS`, `toSheetSummary`, `summaryOf` |
@@ -86,7 +86,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 | `apps/edge-functions/supabase/migrations/00245_status_plans.sql` | `@verify` block loses the four directives naming dropped objects (block only) |
 | `packages/db/src/site-scope/manifest.ts`, `fixed.sql.ts` | Gate `status_plan_sheets`; add `tenant-plan-files` to `SITE_BUCKETS` |
 | `scripts/db/site-scope/site_scoped_access.sql` | Regenerated |
-| `scripts/db/assert-status-plans-roles.sql` | Rewritten for the post-00248 state (91 assertions) |
+| `scripts/db/assert-status-plans-roles.sql` | Rewritten for the post-00249 state (91 assertions) |
 | `packages/db/src/types.ts` | `status_plans` columns, `status_plan_sheets`, `status_plan_shapes.sheet_id` |
 | `packages/shared/src/status-plans/types.ts` (+ test) | Labels, default names, bucket constants, row types |
 | `apps/web/src/lib/status-plans/{types,canvas-shape,write-errors,plan-urls,load-plan-page,on-plan-links,plan-render-data,render-plan-page,appendix,report-appendix}.ts` (+ tests) | Sheets |
@@ -159,7 +159,7 @@ In `apps/edge-functions/supabase/functions/cloud-sync-project/index.ts`, delete 
 and put this comment in its place (directly above `return false`):
 
 ```ts
-  // Status plans no longer anchor to drawings (tenant plans, 00248): their
+  // Status plans no longer anchor to drawings (tenant plans, 00249): their
   // sheets live in their own bucket, tenant-plan-files, which cloud sync never
   // touches. There is deliberately no lookup for them here.
 ```
@@ -170,7 +170,7 @@ Discovery reads `CREATE TABLE` bodies, and 00245's body still names `floor_plan_
 
 ```ts
   'tenants.status_plans':
-    'No longer anchored to a drawing. The tenant plans migration (00248) drops floor_plan_id, ' +
+    'No longer anchored to a drawing. The tenant plans migration (00249) drops floor_plan_id, ' +
     'page_index and source_file_path; a plan\'s sheets are files in the tenant-plan-files bucket, ' +
     'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
     'is the only reason discovery finds it.',
@@ -198,7 +198,7 @@ Expected: no errors. If `deno` is not installed locally, skip; CI's edge-functio
 git add apps/edge-functions/supabase/functions/cloud-sync-project/index.ts packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts
 git commit -m "fix(cloud-sync): isAnnotated() stops reading status_plans before tenant plans drop floor_plan_id
 
-Must be deployed before 00248 is applied: the old lookup filters on a
+Must be deployed before 00249 is applied: the old lookup filters on a
 column the migration drops, and isAnnotated() fails closed, which would
 stop auto-adopt for every drawing.
 
@@ -238,7 +238,7 @@ with
   // Status plans (00245) are in this manifest like any generated table, and
   // their migration carries the generator's text byte for byte; a contract
   // test (status-plans-site-scope.contract.test.ts) holds the two together.
-  // status_plan_sheets (00248, tenant plans) likewise, held by
+  // status_plan_sheets (00249, tenant plans) likewise, held by
   // tenant-plans-site-scope.contract.test.ts, which also pins the
   // site_scope_objects text that adds the tenant-plan-files bucket.
 ```
@@ -289,12 +289,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task B2: Migration `00248_tenant_plans.sql`
+### Task B2: Migration `00249_tenant_plans.sql`
 
 **Files:**
 - Create: `packages/db/src/__tests__/security/tenant-plans-site-scope.contract.test.ts`
 - Modify: `packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts`
-- Create: `apps/edge-functions/supabase/migrations/00248_tenant_plans.sql`
+- Create: `apps/edge-functions/supabase/migrations/00249_tenant_plans.sql`
 - Modify: `apps/edge-functions/supabase/migrations/00245_status_plans.sql` (`@verify` block only)
 
 - [ ] **Step 1: Write the site-scope contract test (red)**
@@ -387,11 +387,11 @@ Expected: FAIL — `exactly one <number>_tenant_plans.sql migration: expected []
 
 - [ ] **Step 4: Write the migration**
 
-Create `apps/edge-functions/supabase/migrations/00248_tenant_plans.sql`:
+Create `apps/edge-functions/supabase/migrations/00249_tenant_plans.sql`:
 
 ```sql
 -- ---------------------------------------------------------------------------
--- Migration 00248: tenant plans (status plans move under Tenants, own files)
+-- Migration 00249: tenant plans (status plans move under Tenants, own files)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/superpowers/specs/2026-10-12-tenant-plans-relocation-design.md (§3, §4)
 --
@@ -432,7 +432,7 @@ Create `apps/edge-functions/supabase/migrations/00248_tenant_plans.sql`:
 -- FOR ALL for a role gate (00205 -> 00206). site_scope is the generator's text
 -- byte for byte (tenant-plans-site-scope.contract.test.ts).
 --
--- STORAGE. tenant-plan-files is private, 60 MB per file, PDF / PNG / JPEG.
+-- STORAGE. tenant-plan-files is private, 50 MB per file, PDF / PNG / JPEG.
 -- tenants.tenant_plan_file_project(name) returns the project only when the
 -- path's org / project / plan segments name a real plan of that project and
 -- org, so a forged prefix reads as no project at all. Read: any member who can
@@ -502,7 +502,7 @@ Create `apps/edge-functions/supabase/migrations/00248_tenant_plans.sql`:
 -- sql: (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'tenants.status_plan_sheets'::regclass)
 -- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'tenants.status_plan_sheets'::regclass AND polcmd IN ('r', '*') AND polname <> 'site_scope')
 -- sql: (SELECT count(*) = 3 FROM pg_policy WHERE polrelid = 'tenants.status_plan_sheets'::regclass AND polpermissive = false AND polcmd IN ('a', 'w', 'd') AND pg_get_expr(coalesce(polqual, polwithcheck), polrelid) LIKE '%project_manager%' AND pg_get_expr(coalesce(polqual, polwithcheck), polrelid) NOT LIKE '%contractor%')
--- sql: (SELECT count(*) = 1 FROM storage.buckets WHERE id = 'tenant-plan-files' AND public = false AND file_size_limit = 62914560)
+-- sql: (SELECT count(*) = 1 FROM storage.buckets WHERE id = 'tenant-plan-files' AND public = false AND file_size_limit = 52428800)
 -- sql: (SELECT count(*) = 3 AND bool_and(cmd IN ('SELECT', 'INSERT', 'DELETE')) FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'tenant\_plan\_files\_%')
 -- sql: (SELECT strpos(coalesce(qual, ''), 'tenant-plan-files') > 0 AND strpos(coalesce(with_check, ''), 'tenant-plan-files') > 0 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'site_scope_objects')
 -- sql: (SELECT count(*) = 0 FROM information_schema.columns WHERE table_schema = 'tenants' AND table_name = 'status_plan_sheets' AND column_name IN ('colour', 'color', 'fill', 'status', 'area_m2', 'area_sqm'))
@@ -812,7 +812,7 @@ REVOKE ALL ON tenants.status_plan_sheets FROM anon;
 -- 5. Files: the tenant-plan-files bucket ---------------------------------------------
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('tenant-plan-files', 'tenant-plan-files', false, 62914560, ARRAY['application/pdf', 'image/png', 'image/jpeg'])
+VALUES ('tenant-plan-files', 'tenant-plan-files', false, 52428800, ARRAY['application/pdf', 'image/png', 'image/jpeg'])
 ON CONFLICT (id) DO UPDATE
   SET public = false, file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 
@@ -876,7 +876,7 @@ In `apps/edge-functions/supabase/migrations/00245_status_plans.sql`, delete exac
 -- constraint: status_plans_drawing_page_purpose_key ON tenants.status_plans
 ```
 
-Why: the post-push verifier re-checks every migration ≥ `00185` on every deploy. After 00248 those four objects no longer exist, so 00245's block would turn the deploy red even though everything applied. Task F7 Step 6 proves both directions (original block red under the new state, edited block green).
+Why: the post-push verifier re-checks every migration ≥ `00185` on every deploy. After 00249 those four objects no longer exist, so 00245's block would turn the deploy red even though everything applied. Task F7 Step 6 proves both directions (original block red under the new state, edited block green).
 
 - [ ] **Step 6: Run the db contract tests**
 
@@ -892,13 +892,13 @@ Expected: PASS, including `tenant-plans-site-scope.contract.test.ts` (4) and the
 TMPDIR="/Volumes/Extreme SSD/tmp" pnpm --filter web exec vitest run src/lib/migration-verify-block.contract.test.ts
 ```
 
-Expected: PASS, including `00248_tenant_plans.sql declares every table, view and function it creates` (one table, four functions).
+Expected: PASS, including `00249_tenant_plans.sql declares every table, view and function it creates` (one table, four functions).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00248_tenant_plans.sql apps/edge-functions/supabase/migrations/00245_status_plans.sql packages/db/src/__tests__/security/tenant-plans-site-scope.contract.test.ts packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts
-git commit -m "feat(db): 00248 tenant plans: own sheets and bucket, plans no longer anchor to drawings
+git add apps/edge-functions/supabase/migrations/00249_tenant_plans.sql apps/edge-functions/supabase/migrations/00245_status_plans.sql packages/db/src/__tests__/security/tenant-plans-site-scope.contract.test.ts packages/db/src/__tests__/security/floor-plan-annotated-predicate.contract.test.ts
+git commit -m "feat(db): 00249 tenant plans: own sheets and bucket, plans no longer anchor to drawings
 
 status_plans drops floor_plan_id/page_index/source_file_path and becomes one
 per (project, purpose); status_plan_sheets holds each sheet's file, page,
@@ -916,20 +916,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify (rewrite): `scripts/db/assert-status-plans-roles.sql`
 
-The old file seeds `floor_plan_id`, so it cannot run once 00248 is applied. It is rewritten to describe the state 00248 leaves (on top of 00245, which production already has). It is run in Task F7, not here: the dry-run harness needs network access and the Management API token.
+The old file seeds `floor_plan_id`, so it cannot run once 00249 is applied. It is rewritten to describe the state 00249 leaves (on top of 00245, which production already has). It is run in Task F7, not here: the dry-run harness needs network access and the Management API token.
 
 - [ ] **Step 1: Replace the file**
 
 Overwrite `scripts/db/assert-status-plans-roles.sql` with:
 
 ```sql
--- BEHAVIOURAL assertions for status plans after 00248 (tenant plans), run as real roles.
+-- BEHAVIOURAL assertions for status plans after 00249 (tenant plans), run as real roles.
 --
 --   red:   scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql scripts/db/assert-status-plans-roles.sql
---   green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00248_tenant_plans.sql scripts/db/assert-status-plans-roles.sql
+--   green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00249_tenant_plans.sql scripts/db/assert-status-plans-roles.sql
 --
 -- 00245 is already applied on production; this file describes the state that
--- 00248 leaves on top of it: plans per (project, purpose), sheets with their
+-- 00249 leaves on top of it: plans per (project, purpose), sheets with their
 -- own files in tenant-plan-files, shapes on sheets.
 --
 -- Mechanics this project has paid for:
@@ -1673,14 +1673,14 @@ Directly after the closing `}` of `status_plan_shapes` (alphabetical: `status_pl
           calibration_metres?: number | null
           calibration_points?: Json | null
           created_at?: string
-          /** Hand-patched optional: bound to auth.uid() by trigger (00248). */
+          /** Hand-patched optional: bound to auth.uid() by trigger (00249). */
           created_by?: string | null
           file_name: string
           file_path: string
           id?: string
           label: string
           mime: string
-          /** Hand-patched optional: bound from the plan by trigger (00248). */
+          /** Hand-patched optional: bound from the plan by trigger (00249). */
           organisation_id?: string
           page_index?: number
           pixels_per_meter?: number | null
@@ -1741,11 +1741,11 @@ Replace the whole `status_plans: { … }` block (Row / Insert / Update / Relatio
         }
         Insert: {
           created_at?: string
-          /** Hand-patched optional: bound to auth.uid() by trigger (00245/00248). */
+          /** Hand-patched optional: bound to auth.uid() by trigger (00245/00249). */
           created_by?: string | null
           id?: string
           name: string
-          /** Hand-patched optional: bound from the project by trigger (00248). */
+          /** Hand-patched optional: bound from the project by trigger (00249). */
           organisation_id?: string
           project_id: string
           purpose: string
@@ -1777,7 +1777,7 @@ Expected: exit 0.
 
 ```bash
 git add packages/db/src/types.ts
-git commit -m "chore(db): hand-edit types for tenant plans (00248)
+git commit -m "chore(db): hand-edit types for tenant plans (00249)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1832,7 +1832,7 @@ describe('tenant plan constants', () => {
     expect(sql).toContain(`VALUES ('${TENANT_PLAN_BUCKET}', '${TENANT_PLAN_BUCKET}', false, ${TENANT_PLAN_MAX_BYTES}, ARRAY[${TENANT_PLAN_MIMES.map((m) => `'${m}'`).join(', ')}])`)
     const mimeLine = sql.split('\n').find((l) => l.includes('CONSTRAINT status_plan_sheets_mime_check CHECK'))!
     expect([...TENANT_PLAN_MIMES].sort()).toEqual([...mimeLine.matchAll(/'([a-z]+\/[a-z]+)'/g)].map((m) => m[1]!).sort())
-    expect(TENANT_PLAN_MAX_BYTES).toBe(60 * 1024 * 1024)
+    expect(TENANT_PLAN_MAX_BYTES).toBe(50 * 1024 * 1024)
   })
 
   it('the label cap mirrors the CHECK', () => {
@@ -1881,10 +1881,10 @@ export const DEFAULT_PLAN_NAME: Record<StatusPlanPurpose, string> = {
   distribution_schematic: 'Line diagram',
 }
 
-/** The private bucket that holds every sheet's file (00248). */
+/** The private bucket that holds every sheet's file (00249). */
 export const TENANT_PLAN_BUCKET = 'tenant-plan-files'
-/** Mirrors the bucket's file_size_limit (60 MB). */
-export const TENANT_PLAN_MAX_BYTES = 60 * 1024 * 1024
+/** Mirrors the bucket's file_size_limit (50 MB). */
+export const TENANT_PLAN_MAX_BYTES = 50 * 1024 * 1024
 /** Mirrors status_plan_sheets_mime_check and the bucket's allowed_mime_types. */
 export const TENANT_PLAN_MIMES = ['application/pdf', 'image/png', 'image/jpeg'] as const
 export type TenantPlanMime = (typeof TENANT_PLAN_MIMES)[number]
@@ -1895,7 +1895,7 @@ export const SHEET_LABEL_MAX = 120
 Replace the `StatusPlanRow`, `StatusPlanShapeRow`, `StatusPlan`, `StatusPlanShape` interfaces and the two mappers with:
 
 ```ts
-/** tenants.status_plans as PostgREST returns it (after 00248). */
+/** tenants.status_plans as PostgREST returns it (after 00249). */
 export interface StatusPlanRow {
   id: string
   project_id: string
@@ -2004,7 +2004,7 @@ export function statusPlanShapeFromRow(r: StatusPlanShapeRow): StatusPlanShape {
 }
 ```
 
-Update the file's header comment line "A status plan is one page of a drawing marked with a purpose." to "A status plan is a project's tenant floor plan or line diagram; its sheets are uploaded files (00248)."
+Update the file's header comment line "A status plan is one page of a drawing marked with a purpose." to "A status plan is a project's tenant floor plan or line diagram; its sheets are uploaded files (00249)."
 
 - [ ] **Step 4: Run the shared suite**
 
@@ -2224,8 +2224,8 @@ describe('file types and sizes', () => {
   it('says what is wrong with a file, by name', () => {
     expect(fileProblem({ name: 'a.dwg', size: 10, type: '' })).toBe('a.dwg is not a PDF, PNG or JPEG.')
     expect(fileProblem({ name: 'a.pdf', size: 0, type: 'application/pdf' })).toBe('a.pdf is empty.')
-    expect(fileProblem({ name: 'a.pdf', size: 60 * 1024 * 1024 + 1, type: 'application/pdf' })).toBe('a.pdf is larger than 60 MB.')
-    expect(fileProblem({ name: 'a.pdf', size: 60 * 1024 * 1024, type: 'application/pdf' })).toBeNull()
+    expect(fileProblem({ name: 'a.pdf', size: 50 * 1024 * 1024 + 1, type: 'application/pdf' })).toBe('a.pdf is larger than 50 MB.')
+    expect(fileProblem({ name: 'a.pdf', size: 50 * 1024 * 1024, type: 'application/pdf' })).toBeNull()
   })
   it('limits per upload and per plan', () => {
     expect(MAX_FILES_PER_UPLOAD).toBe(20)
@@ -2276,7 +2276,7 @@ Create `apps/web/src/lib/status-plans/sheet-files.ts`:
  * (spec 2026-10-12 §3). Server-side: the sheet actions import it; pdf-lib is
  * loaded only to count pages.
  *
- * The path pattern is the one the 00248 trigger and bucket policy enforce:
+ * The path pattern is the one the 00249 trigger and bucket policy enforce:
  *   {org}/{project}/{plan}/{folder}/{revision}.{pdf|png|jpg}
  * where folder is the id of the first sheet the file was uploaded for. A PDF
  * of N pages is N sheets sharing one path.
@@ -2310,7 +2310,7 @@ export function mimeForFile(name: string, type: string): TenantPlanMime | null {
 export function fileProblem(f: { name: string; size: number; type: string }): string | null {
   if (!mimeForFile(f.name, f.type)) return `${f.name} is not a PDF, PNG or JPEG.`
   if (!(f.size > 0)) return `${f.name} is empty.`
-  if (f.size > TENANT_PLAN_MAX_BYTES) return `${f.name} is larger than 60 MB.`
+  if (f.size > TENANT_PLAN_MAX_BYTES) return `${f.name} is larger than 50 MB.`
   return null
 }
 
@@ -2633,7 +2633,7 @@ Expected: FAIL (new codes and the `'sheet'` target are unknown).
 /**
  * A Postgres / PostgREST refusal on a tenant plan write, as a sentence.
  *
- * Codes come from 00245 and 00248: 23514 for trigger and CHECK refusals, 23505
+ * Codes come from 00245 and 00249: 23514 for trigger and CHECK refusals, 23505
  * for the unique keys, 23503 for a missing project / plan / sheet / board, and
  * 42501 from RLS. Each rule needs the code AND a distinctive substring, so two
  * different refusals with one code never share a sentence. The raw message is
@@ -2962,7 +2962,7 @@ describe('prepareTenantPlanUploadAction', () => {
     expect(await prepareTenantPlanUploadAction({ projectId: P, purpose: 'tenant_layout', files: [{ name: 'E-100.dwg', size: 10, type: '' }] }))
       .toEqual({ ok: false, error: 'E-100.dwg is not a PDF, PNG or JPEG.' })
     expect(await prepareTenantPlanUploadAction({ projectId: P, purpose: 'tenant_layout', files: [{ name: 'big.pdf', size: 61 * 1024 * 1024, type: 'application/pdf' }] }))
-      .toEqual({ ok: false, error: 'big.pdf is larger than 60 MB.' })
+      .toEqual({ ok: false, error: 'big.pdf is larger than 50 MB.' })
     expect(calls).toEqual([])
   })
 
@@ -3200,7 +3200,7 @@ Create `apps/web/src/actions/tenant-plan-sheets.actions.ts`:
  *  - edits to an existing sheet are conditional on updated_at in the same
  *    statement; zero rows back is a conflict, never a silent success;
  *  - organisation_id, created_by, revision and replaced_* are never sent:
- *    the 00248 triggers derive them.
+ *    the 00249 triggers derive them.
  *
  * Only async functions are exported ('use server'); types live in
  * lib/status-plans/types.ts.
@@ -3798,7 +3798,7 @@ Expected: FAIL (`createStatusPlanShapeAction` still takes `planId`).
  *  - turns a Postgres refusal into a sentence (lib/status-plans/write-errors).
  *
  * A shape is created on a SHEET; the plan is read from the sheet on the server,
- * and the 00248 trigger refuses a sheet of another plan. Shape writes carry the
+ * and the 00249 trigger refuses a sheet of another plan. Shape writes carry the
  * row's updated_at and are CONDITIONAL on it (`.eq('updated_at', expected)`), so
  * the stale check and the write are one statement. Zero rows back means
  * someone else moved or deleted the shape.
@@ -4252,7 +4252,7 @@ Expected: FAIL (`loadTenantPlanPage` / `pickSheet` not exported).
 ```ts
 /**
  * Everything a tenant plan route needs, read through the CALLER'S session:
- * RLS and site scope (00238, 00245, 00248) are the read gate, so a project the
+ * RLS and site scope (00238, 00245, 00249) are the read gate, so a project the
  * caller may not see answers null and the page 404s. No service client; the
  * sheet's signed URL is minted through the session too (the bucket's read
  * policy admits every project member).
@@ -4809,7 +4809,7 @@ Run: `TMPDIR="/Volumes/Extreme SSD/tmp" pnpm --filter web exec vitest run "src/a
 /**
  * Upload one or more files to a tenant plan (spec 2026-10-12 §3). The browser
  * uploads straight to the private bucket with server-issued signed URLs, so a
- * 60 MB A0 never passes through a Vercel function; the server then registers
+ * 50 MB A0 never passes through a Vercel function; the server then registers
  * the sheets (a PDF of N pages becomes N sheets, files appended in order).
  * Props are strings only.
  */
@@ -5248,7 +5248,7 @@ export function TenantPlanEmpty({ projectId, purpose, canEdit }: TenantPlanEmpty
       <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-mid)' }}>
         Nothing uploaded yet.{' '}
         {canEdit
-          ? `${HINT[purpose]} PDF, PNG or JPEG, up to 60 MB each; every page of a PDF becomes a sheet.`
+          ? `${HINT[purpose]} PDF, PNG or JPEG, up to 50 MB each; every page of a PDF becomes a sheet.`
           : 'An owner, admin or project manager can upload it.'}
       </p>
       {canEdit && <div><TenantPlanUploader projectId={projectId} purpose={purpose} label="Upload" /></div>}
@@ -6941,7 +6941,7 @@ Run: `TMPDIR="/Volumes/Extreme SSD/tmp" pnpm --filter web exec vitest run src/li
  *
  * Reads:
  *   clients.db      — the CALLER's session client: project, plans, sheets, shapes and nodes under
- *                     RLS + site_scope (00245/00248 open SELECT to every project role).
+ *                     RLS + site_scope (00245/00249 open SELECT to every project role).
  *   clients.facts   — order / scope facts (loadTenantShopFacts, loadProjectDbOrderStatus); the service
  *                     client, passed ONLY after the route's project gate, as the tenant report does.
  *   clients.storage — sheet bytes from the tenant-plan-files bucket (service client).
@@ -6980,7 +6980,7 @@ export const MAX_PLAN_SHEETS_PER_REPORT = 20
  * One sheet file, and Σ unique files for one appendix. Both sit under the `reports` bucket's 50 MiB
  * file_size_limit (00117): the finished PDF carries the sources (vector pages are copied, not
  * rasterised), so the handoff also re-checks the final bytes (pdf-handoff.ts). A sheet file may be up
- * to 60 MB in its own bucket; one over this cap is listed as "not included" with the reason.
+ * to 50 MB in its own bucket; one over this cap is listed as "not included" with the reason.
  */
 export const MAX_STATUS_PLAN_SOURCE_BYTES = 40 * 1024 * 1024
 export const MAX_STATUS_PLAN_TOTAL_BYTES = 40 * 1024 * 1024
@@ -7022,7 +7022,7 @@ export function orderSheets(refs: readonly SheetRef[]): SheetRef[] {
     || Number(a.row.sort_order) - Number(b.row.sort_order))
 }
 
-/** What pdf-lib can embed. The 00248 trigger only admits these three. */
+/** What pdf-lib can embed. The 00249 trigger only admits these three. */
 export function sourceKindFor(path: string): 'pdf' | 'png' | 'jpg' | null {
   if (/\.pdf$/i.test(path)) return 'pdf'
   if (/\.png$/i.test(path)) return 'png'
@@ -7475,7 +7475,7 @@ Replace `listPortalStatusPlans` with:
 
 ```ts
 /**
- * Tenant plans (spec 2026-10-12 §2) — read via the USER client: 00245/00248 SELECT admits
+ * Tenant plans (spec 2026-10-12 §2) — read via the USER client: 00245/00249 SELECT admits
  * client_viewer. A plan with no sheet yet is left out ("where they exist").
  */
 export async function listPortalTenantPlans(projectId: string) {
@@ -7620,7 +7620,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - [ ] **Step 1: Page routes** — replace the two `status-plans` rows (lines ~74–75) with:
 
 ```markdown
-| `/projects/[id]/tenant-schedule/floor-plan` · `/projects/[id]/tenant-schedule/line-diagram` (tenant plans: sheet strip `?sheet=`, canvas, side panel, legend; `?shape=` selects a shape — the tenant schedule's "On plan ↗" link. Added 2026-10-12, migration `00248`). Read through the caller's session (RLS + `site_scope`). Upload, Add sheets, Replace file, Rename, Delete sheet, Shapes checked (re-anchor), Set scale, draw / link / delete shapes need `ORG_WRITE_ROLES` (`requireEffectiveRole(…).ok`); every other project role gets the same page read-only. The tenant schedule's "Tenant plans" cards show Upload / Upload / Replace to writers and Open to everyone once something is loaded | W | W | W | R | R | R | → `/portal` |
+| `/projects/[id]/tenant-schedule/floor-plan` · `/projects/[id]/tenant-schedule/line-diagram` (tenant plans: sheet strip `?sheet=`, canvas, side panel, legend; `?shape=` selects a shape — the tenant schedule's "On plan ↗" link. Added 2026-10-12, migration `00249`). Read through the caller's session (RLS + `site_scope`). Upload, Add sheets, Replace file, Rename, Delete sheet, Shapes checked (re-anchor), Set scale, draw / link / delete shapes need `ORG_WRITE_ROLES` (`requireEffectiveRole(…).ok`); every other project role gets the same page read-only. The tenant schedule's "Tenant plans" cards show Upload / Upload / Replace to writers and Open to everyone once something is loaded | W | W | W | R | R | R | → `/portal` |
 | `/projects/[id]/status-plans` · `/projects/[id]/status-plans/[planId]` (retired 2026-10-12: 307 to `/projects/[id]/tenant-schedule`) | → | → | → | → | → | → | → `/portal` |
 ```
 
@@ -7638,12 +7638,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | `GET /api/projects/[id]/status-plans/[planId]/sheet?sheet=` (Export sheet — one sheet at its own size; `?sheet=` required, uuid, else 404) | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ | R²¹ |
 ```
 
-In footnote ²¹: replace "**Status plans in PDF (slice 4, 2026-10-09).**" with "**Tenant plans in PDF (slice 4, 2026-10-09; per sheet since 2026-10-12).**"; in the **Export sheet** bullet replace "The button renders on distribution schematics only (spec §8); the route serves tenant layouts too." with "The button renders on the line diagram only; the route serves floor plan sheets too."; in the **Reads** bullet replace "Plan, shape, drawing, page-scale and node rows go through the caller's session (`00245` SELECT…). Order and scope facts and the drawing bytes in the `drawings` bucket use the service client, only after the gate." with "Plan, sheet, shape and node rows go through the caller's session (`00245`/`00248` SELECT, which admits every project role including client_viewer). Order and scope facts and the sheet bytes in the `tenant-plan-files` bucket use the service client, only after the gate."; in the **Delivery** bullet replace `{org}/{project}/status-plans/{plan}/sheet.pdf` with `{org}/{project}/status-plans/{plan}/{sheet}/sheet.pdf`.
+In footnote ²¹: replace "**Status plans in PDF (slice 4, 2026-10-09).**" with "**Tenant plans in PDF (slice 4, 2026-10-09; per sheet since 2026-10-12).**"; in the **Export sheet** bullet replace "The button renders on distribution schematics only (spec §8); the route serves tenant layouts too." with "The button renders on the line diagram only; the route serves floor plan sheets too."; in the **Reads** bullet replace "Plan, shape, drawing, page-scale and node rows go through the caller's session (`00245` SELECT…). Order and scope facts and the drawing bytes in the `drawings` bucket use the service client, only after the gate." with "Plan, sheet, shape and node rows go through the caller's session (`00245`/`00249` SELECT, which admits every project role including client_viewer). Order and scope facts and the sheet bytes in the `tenant-plan-files` bucket use the service client, only after the gate."; in the **Delivery** bullet replace `{org}/{project}/status-plans/{plan}/sheet.pdf` with `{org}/{project}/status-plans/{plan}/{sheet}/sheet.pdf`.
 
 - [ ] **Step 4: Server actions** — replace the `### Status plans (status-plan.actions.ts, …)` section's heading, table and note with:
 
 ```markdown
-### Tenant plans (`status-plan.actions.ts`, `status-plan-detection.actions.ts`, `tenant-plan-sheets.actions.ts`; migrations `00245`, `00248`)
+### Tenant plans (`status-plan.actions.ts`, `status-plan-detection.actions.ts`, `tenant-plan-sheets.actions.ts`; migrations `00245`, `00249`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -7655,13 +7655,13 @@ In footnote ²¹: replace "**Status plans in PDF (slice 4, 2026-10-09).**" with 
 | `createStatusPlanShapeAction` (on a sheet) · `updateStatusPlanShapeAction` · `deleteStatusPlanShapeAction` | W | W | W | — | — | — | — |
 | `acceptDetectedBlocksAction` (line diagram sheets only; one all-or-nothing insert) | W | W | W | — | — | — | — |
 
-> **Changed 2026-10-12 (tenant plans, `00248`).** Plans are one per project per purpose and are created by the first upload; the plan-level create / rename / delete / re-anchor actions were removed. Every action gates on `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` and reads `.ok`, resolving the project from the plan, sheet or shape on the server; the RESTRICTIVE per-verb policies of `00245`/`00248` and the bucket's INSERT / DELETE policies are the database backstop. Actions return `{ ok, error }` and never throw for a refusal; Postgres codes become sentences (`lib/status-plans/write-errors.ts`). Sheet and shape edits are **conditional on the row's `updated_at`** in the same statement; zero rows back is reported as "changed by someone else" (or deleted) with a Reload control. Upload paths are built by the server (`{org}/{project}/{plan}/{folder}/{revision}.{ext}`) and registration refuses any other path; page counts come from the uploaded bytes (pdf-lib), never from the client. Signed upload URLs are minted with the caller's session, so the bucket's INSERT policy is checked as that person. `organisation_id`, `created_by`, `revision`, `replaced_at` and `replaced_from_path` are never sent: the triggers derive them. Shape actions do not revalidate the canvas page; upload, replace and delete navigate to the sheet (a fresh signed URL is wanted then).
+> **Changed 2026-10-12 (tenant plans, `00249`).** Plans are one per project per purpose and are created by the first upload; the plan-level create / rename / delete / re-anchor actions were removed. Every action gates on `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` and reads `.ok`, resolving the project from the plan, sheet or shape on the server; the RESTRICTIVE per-verb policies of `00245`/`00249` and the bucket's INSERT / DELETE policies are the database backstop. Actions return `{ ok, error }` and never throw for a refusal; Postgres codes become sentences (`lib/status-plans/write-errors.ts`). Sheet and shape edits are **conditional on the row's `updated_at`** in the same statement; zero rows back is reported as "changed by someone else" (or deleted) with a Reload control. Upload paths are built by the server (`{org}/{project}/{plan}/{folder}/{revision}.{ext}`) and registration refuses any other path; page counts come from the uploaded bytes (pdf-lib), never from the client. Signed upload URLs are minted with the caller's session, so the bucket's INSERT policy is checked as that person. `organisation_id`, `created_by`, `revision`, `replaced_at` and `replaced_from_path` are never sent: the triggers derive them. Shape actions do not revalidate the canvas page; upload, replace and delete navigate to the sheet (a fresh signed URL is wanted then).
 ```
 
 - [ ] **Step 5: Database section** — replace the `### Status plans (tenants.status_plans, tenants.status_plan_shapes, migration 00245)` section with:
 
 ```markdown
-### Tenant plans (`tenants.status_plans`, `tenants.status_plan_sheets`, `tenants.status_plan_shapes`, bucket `tenant-plan-files`; migrations `00245`, `00248`)
+### Tenant plans (`tenants.status_plans`, `tenants.status_plan_sheets`, `tenants.status_plan_shapes`, bucket `tenant-plan-files`; migrations `00245`, `00249`)
 
 | Surface | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -7671,7 +7671,7 @@ In footnote ²¹: replace "**Status plans in PDF (slice 4, 2026-10-09).**" with 
 | Upload or delete a sheet file (`tenant_plan_files_insert` / `_delete`: write role on the path's project; no UPDATE policy) | W | W | W | — | — | — | — |
 | Draw, move, link, unlink or delete a shape (RLS) | W | W | W | — | — | — | — |
 
-> **Changed 2026-10-12 (`00248`).** A plan no longer anchors to a drawing: `floor_plan_id`, `page_index` and `source_file_path` are dropped, `organisation_id` is bound from the project, and `(project_id, purpose)` is unique. A sheet is one page of one file in the private `tenant-plan-files` bucket (60 MB, PDF / PNG / JPEG); its file must live under its own plan's folder (`{org}/{project}/{plan}/…`, enforced by trigger, so the service-side renderers can never be pointed at another project's object). Replacing the file is an UPDATE of `file_path`; the trigger sets `revision + 1`, `replaced_at` and `replaced_from_path` (client values discarded) and keeps the masks and the scale; re-anchoring clears `replaced_at` only. A shape's sheet must belong to its plan and is fixed; `(status_plan_id, node_id)` stays unique, so a board appears once per plan across sheets. `tenants.tenant_plan_file_project(name)` (definer, `anon` revoked) returns the project only when the path's org / project / plan segments name a real plan. Read = every project member, **client_viewer included**; write = `ORG_WRITE_ROLES` through PERMISSIVE membership + **RESTRICTIVE per-verb** gates; the generated `site_scope` policy on all three tables and `site_scope_objects` now covering `tenant-plan-files`. Proven by `scripts/db/assert-status-plans-roles.sql` (77 impersonation assertions, red first, seven mutations). Cloud sync's `isAnnotated()` no longer reads status plans (nothing there references a drawing).
+> **Changed 2026-10-12 (`00249`).** A plan no longer anchors to a drawing: `floor_plan_id`, `page_index` and `source_file_path` are dropped, `organisation_id` is bound from the project, and `(project_id, purpose)` is unique. A sheet is one page of one file in the private `tenant-plan-files` bucket (50 MB, PDF / PNG / JPEG); its file must live under its own plan's folder (`{org}/{project}/{plan}/…`, enforced by trigger, so the service-side renderers can never be pointed at another project's object). Replacing the file is an UPDATE of `file_path`; the trigger sets `revision + 1`, `replaced_at` and `replaced_from_path` (client values discarded) and keeps the masks and the scale; re-anchoring clears `replaced_at` only. A shape's sheet must belong to its plan and is fixed; `(status_plan_id, node_id)` stays unique, so a board appears once per plan across sheets. `tenants.tenant_plan_file_project(name)` (definer, `anon` revoked) returns the project only when the path's org / project / plan segments name a real plan. Read = every project member, **client_viewer included**; write = `ORG_WRITE_ROLES` through PERMISSIVE membership + **RESTRICTIVE per-verb** gates; the generated `site_scope` policy on all three tables and `site_scope_objects` now covering `tenant-plan-files`. Proven by `scripts/db/assert-status-plans-roles.sql` (77 impersonation assertions, red first, seven mutations). Cloud sync's `isAnnotated()` no longer reads status plans (nothing there references a drawing).
 ```
 
 - [ ] **Step 6: Commit**
@@ -7701,7 +7701,7 @@ gh pr list --state open --json number,files --jq '.[] | {n: .number, m: [.files[
 source scripts/db/mgmt-api.sh && mgmt_query "SELECT max(version) AS head FROM supabase_migrations.schema_migrations"
 ```
 
-Expected: highest on `origin/main` is `00247_…`, ledger head ≤ `00247`, no open PR claims `00248`. If `00248` (or higher) is taken anywhere: `git mv` the file to the next free number, change its header line `-- Migration 00248:` and the two `00248` mentions in `docs/rbac-matrix.md`, re-run Step 2 for the db and web suites (tests find the file by pattern), commit, and use the new path below. If the ledger head is BELOW `00247` (00246/00247 not applied yet), that is fine: they apply first on merge, in number order.
+Expected: highest on `origin/main` is `00247_…`, ledger head ≤ `00247`, no open PR claims `00249`. If `00249` (or higher) is taken anywhere: `git mv` the file to the next free number, change its header line `-- Migration 00249:` and the two `00249` mentions in `docs/rbac-matrix.md`, re-run Step 2 for the db and web suites (tests find the file by pattern), commit, and use the new path below. If the ledger head is BELOW `00247` (00246/00247 not applied yet), that is fine: they apply first on merge, in number order.
 
 - [ ] **Step 2: Three suites**
 
@@ -7729,7 +7729,7 @@ Expected: all exit 0. `next build` is the only check that catches a non-async ex
 - [ ] **Step 4: RED, then GREEN — the assertions against production (rolled back)**
 
 ```bash
-M=apps/edge-functions/supabase/migrations/00248_tenant_plans.sql
+M=apps/edge-functions/supabase/migrations/00249_tenant_plans.sql
 A=scripts/db/assert-status-plans-roles.sql
 TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql "$A"
 TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh "$M" "$A"
@@ -7790,7 +7790,7 @@ node --experimental-strip-types scripts/db/emit-verify-sweep.ts "$D/verify-sweep
 TMPDIR="$D" scripts/db/dry-run-migration.sh "$M" "$D/verify-sweep.sql"
 ```
 
-Expected: every line `✓`, including all of `00245_status_plans.sql #…` (the edited block) and `00248_tenant_plans.sql #…` (proof that 00248's own block parses and holds before it is ever applied).
+Expected: every line `✓`, including all of `00245_status_plans.sql #…` (the edited block) and `00249_tenant_plans.sql #…` (proof that 00249's own block parses and holds before it is ever applied).
 
 Now prove the edit was needed (rule 2): sweep 00245's ORIGINAL block under the new state.
 
@@ -7808,7 +7808,7 @@ TMPDIR="$D" scripts/db/dry-run-migration.sh "$M" "$D/sweep-00245-original.sql"
 
 Expected: exit 1 with exactly four `✗` — the two `column:` directives (`page_index`, `source_file_path`) and the two `constraint:` directives (`status_plans_page_positive`, `status_plans_drawing_page_purpose_key`). That is the deploy that would have gone red without Task B2 Step 5. (The helper lives in `$TMPDIR`, never in the repo; it imports `verify-header.ts` by absolute path, exactly as `scripts/db/emit-verify-sweep.ts` does by relative path.)
 
-If the full sweep aborts instead of reporting, regenerate it with a later `since` (`00230`, then `00238`) to find the migration whose directive raised; a `✗` in an earlier block means it counts something 00248 changed — fix it forward in this branch by editing that block, and re-run this step.
+If the full sweep aborts instead of reporting, regenerate it with a later `since` (`00230`, then `00238`) to find the migration whose directive raised; a `✗` in an earlier block means it counts something 00249 changed — fix it forward in this branch by editing that block, and re-run this step.
 
 - [ ] **Step 8: Contract checks that need nothing but the repo**
 
@@ -7817,7 +7817,7 @@ TMPDIR="$D" pnpm --filter @esite/db exec vitest run src/__tests__/security
 TMPDIR="$D" pnpm --filter web exec vitest run src/lib/migration-verify-block.contract.test.ts src/lib/auth src/lib/status-plans/page-props.contract.test.ts
 ```
 
-Expected: PASS (annotated predicate without `status_plans`, the exemption proven true, site-scope text byte for byte, every function in `00248` declared, role gates read `.ok`, page props JSON only).
+Expected: PASS (annotated predicate without `status_plans`, the exemption proven true, site-scope text byte for byte, every function in `00249` declared, role gates read `.ok`, page props JSON only).
 
 - [ ] **Step 9: Stop here**
 
@@ -7827,7 +7827,7 @@ The branch is green on the three suites, types, lint and `next build`; the migra
 
 ## Deploy runbook (owner / release session only — NOT executed by implementers)
 
-Order matters: **function first, migration second.** The live `cloud-sync-project` filters `tenants.status_plans` by `floor_plan_id`; once 00248 drops that column the query errors, `isAnnotated()` treats the error as "annotated", and auto-adopt silently stops for every drawing in production.
+Order matters: **function first, migration second.** The live `cloud-sync-project` filters `tenants.status_plans` by `floor_plan_id`; once 00249 drops that column the query errors, `isAnnotated()` treats the error as "annotated", and auto-adopt silently stops for every drawing in production.
 
 **R1. Round-trip and what it buys.** One edge-function deploy (≈1 min) and one merge that runs `Deploy DB Migrations` (≈3–5 min). Together they make the tenant plan routes usable; verification below takes ≈10 min more. Production holds 0 status plans, so no one loses work between R2 and R4.
 
@@ -7865,7 +7865,7 @@ Expected: only `done` rows.
 gh pr merge <PR> --merge
 ```
 
-Watch `Deploy DB Migrations` on the merge commit to the end (`gh run watch`). It applies 00246/00247 first if they are not yet applied, then 00248, then the post-push verifier re-checks every migration ≥ 00185. **A green run is not evidence the migration ran** — R5 reads it back.
+Watch `Deploy DB Migrations` on the merge commit to the end (`gh run watch`). It applies 00246/00247 first if they are not yet applied, then 00249, then the post-push verifier re-checks every migration ≥ 00185. **A green run is not evidence the migration ran** — R5 reads it back.
 
 **R5. Verify on production.**
 
@@ -7878,7 +7878,7 @@ mgmt_query "SELECT strpos(qual, 'tenant-plan-files') > 0 AS covered FROM pg_poli
 TMPDIR="/Volumes/Extreme SSD/tmp" scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql scripts/db/assert-status-plans-roles.sql scripts/db/assert-site-scope-coverage.sql
 ```
 
-Expected: `00248` in the ledger; `dropped_cols_left = 0`; the bucket private, `62914560`, three types; `covered = true`; 77 + coverage all `✓` against the LIVE state (noop migration, rolled back).
+Expected: `00249` in the ledger; `dropped_cols_left = 0`; the bucket private, `52428800`, three types; `covered = true`; 77 + coverage all `✓` against the LIVE state (noop migration, rolled back).
 
 Then the web:
 
@@ -7896,7 +7896,7 @@ Expected: each a redirect to `/login?next=…` for a signed-out visitor (the gat
 
 ## Spec ambiguities resolved in this plan
 
-1. **Migration number.** The brief said "head 00245 → write 00246". `origin/main` already holds `00246_tender_cidb_not_applicable.sql` and `00247_tender_cidb_certificate_waiver.sql`, so the file is `00248_tenant_plans.sql`, with the usual re-check at apply time. Tests find it by `^\d{5}_tenant_plans\.sql$`.
+1. **Migration number.** The brief said "head 00245 → write 00246". `origin/main` already holds `00246_tender_cidb_not_applicable.sql` and `00247_tender_cidb_certificate_waiver.sql`, so the file is `00249_tenant_plans.sql`, with the usual re-check at apply time. Tests find it by `^\d{5}_tenant_plans\.sql$`.
 2. **Storage path for a multi-page PDF.** The spec's `{org}/{project}/{plan_id}/{sheet_id}/{revision}.{ext}` has one file serving N sheets. The folder segment is the id of the FIRST sheet registered for that file (the server pre-allocates it and the sheet row is inserted with that id); the other pages' sheets share the path. A replacement always goes to the replaced sheet's own folder at `revision + 1`.
 3. **Page count is counted server-side** (pdf-lib on the uploaded object, read back through the caller's session), not trusted from the browser. The registering pages carry `maxDuration = 60`.
 4. **Replace and page choice.** Replace takes an explicit "Page in the new file" (default: the sheet's current page) and refuses a page the file does not have. `page_index`, `mime` and `file_name` can only change together with the file (trigger).
@@ -7905,7 +7905,7 @@ Expected: each a redirect to `/login?next=…` for a signed-out visitor (the gat
 7. **Storage RLS keyed on the path.** `tenant_plan_file_project(name)` is a definer function that returns the project only when org / project / plan segments name a real plan of that project and org; read = project access, insert / delete = write role, no UPDATE policy (a replacement is a new object). `site_scope_objects` is re-created from the generator with the bucket added (`SITE_BUCKETS` changed), not a second storage policy.
 8. **Signed upload URLs use the caller's session**, not the service client, so the bucket's INSERT policy is the gate (no new entry in the service-client gate contract).
 9. **Old routes** redirect to the tenant schedule itself (307, `redirect()`), not to a specific tool; the old portal tab redirects to `/portal/[projectId]/tenant-plans`. Internal API paths (`/api/…/status-plans/[planId]/…`) are kept; Export sheet now requires `?sheet=`.
-10. **Caps.** "Same caps": 20 sheets per report appendix (was 20 plans), 40 MiB per file and in total for a PDF, although a sheet file may be up to 60 MB in its bucket; a larger one is listed "not included" with the reason. The portal PDF draws up to 20 sheets of one plan and skips a sheet it cannot draw.
+10. **Caps.** "Same caps": 20 sheets per report appendix (was 20 plans), 40 MiB per file and in total for a PDF, although a sheet file may be up to 50 MB in its bucket; a larger one is listed "not included" with the reason. The portal PDF draws up to 20 sheets of one plan and skips a sheet it cannot draw.
 11. **Legend.** "Per sheet and plan totals" = a second column (all sheets) when the plan has more than one sheet, plus an "All sheets" measured-GLA line on the floor plan.
 12. **Full navigation after upload / replace / delete** (`window.location.assign` behind `navigateTo`), because `router.refresh()` has been seen not to commit on pages in this app and a fresh signed URL is needed then; shape edits, rename, re-anchor and scale fold into state.
 13. **`isAnnotated()` exemption.** `tenants.status_plans` is still discovered by the contract test (00245's CREATE TABLE names `floor_plan_id`), so it is exempted with a reason, and a new case proves the exemption by finding the `DROP COLUMN floor_plan_id` in the corpus. `status_plan_sheets` never mentions `floor_plan`, so it is not discovered.

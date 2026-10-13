@@ -63,7 +63,7 @@ const DECLARED_EXEMPT: Record<string, string> = {
     'the adopt rather than being invalidated by it; treating it as annotation would freeze ' +
     'every synced drawing forever.',
   'tenants.status_plans':
-    'No longer anchored to a drawing. The tenant plans migration (00248) drops floor_plan_id, ' +
+    'No longer anchored to a drawing. The tenant plans migration (00249) drops floor_plan_id, ' +
     'page_index and source_file_path; a plan\'s sheets are files in the tenant-plan-files bucket, ' +
     'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
     'is the only reason discovery finds it.',

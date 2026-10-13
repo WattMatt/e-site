@@ -13,7 +13,7 @@
  *  - turns a Postgres refusal into a sentence (lib/status-plans/write-errors).
  *
  * A shape is created on a SHEET; the plan is read from the sheet on the server,
- * and the 00248 trigger refuses a sheet of another plan. Shape writes carry the
+ * and the 00249 trigger refuses a sheet of another plan. Shape writes carry the
  * row's updated_at and are CONDITIONAL on it (`.eq('updated_at', expected)`), so
  * the stale check and the write are one statement. Zero rows back means
  * someone else moved or deleted the shape.

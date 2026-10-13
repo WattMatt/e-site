@@ -17,7 +17,7 @@ export function TenantPlanEmpty({ projectId, purpose, canEdit }: TenantPlanEmpty
       <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-mid)' }}>
         Nothing uploaded yet.{' '}
         {canEdit
-          ? `${HINT[purpose]} PDF, PNG or JPEG, up to 60 MB each; every page of a PDF becomes a sheet.`
+          ? `${HINT[purpose]} PDF, PNG or JPEG, up to 50 MB each; every page of a PDF becomes a sheet.`
           : 'An owner, admin or project manager can upload it.'}
       </p>
       {canEdit && <div><TenantPlanUploader projectId={projectId} purpose={purpose} label="Upload" /></div>}

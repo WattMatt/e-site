@@ -1,10 +1,10 @@
--- BEHAVIOURAL assertions for status plans after 00248 (tenant plans), run as real roles.
+-- BEHAVIOURAL assertions for status plans after 00249 (tenant plans), run as real roles.
 --
 --   red:   scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql scripts/db/assert-status-plans-roles.sql
---   green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00248_tenant_plans.sql scripts/db/assert-status-plans-roles.sql
+--   green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00249_tenant_plans.sql scripts/db/assert-status-plans-roles.sql
 --
 -- 00245 is already applied on production; this file describes the state that
--- 00248 leaves on top of it: plans per (project, purpose), sheets with their
+-- 00249 leaves on top of it: plans per (project, purpose), sheets with their
 -- own files in tenant-plan-files, shapes on sheets.
 --
 -- Mechanics this project has paid for:

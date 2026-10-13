@@ -1,7 +1,7 @@
 /**
  * A Postgres / PostgREST refusal on a tenant plan write, as a sentence.
  *
- * Codes come from 00245 and 00248: 23514 for trigger and CHECK refusals, 23505
+ * Codes come from 00245 and 00249: 23514 for trigger and CHECK refusals, 23505
  * for the unique keys, 23503 for a missing project / plan / sheet / board, and
  * 42501 from RLS. Each rule needs the code AND a distinctive substring, so two
  * different refusals with one code never share a sentence. The raw message is

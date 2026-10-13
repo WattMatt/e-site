@@ -927,7 +927,7 @@ async function isAnnotated(
     .maybeSingle()
   if (loe || layoutObject) return true
 
-  // Status plans no longer anchor to drawings (tenant plans, 00248): their
+  // Status plans no longer anchor to drawings (tenant plans, 00249): their
   // sheets live in their own bucket, tenant-plan-files, which cloud sync never
   // touches. There is deliberately no lookup for them here.
   return false

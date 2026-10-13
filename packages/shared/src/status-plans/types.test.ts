@@ -150,7 +150,7 @@ describe('tenant plan constants', () => {
     expect(sql).toContain(`VALUES ('${TENANT_PLAN_BUCKET}', '${TENANT_PLAN_BUCKET}', false, ${TENANT_PLAN_MAX_BYTES}, ARRAY[${TENANT_PLAN_MIMES.map((m) => `'${m}'`).join(', ')}])`)
     const mimeLine = sql.split('\n').find((l) => l.includes('CONSTRAINT status_plan_sheets_mime_check CHECK'))!
     expect([...TENANT_PLAN_MIMES].sort()).toEqual([...mimeLine.matchAll(/'([a-z]+\/[a-z]+)'/g)].map((m) => m[1]!).sort())
-    expect(TENANT_PLAN_MAX_BYTES).toBe(60 * 1024 * 1024)
+    expect(TENANT_PLAN_MAX_BYTES).toBe(50 * 1024 * 1024)
   })
 
   it('the label cap mirrors the CHECK', () => {

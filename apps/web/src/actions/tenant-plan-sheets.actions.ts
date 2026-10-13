@@ -19,7 +19,7 @@
  *  - edits to an existing sheet are conditional on updated_at in the same
  *    statement; zero rows back is a conflict, never a silent success;
  *  - organisation_id, created_by, revision and replaced_* are never sent:
- *    the 00248 triggers derive them.
+ *    the 00249 triggers derive them.
  *
  * Only async functions are exported ('use server'); types live in
  * lib/status-plans/types.ts.

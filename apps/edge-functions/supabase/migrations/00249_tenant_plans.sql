@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00248: tenant plans (status plans move under Tenants, own files)
+-- Migration 00249: tenant plans (status plans move under Tenants, own files)
 -- ---------------------------------------------------------------------------
 -- Spec: docs/superpowers/specs/2026-10-12-tenant-plans-relocation-design.md (§3, §4)
 --
@@ -40,7 +40,7 @@
 -- FOR ALL for a role gate (00205 -> 00206). site_scope is the generator's text
 -- byte for byte (tenant-plans-site-scope.contract.test.ts).
 --
--- STORAGE. tenant-plan-files is private, 60 MB per file, PDF / PNG / JPEG.
+-- STORAGE. tenant-plan-files is private, 50 MB per file, PDF / PNG / JPEG.
 -- tenants.tenant_plan_file_project(name) returns the project only when the
 -- path's org / project / plan segments name a real plan of that project and
 -- org, so a forged prefix reads as no project at all. Read: any member who can
@@ -110,7 +110,7 @@
 -- sql: (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'tenants.status_plan_sheets'::regclass)
 -- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'tenants.status_plan_sheets'::regclass AND polcmd IN ('r', '*') AND polname <> 'site_scope')
 -- sql: (SELECT count(*) = 3 FROM pg_policy WHERE polrelid = 'tenants.status_plan_sheets'::regclass AND polpermissive = false AND polcmd IN ('a', 'w', 'd') AND pg_get_expr(coalesce(polqual, polwithcheck), polrelid) LIKE '%project_manager%' AND pg_get_expr(coalesce(polqual, polwithcheck), polrelid) NOT LIKE '%contractor%')
--- sql: (SELECT count(*) = 1 FROM storage.buckets WHERE id = 'tenant-plan-files' AND public = false AND file_size_limit = 62914560)
+-- sql: (SELECT count(*) = 1 FROM storage.buckets WHERE id = 'tenant-plan-files' AND public = false AND file_size_limit = 52428800)
 -- sql: (SELECT count(*) = 3 AND bool_and(cmd IN ('SELECT', 'INSERT', 'DELETE')) FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname LIKE 'tenant\_plan\_files\_%')
 -- sql: (SELECT strpos(coalesce(qual, ''), 'tenant-plan-files') > 0 AND strpos(coalesce(with_check, ''), 'tenant-plan-files') > 0 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'site_scope_objects')
 -- sql: (SELECT count(*) = 0 FROM information_schema.columns WHERE table_schema = 'tenants' AND table_name = 'status_plan_sheets' AND column_name IN ('colour', 'color', 'fill', 'status', 'area_m2', 'area_sqm'))
@@ -420,7 +420,7 @@ REVOKE ALL ON tenants.status_plan_sheets FROM anon;
 -- 5. Files: the tenant-plan-files bucket ---------------------------------------------
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES ('tenant-plan-files', 'tenant-plan-files', false, 62914560, ARRAY['application/pdf', 'image/png', 'image/jpeg'])
+VALUES ('tenant-plan-files', 'tenant-plan-files', false, 52428800, ARRAY['application/pdf', 'image/png', 'image/jpeg'])
 ON CONFLICT (id) DO UPDATE
   SET public = false, file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 
