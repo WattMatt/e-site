@@ -200,10 +200,11 @@ export async function loadStatusPlanRenderInputs(clients: PlanRenderClients, arg
 
   for (const { plan, row } of kept) {
     const boardSheet = byBoard && plan.purpose === 'tenant_layout'
+    // Feed unavailable: the sheet is still exported, in status colours, and says why in its title strip.
     const planName = !boardSheet ? plan.name
-      : feed ? `${plan.name} by main board (cable schedule ${feed.revisionCode})` : `${plan.name} by main board`
+      : feed ? `${plan.name} by main board (cable schedule ${feed.revisionCode})`
+      : `${plan.name} by main board (Main board view unavailable: ${feedOmission} — shown by status)`
     const title = planTitle(planName, plan.purpose, row.label)
-    if (boardSheet && !feed) { omitted.push({ title, reason: feedOmission }); continue }
     const kind = sourceKindFor(row.file_path)
     if (!kind) { omitted.push({ title, reason: 'the sheet is not a PDF, PNG or JPEG file' }); continue }
 

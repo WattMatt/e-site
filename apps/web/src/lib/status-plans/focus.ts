@@ -15,3 +15,12 @@ export function pulseVisible(elapsedMs: number): boolean {
   if (!(elapsedMs >= 0) || elapsedMs >= FOCUS_PULSE_MS) return false
   return Math.floor(elapsedMs / FOCUS_BLINK_MS) % 2 === 0
 }
+
+/**
+ * Whether a Show still has to be applied. The canvas records a nonce as handled only
+ * after a fit actually succeeded (fitToBox is null while the view is not laid out), so
+ * a Show that arrives early stays pending and is retried when the layout is ready.
+ */
+export function focusPending(appliedNonce: number | null, focus: { nonce: number } | null | undefined, hasImage: boolean): boolean {
+  return !!focus && hasImage && appliedNonce !== focus.nonce
+}

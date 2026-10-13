@@ -1,7 +1,7 @@
 // @vitest-environment node
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { COLOURS, FEED_UNKNOWN_STYLE, MAIN_BOARD_PALETTE, areaShapeStyle, boardShapeStyle, dbBlockStyle, tenantShapeStyle } from '@esite/shared/status-plans'
+import { COLOURS, FEED_UNKNOWN_STYLE, MAIN_BOARD_PALETTE, TENANT_LEGEND, areaShapeStyle, boardShapeStyle, dbBlockStyle, tenantShapeStyle } from '@esite/shared/status-plans'
 import { fakeSupabase } from '@/test/fake-supabase'
 
 const factsMock = vi.hoisted(() => vi.fn())
@@ -268,12 +268,15 @@ describe('colourBy board (floor plan by main board)', () => {
     expect(s!.counts).toMatchObject({ 'board:mb': 1, feed_unknown: 1, common: 1 })
   })
 
-  it('no cable schedule: the floor plan sheet is "not included" with the reason, and no file is read', async () => {
+  it('no cable schedule: the sheet falls back to status colours with the reason in its title', async () => {
     const { clients, st } = world({ shapes: [shapeRow('s1', 'a', 'a1', { node_id: 'n-done' })] })
     const { inputs, omitted } = await load(clients, { colourBy: 'board' })
-    expect(inputs).toEqual([])
-    expect(omitted).toEqual([{ title: 'Plan a by main board (Tenant floor plan, Sheet a1)', reason: 'the project has no cable schedule yet' }])
-    expect(st.downloads).toEqual([])
+    expect(omitted).toEqual([])
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]!.planName).toBe('Plan a by main board (Main board view unavailable: no cable schedule is visible to you on this project — shown by status)')
+    expect(inputs[0]!.legend.map((e) => e.key)).not.toContain('board:mb')
+    expect(inputs[0]!.legend).toEqual(TENANT_LEGEND)
+    expect(st.downloads.length).toBeGreaterThan(0)
   })
 
   it('status mode reads no cable schedule at all', async () => {

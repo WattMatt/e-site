@@ -33,12 +33,12 @@ type Unavailable = 'no_revision' | 'unreadable' | 'no_boards'
 
 const FEED_UNAVAILABLE: Record<Unavailable, string> = {
   unreadable: 'Main board view unavailable — the cable schedule could not be read.',
-  no_revision: 'Main board view unavailable — this project has no cable schedule yet.',
+  no_revision: 'Main board view unavailable — no cable schedule is visible to you on this project.',
   no_boards: 'Main board view unavailable — the cable schedule has no main boards.',
 }
 const FEED_OMISSION: Record<Unavailable, string> = {
   unreadable: 'the cable schedule could not be read',
-  no_revision: 'the project has no cable schedule yet',
+  no_revision: 'no cable schedule is visible to you on this project',
   no_boards: 'the cable schedule has no main boards',
 }
 

@@ -115,7 +115,7 @@ describe('planFeedFrom', () => {
       reason: 'Main board view unavailable — the cable schedule could not be read.',
       omission: 'the cable schedule could not be read',
     })
-    expect(planFeedFrom({ ok: false, reason: 'no_revision' }, ['db1'])).toMatchObject({ state: 'unavailable', omission: 'the project has no cable schedule yet' })
+    expect(planFeedFrom({ ok: false, reason: 'no_revision' }, ['db1'])).toMatchObject({ state: 'unavailable', reason: 'Main board view unavailable — no cable schedule is visible to you on this project.', omission: 'no cable schedule is visible to you on this project' })
     expect(planFeedFrom({ ok: true, revisionId: 'r', revisionCode: 'Rev 1', edges: [], boards: [] }, ['db1']))
       .toMatchObject({ state: 'unavailable', omission: 'the cable schedule has no main boards' })
   })

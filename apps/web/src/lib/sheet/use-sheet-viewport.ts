@@ -95,14 +95,15 @@ export function useSheetViewport({
     setOffset(t.offset)
   }, [imageW, imageH, viewport])
 
-  /** "Show": zoom so `box` (image space) fills `fill` of the view, centred. A no-op until laid out. */
-  const fitToBoxView = useCallback((box: ViewBox, fill?: number) => {
+  /** "Show": zoom so `box` (image space) fills `fill` of the view, centred. A no-op (returns false) until laid out. */
+  const fitToBoxView = useCallback((box: ViewBox, fill?: number): boolean => {
     const t = fitToBox(viewport, box, fill)
-    if (!t) return
+    if (!t) return false
     scaleRef.current = t.scale
     offsetRef.current = t.offset
     setScale(t.scale)
     setOffset(t.offset)
+    return true
   }, [viewport])
 
   // First-load auto-fit

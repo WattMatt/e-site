@@ -23,7 +23,7 @@ import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/fl
 import { Tooltip } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/markup-tooltip'
 import { useSheetImage, backingSize } from '@/lib/sheet/use-sheet-image'
 import { useSheetViewport } from '@/lib/sheet/use-sheet-viewport'
-import { FOCUS_COLOUR, FOCUS_FILL, FOCUS_PULSE_MS, FOCUS_TICK_MS, pulseVisible } from '@/lib/status-plans/focus'
+import { FOCUS_COLOUR, FOCUS_FILL, FOCUS_PULSE_MS, FOCUS_TICK_MS, focusPending, pulseVisible } from '@/lib/status-plans/focus'
 import {
   canvasReducer,
   dragVertex,
@@ -141,14 +141,16 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
   const appliedFocusNonce = useRef<number | null>(null)
   useEffect(() => {
     const f = p.focus
-    if (!f || !img || appliedFocusNonce.current === f.nonce) return
+    if (!f || !focusPending(appliedFocusNonce.current, f, !!img)) return
+    // Handled only after a fit succeeded: while the view is not laid out it stays pending
+    // and this effect re-runs when the viewport size changes.
+    if (!vp.fitToBox(f.box, FOCUS_FILL)) return
     appliedFocusNonce.current = f.nonce
-    vp.fitToBox(f.box, FOCUS_FILL)
     const t = Date.now()
     setPulse({ box: f.box, started: t })
     setPulseNow(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.focus?.nonce, img])
+  }, [p.focus?.nonce, img, viewport.w, viewport.h])
   useEffect(() => {
     if (!pulse) return
     const id = setInterval(() => {
