@@ -37,6 +37,10 @@ import { useAuth } from '../../../src/providers/AuthProvider'
 import { Renderer, type FieldChangePatch } from '../../../src/inspections/FieldRenderers'
 import { pendingPhotoSlots } from '../../../src/inspections/attachment-queue'
 import {
+  VERIFIER_READ_ONLY_MESSAGE,
+  captureAccess,
+} from '../../../src/inspections/capture-access'
+import {
   type OutboxItem,
   enqueueResponse,
   enqueueSubmit,
@@ -58,11 +62,8 @@ type LoadedInspection = {
   template_id: string
   target_label: string | null
   status: string
+  verifier_id: string | null
 }
-
-// Statuses in which a contributor may still answer (mirrors
-// inspections.user_can_write_responses).
-const ANSWERABLE_STATUSES = ['assigned', 'in_progress', 're-inspect_required']
 
 export default function MobileCaptureScreen() {
   const { inspectionId } = useLocalSearchParams<{ inspectionId: string }>()
@@ -71,6 +72,7 @@ export default function MobileCaptureScreen() {
 
   const [inspection, setInspection] = useState<LoadedInspection | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
+  const [deliverableType, setDeliverableType] = useState<string | null>(null)
   const [responses, setResponses] = useState<Response[]>([])
   const responsesRef = useRef<Response[]>([])
   // Photo slots (section_id+field_id) used for min_count enforcement: the
@@ -124,6 +126,7 @@ export default function MobileCaptureScreen() {
         if (cancelled) return
         setInspection(bundle.inspection)
         setTemplate(schemaJson)
+        setDeliverableType(bundle.template?.deliverable_type ?? null)
         applyResponses(mergeOutboxIntoResponses(bundle.responses as unknown as Response[], queued))
         setOutbox(queued)
         setPhotos([...bundle.photos, ...localPhotos])
@@ -144,8 +147,20 @@ export default function MobileCaptureScreen() {
     [template, responses, photos],
   )
 
+  const access = inspection
+    ? captureAccess({
+        userId,
+        status: inspection.status,
+        verifierId: inspection.verifier_id,
+        deliverableType,
+        schemaJson: template,
+      })
+    : null
+
   const updateResponse = async (sectionId: string, fieldId: string, patch: FieldChangePatch) => {
-    if (!inspectionId) return
+    // The fields are read-only then; this is the backstop, so nothing is queued that the
+    // database would refuse.
+    if (!inspectionId || !access || access.readOnly) return
     const prev = responsesRef.current
     const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
     const current: Response = idx === -1 ? { section_id: sectionId, field_id: fieldId } : prev[idx]
@@ -178,7 +193,7 @@ export default function MobileCaptureScreen() {
   }
 
   const onSubmit = async () => {
-    if (!template || !ev || !inspectionId) return
+    if (!template || !ev || !inspectionId || !access?.canSubmit) return
     if (ev.missingRequired.length > 0) {
       Alert.alert(
         'Required fields missing',
@@ -266,7 +281,7 @@ export default function MobileCaptureScreen() {
     )
   }
 
-  const answerable = ANSWERABLE_STATUSES.includes(inspection.status)
+  const { readOnly, verifierLocked, canSubmit } = access!
   const refused = outbox.filter((i) => i.status === 'rejected')
   const waiting = outbox.filter((i) => i.status !== 'rejected')
   const submitQueued = waiting.some((i) => i.kind === 'submit')
@@ -285,7 +300,11 @@ export default function MobileCaptureScreen() {
       </View>
 
       {/* Upload state — what has not reached the server, and why */}
-      {!answerable && (
+      {verifierLocked ? (
+        <View style={[styles.notice, styles.noticeInfo]} testID="capture-verifier-read-only">
+          <Text style={styles.noticeText}>{VERIFIER_READ_ONLY_MESSAGE}</Text>
+        </View>
+      ) : readOnly && (
         <View style={[styles.notice, styles.noticeInfo]} testID="capture-not-answerable">
           <Text style={styles.noticeText}>
             This inspection is {inspection.status.replace(/_/g, ' ')}; answers can no longer be changed.
@@ -347,6 +366,7 @@ export default function MobileCaptureScreen() {
                 inspectionId={inspectionId!}
                 sectionId={section.section_id}
                 onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                readOnly={readOnly}
               />
             </View>
           )
@@ -373,6 +393,7 @@ export default function MobileCaptureScreen() {
                       inspectionId={inspectionId!}
                       sectionId={section.section_id}
                       onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                      readOnly={readOnly}
                     />
                   </View>
                 )
@@ -390,7 +411,7 @@ export default function MobileCaptureScreen() {
             {ev?.overallResult ? ` · ${ev.overallResult}` : ''}
           </Text>
         </View>
-        {answerable && (
+        {canSubmit && (
           <TouchableOpacity
             onPress={onSubmit}
             disabled={submitting || submitQueued}

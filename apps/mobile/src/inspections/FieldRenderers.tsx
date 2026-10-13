@@ -60,6 +60,10 @@ export interface RendererProps {
   inspectionId: string
   sectionId: string
   onChange: (patch: FieldChangePatch) => void
+  // Shows the saved answers without letting anyone change them: no presses, no typing, no
+  // camera, picker or upload. The capture screen sets it when the database would refuse the
+  // write anyway (the inspection is no longer answerable, or the user is its separate verifier).
+  readOnly?: boolean
   // Optional escape hatches for repeating_group entries — see web FieldRenderer for the
   // mirror shape. `allResponses` lets the renderer rehydrate existing entries on mount;
   // `onUpsert` lets sub-fields write to the synthetic `<group>[<i>].<sub>` field_id
@@ -95,6 +99,7 @@ export function Renderer(props: RendererProps): JSX.Element | null {
         inspectionId={props.inspectionId}
         sectionId={props.sectionId}
         fieldId={props.field.field_id}
+        readOnly={props.readOnly}
       />
     </>
   )
@@ -119,6 +124,7 @@ function renderFieldBody(props: RendererProps): JSX.Element | null {
           field={props.field}
           inspectionId={props.inspectionId}
           sectionId={props.sectionId}
+          readOnly={props.readOnly}
         />
       )
     case 'header':
@@ -130,6 +136,7 @@ function renderFieldBody(props: RendererProps): JSX.Element | null {
           value={props.response?.value_json as SignaturePayload | undefined}
           onChange={(v) => props.onChange({ value_json: v as unknown as Record<string, unknown> })}
           inspectionId={props.inspectionId}
+          readOnly={props.readOnly}
         />
       )
     case 'repeating_group':
@@ -140,6 +147,7 @@ function renderFieldBody(props: RendererProps): JSX.Element | null {
           field={props.field}
           value={props.response?.value_text ?? undefined}
           onChange={(v) => props.onChange({ value_text: v })}
+          readOnly={props.readOnly}
         />
       )
     case 'file':
@@ -149,6 +157,7 @@ function renderFieldBody(props: RendererProps): JSX.Element | null {
           value={props.response?.value_json as { remotePath: string; filename: string } | undefined}
           onChange={(v) => props.onChange({ value_json: v as Record<string, unknown> })}
           inspectionId={props.inspectionId}
+          readOnly={props.readOnly}
         />
       )
     case 'computed':
@@ -165,7 +174,7 @@ function renderFieldBody(props: RendererProps): JSX.Element | null {
 
 // ─── Pass / fail ─────────────────────────────────────────────────────
 
-function PassFailField({ field, response, onChange }: RendererProps) {
+function PassFailField({ field, response, onChange, readOnly }: RendererProps) {
   const isPass = response?.value_bool === true
   const isFail = response?.value_bool === false
   return (
@@ -176,8 +185,10 @@ function PassFailField({ field, response, onChange }: RendererProps) {
           onPress={() =>
             onChange({ value_bool: true, pass_state: 'pass', fail_reason: null })
           }
+          disabled={readOnly}
           style={[
             styles.passFailBtn,
+            readOnly && !isPass && styles.readOnlyDim,
             isPass && { borderColor: colors.green, backgroundColor: colors.greenDim },
           ]}
         >
@@ -187,8 +198,10 @@ function PassFailField({ field, response, onChange }: RendererProps) {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => onChange({ value_bool: false, pass_state: 'fail' })}
+          disabled={readOnly}
           style={[
             styles.passFailBtn,
+            readOnly && !isFail && styles.readOnlyDim,
             isFail && { borderColor: colors.red, backgroundColor: colors.redDim },
           ]}
         >
@@ -203,7 +216,8 @@ function PassFailField({ field, response, onChange }: RendererProps) {
           placeholderTextColor={colors.textDim}
           value={response?.fail_reason ?? ''}
           onChangeText={(t) => onChange({ value_bool: false, fail_reason: t, pass_state: 'fail' })}
-          style={[styles.input, { marginTop: spacing.sm }]}
+          editable={!readOnly}
+          style={[styles.input, { marginTop: spacing.sm }, readOnly && styles.inputReadOnly]}
         />
       ) : null}
     </View>
@@ -212,7 +226,7 @@ function PassFailField({ field, response, onChange }: RendererProps) {
 
 // ─── Number ─────────────────────────────────────────────────────────
 
-function NumberField({ field, response, sectionId, onChange }: RendererProps) {
+function NumberField({ field, response, sectionId, onChange, readOnly }: RendererProps) {
   const ev = evaluateField(field, response ?? {
     section_id: sectionId,
     field_id: field.field_id,
@@ -229,7 +243,8 @@ function NumberField({ field, response, sectionId, onChange }: RendererProps) {
               value_number: t === '' ? null : Number.parseFloat(t),
             })
           }
-          style={[styles.input, { flex: 1 }]}
+          editable={!readOnly}
+          style={[styles.input, { flex: 1 }, readOnly && styles.inputReadOnly]}
           placeholderTextColor={colors.textDim}
         />
         {field.unit ? <Text style={styles.unit}>{field.unit}</Text> : null}
@@ -252,7 +267,7 @@ function NumberField({ field, response, sectionId, onChange }: RendererProps) {
 
 // ─── Text / textarea ─────────────────────────────────────────────────
 
-function TextField({ field, response, onChange }: RendererProps) {
+function TextField({ field, response, onChange, readOnly }: RendererProps) {
   const multi = field.type === 'textarea'
   return (
     <View>
@@ -261,8 +276,13 @@ function TextField({ field, response, onChange }: RendererProps) {
         multiline={multi}
         value={response?.value_text ?? ''}
         onChangeText={(t) => onChange({ value_text: t })}
+        editable={!readOnly}
         placeholderTextColor={colors.textDim}
-        style={[styles.input, multi && { minHeight: 96, textAlignVertical: 'top' }]}
+        style={[
+          styles.input,
+          multi && { minHeight: 96, textAlignVertical: 'top' },
+          readOnly && styles.inputReadOnly,
+        ]}
       />
     </View>
   )
@@ -274,22 +294,28 @@ function DateField({
   field,
   value,
   onChange,
+  readOnly,
 }: {
   field: Field
   value?: string
   onChange: (v: string) => void
+  readOnly?: boolean
 }) {
   const [showPicker, setShowPicker] = useState(false)
   const date = value ? new Date(value) : new Date()
   return (
     <View>
       <FieldLabel field={field} />
-      <Pressable onPress={() => setShowPicker(true)} style={styles.dateButton}>
+      <Pressable
+        onPress={() => setShowPicker(true)}
+        disabled={readOnly}
+        style={[styles.dateButton, readOnly && styles.inputReadOnly]}
+      >
         <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
-          {value ? new Date(value).toLocaleDateString() : 'Pick a date'}
+          {value ? new Date(value).toLocaleDateString() : readOnly ? 'No date' : 'Pick a date'}
         </Text>
       </Pressable>
-      {showPicker && (
+      {showPicker && !readOnly && (
         <DateTimePicker
           value={date}
           mode="date"
@@ -305,7 +331,7 @@ function DateField({
 
 // ─── Dropdown / multi-select (toggle pills) ─────────────────────────
 
-function ChoiceField({ field, response, onChange }: RendererProps) {
+function ChoiceField({ field, response, onChange, readOnly }: RendererProps) {
   const isMulti = field.type === 'multi_select'
   const options = (field.options as string[] | undefined) ?? []
   return (
@@ -331,7 +357,8 @@ function ChoiceField({ field, response, onChange }: RendererProps) {
                   onChange({ value_text: opt })
                 }
               }}
-              style={[styles.chip, selected && styles.chipSelected]}
+              disabled={readOnly}
+              style={[styles.chip, selected && styles.chipSelected, readOnly && !selected && styles.readOnlyDim]}
             >
               <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{opt}</Text>
             </Pressable>
@@ -417,10 +444,12 @@ function PhotoField({
   field,
   inspectionId,
   sectionId,
+  readOnly,
 }: {
   field: Field
   inspectionId: string
   sectionId: string
+  readOnly?: boolean
 }) {
   const { enqueueing, localPhotos, capture: onPick } = usePhotoCapture(
     inspectionId,
@@ -432,15 +461,17 @@ function PhotoField({
   return (
     <View>
       <FieldLabel field={field} />
-      <Pressable
-        onPress={onPick}
-        disabled={enqueueing}
-        style={[styles.photoBtn, enqueueing && { opacity: 0.5 }]}
-      >
-        <Text style={styles.photoBtnText}>
-          {enqueueing ? 'Saving...' : 'Take photo'}
-        </Text>
-      </Pressable>
+      {!readOnly && (
+        <Pressable
+          onPress={onPick}
+          disabled={enqueueing}
+          style={[styles.photoBtn, enqueueing && { opacity: 0.5 }]}
+        >
+          <Text style={styles.photoBtnText}>
+            {enqueueing ? 'Saving...' : 'Take photo'}
+          </Text>
+        </Pressable>
+      )}
 
       {/* Thumbnail grid — 3-column, square thumbs, tap to open lightbox */}
       {localPhotos.length > 0 ? (
@@ -476,14 +507,17 @@ function InlineFieldPhotos({
   inspectionId,
   sectionId,
   fieldId,
+  readOnly,
 }: {
   inspectionId: string
   sectionId: string
   fieldId: string
+  readOnly?: boolean
 }) {
   const { enqueueing, localPhotos, capture } = usePhotoCapture(inspectionId, sectionId, fieldId)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
+  if (readOnly && localPhotos.length === 0) return null
   return (
     <View style={styles.inlinePhotoRow}>
       {localPhotos.map((photo, idx) => (
@@ -496,15 +530,17 @@ function InlineFieldPhotos({
           <Image source={{ uri: photo.uri }} style={styles.photoThumbImg} resizeMode="cover" />
         </TouchableOpacity>
       ))}
-      <Pressable
-        onPress={capture}
-        disabled={enqueueing}
-        style={[styles.inlinePhotoBtn, enqueueing && { opacity: 0.5 }]}
-      >
-        <Text style={styles.inlinePhotoBtnText}>
-          {enqueueing ? 'Saving…' : localPhotos.length > 0 ? '+ Photo' : '+ Add photo'}
-        </Text>
-      </Pressable>
+      {!readOnly && (
+        <Pressable
+          onPress={capture}
+          disabled={enqueueing}
+          style={[styles.inlinePhotoBtn, enqueueing && { opacity: 0.5 }]}
+        >
+          <Text style={styles.inlinePhotoBtnText}>
+            {enqueueing ? 'Saving…' : localPhotos.length > 0 ? '+ Photo' : '+ Add photo'}
+          </Text>
+        </Pressable>
+      )}
       <PhotoLightbox
         photos={localPhotos}
         activeIndex={lightboxIndex ?? 0}
@@ -523,7 +559,7 @@ function InlineFieldPhotos({
 // the entry (server round-trip; offline behaviour is the caller's problem
 // for v1). `+ Add` appends a new index at max+1.
 function RepeatingGroupField(props: RendererProps) {
-  const { field, allResponses, onUpsert, onDeleteEntry, inspectionId, sectionId } = props
+  const { field, allResponses, onUpsert, onDeleteEntry, inspectionId, sectionId, readOnly } = props
   const subFields = (field.fields ?? []) as Field[]
   const seedIndices = allResponses
     ? listRepeatingGroupEntryIndices(field.field_id, allResponses)
@@ -611,16 +647,18 @@ function RepeatingGroupField(props: RendererProps) {
                     return n
                   })
                 }
-                onLongPress={() => confirmRemove(idx)}
+                onLongPress={readOnly ? undefined : () => confirmRemove(idx)}
                 style={styles.rgEntryHeader}
               >
                 <Text style={styles.rgEntryChevron}>{isOpen ? '▾' : '▸'}</Text>
                 <Text style={styles.rgEntryLabel} numberOfLines={1}>
                   {labelFor(idx)}
                 </Text>
-                <Text style={[styles.rgEntryAction, deletingIdx === idx && { opacity: 0.4 }]}>
-                  {deletingIdx === idx ? '…' : '✕'}
-                </Text>
+                {!readOnly && (
+                  <Text style={[styles.rgEntryAction, deletingIdx === idx && { opacity: 0.4 }]}>
+                    {deletingIdx === idx ? '…' : '✕'}
+                  </Text>
+                )}
               </Pressable>
               {isOpen && (
                 <View style={styles.rgEntryBody}>
@@ -640,6 +678,7 @@ function RepeatingGroupField(props: RendererProps) {
                         allResponses={allResponses}
                         onUpsert={onUpsert}
                         onDeleteEntry={onDeleteEntry}
+                        readOnly={readOnly}
                       />
                     )
                   })}
@@ -652,14 +691,16 @@ function RepeatingGroupField(props: RendererProps) {
           <Text style={styles.rgEmpty}>No entries yet.</Text>
         ) : null}
       </View>
-      <Pressable
-        onPress={addEntry}
-        disabled={atMax}
-        style={[styles.rgAddBtn, atMax && { opacity: 0.4 }]}
-      >
-        <Text style={styles.rgAddBtnText}>+ Add {field.label.toLowerCase()}</Text>
-      </Pressable>
-      {atMax ? (
+      {!readOnly && (
+        <Pressable
+          onPress={addEntry}
+          disabled={atMax}
+          style={[styles.rgAddBtn, atMax && { opacity: 0.4 }]}
+        >
+          <Text style={styles.rgAddBtnText}>+ Add {field.label.toLowerCase()}</Text>
+        </Pressable>
+      )}
+      {atMax && !readOnly ? (
         <Text style={[styles.helper, { color: colors.amber }]}>
           Maximum {field.max_count} entries reached.
         </Text>
@@ -675,11 +716,13 @@ function SignatureField({
   value,
   onChange,
   inspectionId,
+  readOnly,
 }: {
   field: Field
   value?: SignaturePayload
   onChange: (v: SignaturePayload) => void
   inspectionId: string
+  readOnly?: boolean
 }) {
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -704,13 +747,17 @@ function SignatureField({
   return (
     <View>
       <FieldLabel field={field} />
-      <Pressable onPress={() => setModalOpen(true)} style={styles.signaturePadButton}>
+      <Pressable
+        onPress={() => setModalOpen(true)}
+        disabled={readOnly}
+        style={[styles.signaturePadButton, readOnly && styles.inputReadOnly]}
+      >
         <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
-          {value ? `Signed by ${value.signatoryName}` : 'Tap to sign'}
+          {value ? `Signed by ${value.signatoryName}` : readOnly ? 'Not signed' : 'Tap to sign'}
         </Text>
       </Pressable>
       <SignaturePadModal
-        visible={modalOpen}
+        visible={modalOpen && !readOnly}
         requiredQualifications={
           (field as Field & { required_qualifications?: string[] }).required_qualifications
         }
@@ -728,11 +775,13 @@ function FileField({
   value,
   onChange,
   inspectionId,
+  readOnly,
 }: {
   field: Field
   value?: { remotePath: string; filename: string }
   onChange: (v: { remotePath: string; filename: string }) => void
   inspectionId: string
+  readOnly?: boolean
 }) {
   const handlePick = async () => {
     const acceptedMimes =
@@ -760,9 +809,13 @@ function FileField({
   return (
     <View>
       <FieldLabel field={field} />
-      <Pressable onPress={handlePick} style={styles.fileButton}>
+      <Pressable
+        onPress={handlePick}
+        disabled={readOnly}
+        style={[styles.fileButton, readOnly && styles.inputReadOnly]}
+      >
         <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
-          {value ? `📎 ${value.filename}` : 'Tap to attach file'}
+          {value ? `📎 ${value.filename}` : readOnly ? 'No file attached' : 'Tap to attach file'}
         </Text>
       </Pressable>
     </View>
@@ -816,6 +869,9 @@ function FieldLabel({ field }: { field: Field }) {
 }
 
 const styles = StyleSheet.create({
+  // Read-only: unselected options fade back, inputs lose their "tap me" look.
+  readOnlyDim: { opacity: 0.45 },
+  inputReadOnly: { opacity: 0.7 },
   label: {
     fontSize: fontSize.bodyLg,
     fontWeight: fontWeight.medium,

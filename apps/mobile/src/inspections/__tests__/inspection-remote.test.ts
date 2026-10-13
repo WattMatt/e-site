@@ -100,8 +100,8 @@ describe('reads', () => {
 
   it('loads the capture bundle: inspection, its template by template_id, responses and photo slots', async () => {
     const { client, log } = fakeClient([
-      { data: { id: 'i1', template_id: 't9', target_label: 'DB-1', status: 'assigned', project_id: 'p1' }, error: null, status: 200 },
-      { data: { id: 't9', name: 'LV CoC', schema_json: { sections: [] } }, error: null, status: 200 },
+      { data: { id: 'i1', template_id: 't9', target_label: 'DB-1', status: 'assigned', project_id: 'p1', verifier_id: 'u-v' }, error: null, status: 200 },
+      { data: { id: 't9', name: 'LV CoC', deliverable_type: 'coc', schema_json: { sections: [] } }, error: null, status: 200 },
       { data: [{ section_id: 's1', field_id: 'f1', value_text: 'x' }], error: null, status: 200 },
       { data: [{ section_id: 's1', field_id: 'f2' }], error: null, status: 200 },
     ])
@@ -109,13 +109,17 @@ describe('reads', () => {
     const bundle = await createInspectionRemote(client).loadCaptureBundle('i1')
 
     expect(bundle).toEqual({
-      inspection: { id: 'i1', template_id: 't9', target_label: 'DB-1', status: 'assigned', project_id: 'p1' },
-      template: { id: 't9', name: 'LV CoC', schema_json: { sections: [] } },
+      inspection: { id: 'i1', template_id: 't9', target_label: 'DB-1', status: 'assigned', project_id: 'p1', verifier_id: 'u-v' },
+      template: { id: 't9', name: 'LV CoC', deliverable_type: 'coc', schema_json: { sections: [] } },
       responses: [{ section_id: 's1', field_id: 'f1', value_text: 'x' }],
       photos: [{ section_id: 's1', field_id: 'f2' }],
     })
     expect(log.map((l) => l.table)).toEqual(['inspections', 'templates', 'responses', 'photos'])
     expect(log[1].calls).toContainEqual(['eq', ['id', 't9']])
+    // The screen locks the form for the assigned verifier of a separate-verifier template (00248),
+    // so both reads must carry what that decision needs.
+    expect(String(log[0].calls[0][1][0])).toMatch(/\bverifier_id\b/)
+    expect(String(log[1].calls[0][1][0])).toMatch(/\bdeliverable_type\b/)
   })
 
   it('returns null for an inspection the user cannot see', async () => {
