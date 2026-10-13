@@ -19,7 +19,7 @@
  *     on page 2 of a multi-page PDF failed ALL FOUR tests and its drawing was
  *     eligible for silent adoption.
  *   - `tenants.floor_plan_zones` (00006) — `polygon JSONB`, older than the
- *     predicate itself.
+ *     predicate itself. Retired unused by 00251 (now DECLARED_EXEMPT).
  *
  * WHAT THIS TEST CATCHES. Not a regression of the three fixes (a deleted branch
  * is visible in review). The failure it is really here for is the NEXT table:
@@ -67,6 +67,10 @@ const DECLARED_EXEMPT: Record<string, string> = {
     'page_index and source_file_path; a plan\'s sheets are files in the tenant-plan-files bucket, ' +
     'which cloud sync never reads or swaps. 00245\'s CREATE TABLE still names floor_plan_id, which ' +
     'is the only reason discovery finds it.',
+  'tenants.floor_plan_zones':
+    'Retired unused: 00251 drops the table. Created in 00006 for spatial snag pinning, never written ' +
+    'by any UI, 0 rows in production on 2026-10-13. 00006\'s CREATE TABLE still names floor_plan_id, ' +
+    'which is the only reason discovery finds it.',
 }
 
 /**
@@ -226,6 +230,7 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
       // coverage check discriminates rather than passing everything.
       expect(predicateQueries(body, 'tenants.floor_plan_versions')).toBe(false)
       expect(predicateQueries(body, 'tenants.status_plans')).toBe(false)
+      expect(predicateQueries(body, 'tenants.floor_plan_zones')).toBe(false)
       expect(predicateQueries(body, 'public.rfi_annotations')).toBe(true)
     })
 
