@@ -48,6 +48,8 @@ export interface ShapeView {
   invalid: boolean
   /** node_id is set but the board is not live (soft-deleted, or not visible). */
   linkedNodeMissing: boolean
+  /** Board mode only: other main boards at the same distance ("Also fed from …"). */
+  feedAlso?: string[]
 }
 
 export interface ShapeViewContext {
