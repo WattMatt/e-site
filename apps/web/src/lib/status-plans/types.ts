@@ -141,6 +141,10 @@ export interface StatusPlanPageProps {
   canEdit: boolean
   /** From ?shape=, only when that shape is on the current sheet. */
   initialShapeId: string | null
+  /** Floor plan only (null on a line diagram): the feed graph for "Colour by: Main board". */
+  feed: PlanFeed | null
+  /** From ?colour=; always 'status' on a line diagram. */
+  initialColourBy: ColourBy
 }
 
 /** A plan route with nothing uploaded yet. */

@@ -64,6 +64,8 @@ function props(o: Partial<StatusPlanPageProps> = {}): StatusPlanPageProps {
     today: '2026-06-20',
     canEdit: true,
     initialShapeId: null,
+    feed: null,
+    initialColourBy: 'status',
     ...o,
   }
 }
