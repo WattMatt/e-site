@@ -18,8 +18,9 @@ interface Props {
 }
 
 /**
- * The line diagram (300 schematic): upload it, detect and hatch the DB blocks
- * (spec 2026-10-12 §2). Same reads and gates as the floor plan. "Export sheet" (in the workspace)
+ * The line diagram (300 schematic): upload it, and an empty sheet scans itself
+ * for DB blocks on open for an editor (review above the drawing), then hatch
+ * them (spec 2026-10-12 §2). Same reads and gates as the floor plan. "Export sheet" (in the workspace)
  * downloads the sheet on screen at its own size.
  */
 export default async function LineDiagramPage({ params, searchParams }: Props) {
@@ -37,7 +38,7 @@ export default async function LineDiagramPage({ params, searchParams }: Props) {
         ← Tenant schedule
       </Link>
       <div style={{ marginTop: 8 }}>
-        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace {...data.props} />}
+        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace key={data.props.sheet.id} {...data.props} />}
       </div>
     </div>
   )

@@ -40,7 +40,7 @@ export default async function TenantFloorPlanPage({ params, searchParams }: Prop
         ← Tenant schedule
       </Link>
       <div style={{ marginTop: 8 }}>
-        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace {...data.props} />}
+        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace key={data.props.sheet.id} {...data.props} />}
       </div>
     </div>
   )

@@ -57,8 +57,25 @@ describe('tenant plan routes hand their client components JSON only', () => {
 
     it(`${page.slice(BASE.length)} spreads the assembled props and adds nothing`, () => {
       const src = readFileSync(page, 'utf8')
-      expect(openingTags(src, 'StatusPlanWorkspace')).toEqual(['<StatusPlanWorkspace {...data.props} />'])
+      // `key` is React's, not a prop the component receives (see the remount test below).
+      expect(openingTags(src, 'StatusPlanWorkspace')).toEqual(['<StatusPlanWorkspace key={data.props.sheet.id} {...data.props} />'])
       expect(openingTags(src, 'TenantPlanEmpty')).toEqual(['<TenantPlanEmpty {...data.empty} />'])
+    })
+  }
+})
+
+/**
+ * SHEET SWITCHES MUST REMOUNT THE WORKSPACE. The sheet strip navigates with
+ * <Link href="?sheet=…">; the client workspace holds `sheet` in state seeded
+ * from props, so without a key a switch keeps showing the first sheet (and a
+ * half-finished scan could land on the wrong one). Found 2026-10-13.
+ */
+describe('tenant plan pages key the workspace by sheet', () => {
+  for (const page of PAGES) {
+    it(`${page.split('tenant-schedule/')[1]} remounts StatusPlanWorkspace per sheet`, () => {
+      const tags = openingTags(readFileSync(page, 'utf8'), 'StatusPlanWorkspace')
+      expect(tags.length).toBeGreaterThan(0)
+      for (const t of tags) expect(t).toMatch(/key=\{[^}]*sheet\.id\}/)
     })
   }
 })
