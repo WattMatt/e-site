@@ -58,3 +58,46 @@ describe('viewportKeyAction', () => {
     expect(viewportKeyAction('0', ['0'])).toBe('fit')
   })
 })
+
+import { fitToBox, MIN_SCALE } from './viewport-math'
+
+describe('fitToBox', () => {
+  const vp = { w: 800, h: 600 }
+  const centreOnScreen = (t: { scale: number; offset: { x: number; y: number } }, box: { minX: number; minY: number; maxX: number; maxY: number }) => ({
+    x: t.offset.x + ((box.minX + box.maxX) / 2) * t.scale,
+    y: t.offset.y + ((box.minY + box.maxY) / 2) * t.scale,
+  })
+
+  it('the box fills 60 % of the limiting side and sits in the middle of the view', () => {
+    const box = { minX: 1000, minY: 2000, maxX: 1200, maxY: 2100 } // 200 × 100: width limits (800/200 < 600/100)
+    const t = fitToBox(vp, box)!
+    expect(t.scale).toBeCloseTo((800 / 200) * 0.6, 9)
+    const c = centreOnScreen(t, box)
+    expect(c.x).toBeCloseTo(400, 6)
+    expect(c.y).toBeCloseTo(300, 6)
+  })
+
+  it('a box at the sheet\'s edge is still centred (the sheet may slide off-screen)', () => {
+    const box = { minX: 0, minY: 0, maxX: 100, maxY: 100 }
+    const t = fitToBox(vp, box)!
+    const c = centreOnScreen(t, box)
+    expect(c.x).toBeCloseTo(400, 6)
+    expect(c.y).toBeCloseTo(300, 6)
+    expect(t.offset.x).toBeGreaterThan(0)
+  })
+
+  it('a tiny box is clamped to MAX_SCALE, a huge one to MIN_SCALE; fill is honoured', () => {
+    expect(fitToBox(vp, { minX: 10, minY: 10, maxX: 10.5, maxY: 10.5 })!.scale).toBe(MAX_SCALE)
+    expect(fitToBox(vp, { minX: 0, minY: 0, maxX: 1e7, maxY: 1e7 })!.scale).toBe(MIN_SCALE)
+    expect(fitToBox(vp, { minX: 0, minY: 0, maxX: 800, maxY: 600 }, 1)!.scale).toBeCloseTo(1, 9)
+  })
+
+  it('a zero-size box (a point) does not divide by zero', () => {
+    expect(fitToBox(vp, { minX: 5, minY: 5, maxX: 5, maxY: 5 })!.scale).toBe(MAX_SCALE)
+  })
+
+  it('refuses an unlaid-out view and a box that is not finite', () => {
+    expect(fitToBox({ w: 0, h: 0 }, { minX: 0, minY: 0, maxX: 1, maxY: 1 })).toBeNull()
+    expect(fitToBox(vp, { minX: Infinity, minY: 0, maxX: -Infinity, maxY: 1 })).toBeNull()
+  })
+})
