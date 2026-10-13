@@ -19,6 +19,12 @@
  * drops it before save (without that, every sheet carried its drawing twice). Callers that build a
  * document with drawStatusPlanPage must prune before save — renderStatusPlanPdf and the appendix do.
  *
+ * Annotations (2026-10-13): the canvas shows annotation appearances (pdf.js default
+ * annotationMode), so the PDF draws them too — each drawn annotation's normal appearance
+ * stream is painted over the page at the §12.5.5 matrix (annotation-flatten.ts). They are
+ * flattened, never copied: the output has no interactive annotations. A page without
+ * /Annots produces exactly the bytes it did before (render-plan-page.baseline.test.ts).
+ *
  * Failure model: the source is resolved (loaded, page checked, embedded) BEFORE a page is added, and
  * the embed is forced with `.embed()` — pdf-lib otherwise embeds lazily inside `save()`, where one bad
  * drawing would fail the whole report. A failure is a StatusPlanSourceError carrying a sentence the
@@ -44,6 +50,7 @@ import {
 import { winAnsiSafe } from '@/lib/pdf/winansi'
 import { pruneUnreachableObjects } from '@/lib/pdf/prune-unreachable'
 import { measuredGlaText } from './shape-view'
+import { collectAnnotationAppearances, type FlatAppearance } from './annotation-flatten'
 import {
   IMAGE_PX_PER_PT, PDF_PX_PER_PT, imageToOutput, normaliseRotation, placementFor, viewedSize,
   type Frame, type PageBox, type Placement, type QuarterTurn,
@@ -186,12 +193,17 @@ async function resolveSourceUncached(doc: PDFDocument, source: PlanSource): Prom
     const box = srcPage.getCropBox()
     const rotate = normaliseRotation(srcPage.getRotation().angle)
     let embedded: Awaited<ReturnType<PDFDocument['embedPage']>>
+    let annots: FlatAppearance[] = []
     try {
       // Copy the page with this file's shared copier, then embed it from inside `doc` (no second copy).
       const leaf = copier.copy(srcPage.node)
       const local = PDFPage.of(leaf, doc.context.register(leaf), doc)
       embedded = await doc.embedPage(local, { left: box.x, bottom: box.y, right: box.x + box.width, top: box.y + box.height })
       await embedded.embed()
+      // The copied page brought its /Annots and their appearance streams with it. Keep the ones
+      // pdf.js paints on screen (spec 2026-10-13 §3); referencing them from the output page keeps
+      // them through pruneUnreachableObjects, and everything else is still pruned.
+      annots = collectAnnotationAppearances(doc.context, leaf)
     } catch {
       throw new StatusPlanSourceError(`page ${source.pageIndex} of the drawing could not be embedded`)
     }
@@ -200,6 +212,21 @@ async function resolveSourceUncached(doc: PDFDocument, source: PlanSource): Prom
       draw: (page, p) => {
         const name = page.node.newXObject('SP', embedded.ref)
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...p.matrix), drawObject(name), popGraphicsState())
+        // Each appearance in the source page's user space: the placement, then form space
+        // (source − origin, as embedPage's form), clipped to the page box, then §12.5.5's A.
+        // `Do` applies the appearance's own /Matrix.
+        for (const a of annots) {
+          const an = page.node.newXObject('SA', a.ref)
+          page.pushOperators(
+            pushGraphicsState(),
+            concatTransformationMatrix(...p.matrix),
+            concatTransformationMatrix(1, 0, 0, 1, -box.x, -box.y),
+            rectangle(box.x, box.y, box.width, box.height), clip(), endPath(),
+            concatTransformationMatrix(...a.matrix),
+            drawObject(an),
+            popGraphicsState(),
+          )
+        }
       },
     }
   }
