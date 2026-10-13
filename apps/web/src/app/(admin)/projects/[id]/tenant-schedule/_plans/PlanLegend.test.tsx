@@ -59,4 +59,11 @@ describe('PlanLegend', () => {
     expect(screen.queryByText('Complete')).toBeNull()
     expect(screen.getByText(/from cable schedule Rev 2/)).toBeTruthy()
   })
+
+  it('needs-attention rows have Show, which zooms to the shape', () => {
+    const onShowShape = vi.fn()
+    render(<PlanLegend purpose="tenant_layout" summary={summary} hasScale attention={[{ shapeId: 's9', label: 'ZZ09', reason: 'Area differs' }]} onSelectShape={vi.fn()} onShowShape={onShowShape} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show ZZ09 on the drawing' }))
+    expect(onShowShape).toHaveBeenCalledWith('s9')
+  })
 })

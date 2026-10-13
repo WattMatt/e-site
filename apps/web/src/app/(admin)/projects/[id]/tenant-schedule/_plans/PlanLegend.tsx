@@ -19,13 +19,15 @@ export interface PlanLegendProps {
   hasScale: boolean
   attention: AttentionItem[]
   onSelectShape: (shapeId: string) => void
+  /** "Show": zoom the canvas to the shape and select it. */
+  onShowShape?: (shapeId: string) => void
   /** Board mode: these rows replace the status entries. */
   board?: { rows: BoardLegendRow[]; planRows: BoardLegendRow[] | null; revisionCode: string } | null
 }
 
 const mono = { fontFamily: 'var(--font-mono)', minWidth: 28, textAlign: 'right' } as const
 
-export function PlanLegend({ purpose, summary, planSummary = null, sheetCount = 1, hasScale, attention, onSelectShape, board = null }: PlanLegendProps) {
+export function PlanLegend({ purpose, summary, planSummary = null, sheetCount = 1, hasScale, attention, onSelectShape, onShowShape, board = null }: PlanLegendProps) {
   const legend = purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND
   const showPlan = planSummary !== null && sheetCount > 1
   return (
@@ -84,10 +86,13 @@ export function PlanLegend({ purpose, summary, planSummary = null, sheetCount = 
           <h3 style={{ margin: '4px 0', fontSize: 12, color: 'var(--c-amber)' }}>Needs attention ({attention.length})</h3>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
             {attention.map((a) => (
-              <li key={a.shapeId}>
-                <button type="button" onClick={() => onSelectShape(a.shapeId)} style={{ textAlign: 'left', fontSize: 12, background: 'none', border: 0, padding: 0, cursor: 'pointer' }}>
+              <li key={a.shapeId} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                <button type="button" onClick={() => onSelectShape(a.shapeId)} style={{ flex: 1, textAlign: 'left', fontSize: 12, background: 'none', border: 0, padding: 0, cursor: 'pointer' }}>
                   <strong>{a.label}</strong> — {a.reason}
                 </button>
+                {onShowShape && (
+                  <button type="button" onClick={() => onShowShape(a.shapeId)} aria-label={`Show ${a.label} on the drawing`} style={{ fontSize: 11 }}>Show</button>
+                )}
               </li>
             ))}
           </ul>

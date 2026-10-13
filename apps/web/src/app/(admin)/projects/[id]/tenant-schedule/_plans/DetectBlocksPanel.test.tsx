@@ -207,4 +207,25 @@ describe('DetectBlocksPanel', () => {
     await waitFor(() => expect(acceptMock).toHaveBeenCalledTimes(1))
     expect(acceptMock.mock.calls[0][0].blocks.map((b: { detectedTag: string }) => b.detectedTag)).toEqual(['MB-9.2'])
   })
+
+  it('every reviewable row has Show, which hands the block\'s box to onFocus', async () => {
+    const onFocus = vi.fn()
+    render(<DetectBlocksPanel {...props({ onFocus })} />)
+    await detect()
+    for (const label of ['DB-71', 'DB-90/91', 'FOXTROT']) {
+      expect(screen.getByRole('button', { name: `Show ${label} on the drawing` })).toBeTruthy()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Show DB-71 on the drawing' }))
+    const box = onFocus.mock.calls[0]![0] as { minX: number; minY: number; maxX: number; maxY: number }
+    expect(box.minX).toBeLessThanOrEqual(100)
+    expect(box.maxX).toBeGreaterThan(100)
+    expect(box.minY).toBeLessThanOrEqual(100)
+    expect(box.maxY).toBeGreaterThan(100)
+  })
+
+  it('without onFocus there is no Show button', async () => {
+    render(<DetectBlocksPanel {...props()} />)
+    await detect()
+    expect(screen.queryByRole('button', { name: /^Show / })).toBeNull()
+  })
 })

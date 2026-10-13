@@ -17,7 +17,7 @@
  */
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PURPOSE_LABEL, type AreaType } from '@esite/shared/status-plans'
+import { PURPOSE_LABEL, boundingBox, type AreaType, type Box } from '@esite/shared/status-plans'
 import {
   createStatusPlanShapeAction,
   deleteStatusPlanShapeAction,
@@ -181,6 +181,19 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     setArmedShape(null)
   }, [])
 
+  // ── Show on drawing (spec 2026-10-13 §2) ─────────────────────────────────
+  const focusSeq = useRef(0)
+  const [focus, setFocus] = useState<{ box: Box; nonce: number } | null>(null)
+  const showBox = useCallback((box: Box) => {
+    focusSeq.current += 1
+    setFocus({ box, nonce: focusSeq.current })
+  }, [])
+  const showShape = useCallback((shapeId: string) => {
+    onSelect(shapeId)
+    const s = shapesRef.current.find((x) => x.id === shapeId)
+    if (s && s.points.length >= 6) showBox(boundingBox(s.points))
+  }, [onSelect, showBox])
+
   function reanchor() {
     void run(() => reanchorTenantPlanSheetAction({ sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt }), applySheet)
   }
@@ -198,6 +211,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         existingShapes={sheetShapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId }))}
         canEdit={canEdit}
         onAccepted={(added) => setShapes((prev) => [...prev, ...added])}
+        onFocus={showBox}
       />
     </div>
   ) : null
@@ -261,6 +275,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       <div className="stack-below-lg" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 12, alignItems: 'start' }}>
         <StatusPlanCanvas
           sheet={sheet}
+          focus={focus}
           pageIndex={sheet.pageIndex}
           purpose={purpose}
           shapes={sheetShapes}
@@ -295,6 +310,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           />
           <PlanLegend
             purpose={purpose}
+            onShowShape={showShape}
             summary={sheetSummary}
             planSummary={planSummary}
             sheetCount={sheets.length}

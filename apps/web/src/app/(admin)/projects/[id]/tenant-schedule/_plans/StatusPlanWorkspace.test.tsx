@@ -15,9 +15,10 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
+      {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
@@ -224,5 +225,15 @@ describe('StatusPlanWorkspace', () => {
   it('a line diagram has no colour switch', () => {
     render(<StatusPlanWorkspace {...schematic()} />)
     expect(screen.queryByRole('button', { name: 'Colour by main board' })).toBeNull()
+  })
+
+  it('Show on a needs-attention row selects the shape and focuses its box; Show again re-triggers', () => {
+    // A link to a board that is not live: "needs attention".
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'gone' }] })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('selected:s1')
+    expect(canvasText()).toContain('focus:100,100,300,260#1')
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('focus:100,100,300,260#2')
   })
 })
