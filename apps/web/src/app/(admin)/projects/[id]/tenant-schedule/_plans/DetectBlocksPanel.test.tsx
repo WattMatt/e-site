@@ -253,6 +253,34 @@ describe('DetectBlocksPanel', () => {
     await waitFor(() => expect(extractMock).toHaveBeenCalledTimes(2))
   })
 
+  it('a scan started on one sheet never lands on the next sheet; accept posts the current sheet', async () => {
+    let releaseA: () => void = () => {}
+    extractMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseA = () => resolve({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 1000, height: 1000 })
+    }))
+    const { rerender } = render(<DetectBlocksPanel {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for blocks' }))
+    expect((await screen.findByRole('status')).textContent).toBe('Scanning sheet…')
+    rerender(<DetectBlocksPanel {...props({ sheetId: 'sheet-2', pdfUrl: 'https://signed.example/plan-2.pdf' })} />)
+    releaseA()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(text('Scanned this sheet — 4 blocks: 2 matched · 1 needs you · 1 without a tag')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Accept all 2 matched' })).toBeNull()
+
+    acceptMock.mockResolvedValue({ ok: true, data: [] })
+    await detect()
+    expect(extractMock).toHaveBeenLastCalledWith({ url: 'https://signed.example/plan-2.pdf' }, 1)
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all 2 matched' }))
+    await waitFor(() => expect(acceptMock).toHaveBeenCalledTimes(1))
+    expect(acceptMock.mock.calls[0][0].sheetId).toBe('sheet-2')
+  })
+
+  it('an image drawing\'s note is labelled for what the panel does', () => {
+    render(<DetectBlocksPanel {...props({ isPdf: false })} />)
+    expect(screen.getByRole('region', { name: 'Scan sheet for blocks' })).not.toBeNull()
+  })
+
   it('autoScan never runs for a read-only viewer', async () => {
     const { container } = render(<DetectBlocksPanel {...props({ autoScan: true, canEdit: false })} />)
     await new Promise((r) => setTimeout(r, 0))

@@ -10,6 +10,8 @@
  *
  * The automatic scan runs once per sheet id (a ref, so re-renders and React's
  * dev double-effects never repeat it), and never for a read-only viewer.
+ * A scan belongs to the sheet it started on: the workspace keys the panel by
+ * sheet id, and a result that arrives after the sheet changed is dropped.
  * A meter or incomer inside a main board ("MB-1.1 BULK CHECK METER") is listed
  * collapsed as part of that board: never in Accept all, addable unlinked.
  *
@@ -110,6 +112,22 @@ export function DetectBlocksPanel({
     return s
   }, [existingShapes, pending, choice])
 
+  // A scan belongs to its sheet: a newer run or a different sheet drops its result.
+  const currentSheet = useRef(sheetId)
+  const runRef = useRef(0)
+  useEffect(() => {
+    if (currentSheet.current === sheetId) return
+    currentSheet.current = sheetId
+    runRef.current++
+    setReading(false)
+    setOutcome(null)
+    setReadError(null)
+    setSaveError(null)
+    setDone(new Set())
+    setChoice({})
+    setFilter({})
+  }, [sheetId])
+
   // The automatic scan: once per sheet id. detectRef points at this render's detect().
   const detectRef = useRef<(() => Promise<void>) | null>(null)
   const autoScannedFor = useRef<string | null>(null)
@@ -123,7 +141,7 @@ export function DetectBlocksPanel({
 
   if (!isPdf) {
     return (
-      <section aria-label="Detect blocks" style={{ marginTop: 8 }}>
+      <section aria-label="Scan sheet for blocks" style={{ marginTop: 8 }}>
         <p style={muted}>Block detection reads the text of a PDF drawing. This drawing is an image — draw blocks by hand.</p>
       </section>
     )
@@ -131,6 +149,10 @@ export function DetectBlocksPanel({
 
   async function detect() {
     if (!pdfUrl) { setReadError('The drawing file could not be opened. Reload the page.'); return }
+    const run = ++runRef.current
+    const forSheet = sheetId
+    /** Still this run, on the sheet it started on. */
+    const live = () => runRef.current === run && currentSheet.current === forSheet
     setReading(true)
     setReadError(null)
     setSaveError(null)
@@ -142,15 +164,16 @@ export function DetectBlocksPanel({
       try {
         page = await extractPageText({ url: pdfUrl }, pageIndex)
       } catch {
-        setReadError('The drawing link has expired or could not be read — reload the page and try again.')
+        if (live()) setReadError('The drawing link has expired or could not be read — reload the page and try again.')
         return
       }
+      if (!live()) return
       if (!page.ok) { setReadError(page.error); return }
       setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount))
     } catch {
-      setReadError('The drawing could not be read. Try again.')
+      if (live()) setReadError('The drawing could not be read. Try again.')
     } finally {
-      setReading(false)
+      if (live()) setReading(false)
     }
   }
 

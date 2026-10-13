@@ -216,6 +216,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
 
   const detectionPanel = purpose === 'distribution_schematic' ? (
       <DetectBlocksPanel
+        key={sheet.id}
         sheetId={sheet.id}
         pageIndex={sheet.pageIndex}
         pdfUrl={sheet.signedUrl}
