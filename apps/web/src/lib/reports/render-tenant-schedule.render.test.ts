@@ -89,7 +89,12 @@ describe('renderTenantScheduleReport — final size limit', () => {
     const appendix = { load: { inputs: [planInput(await drawingPdf())], omitted: [{ title: 'Other', reason: 'the drawing is no longer available' }] }, generatedOn: '2026-06-20' }
     const withPlans = await renderTenantScheduleReport(baseData, brand(), appendix)
     expect(withPlans.length).toBeGreaterThan(base.length)
-    const limit = withPlans.length - 1
+    // Two renders of the same report differ by a few bytes (dates, ids), so a
+    // limit of `withPlans.length - 1` let a slightly smaller second render keep
+    // the plan page on CI. Halfway between "no appendix" and "with appendix"
+    // is robust to that jitter and still forces the fallback.
+    const limit = Math.floor((base.length + withPlans.length) / 2)
+    expect(withPlans.length - limit).toBeGreaterThan(1024)
     let outcome: unknown
     const out = await renderTenantScheduleReport(baseData, brand(), appendix, { maxBytes: limit, onOutcome: (o) => { outcome = o } })
     expect(out.length).toBeLessThanOrEqual(limit)
