@@ -34,6 +34,7 @@ import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
 import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
+import { shouldAutoScan } from '@/lib/status-plans/auto-scan'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
 
@@ -200,8 +201,20 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
 
   // Line diagrams: read the sheet's text and propose one rectangle per DB block.
   // existingShapes is the LIVE state of this sheet, so a re-run leaves accepted blocks out.
-  const schematicSlot = purpose === 'distribution_schematic' ? (
-    <div data-slot="schematic-detection">
+  // An empty sheet opened by an editor scans itself, with the review above the
+  // drawing. Decided once per sheet OPEN (not per render): accepting blocks
+  // must not move the panel and remount it mid-review.
+  const decideScan = () => ({
+    sheetId: sheet.id,
+    primary: shouldAutoScan({
+      purpose, canEdit, isPdf: sheet.isPdf, hasFileUrl: !!sheet.signedUrl, shapeCount: sheetShapes.length,
+    }),
+  })
+  const [scanOpen, setScanOpen] = useState(decideScan)
+  if (scanOpen.sheetId !== sheet.id) setScanOpen(decideScan())
+  const scanPrimary = scanOpen.sheetId === sheet.id && scanOpen.primary
+
+  const detectionPanel = purpose === 'distribution_schematic' ? (
       <DetectBlocksPanel
         sheetId={sheet.id}
         pageIndex={sheet.pageIndex}
@@ -212,9 +225,10 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         canEdit={canEdit}
         onAccepted={(added) => setShapes((prev) => [...prev, ...added])}
         onFocus={showBox}
+        autoScan={scanPrimary}
       />
-    </div>
   ) : null
+  const schematicSlot = detectionPanel && !scanPrimary ? <div data-slot="schematic-detection">{detectionPanel}</div> : null
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -269,6 +283,12 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         <div role="alert" className="data-panel" style={{ padding: '8px 12px', fontSize: 12, color: '#dc2626', display: 'flex', gap: 12, alignItems: 'center' }}>
           <span>{notice.text}</span>
           {notice.conflict && <button type="button" onClick={() => window.location.reload()}>Reload</button>}
+        </div>
+      )}
+
+      {detectionPanel && scanPrimary && (
+        <div data-slot="schematic-scan-primary" className="data-panel" style={{ padding: '8px 12px' }}>
+          {detectionPanel}
         </div>
       )}
 

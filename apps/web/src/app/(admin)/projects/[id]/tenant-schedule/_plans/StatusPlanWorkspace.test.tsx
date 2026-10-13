@@ -147,13 +147,49 @@ describe('StatusPlanWorkspace', () => {
     expect(screen.queryByRole('button', { name: 'Set scale' })).toBeNull()
   })
 
-  it('a line diagram offers Detect blocks and no scale banner; a floor plan does not', () => {
-    const { unmount } = render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pixelsPerMeter: null, signedUrl: 'https://s/x', isPdf: true } })} />)
-    expect(screen.getByRole('button', { name: 'Detect blocks' })).toBeTruthy()
+  it('a line diagram with shapes offers Scan sheet for blocks in the side panel, no auto scan, no scale banner; a floor plan does not', () => {
+    const { unmount, container } = render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pixelsPerMeter: null, signedUrl: 'https://s/x', isPdf: true } })} />)
+    expect(screen.getByRole('button', { name: 'Scan sheet for blocks' })).toBeTruthy()
+    expect(container.querySelector('[data-slot="schematic-detection"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="schematic-scan-primary"]')).toBeNull()
+    expect(detection.extractPageText).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Set scale' })).toBeNull()
     unmount()
     render(<StatusPlanWorkspace {...props()} />)
-    expect(screen.queryByRole('button', { name: 'Detect blocks' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan sheet for blocks' })).toBeNull()
+  })
+
+  it('an empty line-diagram sheet scans itself on open and puts the review above the drawing', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 2000, height: 2000 })
+    const { container } = render(<StatusPlanWorkspace {...schematic({ shapes: [] })} />)
+    expect(await screen.findByText('Scanned this sheet — 1 block: 1 matched · 0 need you')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Accept all 1 matched' })).toBeTruthy()
+    const primary = container.querySelector('[data-slot="schematic-scan-primary"]')!
+    expect(primary).not.toBeNull()
+    // Above the canvas in document order, and not repeated in the side panel.
+    expect(primary.compareDocumentPosition(screen.getByTestId('canvas')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('[data-slot="schematic-detection"]')).toBeNull()
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
+    // Accepting gives the sheet a shape; the review stays where it is, state intact.
+    detection.acceptDetectedBlocksAction.mockResolvedValue({
+      ok: true,
+      data: [{ id: 's9', sheetId: 'sh1', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all 1 matched' }))
+    expect(await screen.findByText('Every detected block has been handled.')).not.toBeNull()
+    expect(container.querySelector('[data-slot="schematic-scan-primary"]')).not.toBeNull()
+    expect(canvasText()).toContain('shapes:1')
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
+  })
+
+  it('an empty line-diagram sheet does not scan for a read-only viewer', async () => {
+    render(<StatusPlanWorkspace {...schematic({ shapes: [], canEdit: false })} />)
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(detection.extractPageText).not.toHaveBeenCalled()
   })
 
   it('detection reads the sheet\'s own page and accepted blocks fold into the canvas', async () => {
@@ -167,8 +203,8 @@ describe('StatusPlanWorkspace', () => {
       data: [{ id: 's9', sheetId: 'sh1', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
     })
     render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pageIndex: 2, signedUrl: 'https://s/x', isPdf: true } })} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Accept 1 matched' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for blocks' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept all 1 matched' }))
     await waitFor(() => expect(canvasText()).toContain('shapes:2'))
     expect(detection.extractPageText).toHaveBeenCalledWith({ url: 'https://s/x' }, 2)
     expect(detection.acceptDetectedBlocksAction.mock.calls[0][0].sheetId).toBe('sh1')
