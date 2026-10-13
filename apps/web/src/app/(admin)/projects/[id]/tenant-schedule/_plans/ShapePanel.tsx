@@ -77,6 +77,9 @@ export function ShapePanel(p: ShapePanelProps) {
           <span>{view.statusLabel}</span>
           {shape.source === 'detected' && <span style={{ color: 'var(--c-text-dim)' }}>· detected{shape.detectedTag ? ` (${shape.detectedTag})` : ''}</span>}
         </div>
+        {view.feedAlso && view.feedAlso.length > 0 && (
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--c-text-mid)' }}>Also fed from {view.feedAlso.join(', ')}</p>
+        )}
       </div>
 
       {facts && (

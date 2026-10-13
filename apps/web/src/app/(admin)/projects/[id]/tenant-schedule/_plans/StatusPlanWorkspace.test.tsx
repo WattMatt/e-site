@@ -188,4 +188,41 @@ describe('StatusPlanWorkspace', () => {
     fireEvent.click(screen.getByText('stub-select-s1'))
     expect(spy.mock.calls.at(-1)?.[2]).toBe('/projects/p1/tenant-schedule/floor-plan?sheet=sh1&shape=s1')
   })
+
+  const FEED_OK = {
+    state: 'ok' as const, revisionCode: 'Rev 2',
+    boards: [{ id: 'mb1', name: 'MB 1.1', colour: '#1F5FBF' }],
+    byNode: { n1: { boardId: 'mb1', also: [] } },
+  }
+
+  it('Colour by: Main board re-colours the legend and mirrors ?colour=board', () => {
+    const replace = vi.spyOn(window.history, 'replaceState')
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK })} />)
+    expect(legendRow('Complete')).toBe('Complete1')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by main board' }))
+    expect(legendRow('MB 1.1')!.endsWith('1')).toBe(true)
+    expect(screen.queryByText('Complete')).toBeNull()
+    expect(String(replace.mock.calls.at(-1)![2])).toContain('colour=board')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by status' }))
+    expect(legendRow('Complete')).toBe('Complete1')
+    expect(String(replace.mock.calls.at(-1)![2])).not.toContain('colour=')
+  })
+
+  it('opens in board mode from ?colour=board', () => {
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK, initialColourBy: 'board' })} />)
+    expect((screen.getByRole('button', { name: 'Colour by main board' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+    expect(legendRow('MB 1.1')).toBeTruthy()
+  })
+
+  it('an unreadable cable schedule says so in board mode and keeps the status colours', () => {
+    const feed = { state: 'unavailable' as const, reason: 'Main board view unavailable — the cable schedule could not be read.', omission: 'x' }
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed, initialColourBy: 'board' })} />)
+    expect(screen.getByText(/Main board view unavailable — the cable schedule could not be read\./)).toBeTruthy()
+    expect(legendRow('Complete')).toBe('Complete1')
+  })
+
+  it('a line diagram has no colour switch', () => {
+    render(<StatusPlanWorkspace {...schematic()} />)
+    expect(screen.queryByRole('button', { name: 'Colour by main board' })).toBeNull()
+  })
 })

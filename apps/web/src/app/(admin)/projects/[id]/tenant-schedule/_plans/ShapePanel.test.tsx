@@ -75,4 +75,11 @@ describe('ShapePanel', () => {
     render(<ShapePanel {...props({ shape: null, view: null, node: null, link: null, extra: <p>detect here</p> })} />)
     expect(screen.getByText('detect here')).toBeTruthy()
   })
+
+  it('board mode says which board feeds the shop and which others are as near', () => {
+    const base = props()
+    render(<ShapePanel {...props({ view: { ...base.view!, statusLabel: 'Fed from MB 1.1', feedAlso: ['MB 2.1'] } })} />)
+    expect(screen.getByText('Fed from MB 1.1')).toBeTruthy()
+    expect(screen.getByText('Also fed from MB 2.1')).toBeTruthy()
+  })
 })
