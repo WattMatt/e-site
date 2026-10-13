@@ -21,7 +21,7 @@ const ITEMS = [
 describe('reviewDetection', () => {
   it('sorts proposals into matched · need you · without a tag', () => {
     const r = reviewDetection(detectBlocks(ITEMS), NODES, [])
-    expect(r.counts).toEqual({ detected: 4, matched: 2, needsYou: 1, noTag: 1 })
+    expect(r.counts).toEqual({ detected: 4, matched: 2, needsYou: 1, partOf: 0, noTag: 1 })
     expect(r.rows.map((x) => [x.block.tag, x.category, x.nodeId])).toEqual([
       ['DB-71', 'matched', 'n-71'],
       ['DB-72', 'matched', 'n-72'],
@@ -30,7 +30,7 @@ describe('reviewDetection', () => {
     ])
     expect(r.rows[2].reason).toBe('No board in this project has the tag DB-90/91.')
     expect(r.alreadyOnPlan).toBe(0)
-    expect(detectionSummary(r)).toBe('Detected 4 blocks — 2 matched · 1 needs you · 1 without a tag')
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 4 blocks: 2 matched · 1 needs you · 1 without a tag')
   })
 
   it('sorts a block whose NO: is a sentence into without a tag and keeps the text as the hint', () => {
@@ -86,7 +86,42 @@ describe('reviewDetection', () => {
 
   it('pluralises the summary', () => {
     const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: CHARLIE })), NODES, [])
-    expect(detectionSummary(r)).toBe('Detected 1 block — 0 matched · 1 needs you · 0 without a tag')
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 1 block: 0 matched · 1 needs you')
+  })
+
+  it('a meter or incomer inside a main board is part of it: own category, never needs you or matched', () => {
+    const nodes: MatchableNode[] = [{ id: 'mb', kind: 'rmu', code: 'MAIN BOARD 6.1', shop_number: null, name: 'MAIN BOARD 6.1' }]
+    const items = [
+      ...blockItems({ x: 100, y: 100, values: ['MB-6.1 LOCAL MAIN', 'MAIN BOARD 6.1', '', '', '', '', ''] }),
+      ...blockItems({ x: 400, y: 100, values: ['MB-6.1 BULK CHECK METER', 'MAIN BOARD 6.1', '', '', '', '', ''] }),
+      ...blockItems({ x: 100, y: 400, values: ['MB-6.1 INCOMMING COUNCIL', 'x', '', '', '', '', ''] }),
+    ]
+    const r = reviewDetection(detectBlocks(items), nodes, [])
+    expect(r.rows.map((x) => [x.category, x.nodeId])).toEqual([['matched', 'mb'], ['part_of', null], ['part_of', null]])
+    expect(r.rows[1].reason).toBe('Part of MB-6.1 — not a separate board.')
+    expect(r.counts).toEqual({ detected: 3, matched: 1, needsYou: 0, partOf: 2, noTag: 0 })
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 3 blocks: 1 matched · 0 need you · 2 parts of main boards')
+  })
+
+  it('several boards matching only once zeros are ignored need a person, nothing preselected', () => {
+    const nodes: MatchableNode[] = [
+      { id: 'a', kind: 'tenant_db', code: 'DB-1', shop_number: null, name: 'One' },
+      { id: 'b', kind: 'tenant_db', code: 'DB-01', shop_number: null, name: 'Oh One' },
+    ]
+    const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: ['DB-001', 'ONE', '', '', '', '', ''] })), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'needs_you', candidateIds: ['a', 'b'], preselectId: null })
+    expect(r.rows[0].reason).toBe('DB-001 matches 2 boards once leading zeros are ignored; choose one.')
+  })
+
+  it('a leading-zero tag links its one board as matched', () => {
+    const nodes: MatchableNode[] = [{ id: 'a', kind: 'tenant_db', code: 'DB-1', shop_number: null, name: 'One' }]
+    const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: ['DB-01', 'ONE', '', '', '', '', ''] })), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'matched', nodeId: 'a' })
+  })
+
+  it('one part-of row reads singular', () => {
+    const items = blockItems({ x: 100, y: 100, values: ['MB-6.1 CHECK METER', 'x', '', '', '', '', ''] })
+    expect(detectionSummary(reviewDetection(detectBlocks(items), [], []))).toBe('Scanned this sheet — 1 block: 0 matched · 0 need you · 1 part of a main board')
   })
 })
 

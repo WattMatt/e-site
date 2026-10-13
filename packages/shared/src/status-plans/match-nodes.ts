@@ -4,6 +4,22 @@
  * Exactly one candidate links; zero or several need a person. The block's
  * NAME may break a tie between several tag candidates, and never links on its
  * own: two shops can share a name, a board cannot share a tag.
+ *
+ * Order of passes (the first that finds anything decides):
+ *   1. exact — dots and leading zeros kept (DB-2.1 ≠ DB-21, DB-01 ≠ DB-1);
+ *   2. zeros — every run of digits loses its leading zeros (DB-01 → DB1,
+ *      DB-02A → DB2A, MB-01.1 → MB1.1). One candidate links; several need a
+ *      person with nothing preselected (both DB-1 and DB-01 exist);
+ *   3. dots-only — dots ignored as well; any hit needs a person.
+ *
+ * A NO: value may carry words after its tag ("MB-1.1 LOCAL MAIN",
+ * "MB-1.1 BULK CHECK METER", "MB-1.4 INCOMMING GEN"): parseNoText splits
+ * them. The board itself matches as its tag; a meter or incomer is part of
+ * that board, never a separate one, and is reported as part_of.
+ *
+ * MB-x.y also reads as MAIN BOARD x.y against ANY node kind's code or name
+ * ("MAIN BOARD 1.1", "MAINBOARD 1.2", "MB 1.1"): main boards are often entered
+ * as another kind (rmu) during data entry.
  */
 
 export interface MatchableNode {
@@ -17,11 +33,24 @@ export interface MatchableNode {
 
 export type MatchVia = 'code' | 'shop_number' | 'without_db' | 'main_board'
 
+export type PartRole = 'meter' | 'incomer'
+export type NoRole = 'board' | PartRole
+
 export type BlockMatch =
-  | { state: 'matched'; nodeId: string; via: MatchVia; tieBrokenByName: boolean }
-  | { state: 'ambiguous'; candidateIds: string[]; /** Matched only after dots were ignored (DB-2.1 vs DB-21). */ dotsOnly?: boolean }
+  | {
+      state: 'matched'; nodeId: string; via: MatchVia; tieBrokenByName: boolean
+      /** Present (true) only when the board matched once leading zeros were ignored. */
+      leadingZeros?: true
+    }
+  | {
+      state: 'ambiguous'; candidateIds: string[]
+      /** Matched only after dots were ignored (DB-2.1 vs DB-21). */ dotsOnly?: boolean
+      /** Several boards matched only once leading zeros were ignored. */ zerosOnly?: true
+    }
   | { state: 'unmatched' }
   | { state: 'no_tag' }
+  /** A meter or incomer inside the board `tag` ("MB-1.1 BULK CHECK METER"). */
+  | { state: 'part_of'; tag: string; role: PartRole }
 
 // U+2010–U+2015 are the Unicode hyphens and dashes.
 const STRIP = /[\s\-‐-―.]+/g
@@ -37,6 +66,14 @@ export function exactTag(s: string): string {
   return s.toUpperCase().replace(STRIP_KEEP_DOTS, '')
 }
 
+/** Every run of digits loses its leading zeros (a lone 0 stays): DB01 → DB1, MB01.01 → MB1.1. */
+export function stripLeadingZeros(s: string): string {
+  return s.replace(/\d+/g, (run) => run.replace(/^0+(?=\d)/, ''))
+}
+
+const zeroExact = (s: string) => stripLeadingZeros(exactTag(s))
+const zeroLoose = (s: string) => stripLeadingZeros(normaliseTag(s))
+
 function normaliseName(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9]+/g, '')
 }
@@ -44,15 +81,20 @@ function normaliseName(s: string): string {
 interface KeyMaps {
   byCode: ReadonlyMap<string, readonly string[]>
   byShop: ReadonlyMap<string, readonly string[]>
-  mainBoardByName: ReadonlyMap<string, readonly string[]>
+  /** Every node's name, any kind — read ONLY by the MB-x.y alias. */
+  byName: ReadonlyMap<string, readonly string[]>
 }
 
 export interface NodeIndex {
   nodes: ReadonlyMap<string, MatchableNode>
-  /** Keyed with dots kept (primary). */
+  /** Keyed with dots and leading zeros kept (primary). */
   exact: KeyMaps
+  /** Dots kept, leading zeros stripped (one hit links; several need a person). */
+  zeros: KeyMaps
   /** Keyed with dots stripped (fallback; a hit there needs a person). */
   loose: KeyMaps
+  /** Dots and leading zeros stripped (fallback; a hit there needs a person). */
+  looseZeros: KeyMaps
 }
 
 function add(map: Map<string, string[]>, key: string, id: string) {
@@ -65,20 +107,22 @@ function add(map: Map<string, string[]>, key: string, id: string) {
 function buildMaps(nodes: readonly MatchableNode[], norm: (s: string) => string): KeyMaps {
   const byCode = new Map<string, string[]>()
   const byShop = new Map<string, string[]>()
-  const mainBoardByName = new Map<string, string[]>()
+  const byName = new Map<string, string[]>()
   for (const node of nodes) {
     if (node.code) add(byCode, norm(node.code), node.id)
     if (node.shop_number) add(byShop, norm(node.shop_number), node.id)
-    if (node.kind === 'main_board' && node.name) add(mainBoardByName, norm(node.name), node.id)
+    if (node.name) add(byName, norm(node.name), node.id)
   }
-  return { byCode, byShop, mainBoardByName }
+  return { byCode, byShop, byName }
 }
 
 export function buildNodeIndex(nodes: readonly MatchableNode[]): NodeIndex {
   return {
     nodes: new Map(nodes.map((x) => [x.id, x])),
     exact: buildMaps(nodes, exactTag),
+    zeros: buildMaps(nodes, zeroExact),
     loose: buildMaps(nodes, normaliseTag),
+    looseZeros: buildMaps(nodes, zeroLoose),
   }
 }
 
@@ -111,6 +155,35 @@ export function isTagShaped(text: string | null): boolean {
 
 const MB_RE = /^MB[\s\-‐-―.]*(\d+(?:\.\d+)*)$/i
 
+const ROLE_WORD_RE = /^[A-Z][A-Z'&/()]*$/
+const METER_WORD_RE = /^(METER|METERS|CHECK)$/
+/** INCOMING and its usual misspellings (INCOMMING, INCOMNG), and INCOMER. */
+const INCOMER_WORD_RE = /^(INC?OM+I?N+G|INCOM+ER)$/
+
+function roleOf(words: readonly string[]): NoRole {
+  if (words.some((w) => METER_WORD_RE.test(w))) return 'meter'
+  if (words.some((w) => INCOMER_WORD_RE.test(w))) return 'incomer'
+  // LOCAL MAIN, MAIN, or anything else names the board itself.
+  return 'board'
+}
+
+/**
+ * A NO: value as {tag, role}: a lone tag is the board; a leading tag-shaped
+ * token followed by words ("MB-1.1 LOCAL MAIN", "MB-1.1 BULK CHECK METER",
+ * "MB-1.4 INCOMMING GEN") is split, the words read as the role. Text with no
+ * leading tag ("GENERATOR 2.1 INCOMING") or with non-words after it → null.
+ */
+export function parseNoText(text: string | null): { tag: string; role: NoRole } | null {
+  const t = (text ?? '').trim()
+  if (!t) return null
+  if (isTagShaped(t)) return { tag: t, role: 'board' }
+  const [head, ...rest] = t.split(/\s+/)
+  if (!head || rest.length === 0 || !isTagShaped(head)) return null
+  const words = rest.map((w) => w.toUpperCase())
+  if (!words.every((w) => ROLE_WORD_RE.test(w))) return null
+  return { tag: head, role: roleOf(words) }
+}
+
 function resolve(maps: KeyMaps, norm: (s: string) => string, tag: string): { ids: string[]; via: MatchVia } {
   const key = norm(tag)
   let found = lookup(maps, key)
@@ -126,8 +199,14 @@ function resolve(maps: KeyMaps, norm: (s: string) => string, tag: string): { ids
   if (found.ids.length === 0) {
     const mb = MB_RE.exec(tag.trim())
     if (mb) {
+      // Any node kind: main boards are often entered as rmu during data entry.
       const alias = norm(`MAIN BOARD ${mb[1]}`)
-      const ids = [...new Set([...lookup(maps, alias).ids, ...(maps.mainBoardByName.get(alias) ?? [])])]
+      const short = norm(`MB ${mb[1]}`)
+      const ids = [...new Set([
+        ...lookup(maps, alias).ids,
+        ...(maps.byName.get(alias) ?? []),
+        ...(maps.byName.get(short) ?? []),
+      ])]
       found = { ids, via: 'main_board' }
     }
   }
@@ -135,16 +214,24 @@ function resolve(maps: KeyMaps, norm: (s: string) => string, tag: string): { ids
 }
 
 export function matchBlock(block: { tag: string | null; name: string | null }, index: NodeIndex): BlockMatch {
-  if (!block.tag || !isTagShaped(block.tag) || !normaliseTag(block.tag)) return { state: 'no_tag' }
+  const parsed = parseNoText(block.tag)
+  if (!parsed || !normaliseTag(parsed.tag)) return { state: 'no_tag' }
+  if (parsed.role !== 'board') return { state: 'part_of', tag: parsed.tag, role: parsed.role }
+  const tag = parsed.tag
 
-  let { ids, via } = resolve(index.exact, exactTag, block.tag)
+  let { ids, via } = resolve(index.exact, exactTag, tag)
   if (ids.length === 0) {
+    // Only a match once leading zeros are ignored (DB-01 vs DB-1).
+    const z = resolve(index.zeros, zeroExact, tag)
+    if (z.ids.length === 1) return { state: 'matched', nodeId: z.ids[0]!, via: z.via, tieBrokenByName: false, leadingZeros: true }
+    if (z.ids.length > 1) return { state: 'ambiguous', candidateIds: z.ids, zerosOnly: true }
     // Only a match once dots are ignored (DB-2.1 vs DB-21): a person decides.
-    const loose = resolve(index.loose, normaliseTag, block.tag)
+    let loose = resolve(index.loose, normaliseTag, tag)
+    if (loose.ids.length === 0) loose = resolve(index.looseZeros, zeroLoose, tag)
     if (loose.ids.length > 0) return { state: 'ambiguous', candidateIds: loose.ids, dotsOnly: true }
   }
   if (ids.length === 0) return { state: 'unmatched' }
-  if (ids.length === 1) return { state: 'matched', nodeId: ids[0], via, tieBrokenByName: false }
+  if (ids.length === 1) return { state: 'matched', nodeId: ids[0]!, via, tieBrokenByName: false }
 
   const wanted = block.name ? normaliseName(block.name) : ''
   if (wanted) {
