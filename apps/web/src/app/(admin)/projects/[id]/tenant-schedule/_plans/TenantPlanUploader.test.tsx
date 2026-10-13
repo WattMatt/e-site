@@ -10,6 +10,7 @@ vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({ storage: { from: (b: string) => { m.bucket(b); return { uploadToSignedUrl: (...a: unknown[]) => m.upload(...a) } } } }),
 }))
 vi.mock('@/lib/status-plans/navigate', () => ({ navigateTo: (...a: unknown[]) => m.navigate(...a) }))
+vi.mock('@/lib/sentry', () => ({ captureError: vi.fn() }))
 
 import { TenantPlanUploader } from './TenantPlanUploader'
 
@@ -37,9 +38,10 @@ describe('TenantPlanUploader', () => {
       { name: 'Mall GF.png', size: 3, type: 'image/png' },
     ] })
     expect(m.bucket).toHaveBeenCalledWith('tenant-plan-files')
-    expect(m.upload.mock.calls.map((c) => [c[0], c[1], c[2], c[3]])).toEqual([
-      ['o/p/pl1/a/1.pdf', 't1', f1, { contentType: 'application/pdf' }],
-      ['o/p/pl1/b/1.png', 't2', f2, { contentType: 'image/png' }],
+    // The bytes read in the browser are what is uploaded, typed with the server's mime.
+    expect(m.upload.mock.calls.map((c) => [c[0], c[1], (c[2] as Blob).size, (c[2] as Blob).type, c[3]])).toEqual([
+      ['o/p/pl1/a/1.pdf', 't1', 4, 'application/pdf', { contentType: 'application/pdf' }],
+      ['o/p/pl1/b/1.png', 't2', 3, 'image/png', { contentType: 'image/png' }],
     ])
     expect(m.register).toHaveBeenCalledWith({ planId: 'pl1', files: [
       { path: 'o/p/pl1/a/1.pdf', fileName: 'E-300.pdf', mime: 'application/pdf' },
@@ -62,7 +64,19 @@ describe('TenantPlanUploader', () => {
     render(<TenantPlanUploader projectId="p1" purpose="distribution_schematic" label="Add sheets" />)
     expect(screen.getByRole('button', { name: 'Add sheets' })).toBeTruthy()
     choose([f1, f2])
-    expect(await screen.findByText('Uploading E-300.pdf failed. Try again.')).toBeTruthy()
+    expect(await screen.findByText('Uploading E-300.pdf failed (Payload too large). Try again.')).toBeTruthy()
     expect(m.register).not.toHaveBeenCalled()
+  })
+
+  it('an online-only placeholder is refused before anything reaches the server', async () => {
+    const stub = new File([''], '643.E.001 - SITE PLAN.pdf', { type: 'application/pdf' })
+    Object.defineProperty(stub, 'size', { value: 2_400_000 })
+    Object.defineProperty(stub, 'arrayBuffer', { value: () => Promise.reject(new DOMException('unreadable', 'NotReadableError')) })
+    render(<TenantPlanUploader projectId="p1" purpose="tenant_layout" />)
+    choose([f1, stub])
+    expect(await screen.findByText(/643\.E\.001 - SITE PLAN\.pdf could not be read from this computer/)).toBeTruthy()
+    expect(screen.getByText(/available offline/)).toBeTruthy()
+    expect(m.prepare).not.toHaveBeenCalled()
+    expect(m.upload).not.toHaveBeenCalled()
   })
 })

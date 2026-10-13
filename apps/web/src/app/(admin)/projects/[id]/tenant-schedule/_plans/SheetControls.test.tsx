@@ -10,6 +10,7 @@ vi.mock('@/actions/tenant-plan-sheets.actions', () => ({
   replaceTenantPlanSheetAction: (...a: unknown[]) => m.replace(...a),
 }))
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ storage: { from: () => ({ uploadToSignedUrl: (...a: unknown[]) => m.upload(...a) }) } }) }))
+vi.mock('@/lib/sentry', () => ({ captureError: vi.fn() }))
 vi.mock('@/lib/status-plans/navigate', () => ({ navigateTo: (...a: unknown[]) => m.navigate(...a) }))
 
 import { SheetControls } from './SheetControls'
@@ -57,7 +58,8 @@ describe('SheetControls', () => {
     fireEvent.change(screen.getByLabelText('Choose the replacement file'), { target: { files: [file] } })
     await waitFor(() => expect(m.navigate).toHaveBeenCalledWith('/projects/p1/tenant-schedule/floor-plan?sheet=sh1'))
     expect(m.prep).toHaveBeenCalledWith({ sheetId: 'sh1', file: { name: 'E-100 rev C.pdf', size: 4, type: 'application/pdf' } })
-    expect(m.upload).toHaveBeenCalledWith('o/p/pl/sh1/2.pdf', 'tk', file, { contentType: 'application/pdf' })
+    const [p, t, body, opts] = m.upload.mock.calls[0]!
+    expect([p, t, (body as Blob).size, (body as Blob).type, opts]).toEqual(['o/p/pl/sh1/2.pdf', 'tk', 4, 'application/pdf', { contentType: 'application/pdf' }])
     expect(m.replace).toHaveBeenCalledWith({ sheetId: 'sh1', expectedUpdatedAt: 'u0', path: 'o/p/pl/sh1/2.pdf', fileName: 'E-100 rev C.pdf', mime: 'application/pdf', pageIndex: 3 })
   })
 

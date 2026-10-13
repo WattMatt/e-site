@@ -13,6 +13,8 @@ import { prepareTenantPlanUploadAction, registerTenantPlanSheetsAction } from '@
 import { createClient } from '@/lib/supabase/client'
 import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
 import { navigateTo } from '@/lib/status-plans/navigate'
+import { readUploadBytes, uploadFailedMessage } from '@/lib/status-plans/upload-file'
+import { captureError } from '@/lib/sentry'
 
 export interface TenantPlanUploaderProps {
   projectId: string
@@ -34,9 +36,23 @@ export function TenantPlanUploader({ projectId, purpose, label = 'Upload' }: Ten
     setBusy(true)
     setError(null)
     try {
+      // Read every file first: an online-only placeholder must be refused
+      // before a plan or an upload URL is created for it.
+      setStatus(`Reading ${files.length} file${files.length === 1 ? '' : 's'}…`)
+      const blobs: Blob[] = []
+      for (const f of files) {
+        const read = await readUploadBytes(f, f.type || 'application/octet-stream')
+        if (!read.ok) {
+          captureError(read.cause ?? new Error('tenant plan file unreadable'), { stage: 'tenant-plan-read', file: f.name, size: f.size })
+          setError(read.error)
+          return
+        }
+        blobs.push(read.blob)
+      }
+
       setStatus(`Preparing ${files.length} file${files.length === 1 ? '' : 's'}…`)
       const prep = await prepareTenantPlanUploadAction({
-        projectId, purpose, files: files.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+        projectId, purpose, files: files.map((f, i) => ({ name: f.name, size: blobs[i]!.size, type: f.type })),
       })
       if (!prep.ok) { setError(prep.error); return }
 
@@ -45,8 +61,13 @@ export function TenantPlanUploader({ projectId, purpose, label = 'Upload' }: Ten
         const f = files[i]!
         const u = prep.data.uploads[i]!
         setStatus(`Uploading ${f.name} (${i + 1} of ${files.length})…`)
-        const { error: upErr } = await storage.uploadToSignedUrl(u.path, u.token, f, { contentType: u.mime })
-        if (upErr) { setError(`Uploading ${f.name} failed. Try again.`); return }
+        const body = new Blob([blobs[i]!], { type: u.mime })
+        const { error: upErr } = await storage.uploadToSignedUrl(u.path, u.token, body, { contentType: u.mime })
+        if (upErr) {
+          captureError(upErr, { stage: 'tenant-plan-upload', file: f.name, size: body.size })
+          setError(uploadFailedMessage(f.name, upErr))
+          return
+        }
       }
 
       setStatus('Reading the sheets…')
