@@ -22,16 +22,28 @@ export async function loadReportAppendix(a: {
   /** yyyy-mm-dd (johannesburgDate) — overdue is decided against it, as on the plan page. */
   today: string
 }): Promise<ReportAppendixResult> {
-  const purposes = appendixPurposes(statusPlanAppendixOptions(a.url))
-  if (purposes.length === 0) return { ok: true, appendix: null }
+  const opts = statusPlanAppendixOptions(a.url)
+  const purposes = appendixPurposes(opts)
+  if (purposes.length === 0 && !opts.byBoard) return { ok: true, appendix: null }
   const access = await requireProjectAccess(a.sessionClient, a.projectId)
   if (!access.ok) return access
   try {
     const service = createServiceClient()
-    const load = await loadStatusPlanRenderInputs(
-      { db: a.sessionClient, facts: service, storage: service.storage as unknown as StorageLike },
-      { projectId: a.projectId, today: a.today, purposes },
-    )
+    const clients = { db: a.sessionClient, facts: service, storage: service.storage as unknown as StorageLike }
+    const parts: PlanRenderLoadResult[] = []
+    if (purposes.length > 0) {
+      parts.push(await loadStatusPlanRenderInputs(clients, { projectId: a.projectId, today: a.today, purposes }))
+    }
+    // Board pages follow the status pages; same files, so they embed once in the output (keyed by path).
+    if (opts.byBoard) {
+      parts.push(await loadStatusPlanRenderInputs(clients, { projectId: a.projectId, today: a.today, purposes: ['tenant_layout'], colourBy: 'board' }))
+    }
+    const load: PlanRenderLoadResult = {
+      inputs: parts.flatMap((p) => p.inputs),
+      omitted: parts.flatMap((p) => p.omitted),
+    }
+    const organisationId = parts.find((p) => p.organisationId)?.organisationId
+    if (organisationId) load.organisationId = organisationId
     return { ok: true, appendix: { load, generatedOn: a.today } }
   } catch (err) {
     console.error('[status-plans] report appendix could not be loaded', err)

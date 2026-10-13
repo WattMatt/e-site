@@ -108,4 +108,18 @@ describe('TenantScheduleReportButton', () => {
     await act(async () => { resolve({ ok: true, blob: () => Promise.resolve(new Blob(['%PDF'])) }); await Promise.resolve(); await Promise.resolve() })
     expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
+
+  it('"Floor plan by main board" is off by default; ticking it re-renders with ?boardPlans=1', async () => {
+    const fetchMock = stubPdfFetch()
+    const { TenantScheduleReportButton } = await import('./TenantScheduleReportButton')
+    render(<TenantScheduleReportButton projectId={PROJECT_ID} />)
+    await userEvent.click(screen.getByRole('button', { name: /generate report/i }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const box = screen.getByRole('checkbox', { name: /floor plan by main board/i }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    await waitFor(() => expect(box.disabled).toBe(false))
+    await userEvent.click(box)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[1]![0]).toBe(`/api/projects/${PROJECT_ID}/tenant-schedule/report-preview?tenantPlans=1&boardPlans=1`)
+  })
 })
