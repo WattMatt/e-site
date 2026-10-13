@@ -48,6 +48,6 @@ describe('loadReportAppendix', () => {
   it('a load failure becomes one "not included" line, never an error', async () => {
     m.load.mockRejectedValue(new Error('status plans could not be read: boom'))
     const r = await loadReportAppendix({ ...base, url: 'http://x/r?schematicPlans=1' })
-    expect(r).toEqual({ ok: true, appendix: { load: { inputs: [], omitted: [{ title: 'Tenant status plans', reason: 'the plans could not be loaded — generate the report again' }] }, generatedOn: '2026-10-09' } })
+    expect(r).toEqual({ ok: true, appendix: { load: { inputs: [], omitted: [{ title: 'Tenant plans', reason: 'the plans could not be loaded — generate the report again' }] }, generatedOn: '2026-10-09' } })
   })
 })

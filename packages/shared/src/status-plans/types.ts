@@ -1,7 +1,7 @@
 /**
  * Status plans — shared shapes (spec 2026-10-09 §4).
  *
- * A status plan is one page of a drawing marked with a purpose. Its shapes
+ * A status plan is a project's tenant floor plan or line diagram; its sheets are uploaded files (00249). Its shapes
  * store geometry + link + type ONLY: image-space pixels of the page at the
  * fixed scale-2 raster (apps/web/src/lib/sheet), flat [x0, y0, x1, y1, …].
  * Status, colour, hatch and area are derived, never stored.
@@ -25,10 +25,27 @@ export const AREA_TYPE_LABEL: Record<AreaType, string> = {
   vacant: 'Vacant / future',
 }
 
+/** What the two tools are called on screen and in PDFs (spec 2026-10-12 §2). */
 export const PURPOSE_LABEL: Record<StatusPlanPurpose, string> = {
-  tenant_layout: 'Tenant layout',
-  distribution_schematic: 'Distribution schematic',
+  tenant_layout: 'Tenant floor plan',
+  distribution_schematic: 'Line diagram',
 }
+
+/** The name a plan is created with, the first time a file is uploaded to it. */
+export const DEFAULT_PLAN_NAME: Record<StatusPlanPurpose, string> = {
+  tenant_layout: 'Floor plan',
+  distribution_schematic: 'Line diagram',
+}
+
+/** The private bucket that holds every sheet's file (00249). */
+export const TENANT_PLAN_BUCKET = 'tenant-plan-files'
+/** Mirrors the bucket's file_size_limit (50 MB). */
+export const TENANT_PLAN_MAX_BYTES = 50 * 1024 * 1024
+/** Mirrors status_plan_sheets_mime_check and the bucket's allowed_mime_types. */
+export const TENANT_PLAN_MIMES = ['application/pdf', 'image/png', 'image/jpeg'] as const
+export type TenantPlanMime = (typeof TENANT_PLAN_MIMES)[number]
+/** Mirrors status_plan_sheets_label_not_blank. */
+export const SHEET_LABEL_MAX = 120
 
 export const SHAPE_KINDS = ['polygon', 'rect'] as const
 export type ShapeKind = (typeof SHAPE_KINDS)[number]
@@ -75,16 +92,35 @@ export function pointsError(shape: ShapeKind, points: unknown): string | null {
   return null
 }
 
-/** tenants.status_plans as PostgREST returns it. */
+/** tenants.status_plans as PostgREST returns it (after 00249). */
 export interface StatusPlanRow {
   id: string
   project_id: string
   organisation_id: string
-  floor_plan_id: string
-  page_index: number
   purpose: StatusPlanPurpose
   name: string
-  source_file_path: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** tenants.status_plan_sheets as PostgREST returns it. Numerics may arrive as strings. */
+export interface StatusPlanSheetRow {
+  id: string
+  status_plan_id: string
+  organisation_id: string
+  sort_order: number
+  label: string
+  file_path: string
+  page_index: number
+  file_name: string
+  mime: TenantPlanMime
+  revision: number
+  replaced_at: string | null
+  replaced_from_path: string | null
+  pixels_per_meter: number | string | null
+  calibration_points: unknown
+  calibration_metres: number | string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -94,6 +130,7 @@ export interface StatusPlanRow {
 export interface StatusPlanShapeRow {
   id: string
   status_plan_id: string
+  sheet_id: string
   shape: ShapeKind
   points: unknown
   node_id: string | null
@@ -109,11 +146,8 @@ export interface StatusPlan {
   id: string
   projectId: string
   organisationId: string
-  floorPlanId: string
-  pageIndex: number
   purpose: StatusPlanPurpose
   name: string
-  sourceFilePath: string
   createdBy: string | null
   createdAt: string
   updatedAt: string
@@ -122,6 +156,7 @@ export interface StatusPlan {
 export interface StatusPlanShape {
   id: string
   statusPlanId: string
+  sheetId: string
   shape: ShapeKind
   points: number[]
   nodeId: string | null
@@ -138,11 +173,8 @@ export function statusPlanFromRow(r: StatusPlanRow): StatusPlan {
     id: r.id,
     projectId: r.project_id,
     organisationId: r.organisation_id,
-    floorPlanId: r.floor_plan_id,
-    pageIndex: r.page_index,
     purpose: r.purpose,
     name: r.name,
-    sourceFilePath: r.source_file_path,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -155,6 +187,7 @@ export function statusPlanShapeFromRow(r: StatusPlanShapeRow): StatusPlanShape {
   return {
     id: r.id,
     statusPlanId: r.status_plan_id,
+    sheetId: r.sheet_id,
     shape: r.shape,
     points: (r.points as number[]).map(Number),
     nodeId: r.node_id,

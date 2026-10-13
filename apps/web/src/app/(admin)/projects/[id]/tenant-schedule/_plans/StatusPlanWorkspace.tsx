@@ -1,35 +1,39 @@
 'use client'
 
 /**
- * The status plan page's client side: state, writes, banners and layout.
+ * A tenant plan's client side: the sheet strip, the current sheet's canvas,
+ * writes, banners and the legend (spec 2026-10-12 §2, §5).
  *
- * Every write is a per-shape server action whose result is FOLDED INTO LOCAL
- * STATE. There is no router.refresh(): it would re-render the server page
- * under the canvas and re-mint the drawing's signed URL. Selection is
- * mirrored to ?shape= with history.replaceState (no server round trip), so a
- * link from the tenant schedule and a reload land on the same shape.
+ * Every shape write is a per-shape server action whose result is FOLDED INTO
+ * LOCAL STATE. There is no router.refresh(): it would re-render the server page
+ * under the canvas and re-mint the sheet's signed URL. Moving to another sheet
+ * is a navigation (?sheet=), the one time a new URL is wanted. Selection is
+ * mirrored to ?sheet=&shape= with history.replaceState (no server round trip),
+ * so the tenant schedule's "On plan" link and a reload land on the same shape.
+ *
+ * `shapes` holds every sheet's shapes: the canvas gets the current sheet's, the
+ * legend shows this sheet and the whole plan, and the node picker sees them all
+ * (a board appears once per plan, across sheets).
  */
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { PURPOSE_LABEL, type AreaType } from '@esite/shared/status-plans'
 import {
   createStatusPlanShapeAction,
-  deleteStatusPlanAction,
   deleteStatusPlanShapeAction,
-  reanchorStatusPlanAction,
-  renameStatusPlanAction,
   updateStatusPlanShapeAction,
 } from '@/actions/status-plan.actions'
-import { pageScaleFor, withPageScale } from '@/lib/sheet/page-scale'
+import { reanchorTenantPlanSheetAction } from '@/actions/tenant-plan-sheets.actions'
 import { legendSummary, needsAttention, resolveShapeView, type ShapeView } from '@/lib/status-plans/shape-view'
 import { buildNodeOptions } from '@/lib/status-plans/node-options'
-import { fileLabel, statusPlanHref, statusPlansHref } from '@/lib/status-plans/plan-urls'
+import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
 import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
-import type { ActionResult, CanvasShape, PlanNode, PlanSheet, StatusPlanPageProps } from '@/lib/status-plans/types'
+import type { ActionResult, CanvasShape, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
+import { SheetStrip } from './SheetStrip'
+import { SheetControls } from './SheetControls'
 
 /**
  * A plan node as the block matcher reads it. The loader shows a missing code
@@ -42,7 +46,7 @@ function toDetectNode(n: PlanNode): DetectNode {
 
 const StatusPlanCanvas = dynamic(() => import('./StatusPlanCanvas').then((m) => m.StatusPlanCanvas), {
   ssr: false,
-  loading: () => <div className="data-panel" style={{ padding: 48, textAlign: 'center', color: 'var(--c-text-dim)' }}>Loading the drawing…</div>,
+  loading: () => <div className="data-panel" style={{ padding: 48, textAlign: 'center', color: 'var(--c-text-dim)' }}>Loading the sheet…</div>,
 })
 
 const ARM_MS = 4000
@@ -51,21 +55,16 @@ const NO_ANSWER = 'The server did not answer. Check your connection and try agai
 export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const { projectId, plan, canEdit, today } = props
   const purpose = plan.purpose
-  const router = useRouter()
 
   const [shapes, setShapes] = useState<CanvasShape[]>(props.shapes)
   const shapesRef = useRef(shapes)
   shapesRef.current = shapes
   const [sheet, setSheet] = useState<PlanSheet>(props.sheet)
-  const [planName, setPlanName] = useState(plan.name)
-  const [sourceFilePath, setSourceFilePath] = useState(plan.sourceFilePath)
+  const [sheets, setSheets] = useState<SheetSummary[]>(props.sheets)
   const [selectedId, setSelectedId] = useState<string | null>(props.initialShapeId)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ text: string; conflict: boolean } | null>(null)
   const [armedShape, setArmedShape] = useState<string | null>(null)
-  const [armedPlan, setArmedPlan] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [nameDraft, setNameDraft] = useState(plan.name)
   const [requestedTool, setRequestedTool] = useState<{ tool: CanvasTool; nonce: number } | null>(null)
 
   useEffect(() => {
@@ -73,36 +72,43 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     const t = setTimeout(() => setArmedShape(null), ARM_MS)
     return () => clearTimeout(t)
   }, [armedShape])
-  useEffect(() => {
-    if (!armedPlan) return
-    const t = setTimeout(() => setArmedPlan(false), ARM_MS)
-    return () => clearTimeout(t)
-  }, [armedPlan])
 
-  // ?shape= mirrors the selection without a navigation.
+  // ?sheet=&shape= mirror the view without a navigation.
   useEffect(() => {
     try {
-      window.history.replaceState(window.history.state, '', statusPlanHref(projectId, plan.id, selectedId))
+      window.history.replaceState(window.history.state, '', tenantPlanHref(projectId, purpose, { sheet: sheet.id, shape: selectedId }))
     } catch {
       /* a sandboxed frame may refuse; the selection still works */
     }
-  }, [projectId, plan.id, selectedId])
+  }, [projectId, purpose, sheet.id, selectedId])
+
+  /** A sheet row changed on the server (rename, re-anchor, scale): keep the strip and the canvas in step. */
+  const applySheet = useCallback((s: SheetSummary) => {
+    setSheets((prev) => prev.map((x) => (x.id === s.id ? s : x)))
+    setSheet((prev) => (prev.id === s.id ? { ...prev, ...s } : prev))
+  }, [])
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const nodesById = useMemo(() => new Map(props.nodes.map((n) => [n.id, n])), [props.nodes])
-  const pixelsPerMeter = pageScaleFor(sheet, plan.pageIndex)
+  const scaleBySheet = useMemo(() => new Map(sheets.map((s) => [s.id, s.pixelsPerMeter])), [sheets])
+  const pixelsPerMeter = sheet.pixelsPerMeter
   const views = useMemo(() => {
-    const ctx = { purpose, nodesById, shopLinks: props.shopLinks, dbOrders: props.dbOrders, today, pixelsPerMeter }
     const out: Record<string, ShapeView> = {}
-    for (const s of shapes) out[s.id] = resolveShapeView(s, ctx)
+    for (const s of shapes) {
+      out[s.id] = resolveShapeView(s, {
+        purpose, nodesById, shopLinks: props.shopLinks, dbOrders: props.dbOrders, today,
+        pixelsPerMeter: scaleBySheet.get(s.sheetId) ?? null,
+      })
+    }
     return out
-  }, [shapes, purpose, nodesById, props.shopLinks, props.dbOrders, today, pixelsPerMeter])
-  const summary = useMemo(() => legendSummary(Object.values(views), purpose), [views, purpose])
-  const attention = useMemo(() => needsAttention(shapes, views), [shapes, views])
-  const selected = shapes.find((s) => s.id === selectedId) ?? null
+  }, [shapes, purpose, nodesById, props.shopLinks, props.dbOrders, today, scaleBySheet])
+  const sheetShapes = useMemo(() => shapes.filter((s) => s.sheetId === sheet.id), [shapes, sheet.id])
+  const sheetSummary = useMemo(() => legendSummary(sheetShapes.map((s) => views[s.id]!), purpose), [sheetShapes, views, purpose])
+  const planSummary = useMemo(() => legendSummary(shapes.map((s) => views[s.id]!), purpose), [shapes, views, purpose])
+  const attention = useMemo(() => needsAttention(sheetShapes, views), [sheetShapes, views])
+  const selected = sheetShapes.find((s) => s.id === selectedId) ?? null
   const detectNodes = useMemo(() => props.nodes.map(toDetectNode), [props.nodes])
   const options = useMemo(() => buildNodeOptions(props.nodes, shapes, selectedId, purpose), [props.nodes, shapes, selectedId, purpose])
-  const drawingChanged = sheet.currentFilePath !== sourceFilePath
 
   // ── Writes ───────────────────────────────────────────────────────────────
   async function run<T>(fn: () => Promise<ActionResult<T>>, onOk: (d: T) => void): Promise<{ error?: string }> {
@@ -126,7 +132,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const replaceShape = (s: CanvasShape) => setShapes((prev) => prev.map((x) => (x.id === s.id ? s : x)))
 
   const onCreate = (c: ShapeCommit) =>
-    run(() => createStatusPlanShapeAction({ planId: plan.id, shape: c.shape, points: c.points }), (s) => {
+    run(() => createStatusPlanShapeAction({ sheetId: sheet.id, shape: c.shape, points: c.points }), (s) => {
       setShapes((prev) => [...prev, s])
       setSelectedId(s.id)
     })
@@ -159,32 +165,21 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     setArmedShape(null)
   }, [])
 
-  function rename() {
-    void run(() => renameStatusPlanAction({ planId: plan.id, name: nameDraft }), (d) => {
-      setPlanName(d.name)
-      setRenaming(false)
-    })
-  }
-  function deletePlan() {
-    if (!armedPlan) { setArmedPlan(true); return }
-    setArmedPlan(false)
-    void run(() => deleteStatusPlanAction({ planId: plan.id }), () => router.push(statusPlansHref(projectId)))
-  }
   function reanchor() {
-    void run(() => reanchorStatusPlanAction({ planId: plan.id }), (d) => setSourceFilePath(d.sourceFilePath))
+    void run(() => reanchorTenantPlanSheetAction({ sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt }), applySheet)
   }
 
-  // Schematic plans: read the drawing's text and propose one rectangle per DB block (slice 3).
-  // existingShapes is the LIVE state, so a re-run leaves accepted blocks out.
+  // Line diagrams: read the sheet's text and propose one rectangle per DB block.
+  // existingShapes is the LIVE state of this sheet, so a re-run leaves accepted blocks out.
   const schematicSlot = purpose === 'distribution_schematic' ? (
     <div data-slot="schematic-detection">
       <DetectBlocksPanel
-        planId={plan.id}
-        pageIndex={plan.pageIndex}
+        sheetId={sheet.id}
+        pageIndex={sheet.pageIndex}
         pdfUrl={sheet.signedUrl}
         isPdf={sheet.isPdf}
         nodes={detectNodes}
-        existingShapes={shapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId }))}
+        existingShapes={sheetShapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId }))}
         canEdit={canEdit}
         onAccepted={(added) => setShapes((prev) => [...prev, ...added])}
       />
@@ -194,41 +189,30 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-        {renaming ? (
-          <>
-            <input className="ob-input" aria-label="Plan name" value={nameDraft} maxLength={120} onChange={(e) => setNameDraft(e.target.value)} />
-            <button type="button" className="btn-primary-amber" disabled={busy} onClick={rename}>Save</button>
-            <button type="button" onClick={() => { setRenaming(false); setNameDraft(planName) }}>Cancel</button>
-          </>
-        ) : (
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{planName}</h1>
-        )}
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{PURPOSE_LABEL[purpose]}</h1>
         <span style={{ fontSize: 13, color: 'var(--c-text-dim)' }}>
-          {PURPOSE_LABEL[purpose]} · {sheet.name} · page {plan.pageIndex}
+          {sheet.label} · {sheet.fileName}{sheet.isPdf ? ` · page ${sheet.pageIndex}` : ''}
         </span>
-        {canEdit && !renaming && (
-          <span style={{ display: 'inline-flex', gap: 6, marginLeft: 'auto' }}>
-            <button type="button" onClick={() => setRenaming(true)}>Rename</button>
-            <button type="button" disabled={busy} onClick={deletePlan} style={{ color: '#dc2626', fontWeight: armedPlan ? 700 : 400 }}>
-              {armedPlan ? 'Press again to delete the plan' : 'Delete plan'}
-            </button>
-          </span>
-        )}
       </div>
 
-      {drawingChanged && (
+      <SheetStrip projectId={projectId} purpose={purpose} sheets={sheets} currentId={sheet.id} canEdit={canEdit} />
+      {canEdit && (
+        <SheetControls projectId={projectId} purpose={purpose} sheet={sheet} shapeCount={sheetShapes.length} onChanged={applySheet} />
+      )}
+
+      {sheet.replacedAt && (
         <div role="status" className="data-panel" style={{ padding: '8px 12px', fontSize: 12, borderColor: 'var(--c-amber)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <span>
-            This plan was drawn on <strong>{fileLabel(sourceFilePath)}</strong>; the drawing is now <strong>{fileLabel(sheet.currentFilePath)}</strong>.
-            Shapes are shown where they were drawn — check them against the new sheet.
+            This sheet&apos;s file was replaced (<strong>{sheet.fileName}</strong>, revision {sheet.revision}). Shapes and the scale
+            were kept where they were — check them against the new file.
           </span>
-          {canEdit && <button type="button" disabled={busy} onClick={reanchor}>Shapes checked — use the new file</button>}
+          {canEdit && <button type="button" disabled={busy} onClick={reanchor}>Shapes checked — keep them</button>}
         </div>
       )}
 
       {purpose === 'tenant_layout' && pixelsPerMeter === null && (
         <div role="status" className="data-panel" style={{ padding: '8px 12px', fontSize: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span>Calibrate this page on the drawing to measure areas. Until then areas show “—”.</span>
+          <span>Set this sheet&apos;s scale to measure areas. Until then areas show “—”.</span>
           {canEdit && (
             <button type="button" onClick={() => setRequestedTool({ tool: 'calibrate', nonce: Date.now() })}>Set scale</button>
           )}
@@ -245,9 +229,9 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       <div className="stack-below-lg" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 12, alignItems: 'start' }}>
         <StatusPlanCanvas
           sheet={sheet}
-          pageIndex={plan.pageIndex}
+          pageIndex={sheet.pageIndex}
           purpose={purpose}
-          shapes={shapes}
+          shapes={sheetShapes}
           views={views}
           selectedId={selectedId}
           canEdit={canEdit}
@@ -257,7 +241,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           onCreate={onCreate}
           onReshape={onReshape}
           onDeleteRequest={requestDelete}
-          onCalibrated={(c) => setSheet((s) => withPageScale(s, c.pageIndex, c.pixelsPerMeter))}
+          onCalibrated={applySheet}
         />
         <aside style={{ display: 'grid', gap: 12 }}>
           <ShapePanel
@@ -277,7 +261,15 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
             onDelete={requestDelete}
             extra={schematicSlot}
           />
-          <PlanLegend purpose={purpose} summary={summary} hasScale={pixelsPerMeter !== null} attention={attention} onSelectShape={onSelect} />
+          <PlanLegend
+            purpose={purpose}
+            summary={sheetSummary}
+            planSummary={planSummary}
+            sheetCount={sheets.length}
+            hasScale={pixelsPerMeter !== null}
+            attention={attention}
+            onSelectShape={onSelect}
+          />
         </aside>
       </div>
     </div>

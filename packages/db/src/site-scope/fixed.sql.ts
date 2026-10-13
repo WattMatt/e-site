@@ -85,7 +85,7 @@ CREATE POLICY site_scope ON public.profiles AS RESTRICTIVE FOR SELECT
 `
 
 const SITE_BUCKETS = ['drawings', 'project-documents', 'rfi-attachments', 'diary-attachments', 'snag-photos',
-  'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence']
+  'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence', 'tenant-plan-files']
 
 /** Storage: path {org}/{project}/... ({org}/projects/{project}/... for jbcc-letters). Org owner/admin always pass (orphans of deleted projects stay readable to them). */
 export const STORAGE_SQL = `

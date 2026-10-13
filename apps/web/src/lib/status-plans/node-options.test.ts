@@ -12,7 +12,7 @@ const NODES: PlanNode[] = [
   n({ id: 'm1', code: 'MB-9.7', kind: 'main_board' }),
 ]
 const s = (id: string, nodeId: string | null): CanvasShape => ({
-  id, shape: 'polygon', points: [0, 0, 1, 0, 1, 1], nodeId, areaType: null, detectedTag: null, source: 'manual', updatedAt: 't',
+  id, sheetId: 'sh1', shape: 'polygon', points: [0, 0, 1, 0, 1, 1], nodeId, areaType: null, detectedTag: null, source: 'manual', updatedAt: 't',
 })
 
 describe('buildNodeOptions', () => {

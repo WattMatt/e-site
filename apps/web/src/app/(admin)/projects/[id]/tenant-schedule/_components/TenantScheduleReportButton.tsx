@@ -140,11 +140,11 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>Tenant Schedule Report</span>
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)', marginLeft: 12 }}>
                 <input type="checkbox" checked={plans.tenantLayout} onChange={() => togglePlans('tenantLayout')} disabled={loading || saving} />
-                Tenant status plans
+                Tenant floor plan
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-mid)' }}>
                 <input type="checkbox" checked={plans.schematic} onChange={() => togglePlans('schematic')} disabled={loading || saving} />
-                Distribution schematics
+                Line diagram
               </label>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
                 {saved && <span style={{ fontSize: 12, color: 'var(--c-green)' }}>Saved to project ✓</span>}

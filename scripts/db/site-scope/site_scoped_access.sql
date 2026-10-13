@@ -127,6 +127,7 @@
 -- policy: site_scope ON tenants.floor_plan_zones RESTRICTIVE
 -- policy: site_scope ON tenants.floor_plan_page_scales RESTRICTIVE
 -- policy: site_scope ON tenants.status_plan_shapes RESTRICTIVE
+-- policy: site_scope ON tenants.status_plan_sheets RESTRICTIVE
 -- policy: site_scope ON projects.variation_lines RESTRICTIVE
 -- policy: site_scope ON projects.valuation_lines RESTRICTIVE
 -- policy: site_scope ON projects.qc_comments RESTRICTIVE
@@ -580,6 +581,10 @@ DROP POLICY IF EXISTS site_scope ON tenants.status_plan_shapes;
 CREATE POLICY site_scope ON tenants.status_plan_shapes AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)))
   WITH CHECK (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)));
+DROP POLICY IF EXISTS site_scope ON tenants.status_plan_sheets;
+CREATE POLICY site_scope ON tenants.status_plan_sheets AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)))
+  WITH CHECK (public.user_has_project_access(public.site_project_of_status_plan(status_plan_id)));
 DROP POLICY IF EXISTS site_scope ON projects.variation_lines;
 CREATE POLICY site_scope ON projects.variation_lines AS RESTRICTIVE FOR ALL
   USING (public.user_has_project_access(public.site_project_of_variation_order(variation_order_id)))
@@ -761,8 +766,8 @@ GRANT EXECUTE ON FUNCTION public.storage_site_access(text, text) TO authenticate
 
 DROP POLICY IF EXISTS site_scope_objects ON storage.objects;
 CREATE POLICY site_scope_objects ON storage.objects AS RESTRICTIVE FOR ALL
-  USING (CASE WHEN bucket_id IN ('drawings', 'project-documents', 'rfi-attachments', 'diary-attachments', 'snag-photos', 'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence') THEN public.storage_site_access(bucket_id, name) ELSE true END)
-  WITH CHECK (CASE WHEN bucket_id IN ('drawings', 'project-documents', 'rfi-attachments', 'diary-attachments', 'snag-photos', 'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence') THEN public.storage_site_access(bucket_id, name) ELSE true END);
+  USING (CASE WHEN bucket_id IN ('drawings', 'project-documents', 'rfi-attachments', 'diary-attachments', 'snag-photos', 'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence', 'tenant-plan-files') THEN public.storage_site_access(bucket_id, name) ELSE true END)
+  WITH CHECK (CASE WHEN bucket_id IN ('drawings', 'project-documents', 'rfi-attachments', 'diary-attachments', 'snag-photos', 'coc-documents', 'qc-report-entries', 'jbcc-letters', 'cable-schedule-evidence', 'tenant-plan-files') THEN public.storage_site_access(bucket_id, name) ELSE true END);
 CREATE OR REPLACE FUNCTION public.custom_jwt_claims(event jsonb)
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 AS $function$

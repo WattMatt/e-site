@@ -19,10 +19,10 @@ describe('ExportSheetButton', () => {
       blob: () => Promise.resolve(new Blob(['%PDF'])),
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(<ExportSheetButton projectId="p" planId="s" />)
+    render(<ExportSheetButton projectId="p" planId="s" sheetId="sh1" />)
     await userEvent.click(screen.getByRole('button', { name: /export sheet/i }))
     await waitFor(() => expect(click).toHaveBeenCalled())
-    expect(fetchMock).toHaveBeenCalledWith('/api/projects/p/status-plans/s/sheet')
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/p/status-plans/s/sheet?sheet=sh1')
     const a = click.mock.contexts[0] as HTMLAnchorElement
     expect(a.download).toBe('mb-3-1-p1-2026-10-09.pdf')
     expect(a.href).toBe('blob:http://localhost/s')
@@ -30,14 +30,14 @@ describe('ExportSheetButton', () => {
   it('shows the server sentence when the sheet cannot be exported, and downloads nothing', async () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 422, json: () => Promise.resolve({ error: 'This sheet could not be exported: the drawing PDF is password-protected.' }) }))
-    render(<ExportSheetButton projectId="p" planId="s" />)
+    render(<ExportSheetButton projectId="p" planId="s" sheetId="sh1" />)
     await userEvent.click(screen.getByRole('button', { name: /export sheet/i }))
     expect((await screen.findByRole('alert')).textContent).toContain('password-protected')
     expect(click).not.toHaveBeenCalled()
   })
   it('a network failure says so', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<ExportSheetButton projectId="p" planId="s" />)
+    render(<ExportSheetButton projectId="p" planId="s" sheetId="sh1" />)
     await userEvent.click(screen.getByRole('button', { name: /export sheet/i }))
     expect((await screen.findByRole('alert')).textContent).toContain('check your connection')
   })

@@ -13,7 +13,7 @@ describe('acceptErrorSentence (bulk accept of detected blocks)', () => {
     expect(acceptErrorSentence({ code: '23514', message: 'board has been deleted' }))
       .toBe('That board has been deleted. Pick another, or leave the shape unassigned. Nothing was added; run detection again.')
     expect(acceptErrorSentence({ code: '42501', message: 'new row violates row-level security policy' }))
-      .toBe('Only an owner, admin or project manager can change status plans on this project. Nothing was added; run detection again.')
+      .toBe('Only an owner, admin or project manager can change tenant plans on this project. Nothing was added; run detection again.')
   })
 
   it('anything else is a generic sentence, never the raw database message', () => {

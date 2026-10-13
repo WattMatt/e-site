@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { toCanvasShape, shapePatchRow, roundPoints, SHAPE_COLUMNS } from './canvas-shape'
 
 const ROW = {
-  id: 's1', status_plan_id: 'pl1', shape: 'polygon' as const,
+  id: 's1', status_plan_id: 'pl1', sheet_id: 'sh1', shape: 'polygon' as const,
   points: [612.375, -0.5, 1024.125, 2383.9375, 300, 300],
   node_id: 'n1', area_type: null, detected_tag: null, source: 'manual' as const,
   created_by: 'u1', created_at: '2026-10-09T08:00:00.000001+00:00', updated_at: '2026-10-09T09:15:42.123456+00:00',
@@ -11,11 +11,12 @@ const ROW = {
 describe('toCanvasShape', () => {
   it('keeps every coordinate exactly and carries updated_at as the write token', () => {
     expect(toCanvasShape(ROW)).toEqual({
-      id: 's1', shape: 'polygon',
+      id: 's1', sheetId: 'sh1', shape: 'polygon',
       points: [612.375, -0.5, 1024.125, 2383.9375, 300, 300],
       nodeId: 'n1', areaType: null, detectedTag: null, source: 'manual',
       updatedAt: '2026-10-09T09:15:42.123456+00:00',
     })
+    expect(SHAPE_COLUMNS.split(', ')).toContain('sheet_id')
   })
   it('a row the checks refuse is kept and flagged, never thrown', () => {
     const wrongCount = toCanvasShape({ ...ROW, shape: 'rect' })

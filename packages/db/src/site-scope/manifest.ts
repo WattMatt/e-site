@@ -84,6 +84,7 @@ export const GATED: Gated[] = [
   child('tenants.floor_plan_zones', 'floor_plan', 'floor_plan_id'),
   child('tenants.floor_plan_page_scales', 'floor_plan', 'floor_plan_id'),
   child('tenants.status_plan_shapes', 'status_plan', 'status_plan_id'),
+  child('tenants.status_plan_sheets', 'status_plan', 'status_plan_id'),
   child('projects.variation_lines', 'variation_order', 'variation_order_id'),
   child('projects.valuation_lines', 'valuation', 'valuation_id'),
   child('projects.qc_comments', 'qc_report', 'report_id'),
@@ -110,4 +111,7 @@ export const GATED: Gated[] = [
   // Status plans (00245) are in this manifest like any generated table, and
   // their migration carries the generator's text byte for byte; a contract
   // test (status-plans-site-scope.contract.test.ts) holds the two together.
+  // status_plan_sheets (00249, tenant plans) likewise, held by
+  // tenant-plans-site-scope.contract.test.ts, which also pins the
+  // site_scope_objects text that adds the tenant-plan-files bucket.
 ]

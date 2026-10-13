@@ -55,7 +55,7 @@ async function drawingPdf() {
   return d.save()
 }
 const planInput = (bytes: Uint8Array) => ({
-  planId: 'a', planName: 'Ground floor tenants', purpose: 'tenant_layout' as const, drawingName: 'Tenant layout', pageIndex: 1,
+  planId: 'a', planName: 'Ground floor tenants', purpose: 'tenant_layout' as const, drawingName: 'Tenant layout', sheetId: 'sh1', sheetLabel: 'Sheet 1 of 1', pageIndex: 1,
   generatedOn: '2026-06-20', source: { kind: 'pdf' as const, bytes, pageIndex: 1 }, shapes: [], legend: TENANT_LEGEND,
   counts: {}, measured: null, warnings: [],
 })
@@ -72,7 +72,7 @@ describe('renderTenantScheduleReport — status plan appendix', () => {
     const out = await renderWith({ load: { inputs: [planInput(await drawingPdf())], omitted: [] }, generatedOn: '2026-06-20' })
     expect(Buffer.isBuffer(out)).toBe(true)
     expect(await pages(out)).toBe(base + 2)
-    expect(squash(extractPdfText(out))).toContain('Appendix—Tenantstatusplans')
+    expect(squash(extractPdfText(out))).toContain('Appendix—Tenantplans')
   })
   it('an unreadable drawing still ships the report, listed on the divider', async () => {
     const base = await pages(await render(baseData))
@@ -89,13 +89,23 @@ describe('renderTenantScheduleReport — final size limit', () => {
     const appendix = { load: { inputs: [planInput(await drawingPdf())], omitted: [{ title: 'Other', reason: 'the drawing is no longer available' }] }, generatedOn: '2026-06-20' }
     const withPlans = await renderTenantScheduleReport(baseData, brand(), appendix)
     expect(withPlans.length).toBeGreaterThan(base.length)
-    const limit = withPlans.length - 1
+    // Two renders of the same report differ by a few bytes (dates, ids), so a
+    // limit of `withPlans.length - 1` let a slightly smaller second render keep
+    // the plan page on CI. Put the limit halfway between the fallback (every
+    // plan listed as not included) and the full report instead.
+    const fallback = await renderTenantScheduleReport(baseData, brand(), {
+      load: { inputs: [], omitted: [{ title: 'Ground floor tenants', reason: 'x' }, ...appendix.load.omitted] },
+      generatedOn: '2026-06-20',
+    })
+    const limit = Math.floor((fallback.length + withPlans.length) / 2)
+    expect(withPlans.length - limit).toBeGreaterThan(64)
+    expect(limit - fallback.length).toBeGreaterThan(64)
     let outcome: unknown
     const out = await renderTenantScheduleReport(baseData, brand(), appendix, { maxBytes: limit, onOutcome: (o) => { outcome = o } })
     expect(out.length).toBeLessThanOrEqual(limit)
     expect(await pages(out)).toBe((await pages(base)) + 1) // divider only, no plan page
     const text = squash(extractPdfText(out))
-    expect(text).toContain('Appendix—Tenantstatusplans')
+    expect(text).toContain('Appendix—Tenantplans')
     expect(text).toContain('Groundfloortenants')
     expect(text).toContain('Other')
     expect(outcome).toEqual({

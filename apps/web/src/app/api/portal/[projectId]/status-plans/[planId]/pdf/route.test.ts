@@ -5,10 +5,10 @@ import { NextRequest } from 'next/server'
 const m = vi.hoisted(() => ({ portal: vi.fn(), load: vi.fn(), render: vi.fn(), service: vi.fn(), upload: vi.fn(), sign: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ tag: 'session' }), createServiceClient: m.service }))
 vi.mock('@/lib/portal/data', () => ({ requirePortalAccess: m.portal }))
-vi.mock('@/lib/status-plans/plan-render-data', () => ({ loadStatusPlanRenderInputs: m.load }))
+vi.mock('@/lib/status-plans/plan-render-data', () => ({ loadStatusPlanRenderInputs: m.load, MAX_PLAN_SHEETS_PER_REPORT: 20 }))
 vi.mock('@/lib/status-plans/render-plan-page', async () => {
   const actual = await vi.importActual<typeof import('@/lib/status-plans/render-plan-page')>('@/lib/status-plans/render-plan-page')
-  return { ...actual, renderStatusPlanPdf: m.render }
+  return { ...actual, renderStatusPlanSheetsPdf: m.render }
 })
 
 import { GET } from './route'
@@ -16,7 +16,7 @@ import { StatusPlanSourceError } from '@/lib/status-plans/render-plan-page'
 
 const PLAN = '9c1a98b5-6ef3-4388-865f-417d3f5d7465'
 const call = () => GET(new NextRequest(`http://localhost/api/portal/p1/status-plans/${PLAN}/pdf`), { params: Promise.resolve({ projectId: 'p1', planId: PLAN }) })
-const input = { planName: 'Ground floor', pageIndex: 1 }
+const input = { planName: 'Floor plan', sheetLabel: 'Sheet 1', pageIndex: 1 }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -46,8 +46,8 @@ describe('GET portal status plan PDF', () => {
     const res = await call()
     const [clients, args] = m.load.mock.calls[0]!
     expect(clients.db).toEqual({ tag: 'session' })
-    expect(args).toMatchObject({ projectId: 'p1', planIds: [PLAN], maxPlans: 1 })
-    expect(m.render).toHaveBeenCalledWith(input, 'a3')
+    expect(args).toMatchObject({ projectId: 'p1', planIds: [PLAN], maxSheets: 20 })
+    expect(m.render).toHaveBeenCalledWith([input], 'a3')
     expect(m.upload).toHaveBeenCalledWith(`org-1/p1/status-plans/${PLAN}/portal.pdf`, expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'application/pdf', upsert: true }))
     // No download name: the signed URL opens inline in the tab the portal link opened.
     expect(m.sign).toHaveBeenCalledWith(`org-1/p1/status-plans/${PLAN}/portal.pdf`, 600, undefined)

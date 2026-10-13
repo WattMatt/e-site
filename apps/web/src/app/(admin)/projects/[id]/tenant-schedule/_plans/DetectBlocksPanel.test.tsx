@@ -43,12 +43,12 @@ const NODES = [
 ]
 
 const shape = (id: string, nodeId: string | null, detectedTag: string | null): CanvasShape => ({
-  id, shape: 'rect', points: [0, 0, 1, 0, 1, 1, 0, 1], nodeId, areaType: null, detectedTag, source: 'detected', updatedAt: 't',
+  id, sheetId: 'sheet-1', shape: 'rect', points: [0, 0, 1, 0, 1, 1, 0, 1], nodeId, areaType: null, detectedTag, source: 'detected', updatedAt: 't',
 })
 
 function props(over: Partial<DetectBlocksPanelProps> = {}): DetectBlocksPanelProps {
   return {
-    planId: 'plan-1', pageIndex: 1, pdfUrl: 'https://signed.example/plan.pdf', isPdf: true,
+    sheetId: 'sheet-1', pageIndex: 1, pdfUrl: 'https://signed.example/plan.pdf', isPdf: true,
     nodes: NODES, existingShapes: [], canEdit: true, onAccepted: vi.fn(), ...over,
   }
 }
@@ -93,8 +93,8 @@ describe('DetectBlocksPanel', () => {
     await detect()
     fireEvent.click(screen.getByRole('button', { name: 'Accept 2 matched' }))
     await waitFor(() => expect(onAccepted).toHaveBeenCalledTimes(1))
-    const [{ planId, blocks }] = acceptMock.mock.calls[0]
-    expect(planId).toBe('plan-1')
+    const [{ sheetId, blocks }] = acceptMock.mock.calls[0]
+    expect(sheetId).toBe('sheet-1')
     expect(blocks.map((b: { nodeId: string; detectedTag: string; points: number[] }) => [b.nodeId, b.detectedTag, b.points.length]))
       .toEqual([['n-71', 'DB-71', 8], ['n-mb', 'MB-9.2', 8]])
     expect(onAccepted.mock.calls[0][0].map((s: CanvasShape) => s.id)).toEqual(['s1', 's2'])

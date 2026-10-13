@@ -72,20 +72,18 @@ describe('Sidebar — Rate library link', () => {
   })
 })
 
-describe('Sidebar — Status plans', () => {
-  it('sits right after Tenant Schedule inside a project, for writers and readers', () => {
+describe('Sidebar — tenant plans live under the tenant schedule', () => {
+  it('has no Status plans entry; Tenant Schedule is still there', () => {
     pathname = '/projects/p1/tenant-schedule'
-    for (const role of ['owner', 'contractor'] as const) {
-      const { unmount } = render(<Sidebar role={role} />)
-      const order = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
-      expect(order.indexOf('/projects/p1/status-plans')).toBe(order.indexOf('/projects/p1/tenant-schedule') + 1)
-      unmount()
-    }
+    render(<Sidebar role="owner" />)
+    const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
+    expect(hrefs).not.toContain('/projects/p1/status-plans')
+    expect(hrefs).toContain('/projects/p1/tenant-schedule')
   })
 
-  it('marks Status plans active on a plan page', () => {
-    pathname = '/projects/p1/status-plans/pl1'
+  it('marks Tenant Schedule active on the floor plan route', () => {
+    pathname = '/projects/p1/tenant-schedule/floor-plan'
     render(<Sidebar role="owner" />)
-    expect(screen.getByRole('link', { name: 'Status plans' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: 'Tenant Schedule' }).getAttribute('aria-current')).toBe('page')
   })
 })

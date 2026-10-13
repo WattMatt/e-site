@@ -6,7 +6,7 @@ import { pointsError, type AreaType, type StatusPlanShapeRow } from '@esite/shar
 import type { CanvasShape } from './types'
 
 export const SHAPE_COLUMNS =
-  'id, status_plan_id, shape, points, node_id, area_type, detected_tag, source, created_by, created_at, updated_at'
+  'id, status_plan_id, sheet_id, shape, points, node_id, area_type, detected_tag, source, created_by, created_at, updated_at'
 
 /** The sentence shown for a stored outline the checks would refuse today. */
 export const OUTLINE_NEEDS_REDRAWING = 'Outline needs redrawing'
@@ -29,6 +29,7 @@ export function toCanvasShape(row: StatusPlanShapeRow): CanvasShape {
   const invalid = pts === null || pointsError(row.shape, pts) !== null
   return {
     id: row.id,
+    sheetId: row.sheet_id,
     shape: row.shape,
     points: pts ?? [],
     nodeId: row.node_id,

@@ -1,21 +1,33 @@
-/** Routes and drawing-type checks for status plans. Pure; safe on client and server. */
+/** Routes and file helpers for tenant plans. Pure; safe on client and server. */
+import type { StatusPlanPurpose } from '@esite/shared/status-plans'
 
 export const isPdfPath = (p: string): boolean => /\.pdf$/i.test(p)
-export const isImagePath = (p: string): boolean => /\.(png|jpe?g|webp|svg)$/i.test(p)
-/** The canvas renders PDFs (via pdfjs) and rasters; DWG and friends are not drawable. */
-export const isRenderableDrawing = (p: string): boolean => isPdfPath(p) || isImagePath(p)
 
-export function statusPlansHref(projectId: string): string {
-  return `/projects/${encodeURIComponent(projectId)}/status-plans`
+/** The route segment of each tool under /projects/[id]/tenant-schedule. */
+export const TENANT_PLAN_SEGMENT: Record<StatusPlanPurpose, 'floor-plan' | 'line-diagram'> = {
+  tenant_layout: 'floor-plan',
+  distribution_schematic: 'line-diagram',
 }
 
-/** A plan, optionally with one shape selected (`?shape=` — the tenant schedule's "On plan" link). */
-export function statusPlanHref(projectId: string, planId: string, shapeId?: string | null): string {
-  const base = `${statusPlansHref(projectId)}/${encodeURIComponent(planId)}`
-  return shapeId ? `${base}?shape=${encodeURIComponent(shapeId)}` : base
+export function tenantScheduleHref(projectId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/tenant-schedule`
 }
 
-/** "643-E-300 rev B.pdf" from a storage path, for the drawing-changed banner. */
+/** A tenant plan, optionally on one sheet and with one shape selected (?sheet= &shape=). */
+export function tenantPlanHref(
+  projectId: string,
+  purpose: StatusPlanPurpose,
+  opts: { sheet?: string | null; shape?: string | null } = {},
+): string {
+  const base = `${tenantScheduleHref(projectId)}/${TENANT_PLAN_SEGMENT[purpose]}`
+  const q = new URLSearchParams()
+  if (opts.sheet) q.set('sheet', opts.sheet)
+  if (opts.shape) q.set('shape', opts.shape)
+  const s = q.toString().replace(/\+/g, '%20')
+  return s ? `${base}?${s}` : base
+}
+
+/** "2.pdf" from a storage path. */
 export function fileLabel(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? path
 }

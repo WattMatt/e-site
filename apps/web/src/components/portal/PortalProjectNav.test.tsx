@@ -23,7 +23,7 @@ describe('PortalProjectNav', () => {
       'Floor Plans',
       'Handover',
       'Tenant Schedule',
-      'Status Plans',
+      'Tenant plans',
       'Proposals',
     ])
   })

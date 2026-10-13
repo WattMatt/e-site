@@ -117,12 +117,12 @@ describe('ScheduleTable status plan link', () => {
       <ScheduleTable
         nodes={[tenant({})]}
         {...base}
-        onPlanByNode={{ n1: { planId: 'pl1', planName: 'Ground floor', shapeId: 's1' } }}
+        onPlanByNode={{ n1: { sheetId: 'sh1', sheetLabel: 'Ground floor', shapeId: 's1' } }}
       />,
     )
     const link = screen.getByRole('link', { name: /on plan/i })
-    expect(link.getAttribute('href')).toBe('/projects/p1/status-plans/pl1?shape=s1')
-    expect(link.getAttribute('title')).toBe('Shown on Ground floor')
+    expect(link.getAttribute('href')).toBe('/projects/p1/tenant-schedule/floor-plan?sheet=sh1&shape=s1')
+    expect(link.getAttribute('title')).toBe('Shown on the floor plan, Ground floor')
   })
 
   it('shows no link for a shop that is on no plan', () => {

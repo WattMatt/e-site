@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Shape } from 'react-konva'
 import type Konva from 'konva'
 import { hatchSegments, pointsError, rectToPoints, visualCentre, type StatusPlanPurpose } from '@esite/shared/status-plans'
-import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
+import { calibrateTenantPlanSheetAction } from '@/actions/tenant-plan-sheets.actions'
 import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
 import { Tooltip } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/markup-tooltip'
 import { useSheetImage, backingSize } from '@/lib/sheet/use-sheet-image'
@@ -35,7 +35,7 @@ import {
 } from '@/lib/status-plans/canvas-reducer'
 import { roundPoints } from '@/lib/status-plans/canvas-shape'
 import { fillRgba, type ShapeView } from '@/lib/status-plans/shape-view'
-import type { CanvasShape, PlanSheet } from '@/lib/status-plans/types'
+import type { CanvasShape, PlanSheet, SheetSummary } from '@/lib/status-plans/types'
 
 export interface StatusPlanCanvasProps {
   sheet: PlanSheet
@@ -54,7 +54,8 @@ export interface StatusPlanCanvasProps {
   onReshape: (shapeId: string, points: number[]) => Promise<{ error?: string }>
   /** Delete/Backspace on a selection: the workspace's two-step delete. */
   onDeleteRequest: () => void
-  onCalibrated: (c: { pageIndex: number; pixelsPerMeter: number }) => void
+  /** The sheet as stored after its scale was saved (new scale and updated_at). */
+  onCalibrated: (sheet: SheetSummary) => void
   height?: string
 }
 
@@ -75,16 +76,16 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
   const [calibMetres, setCalibMetres] = useState('')
   const [calibSaving, setCalibSaving] = useState(false)
 
-  // ── The sheet (fixed page: a plan is one page of one drawing) ──────────────
+  // ── The sheet: one page of one uploaded file. A replaced file is a new key. ──
   const { img, loadError, pageCount } = useSheetImage({
-    planId: sheet.floorPlanId,
+    planId: `${sheet.id}:${sheet.revision}`,
     signedUrl: sheet.signedUrl,
     isPdf: sheet.isPdf,
     initialPage: pageIndex,
   })
   const [imgW, imgH] = backingSize(img)
-  const naturalW = sheet.widthPx || imgW || 800
-  const naturalH = sheet.heightPx || imgH || 600
+  const naturalW = imgW || 800
+  const naturalH = imgH || 600
   const image = useMemo(() => (img ? { w: imgW, h: imgH } : null), [img, imgW, imgH])
   const containerRef = useRef<HTMLDivElement | null>(null)
   /**
@@ -100,7 +101,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     if (s.rect) send({ type: 'escape' })
     else if (before !== null && s.draft.length > before) send({ type: 'undoPoint' })
   }
-  const vp = useSheetViewport({ containerRef, image, resetKey: `${sheet.floorPlanId}:${pageIndex}`, onPinchStart })
+  const vp = useSheetViewport({ containerRef, image, resetKey: `${sheet.id}:${sheet.revision}:${pageIndex}`, onPinchStart })
   const { scale, offset, viewport } = vp
   const scaleRef = useRef(scale)
   scaleRef.current = scale
@@ -221,7 +222,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     setPreview(null)
   }
 
-  // ── Calibration (through the role-gated action, this page only) ────────────
+  // ── Calibration: the sheet's own scale (role-gated, conditional on updated_at) ──
   async function saveCalibration() {
     const c = cs.calib
     if (c.length !== 4) { setLocalError('Pick two points first.'); return }
@@ -232,9 +233,9 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     setCalibSaving(true)
     setLocalError(null)
     try {
-      const res = await calibrateFloorPlanAction({ floorPlanId: sheet.floorPlanId, points: c, realMetres: metres, pageIndex })
-      if (res.error) { setLocalError(res.error); return }
-      p.onCalibrated({ pageIndex, pixelsPerMeter: res.pixelsPerMeter ?? px / metres })
+      const res = await calibrateTenantPlanSheetAction({ sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt, points: c, realMetres: metres })
+      if (!res.ok) { setLocalError(res.error); return }
+      p.onCalibrated(res.data)
       setCalibMetres('')
       send({ type: 'tool', tool: 'select' })
     } catch {
@@ -295,7 +296,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
       {localError && <div role="alert" className="data-panel" style={{ padding: '8px 12px', color: '#dc2626', fontSize: 12 }}>{localError}</div>}
       {img && pageCount < pageIndex && (
         <div role="alert" className="data-panel" style={{ padding: '8px 12px', fontSize: 12 }}>
-          This drawing has {pageCount} page{pageCount === 1 ? '' : 's'}; the plan is on page {pageIndex}. The drawing may have been replaced with a shorter file.
+          This file has {pageCount} page{pageCount === 1 ? '' : 's'}; this sheet is page {pageIndex}. Replace the sheet&apos;s file or upload the right one.
         </div>
       )}
 

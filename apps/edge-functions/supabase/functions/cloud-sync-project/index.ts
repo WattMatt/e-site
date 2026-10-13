@@ -927,19 +927,9 @@ async function isAnnotated(
     .maybeSingle()
   if (loe || layoutObject) return true
 
-  // A status plan (00245): shop masks and DB-block rectangles in raw image
-  // pixels of THIS file's page. The plan's source_file_path records the file
-  // it was drawn on and the plan page warns when they diverge, but, as for
-  // markup layers, not adopting silently is the actual protection.
-  const { data: statusPlan, error: spe } = await supabase
-    .schema('tenants')
-    .from('status_plans')
-    .select('id')
-    .eq('floor_plan_id', floorPlanId)
-    .limit(1)
-    .maybeSingle()
-  if (spe || statusPlan) return true
-
+  // Status plans no longer anchor to drawings (tenant plans, 00249): their
+  // sheets live in their own bucket, tenant-plan-files, which cloud sync never
+  // touches. There is deliberately no lookup for them here.
   return false
 }
 
