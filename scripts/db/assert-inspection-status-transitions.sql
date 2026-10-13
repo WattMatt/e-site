@@ -31,7 +31,7 @@ SELECT set_config('x.pmu', (SELECT pm.user_id::text FROM projects.project_member
                                AND pm.user_id <> current_setting('x.c')::uuid
                              ORDER BY pm.created_at LIMIT 1), true);
 -- PM2 = a second active project member, neither C nor PMU, who has not answered anything here:
--- a verifier a PM may lawfully reassign to on a separate-verifier template (00248).
+-- a verifier a PM may lawfully reassign to on a separate-verifier template (00250).
 SELECT set_config('x.pm2', (SELECT pm.user_id::text FROM projects.project_members pm
                              JOIN public.user_organisations uo ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
                              WHERE pm.project_id = current_setting('x.kw')::uuid AND pm.is_active AND uo.is_active
@@ -172,9 +172,9 @@ UPDATE inspections.inspections SET status = 'awaiting_verification', overall_res
 INSERT INTO inspections.signatures (inspection_id, section_id, field_id, role, signatory_name, signatory_title, registration_number, storage_path, signed_by)
 VALUES (current_setting('x.i1')::uuid, 's1', 'sig', 'inspector', 'Probe Inspector', 'Electrician', 'RP-12345', 'probe/sig.png', current_setting('x.c')::uuid);
 
--- The contributor as verifier: the template needs a separate verifier. 00248 refuses this
+-- The contributor as verifier: the template needs a separate verifier. 00250 refuses this
 -- assignment, so the state is built with triggers off: certification_blockers() must still hold
--- for a row that reached it some other way (rows from before 00248, the service path).
+-- for a row that reached it some other way (rows from before 00250, the service path).
 DO $$ BEGIN
   SET LOCAL session_replication_role = replica;
   UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i1')::uuid;

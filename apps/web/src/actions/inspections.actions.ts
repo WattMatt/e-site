@@ -341,7 +341,7 @@ export interface UpdateInspectionAssignmentInput {
 /**
  * Reassign an existing inspection's Inspector + Verifier while it is open. PM+ only (the
  * transition guard, 00235, decides). On a separate-verifier template the database refuses a
- * verifier who is the inspector or has already answered (00248); that sentence is returned.
+ * verifier who is the inspector or has already answered (00250); that sentence is returned.
  * Notifies the new Inspector when they changed, and a new Verifier when the inspection is
  * already waiting on them; never the actor.
  */

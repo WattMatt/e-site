@@ -1,4 +1,4 @@
--- 00248_inspection_separate_verifier_at_assignment.sql
+-- 00250_inspection_separate_verifier_at_assignment.sql
 --
 -- On a template that needs a separate verifier (CoC and factory-test by default, or
 -- requires_separate_verifier in the template), the verifier must be someone who did not fill in
@@ -80,7 +80,7 @@ CREATE OR REPLACE FUNCTION inspections.user_can_write_responses(_inspection_id U
       AND uo.role <> 'client_viewer'
       AND COALESCE(public.user_effective_project_role(i.project_id, auth.uid()), 'client_viewer') <> 'client_viewer'
       AND i.status IN ('assigned','in_progress','re-inspect_required')
-      -- The verifier of a separate-verifier inspection checks the work; they do not do it (00248).
+      -- The verifier of a separate-verifier inspection checks the work; they do not do it (00250).
       AND NOT (i.verifier_id IS NOT DISTINCT FROM auth.uid()
                AND inspections.template_requires_separate_verifier(i.template_id))
   );

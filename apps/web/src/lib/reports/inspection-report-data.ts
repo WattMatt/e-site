@@ -592,7 +592,9 @@ export async function gatherInspectionReportData(
     for (const field of flattenSectionFields(section)) {
       if (field.type === 'photo') {
         const pf = await renderPhotoField(section.section_id, field.field_id, String(field.label ?? field.field_id))
-        photoFields.push(pf ?? { sectionId: section.section_id, fieldId: field.field_id, label: String(field.label ?? field.field_id), photos: [], omittedCount: 0 })
+        // A photo field with nothing in it (an optional one left empty) prints nothing: a bare label
+        // with no photo under it reads as a missing page.
+        if (pf) photoFields.push(pf)
         continue
       }
       if (field.type !== 'repeating_group') continue

@@ -40,7 +40,7 @@ interface Props {
   verifierName: string | null
   members: Member[]
   canEdit: boolean
-  /** The template needs a verifier who is not the inspector and has not answered (00248). */
+  /** The template needs a verifier who is not the inspector and has not answered (00250). */
   separateVerifier?: boolean
   /** People who have entered answers on this inspection. */
   contributorIds?: string[]
@@ -67,7 +67,7 @@ export default function AssignmentEditor({
   const [saved, setSaved] = useState(false)
 
   const eligibleVerifiers = members.filter((m) => m.role && VERIFIER_ROLES.includes(m.role))
-  // Why a member may not verify this one, or null. The database refuses the same cases (00248);
+  // Why a member may not verify this one, or null. The database refuses the same cases (00250);
   // naming them here saves a round trip that ends in an error.
   const cannotVerify = (userId: string): string | null => {
     if (!separateVerifier) return null

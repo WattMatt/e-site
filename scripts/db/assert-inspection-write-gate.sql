@@ -108,7 +108,7 @@ RESET ROLE;
 SELECT set_config('request.jwt.claims', '', true);
 UPDATE projects.project_members SET role = 'contractor'
  WHERE project_id = current_setting('x.kw')::uuid AND user_id = current_setting('x.c')::uuid;
--- C also answered this inspection, which 00248 refuses for a separate-verifier template; this
+-- C also answered this inspection, which 00250 refuses for a separate-verifier template; this
 -- state exists only to probe the signature verifier arm on its own, so it is built with triggers off.
 DO $$ BEGIN
   SET LOCAL session_replication_role = replica;

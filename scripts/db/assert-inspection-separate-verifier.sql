@@ -1,12 +1,12 @@
 -- scripts/db/assert-inspection-separate-verifier.sql
 -- On a template that needs a separate verifier (coc / factory_test, or requires_separate_verifier),
--- the verifier may not be the inspector and may not fill in the inspection (00248). Before it, the
+-- the verifier may not be the inspector and may not fill in the inspection (00250). Before it, the
 -- rule lived only in certification_blockers(), so "Shoprite" and "Boxer" on ZZ status-guard test
 -- (2026-10-12) were built in a state that could never be certified.
 --
 -- Run (red without the fix, green with it):
 --   scripts/db/dry-run-migration.sh /tmp/noop.sql  scripts/db/assert-inspection-separate-verifier.sql
---   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00248_inspection_separate_verifier_at_assignment.sql scripts/db/assert-inspection-separate-verifier.sql
+--   scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00250_inspection_separate_verifier_at_assignment.sql scripts/db/assert-inspection-separate-verifier.sql
 --
 -- C   = the rbac-test contractor, active on KINGSWALK (the inspector).
 -- PMU = an org owner/admin/PM with an active project_members row on KINGSWALK (the verifier, a PM).

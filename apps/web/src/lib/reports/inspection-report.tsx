@@ -283,7 +283,26 @@ function photoFieldBlocks(fields: ReportPhotoField[]): ReportPhotoField[] {
     }
   }
   flush()
-  return out
+  // One block per row of photos (label on the first only): every block is then small enough to
+  // travel with its section heading, so a heading never ends a page alone (W-11, 2026-10-13).
+  const rows: ReportPhotoField[] = []
+  for (const f of out) {
+    if (f.photos.length <= spacing.photoGridCols) {
+      rows.push(f)
+      continue
+    }
+    for (let i = 0; i < f.photos.length; i += spacing.photoGridCols) {
+      const last = i + spacing.photoGridCols >= f.photos.length
+      rows.push({
+        ...f,
+        fieldId: `${f.fieldId}#${i}`,
+        label: i === 0 ? f.label : '',
+        photos: f.photos.slice(i, i + spacing.photoGridCols),
+        omittedCount: last ? f.omittedCount : 0,
+      })
+    }
+  }
+  return rows
 }
 
 // ---------------------------------------------------------------------------

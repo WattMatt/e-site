@@ -8,7 +8,7 @@ export interface StatusBannerProps {
   isVerifier: boolean
   /** The signed-in person may change the inspector and verifier above. */
   canReassign: boolean
-  /** The template needs a verifier who did not fill it in (00248). */
+  /** The template needs a verifier who did not fill it in (00250). */
   separateVerifier: boolean
   /** The assigned verifier has entered answers, so they can never certify it. */
   verifierHasAnswered: boolean

@@ -105,7 +105,7 @@ export default async function CapturePage({ params }: Props) {
   }
   const assigneeName = nameFrom(inspection.assigned_to_id)
 
-  // Who has entered answers: on a separate-verifier template none of them may verify (00248).
+  // Who has entered answers: on a separate-verifier template none of them may verify (00250).
   // Read with the service client because response_history is not readable to every member; the
   // RLS-gated inspection read above already proves access.
   const { data: historyRows } = await service
@@ -258,7 +258,7 @@ export default async function CapturePage({ params }: Props) {
           currentUserId={user?.id ?? null}
           mode="capture"
           // The verifier of a separate-verifier inspection checks it; the database refuses their
-          // answers and photos (00248), so the form does not offer them.
+          // answers and photos (00250), so the form does not offer them.
           readOnly={isVerifier && separateVerifier}
         />
       )}

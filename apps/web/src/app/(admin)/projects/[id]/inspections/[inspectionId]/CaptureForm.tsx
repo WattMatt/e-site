@@ -24,7 +24,7 @@ interface Props {
   initialSignatures?: CapturedSignature[]
   status?: string
   verifierId?: string | null
-  /** The template needs a verifier who did not fill it in (00248): the verifier gets no flip mode. */
+  /** The template needs a verifier who did not fill it in (00250): the verifier gets no flip mode. */
   separateVerifier?: boolean
   currentUserId: string | null
   mode: Mode

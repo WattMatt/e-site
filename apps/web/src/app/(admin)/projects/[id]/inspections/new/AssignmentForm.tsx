@@ -90,7 +90,7 @@ export default function AssignmentForm({
     : nodes
 
   // On a CoC / factory-test template (or one that asks for it) the verifier must be someone other
-  // than the inspector; the database refuses it (00248), so the form does not offer it.
+  // than the inspector; the database refuses it (00250), so the form does not offer it.
   const separate = selectedTemplate
     ? requiresSeparateVerifier(selectedTemplate.deliverable_type, selectedTemplate.requires_separate_verifier)
     : false
