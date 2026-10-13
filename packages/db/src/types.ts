@@ -12233,44 +12233,6 @@ export type Database = {
           },
         ]
       }
-      floor_plan_zones: {
-        Row: {
-          color: string | null
-          created_at: string
-          floor_plan_id: string
-          id: string
-          name: string
-          organisation_id: string
-          polygon: Json
-        }
-        Insert: {
-          color?: string | null
-          created_at?: string
-          floor_plan_id: string
-          id?: string
-          name: string
-          organisation_id: string
-          polygon?: Json
-        }
-        Update: {
-          color?: string | null
-          created_at?: string
-          floor_plan_id?: string
-          id?: string
-          name?: string
-          organisation_id?: string
-          polygon?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "floor_plan_zones_floor_plan_id_fkey"
-            columns: ["floor_plan_id"]
-            isOneToOne: false
-            referencedRelation: "floor_plans"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       floor_plans: {
         Row: {
           calibrated_at: string | null
