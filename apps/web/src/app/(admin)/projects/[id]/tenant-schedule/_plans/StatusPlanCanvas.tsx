@@ -62,11 +62,15 @@ export interface StatusPlanCanvasProps {
   height?: string
   /** Drawn over the top-left of the drawing (the colour key); HTML, outside the Konva stage. */
   overlay?: ReactNode
+  /** Proposed outlines (re-align preview), drawn dashed over the shapes; never selectable. */
+  proposals?: number[][]
 }
 
 /** Screen pixels within which a press counts as "on" a corner. */
 const HIT_PX = 8
 const SELECT_COLOUR = '#2563EB'
+/** Re-align proposals: a colour no status or selection uses. */
+const PROPOSAL_COLOUR = '#DB2777'
 
 export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
   const { sheet, pageIndex, purpose, shapes, views, selectedId, canEdit, busy } = p
@@ -444,6 +448,9 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
                   />
                 )
               })}
+              {p.proposals?.map((pts, i) => (
+                <Line key={`proposal:${i}`} points={pts} closed stroke={PROPOSAL_COLOUR} strokeWidth={2.5 / scale} dash={[8 / scale, 5 / scale]} />
+              ))}
               {selected && (
                 <Line points={selected.points} closed stroke={SELECT_COLOUR} strokeWidth={2 / scale} dash={[6 / scale, 4 / scale]} />
               )}
