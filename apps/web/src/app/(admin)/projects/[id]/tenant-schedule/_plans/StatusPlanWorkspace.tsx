@@ -17,7 +17,7 @@
  */
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PURPOSE_LABEL, boundingBox, type AreaType, type Box } from '@esite/shared/status-plans'
+import { PURPOSE_LABEL, SCHEMATIC_LEGEND, TENANT_LEGEND, boundingBox, type AreaType, type Box } from '@esite/shared/status-plans'
 import {
   createStatusPlanShapeAction,
   deleteStatusPlanShapeAction,
@@ -32,6 +32,7 @@ import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
 import type { ActionResult, CanvasShape, ColourBy, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
+import { CanvasLegend, canvasLegendEntries } from './CanvasLegend'
 import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
 import { shouldAutoScan } from '@/lib/status-plans/auto-scan'
@@ -123,6 +124,11 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
         revisionCode: okFeed.revisionCode,
       }
     : null), [boardOn, okFeed, sheetShapes, shapes, views])
+  // The colour key over the drawing: what each colour on THIS sheet means, and how many.
+  const keyEntries = useMemo(() => (boardLegend
+    ? boardLegend.rows.map((r) => ({ key: r.key, label: r.label, style: r.style, count: r.count }))
+    : canvasLegendEntries(purpose === 'tenant_layout' ? TENANT_LEGEND : SCHEMATIC_LEGEND, sheetSummary.counts)
+  ), [boardLegend, purpose, sheetSummary])
   const selected = sheetShapes.find((s) => s.id === selectedId) ?? null
   const detectNodes = useMemo(() => props.nodes.map(toDetectNode), [props.nodes])
   const options = useMemo(() => buildNodeOptions(props.nodes, shapes, selectedId, purpose), [props.nodes, shapes, selectedId, purpose])
@@ -310,6 +316,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           onReshape={onReshape}
           onDeleteRequest={requestDelete}
           onCalibrated={applySheet}
+          overlay={<CanvasLegend entries={keyEntries} />}
         />
         <aside style={{ display: 'grid', gap: 12 }}>
           <ShapePanel

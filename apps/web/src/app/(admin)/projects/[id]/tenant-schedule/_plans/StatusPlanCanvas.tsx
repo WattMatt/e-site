@@ -14,7 +14,7 @@
  * Shapes are selected on MOUSEDOWN (Konva's click is not synthesised
  * reliably) and cancelBubble so a stage press always means empty canvas.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Shape } from 'react-konva'
 import type Konva from 'konva'
 import { hatchSegments, pointsError, rectToPoints, visualCentre, type Box, type StatusPlanPurpose } from '@esite/shared/status-plans'
@@ -60,6 +60,8 @@ export interface StatusPlanCanvasProps {
   /** The sheet as stored after its scale was saved (new scale and updated_at). */
   onCalibrated: (sheet: SheetSummary) => void
   height?: string
+  /** Drawn over the top-left of the drawing (the colour key); HTML, outside the Konva stage. */
+  overlay?: ReactNode
 }
 
 /** Screen pixels within which a press counts as "on" a corner. */
@@ -505,6 +507,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
             )}
           </Stage>
         )}
+        {img && p.overlay}
       </div>
     </div>
   )
