@@ -7,7 +7,9 @@
  */
 import { detectBlocks, type DetectedBlock, type DetectResult, type RejectedBlock } from './detect-blocks'
 import { boundingBox, type Box } from './geometry'
+import type { LineSegment } from './line-space'
 import { buildNodeIndex, matchBlock, type BlockMatch, type MatchableNode } from './match-nodes'
+import { buildLineIndex, snapBlocks } from './snap-blocks'
 import type { ImageTextItem } from './text-space'
 
 export type ReviewCategory = 'matched' | 'needs_you' | 'part_of' | 'no_tag'
@@ -41,6 +43,8 @@ export interface DetectionReview {
   alreadyOnPlan: number
   rejected: RejectedBlock[]
   counts: { detected: number; matched: number; needsYou: number; partOf: number; noTag: number }
+  /** Usable table lines on the page, and how many detected blocks were snapped onto one. */
+  snap: { lineCount: number; snapped: number }
 }
 
 export type DetectionOutcome =
@@ -137,6 +141,7 @@ export function reviewDetection(
     rows,
     alreadyOnPlan,
     rejected: result.rejected,
+    snap: { lineCount: 0, snapped: 0 },
     counts: { detected: rows.length, matched: count('matched'), needsYou: count('needs_you'), partOf: count('part_of'), noTag: count('no_tag') },
   }
 }
@@ -154,11 +159,17 @@ export function runDetection(
   nodes: readonly MatchableNode[],
   existing: readonly ExistingShapeRef[],
   rawItemCount: number = items.length,
+  lines: readonly LineSegment[] = [],
 ): DetectionOutcome {
   if (items.length === 0) return rawItemCount > 0 ? { kind: 'not_upright' } : { kind: 'no_text' }
-  const result = detectBlocks(items)
-  if (result.blocks.length === 0) return { kind: 'no_blocks', labelCount: result.labelCount, rejected: result.rejected }
-  return { kind: 'review', review: reviewDetection(result, nodes, existing) }
+  const found = detectBlocks(items)
+  if (found.blocks.length === 0) return { kind: 'no_blocks', labelCount: found.labelCount, rejected: found.rejected }
+  // Snap BEFORE review, so "already on the plan" is judged against the table's border.
+  const index = buildLineIndex(lines)
+  const blocks = snapBlocks(found.blocks, index)
+  const review = reviewDetection({ ...found, blocks }, nodes, existing)
+  review.snap = { lineCount: index.count, snapped: blocks.filter((b) => b.snapped).length }
+  return { kind: 'review', review }
 }
 
 /** What status_plan_shapes.detected_tag stores for an accepted block. */

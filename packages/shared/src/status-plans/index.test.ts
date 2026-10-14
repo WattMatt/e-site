@@ -35,6 +35,13 @@ describe('@esite/shared/status-plans public surface', () => {
     expect(sp.DETECTED_TAG_MAX).toBe(64)
   })
 
+  it('exports the table-snapping surface', () => {
+    for (const name of ['segmentToImageSpace', 'buildLineIndex', 'findTableRect', 'snapBlock', 'snapBlocks']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.SNAP_TOLERANCES.span).toBe(0.8)
+  })
+
   it('exports the main-board surface (follow-ups 2026-10-13)', () => {
     for (const name of ['feedingMainBoard', 'feedsFor', 'compareBoardNames', 'boardColours', 'boardShapeStyle']) {
       expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
