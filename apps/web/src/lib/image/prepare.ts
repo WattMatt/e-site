@@ -18,6 +18,14 @@
  *  5. If any step fails, refuse with a sentence. Never upload bytes we could not read.
  */
 
+/**
+ * The `accept` for every photo picker. Windows without the paid HEIF extension does not count
+ * `.heic` as an image, so `image/*` alone hides an iPad's photos in the file dialog; and when one
+ * is picked anyway the browser gives it an empty type. Naming the extensions keeps them visible;
+ * prepareImageForUpload reads the bytes, so the empty type does not matter.
+ */
+export const PHOTO_ACCEPT = 'image/*,.heic,.heif'
+
 /** Long edge, in pixels: sharp on a tablet screen, legible when printed, ~0.3–0.8 MB. */
 export const MAX_EDGE = 2048
 export const JPEG_QUALITY = 0.82

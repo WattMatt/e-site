@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { sniffImageFormat, targetSize, prepareImageForUpload, ImageUnreadableError, MAX_EDGE } from './prepare'
+import { sniffImageFormat, targetSize, prepareImageForUpload, ImageUnreadableError, MAX_EDGE, PHOTO_ACCEPT } from './prepare'
 
 const { heicToMock } = vi.hoisted(() => ({ heicToMock: vi.fn() }))
 vi.mock('heic-to/csp', () => ({ heicTo: heicToMock }))
@@ -76,6 +76,22 @@ describe('prepareImageForUpload', () => {
     expect(heicToMock).toHaveBeenCalledWith(expect.objectContaining({ blob: heic, type: 'image/jpeg' }))
     expect(out.file.type).toBe('image/jpeg')
     expect(out.sourceFormat).toBe('heic')
+  })
+
+  it('an iPad HEIC picked on a Windows PC (no type, as Windows reports it) is still converted to JPEG', async () => {
+    // Without the HEIF extension Windows gives the browser type "" — production uploaded that raw,
+    // and the bucket refused it as application/octet-stream (2026-10-14).
+    const heic = new File([ftyp('heic')], 'IMG_4821.HEIC', { type: '' })
+    decodable = (b) => b !== heic
+    heicToMock.mockResolvedValue(new Blob([JPEG], { type: 'image/jpeg' }))
+    const out = await prepareImageForUpload(heic)
+    expect(out.file.type).toBe('image/jpeg')
+    expect(out.file.name).toBe('IMG_4821.jpg')
+    expect(out.sourceFormat).toBe('heic')
+  })
+
+  it('every photo picker accepts .heic explicitly, so Windows shows iPad photos in the dialog', () => {
+    expect(PHOTO_ACCEPT.split(',')).toEqual(expect.arrayContaining(['image/*', '.heic', '.heif']))
   })
 
   it('refuses with a sentence, rather than uploading bytes nobody else could open', async () => {

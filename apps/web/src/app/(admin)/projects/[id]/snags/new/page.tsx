@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { uploadSnagPhoto } from '@/lib/image/compress'
 import { notifySnagCreatedAction } from '@/actions/snag.actions'
 import Link from 'next/link'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 const CATEGORIES = ['general', 'electrical', 'mechanical', 'civil', 'safety', 'quality', 'documentation']
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
@@ -205,7 +206,7 @@ export default function NewSnagPage({ params }: Props) {
             )}
           </div>
           <div style={{ padding: '16px 18px' }}>
-            <PhotoSourcePicker accept="image/*" onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
+            <PhotoSourcePicker accept={PHOTO_ACCEPT} onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
             {photoFiles.length > 0 && (
               <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoFiles.map((f, i) => (

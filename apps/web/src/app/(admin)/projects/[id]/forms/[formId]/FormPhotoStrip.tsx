@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { uploadFormPhoto, SITE_FORM_PHOTO_BUCKET } from '@/lib/site-forms/upload'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 /**
  * Per-field photo strip for site forms.
@@ -298,7 +299,7 @@ export default function FormPhotoStrip({
           {uploading ? 'Uploading…' : photos.length > 0 ? '+ Photo' : '+ Take photo'}
           <input
             type="file"
-            accept="image/*"
+            accept={PHOTO_ACCEPT}
             capture="environment"
             disabled={uploading}
             style={{ display: 'none' }}
