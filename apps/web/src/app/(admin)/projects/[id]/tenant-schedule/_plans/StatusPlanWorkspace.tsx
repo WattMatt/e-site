@@ -35,6 +35,7 @@ import { PlanLegend } from './PlanLegend'
 import { CanvasLegend, canvasLegendEntries } from './CanvasLegend'
 import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
+import { RealignBlocksPanel } from './RealignBlocksPanel'
 import { shouldAutoScan } from '@/lib/status-plans/auto-scan'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
@@ -237,6 +238,30 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   ) : null
   const schematicSlot = detectionPanel && !scanPrimary ? <div data-slot="schematic-detection">{detectionPanel}</div> : null
 
+  // Line diagrams with rectangles: move them onto their tables' drawn borders (links kept).
+  // The proposed outlines are drawn dashed on the canvas while the preview is open.
+  const [realignOutlines, setRealignOutlines] = useState<number[][]>([])
+  const hasRect = sheetShapes.some((s) => s.shape === 'rect')
+  const realignPanel = purpose === 'distribution_schematic' && canEdit && hasRect ? (
+    <div data-slot="schematic-realign">
+      <RealignBlocksPanel
+        key={sheet.id}
+        sheetId={sheet.id}
+        pageIndex={sheet.pageIndex}
+        pdfUrl={sheet.signedUrl}
+        isPdf={sheet.isPdf}
+        nodes={detectNodes}
+        shapes={sheetShapes}
+        onShapes={(updated) => {
+          const byId = new Map(updated.map((u) => [u.id, u]))
+          setShapes((prev) => prev.map((x) => byId.get(x.id) ?? x))
+        }}
+        onProposals={setRealignOutlines}
+      />
+    </div>
+  ) : null
+  const sideSlot = schematicSlot || realignPanel ? <>{schematicSlot}{realignPanel}</> : null
+
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
@@ -317,6 +342,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           onDeleteRequest={requestDelete}
           onCalibrated={applySheet}
           overlay={<CanvasLegend entries={keyEntries} />}
+          proposals={realignPanel ? realignOutlines : []}
         />
         <aside style={{ display: 'grid', gap: 12 }}>
           <ShapePanel
@@ -334,7 +360,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
             onSetAreaType={(areaType) => patchSelected({ areaType })}
             onUnassign={() => patchSelected({ nodeId: null, areaType: null })}
             onDelete={requestDelete}
-            extra={schematicSlot}
+            extra={sideSlot}
           />
           <PlanLegend
             purpose={purpose}

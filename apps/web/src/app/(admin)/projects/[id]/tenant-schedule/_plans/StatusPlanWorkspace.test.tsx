@@ -19,9 +19,10 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][] }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
+      {' '}proposals:{JSON.stringify(props.proposals ?? [])}
       {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
@@ -52,6 +53,8 @@ vi.mock('@/lib/status-plans/navigate', () => ({ navigateTo: vi.fn() }))
 const detection = vi.hoisted(() => ({ extractPageText: vi.fn(), acceptDetectedBlocksAction: vi.fn() }))
 vi.mock('@/lib/status-plans/extract-page-text', () => ({ extractPageText: detection.extractPageText }))
 vi.mock('@/actions/status-plan-detection.actions', () => ({ acceptDetectedBlocksAction: detection.acceptDetectedBlocksAction }))
+const realign = vi.hoisted(() => ({ realignShapesAction: vi.fn() }))
+vi.mock('@/actions/status-plan-realign.actions', () => realign)
 
 import { StatusPlanWorkspace } from './StatusPlanWorkspace'
 
@@ -195,6 +198,45 @@ describe('StatusPlanWorkspace', () => {
     render(<StatusPlanWorkspace {...schematic({ shapes: [], canEdit: false })} />)
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(detection.extractPageText).not.toHaveBeenCalled()
+  })
+
+  it('Re-align blocks shows for an editor on a line diagram with a rectangle, and nowhere else', () => {
+    const pdf = { sheet: { ...SHEET, signedUrl: 'https://s/x', isPdf: true } }
+    const { unmount, container } = render(<StatusPlanWorkspace {...schematic(pdf)} />)
+    expect(within(container.querySelector('[data-slot="schematic-realign"]') as HTMLElement)
+      .getByRole('button', { name: 'Re-align blocks to the drawing' })).toBeTruthy()
+    unmount()
+    for (const p of [schematic({ ...pdf, canEdit: false }), schematic({ ...pdf, shapes: [] }), props()]) {
+      const r = render(<StatusPlanWorkspace {...p} />)
+      expect(screen.queryByRole('button', { name: 'Re-align blocks to the drawing' })).toBeNull()
+      r.unmount()
+    }
+  })
+
+  it('re-align: the canvas draws the proposed outline, and Apply folds the moved shape in', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    const h = (at: number, from: number, to: number) => ({ axis: 'h' as const, at, from, to })
+    const v = (at: number, from: number, to: number) => ({ axis: 'v' as const, at, from, to })
+    const LINES = [h(487, 497, 600), h(601, 497, 600), v(497, 487, 601), v(546, 487, 601), v(600, 487, 601),
+      ...Array.from({ length: 6 }, (_, r) => h(505 + r * 16, 497, 600))]
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, lines: LINES, width: 2000, height: 2000 })
+    const hand: CanvasShape = { ...SHAPE, points: [495, 485, 590, 485, 590, 605, 495, 605], nodeId: 'n1' }
+    const border = [497, 487, 600, 487, 600, 601, 497, 601]
+    realign.realignShapesAction.mockResolvedValue({ ok: true, data: [{ ...hand, points: border, updatedAt: 't2' }] })
+    render(<StatusPlanWorkspace {...schematic({ shapes: [hand], sheet: { ...SHEET, signedUrl: 'https://s/x', isPdf: true } })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-align blocks to the drawing' }))
+    await screen.findByText(/1 will snap to their table/)
+    expect(canvasText()).toContain(`proposals:${JSON.stringify([border])}`)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Re-aligned 1 block')
+    expect(canvasText()).toContain('proposals:[]')
+    expect(realign.realignShapesAction.mock.calls[0][0]).toEqual({ sheetId: 'sh1', moves: [{ shapeId: 's1', expectedUpdatedAt: 't1', points: border }] })
+    // Folded in: a second scan finds it already aligned.
+    fireEvent.click(screen.getByRole('button', { name: 'Re-align blocks to the drawing' }))
+    expect(await screen.findByText('0 will snap to their table (avg 0 px) · 1 already aligned · 0 left as they are')).not.toBeNull()
   })
 
   it('detection reads the sheet\'s own page and accepted blocks fold into the canvas', async () => {
