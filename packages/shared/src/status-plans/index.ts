@@ -6,6 +6,7 @@
 export * from './types'
 export * from './shop-status'
 export * from './db-block-status'
+export * from './board-order-status'
 export * from './geometry'
 export * from './area-check'
 export * from './palette'

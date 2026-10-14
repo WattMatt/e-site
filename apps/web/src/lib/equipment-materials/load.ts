@@ -148,6 +148,9 @@ export async function loadEquipmentMaterialsData(
       .select('id, node_id, label, scope_item_type_id, status, ordered_at, received_at, notes')
       .eq('project_id', projectId)
       .order('label', { ascending: true })
+      // id breaks label ties, so the board line the schedule summarises is the
+      // one the line-diagram plan reads (project-db-orders.ts uses the same order).
+      .order('id', { ascending: true })
     if (error) throw error
     orders = (data ?? []) as unknown as RawOrder[]
   } catch (err: unknown) {

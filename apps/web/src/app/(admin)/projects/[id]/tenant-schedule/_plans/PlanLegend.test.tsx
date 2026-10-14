@@ -28,9 +28,11 @@ describe('PlanLegend', () => {
     expect(onSelectShape).toHaveBeenCalledWith('s9')
   })
 
-  it('a schematic legend has the DB order entries and no area line', () => {
-    render(<PlanLegend purpose="distribution_schematic" summary={{ counts: { required: 4 }, totalM2: 0, unmeasured: 0 }} hasScale attention={[]} onSelectShape={vi.fn()} />)
-    expect(legendRow('Required')).toBe('Required4')
+  it('a schematic legend has the order entries and no area line', () => {
+    render(<PlanLegend purpose="distribution_schematic" summary={{ counts: { required: 4, received: 2 }, totalM2: 0, unmeasured: 0 }} hasScale attention={[]} onSelectShape={vi.fn()} />)
+    expect(legendRow('Required — not yet ordered')).toBe('Required — not yet ordered4')
+    expect(legendRow('Received')).toBe('Received2')
+    expect(legendRow('No order line')).toBe('No order line0')
     expect(screen.queryByText(/Total measured/)).toBeNull()
   })
   it('with several sheets, each row shows this sheet then all sheets, and the plan total area', () => {

@@ -9,6 +9,7 @@
  * No I/O — the page fetches the raw rows and passes them in (testable).
  */
 import { computeOrderRequiredBy, computeRagStatus } from '@esite/shared'
+import { boardOrderStatus } from '@esite/shared/status-plans'
 import { naturalCompare } from '@/lib/natural-compare'
 import type { OrderDoc, ShopDrawing } from '@/lib/equipment-materials/order-types'
 
@@ -110,8 +111,13 @@ export function gatherUnifiedBoards(
       // Equipment board: one line. An orderless equipment board is still a
       // buy-list item that needs ordering, so it reads as 'required' (spec §6
       // backstop) — never 'none', so it stays visible under the Required filter.
+      // The status is the shared boardOrderStatus rule, which the line-diagram
+      // status plan also uses, so the two can never disagree.
       const l = lines[0]
-      summary = { status: l?.status ?? 'required', rollup: null, requiredBy: l?.required_by ?? null, rag: l?.rag ?? 'neutral' }
+      const status = boardOrderStatus({ kind: n.kind, lines: (ordersByNode.get(n.id) ?? []).map((o) => ({
+        scopeKey: o.scope_item_type_id ? scopeTypeById.get(o.scope_item_type_id)?.key ?? '?' : null, status: o.status,
+      })) }) ?? 'required'
+      summary = { status, rollup: null, requiredBy: l?.required_by ?? null, rag: l?.rag ?? 'neutral' }
     }
 
     const board: UnifiedBoard = {

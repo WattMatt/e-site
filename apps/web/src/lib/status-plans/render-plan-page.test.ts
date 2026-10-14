@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import zlib from 'node:zlib'
 import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
-import { TENANT_LEGEND, hatchSegments, type ShapeStyle } from '@esite/shared/status-plans'
+import { SCHEMATIC_LEGEND, TENANT_LEGEND, dbBlockStyle, hatchSegments, hexToRgb01, type ShapeStyle } from '@esite/shared/status-plans'
 import { isWinAnsiSafe } from '@/lib/pdf/winansi'
 import { squash } from '@/test/pdf-text'
 import { pdfStreams, pdfAllText, paintedPaths, cmBeforeDo, samePoints, near, drawnText } from '@/test/pdf-ops'
@@ -110,6 +110,36 @@ describe('renderStatusPlanPdf — A3 layout (report appendix, portal)', () => {
     const outline = paintedPaths(pageStream(out)).find((p) => p.paint === 'S' && p.closed && samePoints(p.points, box))
     expect(outline).toBeDefined()
     for (const [x] of box) expect(x).toBeLessThan(A3_LANDSCAPE[0] - 24 - 200)
+  })
+})
+
+describe('line diagram colours (solid, never hatched)', () => {
+  const STATUSES = ['received', 'ordered', 'required', 'by_tenant', 'no_order', 'unlinked'] as const
+
+  it('every block is a solid fill plus outline, the legend prints solid swatches with labels and counts, and nothing is hatched', async () => {
+    const blocks = STATUSES.map((st, i) => shape({
+      points: [20 + i * 150, 100, 140 + i * 150, 100, 140 + i * 150, 200, 20 + i * 150, 200],
+      style: dbBlockStyle(st), labelLines: [`ZZ-${i}`],
+    }))
+    const counts = { received: 3, ordered: 2, required: 7, by_tenant: 1, no_order: 4, unlinked: 5 }
+    const out = await renderStatusPlanPdf(input(await sourcePdf({ r: 0 }), {
+      purpose: 'distribution_schematic', legend: SCHEMATIC_LEGEND, shapes: blocks, counts,
+    }), 'source')
+    const paths = paintedPaths(pageStream(out))
+    // No hatch strokes anywhere: a hatch is one unclosed path of many move-tos.
+    expect(paths.some((p) => p.paint === 'S' && !p.closed && p.moves > 1)).toBe(false)
+    // One closed fill per filled block on the drawing and per filled legend swatch (unlinked has no fill).
+    const fills = paths.filter((p) => p.paint === 'f' && p.closed)
+    expect(fills).toHaveLength(2 * (STATUSES.length - 1))
+    // Each filled block's colour is painted at the style's opacity (the /GS state is set before the fill).
+    const stream = pageStream(out)
+    for (const st of STATUSES.filter((s) => s !== 'unlinked')) {
+      const { r, g, b } = hexToRgb01(dbBlockStyle(st).fill!)
+      const n = (v: number) => String(v).slice(0, 5).replace('.', '\\.')
+      expect(stream, st).toMatch(new RegExp(`${n(r)}\\d*\\s+${n(g)}\\d*\\s+${n(b)}\\d*\\s+rg`))
+    }
+    const text = squash(drawnText(out))
+    for (const e of SCHEMATIC_LEGEND) expect(text).toContain(squash(`${e.label}${counts[e.key as keyof typeof counts]}`))
   })
 })
 

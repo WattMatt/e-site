@@ -19,7 +19,7 @@ interface Props {
 
 /**
  * The line diagram (300 schematic): upload it, and an empty sheet scans itself
- * for DB blocks on open for an editor (review above the drawing), then hatch
+ * for DB blocks on open for an editor (review above the drawing), then colour
  * them (spec 2026-10-12 §2). Same reads and gates as the floor plan. "Export sheet" (in the workspace)
  * downloads the sheet on screen at its own size.
  */

@@ -2,8 +2,10 @@
  * One status plan as a vector PDF page (spec 2026-10-09 §8).
  *
  * The source drawing page is EMBEDDED (pdf-lib embedPage → form XObject), never rasterised, and
- * every shape is drawn in vector on top from the single palette (palette.ts) with the shared hatch
- * (geometry.ts hatchSegments), so the canvas, the legend and this page cannot disagree.
+ * every shape is drawn in vector on top from the single palette (palette.ts), so the canvas, the
+ * legend and this page cannot disagree. Every palette status is a solid translucent fill plus a
+ * full-strength outline (2026-10-14); the hatch path (geometry.ts hatchSegments) is still drawn for
+ * a style that declares hatches, and no palette style does.
  *
  * Two layouts:
  *   'a3'     — fitted to A3 landscape with a legend column and a title strip (report appendix, portal)
