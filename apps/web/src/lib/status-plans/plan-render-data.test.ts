@@ -128,7 +128,7 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(s!.shapes[2]!.style).toEqual(areaShapeStyle('common'))
     // 200 × 100 px at 20 px/m = 10 m × 5 m = 50 m²
     expect(s!.shapes[0]!.labelLines).toEqual(['L01', 'Done Ltd', '50.0 m²'])
-    expect(s!.counts).toMatchObject({ complete: 1, in_progress: 1, overdue: 1, common: 1, unlinked: 1 })
+    expect(s!.counts).toMatchObject({ complete: 1, in_progress: 0, overdue: 1, common: 1, unlinked: 1 })
     expect(s!.measured).toEqual({ totalM2: 100, unmeasured: 0 })
     expect(s!.source).toEqual({ kind: 'pdf', bytes: PDF, pageIndex: 1, key: filePath('a', 'a1') })
     expect(s!.warnings).toEqual([])
@@ -136,7 +136,7 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(TENANT_PLAN_FILES).toBe('tenant-plan-files')
   })
 
-  it('hatches line diagram blocks from the DB order of any node, without tenant facts', async () => {
+  it('colours line diagram blocks from the order status of any node, without tenant facts', async () => {
     const { clients } = world({
       plans: [planRow('s', { purpose: 'distribution_schematic' })],
       sheets: [sheetRow('s1', 's')],

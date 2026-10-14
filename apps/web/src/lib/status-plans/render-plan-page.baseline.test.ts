@@ -5,6 +5,11 @@
  * running this file on the renderer as it stood BEFORE Phase 3 (Task 3.1). pdf-lib's
  * resource names come from a per-document seeded RNG, so with Date frozen the output is
  * deterministic.
+ *
+ * Re-captured 2026-10-14, deliberately: the legend printed here is TENANT_LEGEND, and its
+ * Overdue swatch became a solid red fill (no hatch). Proven to be the only difference —
+ * with the old hatched Overdue swatch substituted into the legend, the previous eight
+ * hashes reproduced exactly. This file guards annotation flattening, not shape styles.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -13,14 +18,14 @@ import { TENANT_LEGEND, type ShapeStyle } from '@esite/shared/status-plans'
 import { renderStatusPlanPdf, type StatusPlanRenderInput } from './render-plan-page'
 
 const BASELINE: Record<string, string> = {
-  'source:0': '36efbcb5f2617353fea91d2fc13ab72eb5fd8cd39e123ac0f24017c9b48db1de',
-  'source:90': '219552a410610f72264a7f51f9eae3cea5a49e3ddcd72fb1c1eacff16c93f6b9',
-  'source:180': '7418f96c0f3637fded532c56768829f91dea3123a82601246f9b27aeaead47bb',
-  'source:270': 'b865794ade95db6aa41d41063e1f71250512f82009f9c7f1d7bb7d931bea406d',
-  'a3:0': '8d697f479403b4b17b61f8e17c55e348bea8cdb146e221efa45543a72b58dd66',
-  'a3:90': '29eb20f3081e3ce179c776af1766be3873aae4c206940633eabebb984c886248',
-  'a3:180': 'ce54a78041a4486b9d04b4f279c4ab19d4f600ed7f9085ce1a89485d3c61566b',
-  'a3:270': '42d2a8266b3f656052ec4f58b80aceb37edf043b51dc3094687febe2888226d4',
+  'source:0': 'd38a423743c2dbf5876bf20c5b395c65db77db36081b16c6693ccdea105c6293',
+  'source:90': 'ced4b7e8c5cc1b0204abf58b7a5c039febb7301f60a22d6e91c09a6f7d03b418',
+  'source:180': '2c941f4147688bcba859a46e56fc8f9c9f2776bb33be26e7750ce332e96cdcdd',
+  'source:270': 'f6202bd5ca8e4a75c522359d329458bdd4cf7966862667ea5e9317a979d7285e',
+  'a3:0': '0cd2256f5d8ea4b61cedb5139ba6da14fe90ff0646f369e9f0ed2b35021a331a',
+  'a3:90': 'abedd5563c8d31285a06a88a766c4c51c5caba8ca7e5dbb2f1ccef64cb838e29',
+  'a3:180': 'b1b52e9c057628f5e78905e57c23b938c56b30a4f604a05ff2048f4f54481ece',
+  'a3:270': '3142183cfc2a6ea6764270bdf5e865e868b1847fdb62b7ce875da90a781eea23',
 }
 
 const PLAIN: ShapeStyle = { fill: '#2E9E4F', fillOpacity: 0.45, stroke: '#2E9E4F', strokeWidth: 3, dash: null, hatches: [], strikeLabel: false }

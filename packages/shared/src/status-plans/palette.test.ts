@@ -2,7 +2,7 @@ import { MAIN_BOARD_PALETTE, boardColours, boardShapeStyle, FEED_UNKNOWN_LABEL, 
 import { describe, it, expect } from 'vitest'
 import {
   COLOURS,
-  HATCH_SPACING_PX,
+  STROKE_PX,
   tenantShapeStyle,
   areaShapeStyle,
   dbBlockStyle,
@@ -16,7 +16,7 @@ import type { ShopStatus } from './shop-status'
 import type { DbBlockStatus } from './db-block-status'
 
 const SHOP_STATUSES: ShopStatus[] = ['complete', 'in_progress', 'decommissioned', 'unlinked']
-const DB_STATUSES: DbBlockStatus[] = ['required', 'ordered', 'received', 'by_tenant', 'no_order', 'unlinked']
+const DB_STATUSES: DbBlockStatus[] = ['received', 'ordered', 'required', 'by_tenant', 'no_order', 'unlinked']
 
 function allColours(s: ShapeStyle): string[] {
   return [s.fill, s.stroke, ...s.hatches.map((h) => h.color)].filter((c): c is string => c !== null)
@@ -28,11 +28,18 @@ describe('tenant shapes', () => {
     expect(tenantShapeStyle({ status: 'in_progress', overdue: false }).fill).toBe(COLOURS.inProgress)
     expect(tenantShapeStyle({ status: 'in_progress', overdue: false }).hatches).toEqual([])
   })
-  it('overdue keeps the base fill and adds a red outline and red diagonal hatch', () => {
+  it('overdue is its own solid red fill with a red outline — no hatch', () => {
     const s = tenantShapeStyle({ status: 'in_progress', overdue: true })
-    expect(s.fill).toBe(COLOURS.inProgress)
+    expect(s.fill).toBe(COLOURS.overdue)
     expect(s.stroke).toBe(COLOURS.overdue)
-    expect(s.hatches).toEqual([{ angleDeg: 45, spacing: HATCH_SPACING_PX, color: COLOURS.overdue, width: 2 }])
+    expect(s.fillOpacity).toBeGreaterThan(0)
+    expect(s.hatches).toEqual([])
+  })
+  it('no tenant or area style is hatched', () => {
+    for (const st of SHOP_STATUSES) for (const overdue of [false, true]) {
+      expect(tenantShapeStyle({ status: st, overdue }).hatches, `${st} ${overdue}`).toEqual([])
+    }
+    for (const t of AREA_TYPES) expect(areaShapeStyle(t).hatches).toEqual([])
   })
   it('decommissioned strikes its label; unlinked does not', () => {
     expect(tenantShapeStyle({ status: 'decommissioned', overdue: false }).strikeLabel).toBe(true)
@@ -46,27 +53,46 @@ describe('tenant shapes', () => {
 })
 
 describe('schematic DB blocks', () => {
-  it('required: red outline, no fill', () => {
-    const s = dbBlockStyle('required')
-    expect(s.fill).toBeNull()
-    expect(s.stroke).toBe(COLOURS.overdue)
+  const FILLED: Array<[DbBlockStatus, string]> = [
+    ['received', COLOURS.complete],
+    ['ordered', COLOURS.ordered],
+    ['required', COLOURS.overdue],
+    ['by_tenant', COLOURS.byTenant],
+    ['no_order', COLOURS.noOrder],
+  ]
+  it.each(FILLED)('%s: a solid translucent fill with a full-strength 3 px outline in the same colour, no hatch', (st, colour) => {
+    const s = dbBlockStyle(st)
+    expect(s).toMatchObject({ fill: colour, stroke: colour, strokeWidth: STROKE_PX, dash: null, hatches: [] })
+    expect(s.fillOpacity).toBeGreaterThanOrEqual(0.4)
+    expect(s.fillOpacity).toBeLessThanOrEqual(0.6)
   })
-  it('ordered: amber diagonal hatch', () => {
-    expect(dbBlockStyle('ordered').hatches).toEqual([{ angleDeg: 45, spacing: HATCH_SPACING_PX, color: COLOURS.ordered, width: 2 }])
+  it('unlinked: a dashed grey outline and no fill', () => {
+    expect(dbBlockStyle('unlinked')).toMatchObject({ fill: null, fillOpacity: 0, stroke: COLOURS.unlinked, dash: [10, 6], hatches: [] })
   })
-  it('received: translucent green fill', () => {
-    const s = dbBlockStyle('received')
-    expect(s.fill).toBe(COLOURS.complete)
-    expect(s.fillOpacity).toBeGreaterThan(0)
-    expect(s.fillOpacity).toBeLessThan(1)
+  it('no two block statuses share a colour', () => {
+    const colours = DB_STATUSES.map((st) => dbBlockStyle(st).fill ?? `outline:${dbBlockStyle(st).stroke}`)
+    expect(new Set(colours).size).toBe(DB_STATUSES.length)
+    const fills = FILLED.map(([, c]) => c)
+    for (let i = 0; i < fills.length; i++) {
+      for (let j = i + 1; j < fills.length; j++) expect(rgbDistance(fills[i]!, fills[j]!), `${fills[i]} vs ${fills[j]}`).toBeGreaterThanOrEqual(60)
+    }
   })
-  it('by tenant: grey cross-hatch (two directions)', () => {
-    expect(dbBlockStyle('by_tenant').hatches.map((h) => h.angleDeg)).toEqual([45, 135])
-  })
-  it('no order: thin neutral outline only; unlinked: dashed grey outline', () => {
-    expect(dbBlockStyle('no_order')).toMatchObject({ fill: null, hatches: [], dash: null, stroke: COLOURS.neutral })
-    expect(dbBlockStyle('no_order').strokeWidth).toBeLessThan(dbBlockStyle('required').strokeWidth)
-    expect(dbBlockStyle('unlinked').dash).toEqual([10, 6])
+  it('the legend says what each colour means', () => {
+    expect(Object.fromEntries(SCHEMATIC_LEGEND.map((e) => [e.key, e.label]))).toEqual({
+      received: 'Received',
+      ordered: 'Ordered',
+      required: 'Required — not yet ordered',
+      by_tenant: 'Supplied by tenant',
+      no_order: 'No order line',
+      unlinked: 'Not linked to a board',
+    })
+    expect(Object.fromEntries(TENANT_LEGEND.slice(0, 5).map((e) => [e.key, e.label]))).toEqual({
+      complete: 'Complete',
+      in_progress: 'In progress',
+      overdue: 'Overdue (past BO date)',
+      decommissioned: 'Decommissioned',
+      unlinked: 'Unassigned',
+    })
   })
 })
 
@@ -76,7 +102,7 @@ describe('legends and colours', () => {
       'complete', 'in_progress', 'overdue', 'decommissioned', 'unlinked', ...AREA_TYPES,
     ])
   })
-  it('the schematic legend lists every block status once', () => {
+  it('the schematic legend lists every block status once, most advanced first', () => {
     expect(SCHEMATIC_LEGEND.map((e) => e.key)).toEqual(DB_STATUSES)
   })
   it('every colour used anywhere is a #RRGGBB hex', () => {

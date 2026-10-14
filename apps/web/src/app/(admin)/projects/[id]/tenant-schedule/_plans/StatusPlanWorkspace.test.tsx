@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import type { StatusPlanPageProps, CanvasShape, SheetSummary } from '@/lib/status-plans/types'
 
 // No jest-dom in this repo (vitest.config.ts has no setupFiles): assert on textContent.
 const legendRow = (label: string) =>
   within(screen.getByRole('list', { name: 'Legend entries' })).getByText(label).closest('li')!.textContent
 const canvasText = () => screen.getByTestId('canvas').textContent ?? ''
+/** The colour key drawn over the canvas: one "label+count" string per row. */
+const keyRows = () =>
+  within(within(screen.getByTestId('canvas')).getByRole('list', { name: 'Colour key' })).getAllByRole('listitem').map((li) => li.textContent)
 
 const SHEET: SheetSummary = {
   id: 'sh1', label: 'Ground floor', sortOrder: 0, fileName: 'E-100.pdf', mime: 'application/pdf', pageIndex: 1, revision: 1,
@@ -15,7 +19,7 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
       {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
@@ -23,6 +27,7 @@ vi.mock('next/dynamic', () => ({
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
       <button onClick={() => props.onCalibrated({ ...SHEET, pixelsPerMeter: 25, updatedAt: 'u2' })}>stub-calibrated</button>
+      {props.overlay}
     </div>
   ),
 }))
@@ -256,6 +261,31 @@ describe('StatusPlanWorkspace', () => {
     render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed, initialColourBy: 'board' })} />)
     expect(screen.getByText(/Main board view unavailable — the cable schedule could not be read\./)).toBeTruthy()
     expect(legendRow('Complete')).toBe('Complete1')
+  })
+
+  it('the canvas carries a colour key: line diagram statuses with this sheet\'s counts', () => {
+    const blocks: CanvasShape[] = [
+      { ...SHAPE, id: 'b1', nodeId: 'm1' },
+      { ...SHAPE, id: 'b2', nodeId: 'm2' },
+      { ...SHAPE, id: 'b3', nodeId: null },
+      { ...SHAPE, id: 'b4', sheetId: 'sh2', nodeId: 'm1' },
+    ]
+    const nodes = [
+      { id: 'm1', code: 'MB-ZZ1', kind: 'main_board', shopNumber: null, shopName: null, scheduledM2: null, decommissioned: false },
+      { id: 'm2', code: 'MS-ZZ2', kind: 'mini_sub', shopNumber: null, shopName: null, scheduledM2: null, decommissioned: false },
+    ]
+    render(<StatusPlanWorkspace {...schematic({ sheets: [SHEET, SHEET2], shapes: blocks, nodes, dbOrders: { m1: 'received', m2: 'ordered' } })} />)
+    expect(keyRows()).toEqual([
+      'Received1', 'Ordered1', 'Required — not yet ordered0', 'Supplied by tenant0', 'No order line0', 'Not linked to a board1',
+    ])
+  })
+
+  it('the colour key follows Colour by: status rows, then the main boards', () => {
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK })} />)
+    expect(keyRows()[0]).toBe('Complete1')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by main board' }))
+    expect(keyRows()[0]).toBe('MB 1.11')
+    expect(keyRows()).not.toContain('Complete1')
   })
 
   it('a line diagram has no colour switch', () => {
