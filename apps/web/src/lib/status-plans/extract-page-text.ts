@@ -6,14 +6,17 @@
  * The viewport is built at IMAGE_SPACE_SCALE, the scale use-sheet-image
  * rasterises at (pinned by a contract test), and its transform carries the
  * page's /Rotate — so rotation is matrix maths, never a special case.
+ * The page's straight line work comes back alongside (extract-page-lines.ts),
+ * so detected blocks can snap onto their tables' borders.
  */
-import { textItemsToImageSpace, type ImageTextItem, type Matrix } from '@esite/shared/status-plans'
+import { textItemsToImageSpace, type ImageTextItem, type LineSegment, type Matrix } from '@esite/shared/status-plans'
+import { extractPageLines, type OperatorListPage, type PdfOps } from './extract-page-lines'
 
 /** Must equal the scale in lib/sheet/use-sheet-image.ts (pinned by a test). */
 export const IMAGE_SPACE_SCALE = 2
 
 type PdfViewport = { width: number; height: number; transform: number[] }
-type PdfPage = {
+type PdfPage = OperatorListPage & {
   getViewport: (o: { scale: number }) => PdfViewport
   getTextContent: () => Promise<{ items: unknown[] }>
 }
@@ -21,6 +24,8 @@ type PdfDoc = { numPages: number; getPage: (n: number) => Promise<PdfPage>; dest
 export type PdfjsModule = {
   getDocument: (src: Record<string, unknown>) => { promise: Promise<PdfDoc> }
   GlobalWorkerOptions?: { workerSrc: string }
+  /** pdf.js operator codes, for reading the page's line work. */
+  OPS?: PdfOps
 }
 
 async function browserPdfjs(): Promise<PdfjsModule> {
@@ -30,7 +35,15 @@ async function browserPdfjs(): Promise<PdfjsModule> {
 }
 
 export type PageTextResult =
-  | { ok: true; items: ImageTextItem[]; rawItemCount: number; width: number; height: number }
+  | {
+      ok: true
+      items: ImageTextItem[]
+      rawItemCount: number
+      /** Straight table lines, same image space; empty when the page has none or they could not be read. */
+      lines: LineSegment[]
+      width: number
+      height: number
+    }
   | { ok: false; error: string }
 
 export async function extractPageText(
@@ -55,7 +68,8 @@ export async function extractPageText(
     const t = viewport.transform
     const matrix: Matrix = [t[0]!, t[1]!, t[2]!, t[3]!, t[4]!, t[5]!]
     const items = textItemsToImageSpace(content.items, matrix)
-    return { ok: true, items, rawItemCount: content.items.length, width: viewport.width, height: viewport.height }
+    const lines = await extractPageLines(page, matrix, pdfjs.OPS)
+    return { ok: true, items, rawItemCount: content.items.length, lines, width: viewport.width, height: viewport.height }
   } finally {
     await doc.destroy()
   }

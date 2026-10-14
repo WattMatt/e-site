@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import type { DetectionOutcome, ImageTextItem } from '@esite/shared/status-plans'
+import type { DetectionOutcome, ImageTextItem, LineSegment } from '@esite/shared/status-plans'
 import type { CanvasShape } from '@/lib/status-plans/types'
 
 // No jest-dom in this repo: assert on textContent / null.
@@ -322,5 +322,38 @@ describe('DetectBlocksPanel', () => {
     render(<DetectBlocksPanel {...props()} />)
     await detect()
     expect(screen.queryByRole('button', { name: /^Show / })).toBeNull()
+  })
+})
+
+describe('DetectBlocksPanel — boxes snap to the drawn tables', () => {
+  // DB-71's table (invented): border 97..240 × 87..201, divider 146, a row line 5 px under each baseline.
+  const hl = (at: number, from: number, to: number): LineSegment => ({ axis: 'h', at, from, to })
+  const vl = (at: number, from: number, to: number): LineSegment => ({ axis: 'v', at, from, to })
+  const DB71_TABLE: LineSegment[] = [
+    hl(87, 97, 240), hl(201, 97, 240), vl(97, 87, 201), vl(240, 87, 201), vl(146, 87, 201),
+    ...[105, 121, 137, 153, 169, 185].map((y) => hl(y, 97, 240)),
+  ]
+  const NOTE = 'Boxes follow the text — this drawing has no table lines to snap to.'
+
+  it('accepts the block with its box on the table border, not round the text', async () => {
+    extractMock.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, lines: DB71_TABLE, width: 1000, height: 1000 })
+    acceptMock.mockResolvedValue({ ok: true, data: [shape('s1', 'n-71', 'DB-71'), shape('s2', 'n-mb', 'MB-9.2')] })
+    render(<DetectBlocksPanel {...props()} />)
+    await detect()
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all 2 matched' }))
+    await waitFor(() => expect(acceptMock).toHaveBeenCalledTimes(1))
+    const { blocks } = acceptMock.mock.calls[0][0]
+    expect(blocks[0].points).toEqual([97, 87, 240, 87, 240, 201, 97, 201])
+    expect(text(NOTE)).toBeNull()
+    // The other three blocks have no table drawn round them: said, not hidden.
+    expect(text('3 boxes follow the text — no table border was found round them.')).not.toBeNull()
+  })
+
+  it('a drawing with no line work says the boxes follow the text', async () => {
+    extractMock.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, lines: [], width: 1000, height: 1000 })
+    render(<DetectBlocksPanel {...props()} />)
+    await detect()
+    expect(text(NOTE)).not.toBeNull()
+    expect(screen.queryByText(/boxes? follows? the text — no table border/)).toBeNull()
   })
 })
