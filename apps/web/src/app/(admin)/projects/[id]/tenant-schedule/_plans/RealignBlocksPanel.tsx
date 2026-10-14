@@ -59,11 +59,24 @@ function nodeTag(n: MatchableNode | undefined): string {
 export function RealignBlocksPanel({ sheetId, pageIndex, pdfUrl, isPdf, nodes, shapes, onShapes, onProposals }: RealignBlocksPanelProps) {
   const [state, setState] = useState<RealignState>(initialRealignState)
   const stateRef = useRef(state)
+  const onProposalsRef = useRef(onProposals)
+  onProposalsRef.current = onProposals
+  // Handed over in the same step as the state change (not from an effect), so
+  // the canvas never shows outlines from a state the panel has left.
+  const proposalKey = useRef('[]')
+  const publish = (s: RealignState) => {
+    const outlines = realignProposals(s)
+    const key = JSON.stringify(outlines)
+    if (key === proposalKey.current) return
+    proposalKey.current = key
+    onProposalsRef.current(outlines)
+  }
   const send = (e: RealignEvent) => {
     const next = realignReducer(stateRef.current, e)
     if (next !== stateRef.current) {
       stateRef.current = next
       setState(next)
+      publish(next)
     }
   }
 
@@ -74,15 +87,8 @@ export function RealignBlocksPanel({ sheetId, pageIndex, pdfUrl, isPdf, nodes, s
     currentSheet.current = sheetId
     stateRef.current = initialRealignState
     setState(initialRealignState)
+    publish(initialRealignState)
   }, [sheetId])
-
-  const proposals = realignProposals(state)
-  const proposalKey = JSON.stringify(proposals)
-  const onProposalsRef = useRef(onProposals)
-  onProposalsRef.current = onProposals
-  useEffect(() => {
-    onProposalsRef.current(JSON.parse(proposalKey) as number[][])
-  }, [proposalKey])
   // Leaving the sheet (unmount) clears the dashed outlines.
   useEffect(() => () => onProposalsRef.current([]), [])
 
