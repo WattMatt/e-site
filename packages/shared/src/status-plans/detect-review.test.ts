@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { detectBlocks } from './detect-blocks'
 import { boxesOverlap, detectedTagFor, detectionSummary, reviewDetection, runDetection } from './detect-review'
 import { rectToPoints } from './geometry'
+import type { LineSegment } from './line-space'
 import type { MatchableNode } from './match-nodes'
 import { ALPHA, BRAVO, CHARLIE, DELTA_NO_TAG, blockItems, textAt } from './__fixtures__/db-block-layout'
 
@@ -160,6 +161,47 @@ describe('runDetection', () => {
   })
   it('blocks → review', () => {
     expect(runDetection(ITEMS, NODES, []).kind).toBe('review')
+  })
+})
+
+describe('runDetection — snapping to the drawn table', () => {
+  // ALPHA's table (invented): border 97..240 × 87..201, divider 146, row lines 5 px under each baseline.
+  const hl = (at: number, from: number, to: number): LineSegment => ({ axis: 'h', at, from, to })
+  const vl = (at: number, from: number, to: number): LineSegment => ({ axis: 'v', at, from, to })
+  const ALPHA_TABLE: LineSegment[] = [
+    hl(87, 97, 240), hl(201, 97, 240), vl(97, 87, 201), vl(240, 87, 201), vl(146, 87, 201),
+    ...[105, 121, 137, 153, 169, 185].map((y) => hl(y, 97, 240)),
+  ]
+
+  it('snaps the blocks that have a table and says how many', () => {
+    const out = runDetection(ITEMS, NODES, [], ITEMS.length, ALPHA_TABLE)
+    if (out.kind !== 'review') throw new Error(out.kind)
+    expect(out.review.rows.map((r) => [r.block.tag, r.block.snapped])).toEqual([
+      ['DB-71', true], ['DB-72', false], ['DB-90/91', false], [null, false],
+    ])
+    expect(out.review.rows[0]!.block.box).toEqual({ minX: 97, minY: 87, maxX: 240, maxY: 201 })
+    expect(out.review.rows[0]!.block.points).toEqual(rectToPoints(97, 87, 240, 201))
+    expect(out.review.snap).toEqual({ lineCount: ALPHA_TABLE.length, snapped: 1 })
+  })
+
+  it('a sheet with no line work keeps every text box and reports zero lines', () => {
+    const out = runDetection(ITEMS, NODES, [], ITEMS.length, [])
+    if (out.kind !== 'review') throw new Error(out.kind)
+    expect(out.review.rows.every((r) => !r.block.snapped)).toBe(true)
+    expect(out.review.snap).toEqual({ lineCount: 0, snapped: 0 })
+    const noLines = runDetection(ITEMS, NODES, [])
+    if (noLines.kind !== 'review') throw new Error(noLines.kind)
+    expect(noLines.review.snap).toEqual({ lineCount: 0, snapped: 0 })
+  })
+
+  it('leaves out a block already drawn, judged against the SNAPPED box', () => {
+    // Covers 52% of the snapped table (97..240) but only 44% of the text box (95..221).
+    const existing = [{ id: 's1', points: rectToPoints(165, 87, 300, 201), nodeId: null }]
+    const snapped = runDetection(ITEMS, NODES, existing, ITEMS.length, ALPHA_TABLE)
+    const textOnly = runDetection(ITEMS, NODES, existing, ITEMS.length, [])
+    if (snapped.kind !== 'review' || textOnly.kind !== 'review') throw new Error('expected reviews')
+    expect(snapped.review.alreadyOnPlan).toBe(1)
+    expect(textOnly.review.alreadyOnPlan).toBe(0)
   })
 })
 

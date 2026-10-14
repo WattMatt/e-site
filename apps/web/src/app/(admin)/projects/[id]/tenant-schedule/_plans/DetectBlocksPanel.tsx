@@ -15,6 +15,10 @@
  * A meter or incomer inside a main board ("MB-1.1 BULK CHECK METER") is listed
  * collapsed as part of that board: never in Accept all, addable unlinked.
  *
+ * Each proposal's box is snapped onto its table's drawn border (the page's
+ * line work comes back with its text; @esite/shared snap-blocks.ts). A box
+ * with no border to snap to follows the text, and the panel says so.
+ *
  * Nothing is written until a person clicks. Accepted shapes are handed back
  * through onAccepted and folded into the workspace's shapes state (no
  * router.refresh()). A proposal whose outline fails pointsError (a zero-area
@@ -169,7 +173,7 @@ export function DetectBlocksPanel({
       }
       if (!live()) return
       if (!page.ok) { setReadError(page.error); return }
-      setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount))
+      setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount, page.lines ?? []))
     } catch {
       if (live()) setReadError('The drawing could not be read. Try again.')
     } finally {
@@ -281,6 +285,19 @@ export function DetectBlocksPanel({
                 : `${review.alreadyOnPlan} blocks already on this plan were left out.`}
             </p>
           )}
+          {review.snap.lineCount === 0 && (
+            <p style={muted}>Boxes follow the text — this drawing has no table lines to snap to.</p>
+          )}
+          {review.snap.lineCount > 0 && review.rows.some((r) => !r.block.snapped) && (() => {
+            const n = review.rows.filter((r) => !r.block.snapped).length
+            return (
+              <p style={muted}>
+                {n === 1
+                  ? '1 box follows the text — no table border was found round it.'
+                  : `${n} boxes follow the text — no table border was found round them.`}
+              </p>
+            )
+          })()}
           {review.rejected.length > 0 && (
             <details>
               <summary style={muted}>{review.rejected.length} NO: labels did not start a full table</summary>
