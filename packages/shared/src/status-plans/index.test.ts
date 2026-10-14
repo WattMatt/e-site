@@ -49,4 +49,11 @@ describe('@esite/shared/status-plans public surface', () => {
     expect(sp.FEED_MAX_HOPS).toBe(12)
     expect(sp.MAIN_BOARD_PALETTE).toHaveLength(12)
   })
+
+  it('exports the re-align surface (2026-10-14)', () => {
+    for (const name of ['planRealignment', 'realignSummary']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.REALIGN_RULES.minOverlap).toBe(0.5)
+  })
 })
