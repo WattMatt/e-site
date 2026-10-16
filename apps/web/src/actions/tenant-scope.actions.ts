@@ -7,6 +7,7 @@
  *   - setScopeItemPartyAction    — set Landlord/Tenant for a (node, scope_item_type) pair
  *   - setScopeNotRequiredAction  — landlord-covers-full-scope override (no doc will issue)
  *   - addScopeItemTypeAction     — add a new org-level scope item type to the registry
+ *   - removeScopeItemTypeAction  — remove an unused, non-built-in type from the registry
  *
  * Note: setScopeStatusAction and setLayoutStatusAction were removed — status is
  * auto-derived by the 00118 DB trigger from document/revision presence (spec §3.3).
@@ -23,7 +24,7 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
 import { projectService, deriveTenantNodeOrder, planTenantOrderReconcile, ORG_WRITE_ROLES } from '@esite/shared'
 import type { NodeOrderStatus } from '@esite/shared'
 
@@ -48,7 +49,7 @@ async function structurePost(
   body: Record<string, unknown>,
   queryString = '',
   extraPrefer?: string,
-): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> {
   const url = `${supabaseUrl}/rest/v1/${table}${queryString ? `?${queryString}` : ''}`
   const res = await fetch(url, {
     method: 'POST',
@@ -57,9 +58,13 @@ async function structurePost(
   })
   if (!res.ok) {
     const text = await res.text()
-    return { ok: false, error: `INSERT structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+    return {
+      ok: false,
+      status: res.status,
+      error: `INSERT structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}`,
+    }
   }
-  return { ok: true, data: await res.json() }
+  return { ok: true, status: res.status, data: await res.json() }
 }
 
 async function structurePatch(
@@ -361,8 +366,91 @@ export async function setScopeNotRequiredAction(
 }
 
 // ---------------------------------------------------------------------------
-// addScopeItemTypeAction
+// Scope item registry — addScopeItemTypeAction / removeScopeItemTypeAction
+//
+// structure.scope_item_types is ORG-WIDE: a row is a column on every tenant of
+// every project in the organisation (incident 2026-10-16: a "Shop 6" label
+// typed on one project's schedule appeared for every tenant everywhere).
+// So both actions gate on the caller's ORG role (owner/admin/PM, active
+// user_organisations row) — not the per-project effective role, which a
+// project-promoted PM from another company also holds — on top of the
+// project-access guard. This mirrors the table's own RLS (00080).
+// Reads that decide a write go through the service key so they see the whole
+// org, not just the sites the caller is scoped to (00238).
 // ---------------------------------------------------------------------------
+
+/** The two seeded types (00080). Every tenant schedule is built around them. */
+const BUILT_IN_SCOPE_ITEM_KEYS: readonly string[] = ['db', 'lighting']
+
+type RegistryRow = { id: string; key: string; label: string; sort_order: number }
+
+function normaliseLabel(l: string): string {
+  return l.trim().toLowerCase()
+}
+
+/** Project access (effective write role) AND an org write role on the project's org. */
+async function guardOrgRegistryWrite(
+  projectId: string,
+  orgId: string,
+): Promise<{ error: string } | { error?: undefined; supabaseUrl: string; serviceKey: string }> {
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+  if (guard.orgId !== orgId) return { error: 'Organisation mismatch' }
+
+  const orgGate = await requireRole(guard.supabase as never, orgId, ORG_WRITE_ROLES)
+  if (!orgGate.ok) {
+    return {
+      error:
+        'Only an organisation owner, admin or project manager can change the scope items for all projects.',
+    }
+  }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+  return { supabaseUrl, serviceKey }
+}
+
+function structureReadHeaders(serviceKey: string, prefer?: string): Record<string, string> {
+  const h: Record<string, string> = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Accept-Profile': 'structure',
+  }
+  if (prefer) h.Prefer = prefer
+  return h
+}
+
+async function readOrgScopeItemTypes(
+  supabaseUrl: string,
+  serviceKey: string,
+  query: string,
+): Promise<RegistryRow[] | null> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/scope_item_types?${query}`, {
+    method: 'GET',
+    headers: structureReadHeaders(serviceKey),
+  })
+  if (!res.ok) return null
+  const rows = (await res.json()) as unknown
+  return Array.isArray(rows) ? (rows as RegistryRow[]) : null
+}
+
+/** Exact row count via PostgREST Content-Range; null when it cannot be read (fail closed). */
+async function countStructureRows(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+): Promise<number | null> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'HEAD',
+    headers: structureReadHeaders(serviceKey, 'count=exact'),
+  })
+  if (!res.ok) return null
+  const range = res.headers.get('content-range')
+  const m = range ? /\/(\d+)$/.exec(range) : null
+  return m ? Number(m[1]) : null
+}
 
 const addScopeItemTypeSchema = z.object({
   projectId: uuidSchema,
@@ -378,8 +466,11 @@ const addScopeItemTypeSchema = z.object({
 export type AddScopeItemTypeResult = { ok: true; id: string } | { error: string }
 
 /**
- * Insert a new scope_item_type for the org.
- * Idempotent: if (org, key) already exists returns the existing row's id.
+ * Add a new scope_item_type to the org registry (a column for every tenant on
+ * every project in the org). Refuses — and writes nothing — when the org
+ * already has a type with the same key, or the same label (case-insensitive,
+ * trimmed). It never modifies an existing row: the old merge-duplicates upsert
+ * let a re-used key silently rename a type org-wide.
  */
 export async function addScopeItemTypeAction(
   projectId: string,
@@ -387,56 +478,130 @@ export async function addScopeItemTypeAction(
   key: string,
   label: string,
 ): Promise<AddScopeItemTypeResult> {
-  const parsed = addScopeItemTypeSchema.safeParse({ projectId, orgId, key: key.trim().toLowerCase(), label: label.trim() })
-  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
-  const { key: safeKey, label: safeLabel } = parsed.data
+  try {
+    const parsed = addScopeItemTypeSchema.safeParse({
+      projectId,
+      orgId,
+      key: String(key ?? '').trim().toLowerCase(),
+      label: String(label ?? '').trim(),
+    })
+    if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+    const { key: safeKey, label: safeLabel } = parsed.data
+    const duplicate = { error: `"${safeLabel}" already exists as a scope item.` }
 
-  const guard = await guardProjectAccess(projectId)
-  if (guard.error !== undefined) return { error: guard.error }
+    const gate = await guardOrgRegistryWrite(projectId, orgId)
+    if (gate.error !== undefined) return { error: gate.error }
+    const { supabaseUrl, serviceKey } = gate
 
-  // Verify the orgId matches the project's org (belt-and-suspenders)
-  if (guard.orgId !== orgId)
-    return { error: 'Organisation mismatch' }
+    const existing = await readOrgScopeItemTypes(
+      supabaseUrl,
+      serviceKey,
+      `organisation_id=eq.${orgId}&select=id,key,label,sort_order`,
+    )
+    if (!existing) return { error: 'Could not read the current scope items. Nothing was changed.' }
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+    const wanted = normaliseLabel(safeLabel)
+    if (existing.some((t) => t.key === safeKey || normaliseLabel(t.label) === wanted)) return duplicate
 
-  // Check existing sort_order max so new item goes to end
-  const { supabase } = guard
-  const { data: existing } = await supabase
-    .schema('structure')
-    .from('scope_item_types')
-    .select('id, sort_order')
-    .eq('organisation_id', orgId)
-    .order('sort_order', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    const nextSortOrder =
+      existing.length > 0 ? Math.max(...existing.map((t) => Number(t.sort_order) || 0)) + 1 : 10
 
-  const nextSortOrder = existing ? (existing.sort_order as number) + 1 : 10
-
-  const result = await structurePost(
-    supabaseUrl,
-    serviceKey,
-    'scope_item_types',
-    {
+    // Plain INSERT: UNIQUE(organisation_id, key) turns a concurrent add of the
+    // same key into a 409, which is refused below — never merged.
+    const result = await structurePost(supabaseUrl, serviceKey, 'scope_item_types', {
       organisation_id: orgId,
       key: safeKey,
       label: safeLabel,
       sort_order: nextSortOrder,
-    },
-    'on_conflict=organisation_id%2Ckey',
-    'resolution=merge-duplicates',
-  )
+    })
+    if (!result.ok) {
+      if (result.status === 409) return duplicate
+      return { error: 'Could not add the scope item. Nothing was changed.' }
+    }
 
-  if (!result.ok) return { error: result.error ?? 'Failed to add scope item type' }
+    const rows = result.data as Array<{ id: string }>
+    const id = rows?.[0]?.id
+    if (!id) return { error: 'INSERT returned no row' }
 
-  const rows = result.data as Array<{ id: string }>
-  const id = rows?.[0]?.id
-  if (!id) return { error: 'INSERT returned no row' }
-
-  revalidatePath(`/projects/${projectId}/tenant-schedule`)
-  return { ok: true, id }
+    revalidatePath(`/projects/${projectId}/tenant-schedule`)
+    return { ok: true, id }
+  } catch {
+    return { error: 'Could not add the scope item. Nothing was changed.' }
+  }
 }
 
+const removeScopeItemTypeSchema = z.object({
+  projectId: uuidSchema,
+  orgId: uuidSchema,
+  typeId: uuidSchema,
+})
 
+export type RemoveScopeItemTypeResult = { ok: true } | { error: string }
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/**
+ * Remove a scope_item_type from the org registry. Refuses the built-in types,
+ * and any type still referenced by a tenant's scope item or an order line
+ * anywhere in the org (tenant_scope_items cascade on delete — 00080 — so a
+ * delete would silently wipe other projects' data). References are counted
+ * with the service key so the count covers every site, not just the caller's.
+ */
+export async function removeScopeItemTypeAction(
+  projectId: string,
+  orgId: string,
+  typeId: string,
+): Promise<RemoveScopeItemTypeResult> {
+  try {
+    const parsed = removeScopeItemTypeSchema.safeParse({ projectId, orgId, typeId })
+    if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+    const gate = await guardOrgRegistryWrite(projectId, orgId)
+    if (gate.error !== undefined) return { error: gate.error }
+    const { supabaseUrl, serviceKey } = gate
+
+    const found = await readOrgScopeItemTypes(
+      supabaseUrl,
+      serviceKey,
+      `id=eq.${typeId}&organisation_id=eq.${orgId}&select=id,key,label,sort_order`,
+    )
+    if (!found) return { error: 'Could not read the scope item. Nothing was changed.' }
+    const type = found[0]
+    if (!type) return { error: 'Scope item not found.' }
+
+    if (BUILT_IN_SCOPE_ITEM_KEYS.includes(type.key)) {
+      return { error: `"${type.label}" is a built-in scope item and cannot be removed.` }
+    }
+
+    const filter = `scope_item_type_id=eq.${typeId}&select=scope_item_type_id`
+    const [tenantCount, orderCount] = await Promise.all([
+      countStructureRows(supabaseUrl, serviceKey, 'tenant_scope_items', filter),
+      countStructureRows(supabaseUrl, serviceKey, 'node_orders', filter),
+    ])
+    if (tenantCount === null || orderCount === null) {
+      return { error: 'Could not check where this scope item is used. Nothing was changed.' }
+    }
+    if (tenantCount > 0 || orderCount > 0) {
+      return {
+        error: `Used by ${plural(tenantCount, 'tenant', 'tenants')} and ${plural(orderCount, 'order line', 'order lines')} — clear those first.`,
+      }
+    }
+
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/scope_item_types?id=eq.${typeId}&organisation_id=eq.${orgId}`,
+      { method: 'DELETE', headers: structureHeaders(serviceKey) },
+    )
+    if (!res.ok) return { error: 'Could not remove the scope item. Nothing was changed.' }
+    const deleted = (await res.json()) as unknown
+    if (!Array.isArray(deleted) || deleted.length !== 1) {
+      return { error: 'Nothing was removed — the scope item may already be gone.' }
+    }
+
+    revalidatePath(`/projects/${projectId}/tenant-schedule`)
+    return { ok: true }
+  } catch {
+    return { error: 'Could not remove the scope item. Nothing was changed.' }
+  }
+}
