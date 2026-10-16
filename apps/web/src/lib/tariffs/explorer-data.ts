@@ -8,8 +8,8 @@ import 'server-only'
  */
 import { tariffFromRows } from '@esite/shared/tariffs/ingest'
 import {
-  calendarFromRows, normaliseTariffName, pickCalendar, previousFinancialYear,
-  type ExplorerCharge, type HolidayTreatmentRow, type LicenseeSearchItem, type MapLicensee, type Tariff, type TouCalendar,
+  calendarFromRows, normaliseTariffName, pickCalendar, previousFinancialYear, tariffHeadline,
+  type ExplorerCharge, type HolidayTreatmentRow, type ChargeComponent, type LicenseeSearchItem, type MapLicensee, type Tariff, type TariffHeadline, type TariffUnit, type TouCalendar,
 } from '@esite/shared'
 import type { AnyClient } from './admin-gate'
 
@@ -87,15 +87,53 @@ export async function loadLicenseeWithYears(supabase: AnyClient, licenseeId: str
   }
 }
 
-export interface TariffListRow { id: string; name: string; code: string | null; family: string | null; category: string; structure: string; metering: string; isLegacy: boolean }
+export interface TariffListRow {
+  id: string; name: string; code: string | null; family: string | null; category: string; structure: string; metering: string; isLegacy: boolean
+  /** Null when the year's charges could not be read: the list still shows, without figures. */
+  headline: TariffHeadline | null
+}
 
+export const CHARGE_PAGE = 1000 // PostgREST max_rows; a page shorter than this is not proof of the end if max_rows is ever lowered
+
+/** Every charge of a year, the few columns a headline needs, filtered through the join (no id list in the URL). */
+async function yearChargeRows(supabase: AnyClient, yearId: string): Promise<Row[]> {
+  const out: Row[] = []
+  // Advance by what came back, not by the page asked for: a lower max_rows must not skip rows.
+  for (;;) {
+    const { data, error } = await supabase.schema('tariffs').from('charge')
+      .select('id, tariff_id, component, unit, amount_excl_vat, tariff!inner(tariff_year_id)')
+      .eq('tariff.tariff_year_id', yearId).order('id').range(out.length, out.length + CHARGE_PAGE - 1)
+    if (error) fail('charge', error)
+    const page = (data ?? []) as Row[]
+    if (page.length === 0) break
+    out.push(...page)
+  }
+  return out
+}
+
+/** A year's tariffs, each with its headline figures (energy range, fixed charges) read from its charges. */
 export async function loadYearTariffList(supabase: AnyClient, yearId: string): Promise<TariffListRow[]> {
   const { data, error } = await supabase.schema('tariffs').from('tariff')
     .select('id, name, code, family, category, structure, metering, is_legacy').eq('tariff_year_id', yearId).order('name')
   if (error) fail('tariff', error)
-  return ((data ?? []) as Row[]).map((r) => ({
+  const rows = (data ?? []) as Row[]
+  let byTariff: Map<string, Array<{ component: ChargeComponent; unit: TariffUnit; amountExclVat: number }>> | null = new Map()
+  if (rows.length) {
+    try {
+      for (const c of await yearChargeRows(supabase, yearId)) {
+        const k = String(c.tariff_id)
+        const list = byTariff.get(k) ?? []
+        list.push({ component: c.component as ChargeComponent, unit: c.unit as TariffUnit, amountExclVat: Number(c.amount_excl_vat) })
+        byTariff.set(k, list)
+      }
+    } catch {
+      byTariff = null // already logged by fail(); the list is still worth showing
+    }
+  }
+  return rows.map((r) => ({
     id: String(r.id), name: String(r.name), code: (r.code ?? null) as string | null, family: (r.family ?? null) as string | null,
     category: String(r.category), structure: String(r.structure), metering: String(r.metering), isLegacy: Boolean(r.is_legacy),
+    headline: byTariff ? tariffHeadline({ charges: byTariff.get(String(r.id)) ?? [] }) : null,
   }))
 }
 

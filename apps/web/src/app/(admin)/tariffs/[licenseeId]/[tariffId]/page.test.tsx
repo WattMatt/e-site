@@ -44,15 +44,40 @@ const run = async () => render(await TariffDetailPage({ params: Promise.resolve(
 beforeEach(() => vi.clearAllMocks())
 
 describe('tariff detail', () => {
-  it('shows each charge with its unit, YoY change and citation', async () => {
+  it('shows each charge with its unit and a coloured YoY chip, and the citation under Sources and audit', async () => {
     h.detail.mockResolvedValue(detail())
     await run()
     const energy = screen.getByRole('region', { name: 'Energy' })
     expect(within(energy).getByText('750.12 c/kWh')).toBeDefined()
     // (750.12 - 689.79) / 689.79 = +8.746 %
-    expect(within(energy).getByText('+8.7 %')).toBeDefined()
-    expect(within(energy).getByText('Eskom tariffs 2026/27, Megaflex NLA J8')).toBeDefined()
+    expect(within(energy).getByText(/\+8\.7 %/)).toBeDefined()
+    expect(within(energy).queryByText(/Megaflex NLA J8/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'View source for Energy, High demand (winter) · Peak' })).toBeDefined()
+    expect(screen.getByText('Eskom tariffs 2026/27, Megaflex NLA J8')).toBeDefined()
     expect(screen.getByText(/compare each charge with > 1 MVA \(Me01N\) in 2025\/26/)).toBeDefined()
+  })
+  it('leads with the headline figures and the eligibility facts', async () => {
+    h.detail.mockResolvedValue(detail())
+    await run()
+    const glance = screen.getByRole('group', { name: 'At a glance' })
+    expect(within(glance).getByText('750.12 c/kWh')).toBeDefined()
+    expect(within(glance).getByText('Typical change vs 2025/26')).toBeDefined()
+    expect(within(glance).getByText(/\+8\.7 %/)).toBeDefined()
+    const who = screen.getByRole('group', { name: 'Who this tariff is for' })
+    expect(within(who).getByText('Voltage < 500V')).toBeDefined()
+    expect(within(who).getByText('1000–∞ kVA')).toBeDefined()
+    // The code is already in the name, so it is not repeated.
+    expect(within(who).queryByText('Me01N')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Energy rate by season and period' }).textContent).toContain('750.12')
+  })
+  it('the matrix tells a real 0 c/kWh rate from a missing period, and a tariff without seasons gets one row', async () => {
+    const flat = ['peak', 'standard', 'off_peak'].map((tou, i) => ch({ component: 'energy', unit: 'c_per_kWh', amountExclVat: [300.5, 120.25, 0][i], tou: tou as Charge['tou'] }))
+    h.detail.mockResolvedValue(detail({ tariff: tariff(flat), charges: flat.map((c, i) => ({ id: `c${i}`, charge: c, sourceDocumentId: null, sourceTitle: null })), previous: null }))
+    await run()
+    const m = screen.getByRole('region', { name: 'Energy rate by season and period' })
+    expect(within(m).getAllByRole('row')).toHaveLength(2) // header + one season row
+    expect(within(m).getByRole('rowheader').textContent).toBe('All year')
+    expect(within(m).getByText('0.00')).toBeDefined()
   })
   it('draws the TOU visuals from the calendar and lists the family\'s holiday rules', async () => {
     h.detail.mockResolvedValue(detail())
@@ -67,7 +92,7 @@ describe('tariff detail', () => {
     h.detail.mockResolvedValue(detail({ licensee: { id: LID, name: 'CITY POWER', kind: 'municipal', province: 'GP', nersaLicenceNo: null, mdbCode: 'JHB' },
       calendar: { calendar: { ...CAL, source: 'assumed_eskom' }, calendarId: 'cal', fromEskomFallback: true, holidays: [] } }))
     await run()
-    expect(screen.getByText(/CITY POWER publishes seasons but not hours, so Eskom's hours are shown/)).toBeDefined()
+    expect(screen.getByText(/City Power publishes seasons but not hours, so Eskom's hours are shown/)).toBeDefined()
     expect(screen.getByText('Public holidays are billed as the day of the week they fall on.')).toBeDefined()
   })
   it('says when no calendar exists at all, rather than drawing nothing', async () => {
@@ -79,7 +104,8 @@ describe('tariff detail', () => {
     h.detail.mockResolvedValue(detail({ previous: null }))
     await run()
     expect(screen.getByText(/No published tariff of this name in the previous year/)).toBeDefined()
-    expect(screen.queryByText('+0.0 %')).toBeNull()
+    expect(screen.queryByText(/0\.0 %/)).toBeNull()
+    expect(screen.queryByText(/change vs/i)).toBeNull()
   })
   it('a tariff the caller cannot read (or of another licensee) is not found', async () => {
     h.detail.mockResolvedValue(null)
