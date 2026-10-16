@@ -634,6 +634,15 @@ Read-only actions require project access (any project member). Write/export acti
 
 > Permanently deletes a tenant board (`structure.nodes` kind=`tenant_db`) + its cascade (scope/units/documents/orders/drawings) + handover copies + storage objects. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole` — **stricter** than the `/tenant-schedule` page row's general `W` (contractor can edit the schedule but not hard-delete a tenant). Refused when the tenant is wired into an **issued** cable revision or has child boards.
 
+### Tenant scope item registry (`tenant-scope.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `addScopeItemTypeAction` | W | W | W | — | — | — | — |
+| `removeScopeItemTypeAction` | W | W | W | — | — | — | — |
+
+> `structure.scope_item_types` is an **org-wide** registry: each row is a column on every tenant of every project in the organisation (incident 2026-10-16: a "Shop 6" typed on one project's schedule appeared everywhere). Both actions therefore require **both** project access (`requireEffectiveRole(projectId, ORG_WRITE_ROLES)`) **and** an active **org** role of owner/admin/project_manager on the project's org (`requireRole(orgId, ORG_WRITE_ROLES)`) — a contractor promoted per-project to `project_manager` passes the first and is refused by the second. This matches the table's own RLS (00080). Writes use the service-role key. Add is a plain INSERT that refuses a duplicate key or label (case-insensitive) and never modifies an existing row. Remove refuses the built-in `db`/`lighting` types and any type still referenced by `structure.tenant_scope_items` or `structure.node_orders` anywhere in the org (counted with the service key, fail closed — `tenant_scope_items` cascade on delete). The tenant schedule's **Scope items** modal shows the list to every writer and the Add form / Remove buttons only to org owner/admin/PM (server-computed `canManageScopeItems`).
+
 ### DB legend cards (`db-legend.actions.ts`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |

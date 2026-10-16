@@ -11,7 +11,7 @@ import type { Node, LegendCircuit, LegendHeader } from '@esite/shared'
 import { ScopeOfWorkPanel } from './ScopeOfWorkPanel'
 import { LayoutIssuedPanel } from './LayoutIssuedPanel'
 import { DbLegendPanel } from './DbLegendPanel'
-import { AddScopeItemModal } from './AddScopeItemModal'
+import { ScopeItemsModal } from './ScopeItemsModal'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './ScopeOfWorkPanel'
 import type { LayoutDetails } from './LayoutIssuedPanel'
 import { NodeOrderCell } from '../../equipment-schedule/_components/NodeOrderCell'
@@ -28,6 +28,14 @@ interface Props {
   deletedNodes: Node[]
   projectId: string
   orgId: string
+  /** Organisation display name — the Scope items modal names it in its org-wide warning. */
+  orgName?: string
+  /**
+   * Org owner/admin/PM (server-computed via requireRole on the project's org).
+   * Only they may add or remove scope items — the registry is org-wide, so a
+   * per-project promotion is not enough.
+   */
+  canManageScopeItems?: boolean
   scopeItemTypes: ScopeItemType[]
   scopeItemsByNode: Record<string, TenantScopeItem[]>   // node_id → items
   tenantDetailsByNode: Record<string, TenantDetails>    // node_id → details
@@ -51,6 +59,8 @@ export function ScheduleTable({
   deletedNodes,
   projectId,
   orgId,
+  orgName = 'your organisation',
+  canManageScopeItems = false,
   scopeItemTypes: initialScopeItemTypes,
   scopeItemsByNode,
   tenantDetailsByNode,
@@ -121,6 +131,10 @@ export function ScheduleTable({
     })
   }
 
+  function handleScopeItemRemoved(id: string) {
+    setScopeItemTypes((prev) => prev.filter((t) => t.id !== id))
+  }
+
   const sortedDeleted = [...deletedNodes].sort((a, b) => {
     const aNum = a.shop_number ?? a.code ?? ''
     const bNum = b.shop_number ?? b.code ?? ''
@@ -151,7 +165,7 @@ export function ScheduleTable({
 
   return (
     <div>
-      {/* Filter bar + Add scope item button */}
+      {/* Filter bar + Scope items button */}
       <div
         style={{
           marginBottom: 12,
@@ -192,7 +206,7 @@ export function ScheduleTable({
             onClick={() => setShowAddModal(true)}
             style={{ fontSize: 12 }}
           >
-            + Add scope item
+            Scope items
           </Button>
         )}
       </div>
@@ -623,13 +637,17 @@ export function ScheduleTable({
         </div>
       )}
 
-      {/* Add scope item modal */}
+      {/* Scope items modal (org-wide registry: list, add, remove) */}
       {showAddModal && (
-        <AddScopeItemModal
+        <ScopeItemsModal
           projectId={projectId}
           orgId={orgId}
+          orgName={orgName}
+          items={scopeItemTypes}
+          canManage={canManageScopeItems}
           onClose={() => setShowAddModal(false)}
           onAdded={handleScopeItemAdded}
+          onRemoved={handleScopeItemRemoved}
         />
       )}
 
