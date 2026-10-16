@@ -93,8 +93,11 @@ describe('capture tiles mirror their targets’ gates (contract)', () => {
 
   it('inspection: createInspectionAction gates on requirePmOrAbove (an org-role check)', () => {
     const actions = src('src/actions/inspections.actions.ts')
-    const body = actions.slice(actions.indexOf('export async function createInspectionAction'))
-    expect(body.slice(0, 600)).toMatch(/requirePmOrAbove\(/)
+    // createInspectionAction wraps createInspection (it returns refusals as data); the gate is there.
+    expect(actions).toContain('return { ok: true, value: await createInspection(input) }')
+    const start = actions.indexOf('async function createInspection(')
+    expect(start).toBeGreaterThan(-1)
+    expect(actions.slice(start, actions.indexOf('.insert(', start))).toMatch(/requirePmOrAbove\(/)
   })
 
   it('inspection: requirePmOrAbove admits exactly the roles orgRoleCanAssignInspection admits', () => {

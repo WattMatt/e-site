@@ -732,3 +732,36 @@ describe('evaluateInspection — repeating_group', () => {
     expect(r2.overallResult).toBe('pass');
   });
 });
+
+// The capture page's left rail used to count typed answers only, so a section made of photo
+// fields read 0/4 with all four photos uploaded (Shoprite, ZZ status-guard test, 2026-10-12).
+describe('evaluateInspection — sectionStats', () => {
+  const photoField = (field_id: string, required = true): Field => ({ field_id, label: field_id, type: 'photo', required, min_count: 1, max_count: 1 });
+  const template: Template = {
+    template_id: 't', name: 'T', version: '1', deliverable_type: 'coc',
+    sections: [
+      { section_id: 'wiring', title: 'Wiring images', fields: [photoField('a'), photoField('b'), photoField('c'), photoField('d', false)] },
+      { section_id: 'obs', title: 'Observations', fields: [{ field_id: 'q', label: 'Q', type: 'dropdown', required: true, options: ['1', '2'] }, { field_id: 'n', label: 'N', type: 'textarea' }] },
+    ],
+  } as unknown as Template;
+
+  it('counts uploaded photos as answered, section by section', () => {
+    const photos = ['a', 'b', 'c', 'd'].map((field_id) => ({ section_id: 'wiring', field_id }));
+    const r = evaluateInspection(template, [{ section_id: 'obs', field_id: 'q', value_text: '2' }], { photos });
+    expect(r.sectionStats.wiring).toEqual({ answered: 4, total: 4, missing: 0 });
+    expect(r.sectionStats.obs).toEqual({ answered: 1, total: 2, missing: 0 });
+  });
+
+  it('reports the required photos still missing, and only in their own section', () => {
+    const r = evaluateInspection(template, [], { photos: [{ section_id: 'wiring', field_id: 'a' }, { section_id: 'obs', field_id: 'b' }] });
+    expect(r.sectionStats.wiring).toEqual({ answered: 1, total: 4, missing: 2 });
+    expect(r.sectionStats.obs).toEqual({ answered: 0, total: 2, missing: 1 });
+  });
+
+  it('section totals add up to the inspection totals', () => {
+    const photos = [{ section_id: 'wiring', field_id: 'c' }];
+    const r = evaluateInspection(template, [{ section_id: 'obs', field_id: 'n', value_text: 'x' }], { photos });
+    const sum = Object.values(r.sectionStats).reduce((a, s) => ({ answered: a.answered + s.answered, total: a.total + s.total, missing: a.missing + s.missing }), { answered: 0, total: 0, missing: 0 });
+    expect(sum).toEqual({ answered: r.answeredFieldCount, total: r.visibleFieldCount, missing: r.missingRequired.length });
+  });
+});

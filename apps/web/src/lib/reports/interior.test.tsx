@@ -695,15 +695,18 @@ describe('PhotoGrid', () => {
       omittedCount: 0,
     }
     const el = PhotoGrid({ field, accent: ACCENT })
-    // Find the photo cell — it is a direct child of the grid row (the second child of the root)
-    const rootChildren = getChildren(el)
-    // Root children: [label Text, grid row View, (optional omitted note)]
-    const gridRow = rootChildren[1]
-    const photoCells = getChildren(gridRow)
-    expect(photoCells.length).toBeGreaterThan(0)
-    const firstCell = photoCells[0]
-    const cellWidth = resolveStyleProp(getProps(firstCell).style, 'width')
-    expect(cellWidth).toBe(expectedWidth)
+    // Each row of photos is its own unbreakable block, so search the tree for the first node
+    // that sets a width (the photo cell) rather than assuming its position.
+    const findWidth = (node: unknown): unknown => {
+      const w = resolveStyleProp(getProps(node).style, 'width')
+      if (w !== undefined) return w
+      for (const c of getChildren(node)) {
+        const found = findWidth(c)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
+    expect(findWidth(el)).toBe(expectedWidth)
   })
 })
 
@@ -851,5 +854,16 @@ describe('AnnexureList', () => {
     const texts = collectText(el)
     expect(texts.some((t) => t === 'Ann A')).toBe(true)
     expect(texts.some((t) => t === 'Ann B')).toBe(true)
+  })
+})
+
+describe('PhotoGrid — page breaks', () => {
+  it('puts each row of photos in an unbreakable block with the label in the first', () => {
+    const photo = { dataUri: DATA_URI, caption: '' }
+    const field: ReportPhotoField = { sectionId: 's1', fieldId: 'f1', label: 'Board', photos: Array(4).fill(photo), omittedCount: 0 }
+    const blocks = getChildren(PhotoGrid({ field, accent: ACCENT })).filter((c) => getProps(c).wrap === false)
+    expect(blocks).toHaveLength(2) // 3 + 1 photos
+    expect(collectText(blocks[0])).toContain('Board')
+    expect(collectText(blocks[1])).not.toContain('Board')
   })
 })

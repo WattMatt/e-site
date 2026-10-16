@@ -7,6 +7,7 @@ import { ENTRY_TYPE_LABELS } from '@esite/shared'
 import { createDiaryEntryAction, notifyDiaryEntryAction } from '@/actions/diary.actions'
 import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 import type { DiaryEntryType } from '@esite/shared'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
 
@@ -163,7 +164,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
         <label className="ob-label">Attachments</label>
         <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
           {([
-            { label: photoMode ? '📷 Take or add photos' : '📷 Photo', accept: 'image/*' },
+            { label: photoMode ? '📷 Take or add photos' : '📷 Photo', accept: PHOTO_ACCEPT },
             { label: '🎥 Video', accept: 'video/*' },
             { label: '📄 Document', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
           ] as const).map(ctrl => (
@@ -172,7 +173,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId, initialMode }: Pro
               style={{
                 flex: 1, textAlign: 'center', cursor: 'pointer', fontSize: 12,
                 padding: '8px 10px', borderRadius: 6,
-                ...(photoMode && ctrl.accept === 'image/*'
+                ...(photoMode && ctrl.accept === PHOTO_ACCEPT
                   ? { border: '1px solid var(--c-amber)', background: 'var(--c-amber-dim)', color: 'var(--c-amber)', fontWeight: 600 }
                   : { border: '1px solid var(--c-border)', background: 'var(--c-panel)', color: 'var(--c-text-dim)' }),
               }}

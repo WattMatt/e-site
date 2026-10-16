@@ -4,6 +4,7 @@ import type { RendererProps } from '../FieldRenderer'
 import { useState } from 'react'
 import { useFieldPhotos } from './useFieldPhotos'
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 export default function PhotoField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
   const { photos, uploading, error, upload, remove } = useFieldPhotos(
@@ -122,7 +123,7 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
             {uploading ? 'Uploading…' : '+ Add photo'}
             <input
               type="file"
-              accept="image/*"
+              accept={PHOTO_ACCEPT}
               capture="environment"
               style={{ display: 'none' }}
               onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}

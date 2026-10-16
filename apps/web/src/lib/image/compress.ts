@@ -1,47 +1,15 @@
+import { prepareImageForUpload } from './prepare'
+
 /**
- * Client-side image compression for photo uploads.
+ * Prepares a photo for upload: any format a phone or tablet supplies (HEIC included) comes back as
+ * a JPEG with the rotation baked in and the long edge capped. See prepare.ts.
  *
- * Extracted so the snag capture paths share one implementation instead of
- * inlining a fourth copy of the canvas-resize helper. Kept dependency-free and
- * side-effect-free so importing it into a client component costs nothing beyond
- * these few lines.
- *
- * Falls back to the original File on any failure (no canvas, decode error, or a
- * "compressed" result that came out larger) — a photo that uploads slightly big
- * beats a photo that doesn't upload.
+ * It used to fall back to the ORIGINAL file on any failure, which is how an iPhone HEIC reached
+ * storage in a format only Safari can show. It now throws ImageUnreadableError with a sentence for
+ * the person instead: a refusal they can act on beats a photo nobody else can see.
  */
-
-const MAX_WIDTH = 2048
-const QUALITY = 0.85
-
 export async function compressImage(file: File): Promise<File> {
-  if (!file.type.startsWith('image/')) return file
-  if (typeof createImageBitmap !== 'function') return file
-
-  let bitmap: ImageBitmap | null = null
-  try {
-    // imageOrientation:'from-image' bakes EXIF rotation into the pixels, so
-    // phone photos don't arrive sideways in the PDF.
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-    const scale = Math.min(1, MAX_WIDTH / bitmap.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bitmap.width * scale)
-    canvas.height = Math.round(bitmap.height * scale)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', QUALITY),
-    )
-    if (!blob || blob.size >= file.size) return file
-    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {
-      type: 'image/jpeg',
-    })
-  } catch {
-    return file
-  } finally {
-    bitmap?.close()
-  }
+  return (await prepareImageForUpload(file)).file
 }
 
 /**

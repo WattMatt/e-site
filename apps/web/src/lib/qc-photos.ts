@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { compressImage } from '@/lib/image/compress'
 import type { AnnotationData } from '@/components/attachments/types'
 import type { SceneGraph } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/MarkupCanvas'
 
@@ -132,51 +133,6 @@ export interface QcUploadTarget {
   reportId: string
   entryId: string
   userId: string
-}
-
-/**
- * Downscale + re-encode a captured photo before upload.
- *
- * Copy of the canonical compressImage in useFieldPhotos.ts (deliberately
- * inlined, like the branding forms, to avoid client-bundle coupling): resize
- * to 2048 px wide, JPEG q0.85, `imageOrientation: 'from-image'` bakes EXIF
- * rotation into the pixels. Any failure falls back to the original file so a
- * capture is never silently dropped — the bucket's 20 MB cap is the only hard
- * limit on that path.
- */
-async function compressImage(file: File): Promise<File> {
-  const MAX_WIDTH = 2048
-  const QUALITY = 0.85
-
-  if (!file.type.startsWith('image/')) return file
-  if (typeof createImageBitmap !== 'function') return file
-
-  let bitmap: ImageBitmap | null = null
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-
-    const scale = Math.min(1, MAX_WIDTH / bitmap.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bitmap.width * scale)
-    canvas.height = Math.round(bitmap.height * scale)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', QUALITY),
-    )
-    // Keep the original if encoding failed or didn't actually shrink it.
-    if (!blob || blob.size >= file.size) return file
-
-    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {
-      type: 'image/jpeg',
-    })
-  } catch {
-    return file
-  } finally {
-    bitmap?.close()
-  }
 }
 
 /**

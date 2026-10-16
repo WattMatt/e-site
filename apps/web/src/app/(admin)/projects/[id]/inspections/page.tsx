@@ -5,6 +5,8 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { createClient } from '@/lib/supabase/server'
+import { orgRoleCanAssignInspection } from '@/lib/capture/capture-actions'
+import type { OrgRole } from '@esite/shared'
 import InspectionRowDeleteButton from './InspectionRowDeleteButton'
 
 export const dynamic = 'force-dynamic'
@@ -68,6 +70,7 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
     }
   }
   const canDelete = userOrgRole === 'owner'
+  const canCreate = orgRoleCanAssignInspection(userOrgRole as OrgRole | null)
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1100 }}>
@@ -85,9 +88,11 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
           <h1 className="page-title">Inspections</h1>
           <p className="page-subtitle">COCs, factory tests, and structured inspections for this project.</p>
         </div>
-        <Link href={`/projects/${projectId}/inspections/new`} style={{ textDecoration: 'none' }}>
-          <Button>+ New Inspection</Button>
-        </Link>
+        {canCreate && (
+          <Link href={`/projects/${projectId}/inspections/new`} style={{ textDecoration: 'none' }}>
+            <Button>+ New Inspection</Button>
+          </Link>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>

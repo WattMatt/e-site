@@ -212,7 +212,7 @@ describe('AddDiaryEntryForm — arriving from Capture', () => {
     // The photo control precedes the entry-type picker in document order.
     expect(photo.compareDocumentPosition(typeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const input = photo.querySelector('input[type="file"]') as HTMLInputElement
-    expect(input.accept).toBe('image/*')
+    expect(input.accept).toBe('image/*,.heic,.heif')
   })
 
   it('a photo picked in photo mode is uploaded with the entry', async () => {

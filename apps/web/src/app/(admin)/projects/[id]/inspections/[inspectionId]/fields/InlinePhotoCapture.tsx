@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useFieldPhotos, type FieldPhoto } from './useFieldPhotos'
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 interface Props {
   inspectionId: string
@@ -133,7 +134,7 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
           {uploading ? 'Uploading…' : viewable.length > 0 ? '+ Photo' : '+ Add photo'}
           <input
             type="file"
-            accept="image/*"
+            accept={PHOTO_ACCEPT}
             capture="environment"
             disabled={uploading}
             style={{ display: 'none' }}

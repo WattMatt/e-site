@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 interface PhotoPickerProps {
   onFilesSelected: (files: File[]) => void
@@ -17,7 +18,7 @@ interface PhotoPickerProps {
  */
 export function PhotoPicker({
   onFilesSelected,
-  accept = 'image/*',
+  accept = PHOTO_ACCEPT,
   multiple = true,
   maxSizeMB = 10,
   label = 'Upload photos',

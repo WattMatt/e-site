@@ -4,6 +4,7 @@ import type { RendererProps } from '../FieldRenderer'
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { usePhotoTally } from './photo-tally'
 
 interface FileItem {
   id: string
@@ -30,6 +31,8 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
   // Capture routes live under /projects/[id]/… — the param is the project id.
   const params = useParams<{ id?: string }>()
   const [files, setFiles] = useState<FileItem[]>([])
+  // A file field is answered by its upload, so the page's progress and Submit check must hear of it.
+  const tally = usePhotoTally()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -146,6 +149,7 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
         ...prev,
         { id: (row as { id: string }).id, storage_path: path, filename: file.name, signed_url: sig?.signedUrl },
       ])
+      tally.added(sectionId, field.field_id)
     } catch (e) {
       setError((e as Error).message)
     } finally {

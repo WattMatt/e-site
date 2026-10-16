@@ -1,5 +1,6 @@
 import { attachmentKindFromMime } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { prepareIfImage } from '@/lib/image/prepare'
 
 /** `accept` for the document file input. Photo/video inputs use `image/*` /
  *  `video/*` so phone browsers surface the camera; the bucket enforces the
@@ -30,7 +31,9 @@ export async function uploadDiaryAttachments(
   // restart at 0 and collide with committed rows, scrambling display order.
   const baseSort = await nextSortOrder(supabase, entryId)
   for (let i = 0; i < files.length; i++) {
-    const file = files[i]
+    const raw = files[i]
+    // Photos are stored as JPEG whatever the device supplied (prepare.ts); videos and documents as-is.
+    const file = await prepareIfImage(raw)
     if (file.size > DIARY_ATTACHMENT_MAX_BYTES) {
       throw new Error(`"${file.name}" exceeds the 100 MB limit.`)
     }
@@ -59,7 +62,7 @@ export async function uploadDiaryAttachments(
       await supabase.storage.from('diary-attachments').remove([path]).catch(() => {})
       throw rowErr
     }
-    onFileUploaded?.(file)
+    onFileUploaded?.(raw)
   }
 }
 

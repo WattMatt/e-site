@@ -206,6 +206,10 @@ export async function listPortalInspections(projectId: string) {
     .from('inspections')
     .select('id, target_label, target_node_type, target_location, status, overall_result, coc_number, scheduled_at, completed_at, certified_at')
     .eq('project_id', projectId)
+    // A client sees an inspection once it is certified, never while it is open, sent back or
+    // abandoned: the rule RLS applies to them (00235). This read uses the service key, so it must
+    // apply the rule itself; it showed every status until 2026-10-13.
+    .eq('status', 'certified')
     .order('created_at', { ascending: false })
     .limit(200)
   return (data ?? []) as Array<{

@@ -1,4 +1,4 @@
-import type { ConditionalOn, Field, Response, Section, SubSection, Template, EvaluationResult } from './types';
+import type { ConditionalOn, Field, Response, Section, SubSection, Template, EvaluationResult, SectionProgress } from './types';
 
 type PassState = 'pass' | 'fail' | 'na' | 'not_checked';
 
@@ -228,6 +228,13 @@ export function evaluateInspection(
   const missingRequired: { sectionId: string; fieldId: string }[] = [];
   let visibleFieldCount = 0;
   let answeredFieldCount = 0;
+  // Per-section progress, counted by the same rules as the totals above, so a section made
+  // only of photo fields reads 4/4 once its photos are in (it read 0/4 when the capture page
+  // counted typed answers on its own).
+  const sectionStats: Record<string, SectionProgress> = {};
+  const tally = (sectionId: string): SectionProgress =>
+    (sectionStats[sectionId] ??= { answered: 0, total: 0, missing: 0 });
+  for (const s of template.sections) tally(s.section_id);
 
   for (const { section, subsection, field } of iterateAllFields(template)) {
     if (field.type === 'header' || field.type === 'computed') continue;
@@ -263,6 +270,7 @@ export function evaluateInspection(
         for (const sub of subFields) {
           if (sub.type === 'header' || sub.type === 'computed') continue;
           visibleFieldCount++;
+          tally(section.section_id).total++;
           const syntheticId = buildRepeatingGroupKey(field.field_id, i, sub.field_id);
           const r = responses.find(
             (rr) => rr.section_id === section.section_id && rr.field_id === syntheticId,
@@ -280,13 +288,13 @@ export function evaluateInspection(
               sub.type === 'signature'
                 ? (attachments.signatures ?? []).filter((s) => s.field_id === syntheticId && s.section_id === section.section_id)
                 : (attachments.photos ?? []).filter((ph) => ph.field_id === syntheticId && ph.section_id === section.section_id);
-            if (collection.length > 0) answeredFieldCount++;
+            if (collection.length > 0) { answeredFieldCount++; tally(section.section_id).answered++; }
             if (sub.required && collection.length === 0) {
               missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
             }
             continue;
           }
-          if (has) answeredFieldCount++;
+          if (has) { answeredFieldCount++; tally(section.section_id).answered++; }
           if (sub.required && !has) {
             missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
           } else if (r) {
@@ -302,13 +310,15 @@ export function evaluateInspection(
 
     visibleFieldCount++;
 
+    tally(section.section_id).total++;
+
     // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
     if (field.type === 'photo' || field.type === 'file' || field.type === 'signature') {
       if (attachments === undefined) {
         // Backwards-compat: no attachments info → engine assumes legacy pass (no validation)
         if (!field.required) continue;
         // Count as answered for visibility metrics — legacy callers don't surface min_count
-        answeredFieldCount++;
+        { answeredFieldCount++; tally(section.section_id).answered++; }
         continue;
       }
 
@@ -319,7 +329,7 @@ export function evaluateInspection(
       const count = collection.length;
       const minRequired = field.required ? Math.max(field.min_count ?? 1, 1) : (field.min_count ?? 0);
 
-      if (count > 0) answeredFieldCount++;
+      if (count > 0) { answeredFieldCount++; tally(section.section_id).answered++; }
 
       if (field.required && count < minRequired) {
         missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
@@ -345,7 +355,7 @@ export function evaluateInspection(
       response.pass_state === 'na'
     );
 
-    if (hasAnswer) answeredFieldCount++;
+    if (hasAnswer) { answeredFieldCount++; tally(section.section_id).answered++; }
 
     if (field.required && !hasAnswer) {
       missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
@@ -396,7 +406,9 @@ export function evaluateInspection(
     else overallResult = 'pass';
   }
 
-  return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount };
+  for (const m of missingRequired) tally(m.sectionId).missing++;
+
+  return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount, sectionStats };
 }
 
 // Declarative computed-field formulas. v1 covers the patterns the inspections-catalogue

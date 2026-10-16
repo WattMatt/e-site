@@ -30,8 +30,16 @@ SELECT set_config('x.pmu', (SELECT pm.user_id::text FROM projects.project_member
                                AND uo.role IN ('owner','admin','project_manager')
                                AND pm.user_id <> current_setting('x.c')::uuid
                              ORDER BY pm.created_at LIMIT 1), true);
+-- PM2 = a second active project member, neither C nor PMU, who has not answered anything here:
+-- a verifier a PM may lawfully reassign to on a separate-verifier template (00250).
+SELECT set_config('x.pm2', (SELECT pm.user_id::text FROM projects.project_members pm
+                             JOIN public.user_organisations uo ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
+                             WHERE pm.project_id = current_setting('x.kw')::uuid AND pm.is_active AND uo.is_active
+                               AND uo.role IN ('owner','admin','project_manager')
+                               AND pm.user_id NOT IN (current_setting('x.c')::uuid, current_setting('x.pmu')::uuid)
+                             ORDER BY pm.created_at LIMIT 1), true);
 DO $$ BEGIN
-  IF current_setting('x.kw', true) IS NULL OR current_setting('x.pmu', true) IS NULL THEN
+  IF current_setting('x.kw', true) IS NULL OR current_setting('x.pmu', true) IS NULL OR current_setting('x.pm2', true) IS NULL THEN
     RAISE EXCEPTION 'fixture precondition failed: KINGSWALK or a PM-level member is missing; the probes would be vacuous';
   END IF;
   IF (SELECT role FROM public.user_organisations WHERE user_id = current_setting('x.c')::uuid
@@ -164,8 +172,14 @@ UPDATE inspections.inspections SET status = 'awaiting_verification', overall_res
 INSERT INTO inspections.signatures (inspection_id, section_id, field_id, role, signatory_name, signatory_title, registration_number, storage_path, signed_by)
 VALUES (current_setting('x.i1')::uuid, 's1', 'sig', 'inspector', 'Probe Inspector', 'Electrician', 'RP-12345', 'probe/sig.png', current_setting('x.c')::uuid);
 
--- The contributor as verifier: the template needs a separate verifier.
-UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i1')::uuid;
+-- The contributor as verifier: the template needs a separate verifier. 00250 refuses this
+-- assignment, so the state is built with triggers off: certification_blockers() must still hold
+-- for a row that reached it some other way (rows from before 00250, the service path).
+DO $$ BEGIN
+  SET LOCAL session_replication_role = replica;
+  UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i1')::uuid;
+  SET LOCAL session_replication_role = origin;
+END $$;
 SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('c_as_verifier:certify', $$UPDATE inspections.inspections SET status = 'certified', overall_result = 'pass' WHERE id = current_setting('x.i1')::uuid$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
@@ -280,14 +294,14 @@ RESET ROLE; SELECT pg_temp.who(NULL);
 UPDATE inspections.inspections SET assigned_to_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i4')::uuid;
 UPDATE projects.project_members SET role = 'project_manager' WHERE project_id = current_setting('x.kw')::uuid AND user_id = current_setting('x.c')::uuid;
 SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
-SELECT pg_temp.try('promoted_pm:reassign', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.pmu')::uuid, assigned_to_id = current_setting('x.pmu')::uuid,
+SELECT pg_temp.try('promoted_pm:reassign', $$UPDATE inspections.inspections SET verifier_id = current_setting('x.pmu')::uuid, assigned_to_id = NULL,
                                                      scheduled_at = now() + interval '1 day'
                                               WHERE id = current_setting('x.i4')::uuid$$);
 SELECT pg_temp.try('promoted_pm:abandon',  $$UPDATE inspections.inspections SET status = 'abandoned', abandoned_reason = 'Duplicate' WHERE id = current_setting('x.i4')::uuid$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
 UPDATE projects.project_members SET role = 'contractor' WHERE project_id = current_setting('x.kw')::uuid AND user_id = current_setting('x.c')::uuid;
 SELECT pg_temp.who('pmu'); SET LOCAL ROLE authenticated;
-SELECT pg_temp.try('pm:reassign',      $$UPDATE inspections.inspections SET verifier_id = current_setting('x.c')::uuid WHERE id = current_setting('x.i5')::uuid$$);
+SELECT pg_temp.try('pm:reassign',      $$UPDATE inspections.inspections SET verifier_id = current_setting('x.pm2')::uuid WHERE id = current_setting('x.i5')::uuid$$);
 SELECT pg_temp.try('pm:created_by',    $$UPDATE inspections.inspections SET created_by = auth.uid() WHERE id = current_setting('x.i5')::uuid$$);
 SELECT pg_temp.try('pm:template',      $$UPDATE inspections.inspections SET template_id = current_setting('x.tcoc')::uuid WHERE id = current_setting('x.i5')::uuid$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
@@ -316,7 +330,7 @@ UPDATE projects.project_members SET is_active = false WHERE project_id = current
 SELECT pg_temp.who('pmu'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('offproject_pm:start',    $$UPDATE inspections.inspections SET status = 'in_progress' WHERE id = current_setting('x.i7')::uuid$$);
 SELECT pg_temp.try('offproject_pm:submit',   $$UPDATE inspections.inspections SET status = 'awaiting_verification' WHERE id = current_setting('x.i5')::uuid$$);
-SELECT pg_temp.try('offproject_pm:reassign', $$UPDATE inspections.inspections SET assigned_to_id = auth.uid() WHERE id = current_setting('x.i7')::uuid$$);
+SELECT pg_temp.try('offproject_pm:reassign', $$UPDATE inspections.inspections SET assigned_to_id = NULL WHERE id = current_setting('x.i7')::uuid$$);
 SELECT pg_temp.val('offproject_pm:answers_i5', $$SELECT count(*) FROM inspections.responses WHERE inspection_id = current_setting('x.i5')::uuid$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
 UPDATE inspections.inspections SET status = 'in_progress' WHERE id = current_setting('x.i5')::uuid;
