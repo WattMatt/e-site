@@ -74,4 +74,17 @@ describe('buildSolarReportModel', () => {
     const prov = buildSolarReportModel(reportInput('technical')).sections.find((s) => s.title === 'Assumptions and provenance')!
     expect(prov.paragraphs.join(' ')).toContain('Hourly data (8 760 rows) for run r1')
   })
+
+  it('a feasibility report says where the run’s TOU hours came from (the Tariff tab’s notice when Eskom’s stood in)', () => {
+    const tariffRef = { tariffId: 't1', tariffName: 'Business TOU', financialYear: '2026/27', licenseeName: 'Midvaal',
+      touHours: { source: 'assumed_eskom' as const, calendarLicenseeName: 'Eskom', validFrom: '2025-04-01', datedHolidays: 0 } }
+    const i = reportInput('feasibility')
+    const withTou = { ...i, run: { ...i.run, outputs: { ...i.run.outputs, provenance: { ...i.run.outputs.provenance, tariffRef } } } }
+    const rows = buildSolarReportModel(withTou).sections.find((s) => s.title === 'Assumptions and provenance')!.tables[0]!.rows
+    expect(rows).toContainEqual(['TOU hours', "TOU hours assumed equal to Eskom's — confirm against the municipality's by-law (Eskom from 2025-04-01)"])
+    // A technical report carries no tariff provenance at all.
+    const tech = reportInput('technical')
+    const techRows = buildSolarReportModel({ ...tech, run: withTou.run }).sections.find((s) => s.title === 'Assumptions and provenance')!.tables[0]!.rows
+    expect(techRows.some((r) => r[0] === 'TOU hours')).toBe(false)
+  })
 })

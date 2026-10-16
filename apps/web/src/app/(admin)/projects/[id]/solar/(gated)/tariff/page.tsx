@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { ASSUMED_ESKOM_HOURS } from '@esite/shared'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
@@ -21,7 +22,6 @@ type AnyClient = SupabaseClient<any, any, any>
 
 const P = { fontSize: 13, margin: 0 } as const
 const NOTE = { fontSize: 13, margin: 0, padding: '6px 10px', background: 'var(--c-amber-dim)', borderRadius: 6 } as const
-const ASSUMED_ESKOM = "TOU hours assumed equal to Eskom's — confirm against the municipality's by-law"
 
 /**
  * Tariff (spec §5). Edit + financials only: the gate runs BEFORE anything is
@@ -103,7 +103,7 @@ export default async function SolarTariffPage({ params, searchParams }: {
             <CardHeader><span className="data-panel-title">Time-of-use calendar</span></CardHeader>
             <CardBody>
               {!pinned.isTou && <p style={P}>Flat-rate tariff (no time-of-use)</p>}
-              {pinned.isTou && d.calendarAssumedEskom && <p style={NOTE}>{ASSUMED_ESKOM}</p>}
+              {pinned.isTou && d.calendarAssumedEskom && <p style={NOTE}>{ASSUMED_ESKOM_HOURS}</p>}
               {pinned.isTou && (d.calendar
                 ? <TouCalendarDiagram calendar={d.calendar} />
                 : <p style={P}>No TOU calendar in the library for this supply authority. Report it as a tariff error.</p>)}
@@ -128,7 +128,7 @@ export default async function SolarTariffPage({ params, searchParams }: {
 
       {/* Before a tariff is pinned the calendar card is absent: say the hours are assumed here. */}
       {d.licensee && !pinned && d.calendarAssumedEskom && d.calendar && (
-        <Card><CardBody><p style={NOTE}>{ASSUMED_ESKOM}</p></CardBody></Card>
+        <Card><CardBody><p style={NOTE}>{ASSUMED_ESKOM_HOURS}</p></CardBody></Card>
       )}
 
       <Card>

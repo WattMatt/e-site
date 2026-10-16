@@ -34,6 +34,19 @@ export function pickCalendar<T extends Pick<TouCalendarRow, 'validFrom' | 'valid
   return valid.sort((a, b) => b.validFrom.localeCompare(a.validFrom))[0] ?? null
 }
 
+/** The TOU hours notice (functional spec §5): the Tariff tab and a case run's provenance say it the same way. */
+export const ASSUMED_ESKOM_HOURS = "TOU hours assumed equal to Eskom's — confirm against the municipality's by-law"
+
+/** One line for a run's TOU provenance (solar-cases TouHoursRef); null for a run made before it was recorded. */
+export function touHoursLabel(
+  t: { source: 'published' | 'assumed_eskom'; calendarLicenseeName: string; validFrom: string; datedHolidays: number } | undefined,
+): string | null {
+  if (!t) return null
+  const whose = `${t.calendarLicenseeName} from ${t.validFrom}`
+  const base = t.source === 'assumed_eskom' ? `${ASSUMED_ESKOM_HOURS} (${whose})` : `TOU hours ${whose}`
+  if (t.datedHolidays === 0) return base
+  return `${base}; ${t.datedHolidays} public ${t.datedHolidays === 1 ? 'holiday' : 'holidays'} billed per the tariff’s dated schedule`
+}
 export function resolveStudyCalendar(
   own: TouCalendar | null, eskom: TouCalendar | null,
 ): { calendar: TouCalendar | null; assumedEskom: boolean; fromEskomFallback: boolean } {

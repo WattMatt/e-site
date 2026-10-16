@@ -4,11 +4,11 @@
  * Hour h is classified by its START minute (h × 60), matching the interval-ending convention where
  * hour h covers [h:00, h+1:00).
  */
-import { dayTypeOf, seasonForMonth, touPeriodAt, type TouCalendar } from '../../tariffs/tou'
+import { dayTypeOf, seasonForMonth, touPeriodAt, type HolidayDays, type TouCalendar } from '../../tariffs/tou'
 import type { TouPeriod } from '../../services/solar/energy/energy-balance'
 import { DAYS_IN_MONTH, monthHourRanges } from '../../services/solar/time'
 
-export function engineTouPeriods(cal: TouCalendar, holidays: ReadonlySet<string> | undefined, year: number): TouPeriod[] {
+export function engineTouPeriods(cal: TouCalendar, holidays: HolidayDays | undefined, year: number): TouPeriod[] {
   const out: TouPeriod[] = []
   for (let m = 1; m <= 12; m++) {
     const season = seasonForMonth(m, cal)

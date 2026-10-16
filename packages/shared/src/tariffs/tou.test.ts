@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateHourly, dayTypeOf, monthlyDemand, seasonForMonth, touPeriodAt, type TouCalendar, type TouWindow } from './tou'
+import { aggregateHourly, dayTypeOf, monthlyDemand, resolveHolidayDays, seasonForMonth, touPeriodAt, type TouCalendar, type TouWindow } from './tou'
 import type { BillingSeason, TouPeriod } from './types'
 
 const w = (season: BillingSeason, startMinute: number, endMinute: number, period: TouPeriod): TouWindow => ({
@@ -69,5 +69,50 @@ describe('aggregateHourly', () => {
     const months = aggregateHourly({ importKwh: ones, exportKwh: ones, calendar: CAL, year: 2025 })
     expect(months[0].exportKwh).toEqual(months[0].importKwh)
     expect(() => aggregateHourly({ importKwh: new Float64Array(10), calendar: CAL, year: 2025 })).toThrow(RangeError)
+  })
+})
+
+describe('dated holiday treatment (tariffs.holiday_treatment, per tariff family and date)', () => {
+  const ESKOM_LIKE: TouCalendar = { ...CAL, holidayTreatedAs: null }
+  it('a Map is the fully resolved treatment: a listed date takes its treatment, an unlisted date its own weekday', () => {
+    const days = new Map([['2026-04-27', 'saturday' as const], ['2026-04-03', 'sunday' as const]])
+    expect(dayTypeOf(2026, 4, 27, days, ESKOM_LIKE)).toBe('saturday') // Freedom Day, a Monday
+    expect(dayTypeOf(2026, 4, 3, days, ESKOM_LIKE)).toBe('sunday')    // Good Friday
+    expect(dayTypeOf(2026, 4, 28, days, ESKOM_LIKE)).toBe('weekday')  // Tuesday, not listed
+    // The calendar-wide rule does not reach a date the Map leaves out: the Map is already resolved.
+    expect(dayTypeOf(2026, 4, 28, days, CAL)).toBe('weekday')
+  })
+  it('a Set keeps its meaning: a holiday follows holidayTreatedAs, else its weekday', () => {
+    expect(dayTypeOf(2026, 4, 27, new Set(['2026-04-27']), CAL)).toBe('sunday')
+    expect(dayTypeOf(2026, 4, 27, new Set(['2026-04-27']), ESKOM_LIKE)).toBe('weekday')
+  })
+})
+
+describe('resolveHolidayDays', () => {
+  const statutory = new Set(['2026-01-01', '2026-04-03', '2026-04-27', '2026-12-25'])
+  const dated = [
+    { date: '2026-04-03', treatedAs: 'sunday' as const },
+    { date: '2026-04-27', treatedAs: 'saturday' as const },
+    { date: '2027-01-01', treatedAs: 'sunday' as const }, // another calendar year: ignored
+  ]
+  it('without a dated row in the year the statutory Set is returned unchanged (same object)', () => {
+    const r = resolveHolidayDays(2025, statutory, null, dated)
+    expect(r.days).toBe(statutory)
+    expect(r.dated).toBe(0)
+  })
+  it('dated rows win; other statutory holidays take the calendar-wide rule, or their weekday without one', () => {
+    const r = resolveHolidayDays(2026, statutory, null, dated)
+    expect(r.dated).toBe(2)
+    expect(r.days).toBeInstanceOf(Map)
+    const m = r.days as ReadonlyMap<string, string>
+    expect([...m.entries()].sort()).toEqual([['2026-04-03', 'sunday'], ['2026-04-27', 'saturday']])
+    const withRule = resolveHolidayDays(2026, statutory, 'sunday', dated).days as ReadonlyMap<string, string>
+    expect(withRule.get('2026-01-01')).toBe('sunday')
+    expect(withRule.get('2026-12-25')).toBe('sunday')
+    expect(withRule.get('2026-04-27')).toBe('saturday')
+  })
+  it('a dated row on a date the statutory list lacks is still applied (the schedule is the billing authority)', () => {
+    const r = resolveHolidayDays(2026, new Set(), null, [{ date: '2026-08-10', treatedAs: 'saturday' }])
+    expect((r.days as ReadonlyMap<string, string>).get('2026-08-10')).toBe('saturday')
   })
 })

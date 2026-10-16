@@ -17,7 +17,7 @@
  * converts it (kWh = kW × interval / 60).
  */
 import { createBillCalculator, type HourlyCostOptions, type SubHourlyKwh } from '../../../tariffs/bill-calculator'
-import type { TouCalendar } from '../../../tariffs/tou'
+import type { HolidayDays, TouCalendar } from '../../../tariffs/tou'
 import type { Charge, Tariff } from '../../../tariffs/types'
 import { listHolidays } from '../../../lib/jbcc/sa-public-holidays'
 import { HOURS_PER_YEAR } from '../time'
@@ -52,7 +52,7 @@ export interface TariffBillCalculatorOptions extends Omit<HourlyCostOptions, 'ca
    */
   referenceYear: number
   /** Defaults to the statutory SA public holidays of `referenceYear`. */
-  holidays?: ReadonlySet<string>
+  holidays?: HolidayDays
 }
 
 /**

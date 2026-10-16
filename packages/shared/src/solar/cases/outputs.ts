@@ -12,7 +12,14 @@ export const RUN_OUTPUTS_VERSION = 1 as const
 export const DAY_TYPES = ['all', 'weekday', 'saturday', 'sunday'] as const
 export type DayType = (typeof DAY_TYPES)[number]
 
-export interface TariffRef { tariffId: string; tariffName: string; financialYear: string; licenseeName: string }
+/**
+ * Where a run's TOU hours came from. `assumed_eskom`: the supply authority publishes no hours, so
+ * Eskom's stand in (the Tariff tab's notice). `datedHolidays`: holidays of the reference year billed
+ * per the tariff family's dated treatment (tariffs.holiday_treatment); the rest follow the calendar.
+ */
+export interface TouHoursRef { source: 'published' | 'assumed_eskom'; calendarLicenseeName: string; validFrom: string; datedHolidays: number }
+/** `touHours` is absent on runs made before it was recorded. */
+export interface TariffRef { tariffId: string; tariffName: string; financialYear: string; licenseeName: string; touHours?: TouHoursRef }
 
 export interface RunKpis {
   dcKwp: number; acKw: number

@@ -4,6 +4,7 @@
  * report carries no rand value: money is dropped at the top, whatever the caller passes.
  */
 import type { CaseRunOutputs } from '../cases/outputs'
+import { touHoursLabel } from '../tariff/calendar'
 import { CAPEX_CATEGORY_LABELS, type CapexTotals } from '../cases/finance-config'
 import type { FinanceResult } from '../../services/solar/finance/cashflow'
 import type { Tornado } from '../../services/solar/finance/sensitivity'
@@ -183,6 +184,7 @@ export function buildSolarReportModel(i: SolarReportInput): SolarReportModel {
       ['Weather', `${p.weatherSource}${p.weatherFetchedAt ? `, fetched ${isoDate(p.weatherFetchedAt)}` : ''}`],
       ['Global Solar Atlas PVOUT', p.gsaPvoutKwhPerKwp === null ? 'n/a' : `${fixed(p.gsaPvoutKwhPerKwp, 0)} kWh/kWp`],
       ...(money && p.tariffRef ? [['Tariff', `${p.tariffRef.tariffName} (${p.tariffRef.licenseeName}, ${p.tariffRef.financialYear})`]] : []),
+      ...(money && touHoursLabel(p.tariffRef?.touHours) ? [['TOU hours', touHoursLabel(p.tariffRef?.touHours)!]] : []),
       ['Report generated', isoDate(i.generatedAt)],
     ], 99)],
   })

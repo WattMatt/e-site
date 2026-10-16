@@ -34,15 +34,52 @@ export function seasonForMonth(month: number, cal: Pick<TouCalendar, 'highSeason
   return cal.highSeasonMonths.includes(month) ? 'high' : 'low'
 }
 
+/**
+ * The holidays day typing reads. A Set is the statutory list: each date follows the calendar's
+ * `holidayTreatedAs`, else its own weekday. A Map is the RESOLVED treatment (resolveHolidayDays):
+ * a listed date bills as its value, an unlisted date as its own weekday, and the calendar-wide
+ * rule is not consulted again.
+ */
+export type HolidayDays = ReadonlySet<string> | ReadonlyMap<string, WindowDayType>
+
+const isResolved = (h: HolidayDays): h is ReadonlyMap<string, WindowDayType> =>
+  typeof (h as ReadonlyMap<string, WindowDayType>).get === 'function'
+
 export function dayTypeOf(
   year: number, month: number, day: number,
-  holidays: ReadonlySet<string> | undefined,
+  holidays: HolidayDays | undefined,
   cal: Pick<TouCalendar, 'holidayTreatedAs'>,
 ): WindowDayType {
   const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  if (cal.holidayTreatedAs && holidays?.has(key)) return cal.holidayTreatedAs
+  if (holidays && isResolved(holidays)) {
+    const treated = holidays.get(key)
+    if (treated) return treated
+  } else if (cal.holidayTreatedAs && holidays?.has(key)) return cal.holidayTreatedAs
   const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay()
   return dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday'
+}
+
+/**
+ * The statutory holidays of `year` combined with a tariff family's dated treatment
+ * (tariffs.holiday_treatment: Eskom bills the Megaflex family's holidays per date, as a Saturday or
+ * a Sunday). Dated rows of `year` win; every other statutory holiday follows `calendarWide`, or its
+ * own weekday without one. Dated rows are matched by EXACT date only — a rule for 2026 says nothing
+ * about the same holiday in another year (a holiday on a Sunday is listed as Sunday that year only).
+ * With no dated row in `year` the statutory Set comes back unchanged, so day typing is exactly what
+ * it was before the table existed.
+ */
+export function resolveHolidayDays(
+  year: number,
+  statutory: ReadonlySet<string>,
+  calendarWide: 'saturday' | 'sunday' | null,
+  dated: ReadonlyArray<{ date: string; treatedAs: WindowDayType }>,
+): { days: HolidayDays; dated: number } {
+  const inYear = dated.filter((r) => r.date.slice(0, 4) === String(year))
+  if (inYear.length === 0) return { days: statutory, dated: 0 }
+  const days = new Map<string, WindowDayType>()
+  if (calendarWide) for (const d of statutory) days.set(d, calendarWide)
+  for (const r of inYear) days.set(r.date.slice(0, 10), r.treatedAs)
+  return { days, dated: new Set(inYear.map((r) => r.date.slice(0, 10))).size }
 }
 
 export function touPeriodAt(cal: Pick<TouCalendar, 'windows'>, season: BillingSeason, dayType: WindowDayType, minute: number): TouPeriod {
@@ -71,7 +108,7 @@ export function monthlyDemand(input: {
   intervalMinutes: number
   calendar: TouCalendar
   year: number
-  holidays?: ReadonlySet<string>
+  holidays?: HolidayDays
 }): MonthDemand[] {
   const { intervalMinutes: step } = input
   if (!(step > 0) || 1440 % step !== 0) throw new RangeError(`intervalMinutes ${step} must divide a day`)
@@ -106,7 +143,7 @@ export function aggregateHourly(input: {
   exportKwh?: ArrayLike<number>
   calendar: TouCalendar
   year: number
-  holidays?: ReadonlySet<string>
+  holidays?: HolidayDays
 }): MonthUsage[] {
   if (input.importKwh.length !== 8760) throw new RangeError(`importKwh has ${input.importKwh.length} hours, expected 8760`)
   if (input.exportKwh && input.exportKwh.length !== 8760) {

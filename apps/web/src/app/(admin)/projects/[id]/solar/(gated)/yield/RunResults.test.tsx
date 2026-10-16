@@ -45,6 +45,14 @@ describe('RunResults (every figure from the stored run)', () => {
     const foot = screen.getByRole('contentinfo')
     for (const t of ['Engine 0.1.0', 'PVGIS TMY (PVGIS-SARAH2)', 'Inputs ffffffffffff', 'Run by Arno', 'No tariff pinned', 'Load S1 2025']) expect(foot.textContent).toContain(t)
   })
+  it('the provenance footer says where the TOU hours came from', () => {
+    const tariffRef = { tariffId: 't1', tariffName: 'Business TOU', financialYear: '2026/27', licenseeName: 'Midvaal',
+      touHours: { source: 'assumed_eskom' as const, calendarLicenseeName: 'Eskom', validFrom: '2025-04-01', datedHolidays: 0 } }
+    render(<RunResults projectId="p1" caseId="c1" run={{ ...run, outputs: { ...run.outputs, provenance: { ...run.outputs.provenance, tariffRef } } }} />)
+    const foot = screen.getByRole('contentinfo')
+    expect(foot.textContent).toContain('Tariff Midvaal Business TOU 2026/27')
+    expect(foot.textContent).toContain("TOU hours assumed equal to Eskom's — confirm against the municipality's by-law (Eskom from 2025-04-01)")
+  })
   it('energy-flow month and day-type selects switch the typical day', () => {
     render(<RunResults projectId="p1" caseId="c1" run={run} />)
     fireEvent.change(screen.getByLabelText('Month'), { target: { value: '7' } })

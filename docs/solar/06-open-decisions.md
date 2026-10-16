@@ -121,6 +121,35 @@ Plan: `docs/superpowers/plans/2026-09-29-solar-pricing-inputs.md`.
   writes `module_id` today), and `layouts_module_bind` refuses another org's row or a non-module.
   `module_spec` stays the design-time snapshot.
 
+## The case run's TOU calendar — Fixed 2026-10-05
+- **CAL-1 — Fixed.** The case run (`lib/solar/cases/tariff.ts`) queried `tariffs.tou_calendar` itself: the
+  pinned licensee's calendar overlapping the reference year, with **no Eskom fallback**. The Tariff tab
+  (`lib/solar/tariff/calendar-loader.ts`) took the licensee's calendar valid on the date, else Eskom's
+  flagged `assumed_eskom`. So the tab showed hours the run then refused ("There is no TOU calendar…") —
+  every study supplied by a municipality, once its tariff is pinned. Prod on 2026-10-05: 1 study, not
+  pinned, 0 calendars, so nobody was refused yet; 99 non-Eskom licensees had a published year. Now both
+  go through `loadStudyCalendar`, and `calendar-single-source.contract.test.ts` refuses any other Solar
+  lib that reads `tou_calendar` / `tou_window` / `holiday_rule`. What the run prices on:
+  - **Hours:** the pinned licensee's calendar valid on the pricing date (today; an Operations month passes
+    its own), else Eskom's, flagged `assumed_eskom`. The two Eskom licensees are tried in name order, so
+    the stand-in never depends on row order (the tab's `limit(1)` did).
+  - **Provenance:** `tariffRef.touHours` = `{ source, calendarLicenseeName, validFrom, datedHolidays }`,
+    stored on the run (`case_runs.tariff_ref`, `outputs.provenance`) and the financials, shown in the Yield
+    footer and the feasibility report's provenance table — assumed hours carry the Tariff tab's notice
+    word for word (`ASSUMED_ESKOM_HOURS`). Absent on runs made before; those show nothing.
+  - **Holidays:** the statutory holidays of the reference year, plus the tariff family's dated rows from
+    `tariffs.holiday_treatment` (00228, PR #239: Eskom bills the Megaflex family's holidays per date as a
+    Saturday or a Sunday; Homeflex/Ruraflex as the actual weekday). Matched by **exact date** within the
+    reference year and by family (case- and space-insensitive). A rule for 2026 is NOT projected onto
+    2025: Women's Day 2026 is listed as Sunday because it falls on one. With no dated row in the year
+    the statutory Set is passed unchanged, so pricing is byte-for-byte as before. A base without the
+    table prices as before; any other read error refuses the run (`unreadable`). ⚠ The seeded rows cover
+    2026-04-03 to 2027-06-16 and the default reference year is **2025**, so until rows for the load's
+    year exist the treatment changes nothing — `datedHolidays` says so on each run.
+  - **Engine:** `dayTypeOf` / `engineTouPeriods` / `aggregateHourly` / `monthlyDemand` / the bill
+    calculators take `HolidayDays = ReadonlySet<string> | ReadonlyMap<string, WindowDayType>`. A Set means
+    what it always meant; a Map is the resolved treatment (`resolveHolidayDays`).
+
 ## Still open (small, non-blocking)
 - Owner review of the seeded density/archetype table (Phase 3).
 - Owner to confirm WM Solar still works when signed in (after containment + key rotation).
