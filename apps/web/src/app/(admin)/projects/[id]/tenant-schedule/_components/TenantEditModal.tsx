@@ -51,7 +51,7 @@ export function TenantEditModal({
 
   const shopNumberChanged = shopNumber.trim() !== originalShopNumber && shopNumber.trim() !== ''
 
-  // Escape closes (guarded while saving) — matches AddScopeItemModal.
+  // Escape closes (guarded while saving) — matches ScopeItemsModal.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && !isSaving) onClose()

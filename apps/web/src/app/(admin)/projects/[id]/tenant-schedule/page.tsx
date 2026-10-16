@@ -262,6 +262,17 @@ export default async function TenantSchedulePage({ params }: Props) {
   const savedReports = Array.isArray(reportsRes) ? reportsRes : []
   const manageGuard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   const canManageReports = manageGuard.ok
+  // Scope items are an ORG-WIDE registry (a column on every tenant of every
+  // project), so adding/removing one needs the ORG role — the same gate the
+  // actions apply. A per-project promotion is deliberately not enough.
+  const canManageScopeItems = manageGuard.ok
+  // Named in the Scope items modal's org-wide warning (best-effort).
+  const { data: orgRow } = await supabase
+    .from('organisations')
+    .select('name')
+    .eq('id', orgId)
+    .maybeSingle()
+  const orgName = (orgRow as { name?: string | null } | null)?.name ?? 'your organisation'
   // Page-wide write gate: viewers (client_viewer / no write role) get a
   // read-only schedule — no import, no opening-date edit, no row mutations.
   // EFFECTIVE role (00107): org owner/admin/PM, or a per-project promotion via
@@ -349,6 +360,8 @@ export default async function TenantSchedulePage({ params }: Props) {
             deletedNodes={deletedNodes}
             projectId={projectId}
             orgId={orgId}
+            orgName={orgName}
+            canManageScopeItems={canManageScopeItems}
             scopeItemTypes={scopeItemTypes}
             scopeItemsByNode={scopeItemsByNode}
             tenantDetailsByNode={tenantDetailsByNode}

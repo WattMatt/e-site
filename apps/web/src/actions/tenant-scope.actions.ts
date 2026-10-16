@@ -25,6 +25,7 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
+import { isBuiltInScopeItem } from '@/lib/tenant-schedule/scope-item-registry'
 import { projectService, deriveTenantNodeOrder, planTenantOrderReconcile, ORG_WRITE_ROLES } from '@esite/shared'
 import type { NodeOrderStatus } from '@esite/shared'
 
@@ -379,9 +380,6 @@ export async function setScopeNotRequiredAction(
 // org, not just the sites the caller is scoped to (00238).
 // ---------------------------------------------------------------------------
 
-/** The two seeded types (00080). Every tenant schedule is built around them. */
-const BUILT_IN_SCOPE_ITEM_KEYS: readonly string[] = ['db', 'lighting']
-
 type RegistryRow = { id: string; key: string; label: string; sort_order: number }
 
 function normaliseLabel(l: string): string {
@@ -571,7 +569,7 @@ export async function removeScopeItemTypeAction(
     const type = found[0]
     if (!type) return { error: 'Scope item not found.' }
 
-    if (BUILT_IN_SCOPE_ITEM_KEYS.includes(type.key)) {
+    if (isBuiltInScopeItem(type.key)) {
       return { error: `"${type.label}" is a built-in scope item and cannot be removed.` }
     }
 
