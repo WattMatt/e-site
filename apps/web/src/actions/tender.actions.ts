@@ -47,6 +47,14 @@ export interface TenderRecord {
   structure_diff: (TenderBoqDiff & { unmatchedEstimateRows?: number }) | null
   imported_at: string | null
   created_at: string
+  // Particulars (00252): editable while draft, frozen at issue.
+  reference: string | null
+  description: string | null
+  site_inspection: string | null
+  queries_close_at: string | null
+  validity_days: number | null
+  contact_name: string | null
+  contact_email: string | null
 }
 
 export interface TenderItem extends TenderItemRow {
@@ -57,7 +65,7 @@ export interface TenderItem extends TenderItemRow {
 type Result<T> = { data: T } | { error: string }
 
 const TENDER_COLUMNS =
-  'id, project_id, organisation_id, package, title, revision, status, closing_at, source_filename, estimate_filename, stated_subtotal, stated_vat, stated_total, reconciliation, structure_diff, imported_at, created_at'
+  'id, project_id, organisation_id, package, title, revision, status, closing_at, source_filename, estimate_filename, stated_subtotal, stated_vat, stated_total, reconciliation, structure_diff, imported_at, created_at, reference, description, site_inspection, queries_close_at, validity_days, contact_name, contact_email'
 
 function bust(projectId: string, tenderId?: string) {
   revalidatePath(`/projects/${projectId}/tenders`, 'page')

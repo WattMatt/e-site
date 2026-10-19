@@ -85,7 +85,10 @@ export function renderInvitationEmail(v: {
   email: string
   pkg: string
   title: string
+  reference?: string | null
   closingAt: string | null
+  /** Documents issued with the tender (specs, drawings, P&G, conditions); 0 hides the line. */
+  documentCount?: number
   link: string
   code: string
 }): { subject: string; html: string } {
@@ -93,6 +96,7 @@ export function renderInvitationEmail(v: {
   const closes = v.closingAt
     ? new Date(v.closingAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'full', timeStyle: 'short' })
     : ''
+  const label = `${v.pkg} — ${v.title}${v.reference ? ` (${v.reference})` : ''}`
   const html = renderBrandedEmail({
     accentColor: DEFAULT_ACCENT_COLOR,
     logoUrl: null,
@@ -100,15 +104,18 @@ export function renderInvitationEmail(v: {
     title: `Invitation to tender: ${v.pkg}`,
     contentHtml:
       `<p>${e(v.contactName ? `Dear ${v.contactName},` : 'Good day,')}</p>` +
-      `<p>${e(v.orgName)} invites ${e(v.companyName)} to tender for <strong>${e(v.pkg)} — ${e(v.title)}</strong>.</p>` +
+      `<p>${e(v.orgName)} invites ${e(v.companyName)} to tender for <strong>${e(label)}</strong>.</p>` +
       (closes ? `<p>Tenders close <strong>${e(closes)}</strong>.</p>` : '') +
+      (v.documentCount
+        ? `<p>The tender documents (${v.documentCount} file${v.documentCount === 1 ? '' : 's'}: specifications, drawings and conditions as applicable) are on the portal under <strong>Tender documents</strong>.</p>`
+        : '') +
       `<a class="btn" href="${e(v.link)}">Open my invitation</a>` +
       stepsHtml(v.email) +
       codeHtml(v.link, v.code) +
       `<p style="font-size:12px;color:#666">This invitation is personal to ${e(v.email)}. Please do not forward it.</p>`,
     siteUrl: siteUrl(),
   })
-  return { subject: `Invitation to tender: ${v.pkg} — ${v.title}`, html }
+  return { subject: `Invitation to tender: ${label}`, html }
 }
 
 /** A fresh link and code: from the invitation page, or for a return visit. */
