@@ -214,7 +214,7 @@ describe('ShopsPanel', () => {
   it('a suggestion is dropped and its outline cleared once its row is no longer to be drawn', async () => {
     const onPreview = vi.fn()
     const onFocus = vi.fn()
-    const polygon = [1050, 50, 1250, 50, 1250, 300, 1050, 300]
+    const polygon = [1050, 50, 1150, 50, 1150, 100, 1050, 100] // 100 × 50 = 5,000 px
     m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon })
     const base = props({ onPreview, onFocus, backing: fakeBacking() })
     const { rerender } = render(<ShopsPanel {...base} />)
@@ -263,8 +263,8 @@ describe('ShopsPanel', () => {
   it('an offered suggestion previews, and Accept creates a detected polygon linked to the node', async () => {
     const onPreview = vi.fn()
     const onCreated = vi.fn()
-    const polygon = [1050, 50, 1250, 50, 1250, 300, 1050, 300]
-    // 5,000 px at 10 px/m = 50 m², the GLA exactly.
+    const polygon = [1050, 50, 1150, 50, 1150, 100, 1050, 100] // 100 × 50 = 5,000 px
+    // The gate measures the polygon: 5,000 px at 10 px/m = 50 m², the GLA exactly.
     m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon })
     const created: CanvasShape = { ...canvasShape('s20', 1050, 50, 'n2'), points: polygon, source: 'detected', detectedTag: '2' }
     m.create.mockResolvedValue({ ok: true, data: created })
@@ -300,7 +300,7 @@ describe('ShopsPanel', () => {
   })
 
   it('Suggest all runs every draw row and says how far it got', async () => {
-    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon: [0, 0, 10, 0, 10, 10] })
+    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon: [0, 0, 100, 0, 100, 50, 0, 50] })
     render(<ShopsPanel {...props({ backing: fakeBacking() })} />)
     await scan()
     fireEvent.click(screen.getByRole('button', { name: 'Suggest all' }))
@@ -312,7 +312,7 @@ describe('ShopsPanel', () => {
 
   it('Dismiss clears the preview and saves nothing', async () => {
     const onPreview = vi.fn()
-    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon: [0, 0, 10, 0, 10, 10] })
+    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon: [0, 0, 100, 0, 100, 50, 0, 50] })
     render(<ShopsPanel {...props({ onPreview, backing: fakeBacking() })} />)
     await scan()
     fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))

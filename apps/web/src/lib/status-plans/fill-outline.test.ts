@@ -157,6 +157,36 @@ describe('fill-outline', () => {
     expect(roomFill.pixels).toBe(enclosedFree(withCounter, 400, 300, 520, 380) - counter)
   })
 
+  it('seeds the whole grid when the anchor is free but sits between two glyphs', () => {
+    // Two glyph blobs bridged top and bottom (as dilated letters touch), leaving a 3 px free gap
+    // between them in the mask. The anchor is in that gap: it is free, but its region is the gap.
+    const mask = inkMaskFromImageData(
+      raster(PAGE_W, PAGE_H, (set) => {
+        room(set, 400, 300, 120, 80)
+        for (let y = 335; y <= 345; y++) {
+          for (let x = 450; x <= 456; x++) set(x, y)
+          for (let x = 462; x <= 468; x++) set(x, y)
+        }
+        for (let x = 450; x <= 468; x++) {
+          set(x, 335)
+          set(x, 345)
+        }
+      }),
+    )
+    const anchor = { x: 459, y: 340 }
+    expect(mask.ink[anchor.y * PAGE_W + anchor.x]).toBe(0)
+    // The gap after dilation: x 458..460, y 337..343, closed on all four sides.
+    const gap = enclosedFree(mask, 457, 336, 461, 344)
+    expect(gap).toBe(3 * 7)
+    expect(mask.ink[340 * PAGE_W + 457]).toBe(1)
+    expect(mask.ink[340 * PAGE_W + 461]).toBe(1)
+    expect(mask.ink[336 * PAGE_W + 459]).toBe(1)
+    expect(mask.ink[344 * PAGE_W + 459]).toBe(1)
+    const interior = enclosedFree(mask, 400, 300, 520, 380) - gap
+    const ok = expectOk(fillFromAnchor(mask, anchor))
+    expect(Math.abs(ok.pixels - interior) / interior).toBeLessThan(0.01)
+  })
+
   it('a 3 px gap in one wall leaks', () => {
     const closed = inkMaskFromImageData(raster(PAGE_W, PAGE_H, (set) => room(set, 400, 300, 120, 80)))
     // Control: the same room without the gap fills.
@@ -195,12 +225,14 @@ describe('fill-outline', () => {
     // Left half after dilation: x 402..458, y 302..378.
     expect(ok.pixels).toBe(enclosedFree(mask, 400, 300, 460, 380))
     expect(ok.pixels).toBe(57 * 77)
-    // 10 px per metre: 4,389 px is 43.89 m²; the schedule says the whole room, 90.1 m².
+    // The gate measures the grown polygon: x 400..460 × y 300..380 is 61 × 81 = 4,941 px, which at
+    // 10 px per metre is 49.41 m² (0.55 of the GLA); the schedule says the whole room, 90.1 m².
+    expect(shapeAreaPx(ok.polygon)).toBe(61 * 81)
     const gate = gateSuggestion(outcome, 10, 90.1)
     expect(gate).toEqual({
       offered: false,
-      reason: 'The fill came to 43.9 m² for a 90.1 m² shop, not offered.',
-      fillM2: 43.89,
+      reason: 'The fill came to 49.4 m² for a 90.1 m² shop, not offered.',
+      fillM2: 49.41,
     })
   })
 
@@ -257,8 +289,29 @@ describe('fill-outline', () => {
     expect(comb.polygon.length / 2).toBeGreaterThan(300)
   })
 
+  it('the gate measures the grown polygon', () => {
+    // A 109 × 109 wall square: free interior 106 × 106 = 11,236 px, grown by GROW_PX to
+    // 110 × 110 = 12,100 px (no holes, so the polygon is exactly that). At 10 px per metre and a
+    // 144.05 m² GLA the ungrown region is 0.78 × GLA (below the band) and the polygon 0.84 × GLA.
+    const outcome = fillFromAnchor(inkMaskFromImageData(raster(PAGE_W, PAGE_H, (set) => room(set, 400, 300, 109, 109))), {
+      x: 454,
+      y: 354,
+    })
+    const ok = expectOk(outcome)
+    expect(ok.pixels).toBe(106 * 106)
+    expect(ok.pixels / 100 / 144.05).toBeCloseTo(0.78, 3)
+    const polygonPx = shapeAreaPx(ok.polygon)
+    expect(polygonPx).toBe(110 * 110)
+    expect(polygonPx / 100 / 144.05).toBeCloseTo(0.84, 3)
+    const gate = gateSuggestion(outcome, 10, 144.05)
+    expect(gate.offered).toBe(true)
+    if (!gate.offered) throw new Error('not offered')
+    expect(Math.abs(gate.fillM2 - polygonPx / 100) / (polygonPx / 100)).toBeLessThan(0.005)
+  })
+
   it('gate: no scale, no GLA, leak, out of band, in band', () => {
-    // 40,000 px at 20 px per metre is 100 m².
+    // The gate measures the polygon: 200 × 200 = 40,000 px at 20 px per metre is 100 m². `pixels` and
+    // `grownPixels` are diagnostics only.
     const ok: FillOutcome = { kind: 'ok', pixels: 40_000, grownPixels: 41_000, polygon: [0, 0, 200, 0, 200, 200, 0, 200] }
 
     expect(gateSuggestion(ok, null, 100)).toEqual({ offered: false, reason: 'Calibrate the sheet first.', fillM2: null })
@@ -278,7 +331,7 @@ describe('fill-outline', () => {
     // The band is inclusive at both ends, and a zero or negative scale or GLA fails closed.
     // (100 m² / 125 m² is exactly 0.8; 120 m² / 100 m² is exactly 1.2.)
     expect(gateSuggestion(ok, 20, 125).offered).toBe(true)
-    const big: FillOutcome = { ...ok, pixels: 48_000 }
+    const big: FillOutcome = { ...ok, polygon: [0, 0, 240, 0, 240, 200, 0, 200] } // 48,000 px
     expect(gateSuggestion(big, 20, 100)).toEqual({ offered: true, fillM2: 120, glaM2: 100 })
     expect(gateSuggestion(big, 20, 99.9).offered).toBe(false)
     expect(gateSuggestion(ok, 20, 125.1).offered).toBe(false)

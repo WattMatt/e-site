@@ -305,11 +305,13 @@ async function runSheet(sheetId: string, fill: boolean, tmp: string) {
   const offered = out.filter((o) => o.gate.offered).length
   console.log(`\nFill (GATE_BAND ${GATE_BAND.min}–${GATE_BAND.max}, GROW_PX ${GROW_PX}): offered ${offered} of ${draws.length} draw rows\n`)
   table(
-    ['SHOP', 'tenant', 'outcome', 'fill m²', 'GLA m²', 'fill/GLA', 'offered', 'reason'],
+    // fill m² is what the gate judges (the saved polygon); ungrown m² is the region before GROW_PX, for diagnostics.
+    ['SHOP', 'tenant', 'outcome', 'ungrown m²', 'fill m²', 'GLA m²', 'fill/GLA', 'offered', 'reason'],
     out.map((o) => [
       o.r.label.tag,
       tagOfNode(o.r.nodeId),
       o.outcome.kind,
+      o.outcome.kind === 'ok' && ppm ? f1(o.outcome.pixels / (ppm * ppm)) : '—',
       f1(o.fillM2),
       f1(o.gla),
       o.ratio == null ? '—' : o.ratio.toFixed(3),

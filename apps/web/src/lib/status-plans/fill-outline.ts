@@ -6,7 +6,7 @@
  * trace its outline and simplify it. The gate decides whether the result may be offered: only with a
  * scale, a GLA, no leak, and a fill within GATE_BAND of the GLA. Nothing here saves anything.
  */
-import type { Pt } from '@esite/shared/status-plans'
+import { shapeAreaPx, type Pt } from '@esite/shared/status-plans'
 
 /** Luma below this is ink. Wall lines are black or dark grey; hatching and fills are lighter. */
 export const INK_LUMA = 170
@@ -18,7 +18,7 @@ export const GROW_PX = 2
 export const SIMPLIFY_EPS_PX = 2
 /** The DB allows 2,000 points; a shop needs far fewer. */
 export const MAX_VERTICES = 1000
-/** When the anchor sits on a glyph, probe ±dx × ±dy around it in `step` px steps. */
+/** Seed the fill at the anchor and every ±dx × ±dy point around it in `step` px steps. */
 export const SEED_GRID = { dx: 24, dy: 16, step: 8 }
 /** fill m² / GLA must fall in this band (inclusive) for the outline to be offered. */
 export const GATE_BAND = { min: 0.8, max: 1.2 }
@@ -31,8 +31,8 @@ export interface InkMask {
 }
 
 /**
- * `pixels` is the region as filled (used for the gate's m²); `grownPixels` is the region after the
- * GROW_PX growth. The polygon traces the grown region's outer boundary and drops holes, so before
+ * `pixels` is the region as filled (diagnostics only); `grownPixels` is the region after the
+ * GROW_PX growth. The gate measures the polygon, which is what Accept saves. The polygon traces the grown region's outer boundary and drops holes, so before
  * simplification it encloses exactly `grownPixels` only when no hole survives the grow; label text
  * inside a shop normally does survive, and then the polygon encloses `grownPixels` plus the holes.
  * Polygon coordinates are pixel-edge corners in image pixels, flat `[x0, y0, x1, y1, …]`.
@@ -148,13 +148,16 @@ function scanlineFill(mask: InkMask, visited: Uint8Array, label: number, sx: num
   return region
 }
 
-/** The anchor when it is free, else the SEED_GRID points around it, nearest first. */
+/**
+ * Every free SEED_GRID point around the anchor (the anchor itself is the grid's centre), nearest
+ * first. The whole grid is seeded even when the anchor pixel is free: a free anchor can sit in the
+ * 2–4 px gap between two glyphs, whose region is the gap, not the shop.
+ */
 function seedsFor(mask: InkMask, anchor: Pt): number[] {
   const { width: w, height: h, ink } = mask
   const ax = Math.floor(anchor.x)
   const ay = Math.floor(anchor.y)
   const free = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && !ink[y * w + x]
-  if (free(ax, ay)) return [ay * w + ax]
   const grid: Array<{ idx: number; d2: number }> = []
   for (let oy = -SEED_GRID.dy; oy <= SEED_GRID.dy; oy += SEED_GRID.step) {
     for (let ox = -SEED_GRID.dx; ox <= SEED_GRID.dx; ox += SEED_GRID.step) {
@@ -349,7 +352,9 @@ export function gateSuggestion(outcome: FillOutcome, pixelsPerMeter: number | nu
   if (outcome.kind === 'leak') return { offered: false, reason: 'The fill ran into the mall; draw this shop by hand.', fillM2: null }
   if (outcome.kind === 'no_region') return { offered: false, reason: 'No white space at the label.', fillM2: null }
   if (pixelsPerMeter == null || !(pixelsPerMeter > 0)) return { offered: false, reason: 'Calibrate the sheet first.', fillM2: null }
-  const fillM2 = outcome.pixels / (pixelsPerMeter * pixelsPerMeter)
+  // The polygon Accept would save (grown region plus any holes), not the ungrown fill: the fill stops
+  // at the wall's inside face, and GROW_PX exists to move the measured edge out towards the GLA line.
+  const fillM2 = shapeAreaPx(outcome.polygon) / (pixelsPerMeter * pixelsPerMeter)
   if (glaM2 == null || !(glaM2 > 0)) return { offered: false, reason: 'No GLA on the schedule for this shop.', fillM2 }
   const ratio = fillM2 / glaM2
   if (ratio < GATE_BAND.min || ratio > GATE_BAND.max) {
