@@ -9,7 +9,7 @@
  * The page's straight line work comes back alongside (extract-page-lines.ts),
  * so detected blocks can snap onto their tables' borders.
  */
-import { textItemsToImageSpace, type ImageTextItem, type LineSegment, type Matrix } from '@esite/shared/status-plans'
+import { allTextItemsToImageSpace, textItemsToImageSpace, type ImageTextItem, type LineSegment, type Matrix } from '@esite/shared/status-plans'
 import { extractPageLines, type OperatorListPage, type PdfOps } from './extract-page-lines'
 
 /** Must equal the scale in lib/sheet/use-sheet-image.ts (pinned by a test). */
@@ -37,7 +37,10 @@ async function browserPdfjs(): Promise<PdfjsModule> {
 export type PageTextResult =
   | {
       ok: true
+      /** Upright runs only: what the 300 block detector reads. */
       items: ImageTextItem[]
+      /** Every run at any rotation (rotated runs as their raster bounding box): what the SHOP label scan reads. */
+      allItems: ImageTextItem[]
       rawItemCount: number
       /** Straight table lines, same image space; empty when the page has none or they could not be read. */
       lines: LineSegment[]
@@ -68,8 +71,9 @@ export async function extractPageText(
     const t = viewport.transform
     const matrix: Matrix = [t[0]!, t[1]!, t[2]!, t[3]!, t[4]!, t[5]!]
     const items = textItemsToImageSpace(content.items, matrix)
+    const allItems = allTextItemsToImageSpace(content.items, matrix)
     const lines = await extractPageLines(page, matrix, pdfjs.OPS)
-    return { ok: true, items, rawItemCount: content.items.length, lines, width: viewport.width, height: viewport.height }
+    return { ok: true, items, allItems, rawItemCount: content.items.length, lines, width: viewport.width, height: viewport.height }
   } finally {
     await doc.destroy()
   }

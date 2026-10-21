@@ -241,7 +241,10 @@ describe('StatusPlanWorkspace', () => {
 
   it('Draw on a Shops row arms the canvas with the tenant link', async () => {
     detection.extractPageText.mockResolvedValue({
-      ok: true, items: [{ str: 'SHOP ZZ01', x: 900, baseline: 900, top: 890, width: 54, height: 10 }], rawItemCount: 1, width: 2000, height: 2000,
+      ok: true,
+      items: [{ str: 'SHOP ZZ01', x: 900, baseline: 900, top: 890, width: 54, height: 10 }],
+      allItems: [{ str: 'SHOP ZZ01', x: 900, baseline: 900, top: 890, width: 54, height: 10 }],
+      rawItemCount: 1, width: 2000, height: 2000,
     })
     render(<StatusPlanWorkspace {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Draw SHOP ZZ01' }))

@@ -215,7 +215,8 @@ export function ShopsPanel({
       }
       if (!live()) return
       if (!page.ok) { setReadError(page.error); return }
-      const labels = detectShopLabels(page.items)
+      // Every run, rotated ones included: shop labels are often turned ±45° or −90°.
+      const labels = detectShopLabels(page.allItems)
       const counts = reviewShopLabels({ labels, nodes, shapes, replaced }).counts
       Sentry.addBreadcrumb({ category: 'status-plans', message: 'shops-scan', data: counts })
       setScanned({ labels, rawItemCount: page.rawItemCount })

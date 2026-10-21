@@ -12,6 +12,7 @@ const legacy = async () => (await import('pdfjs-dist/legacy/build/pdf.mjs')) as 
 const LABELS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:']
 // Invented values (public repo).
 const VALUES = ['DB-77', 'TEST STORE', '120m2', '100A TP', '4C 25mm2 CU', 'QA-0007', '100/5A']
+const ROTATED_LABEL = 'SHOP 7'
 
 /**
  * A 600×400 pt page with /Rotate 90. On the scale-2 raster of such a page,
@@ -30,7 +31,17 @@ async function rotatedSheet(): Promise<Uint8Array> {
     put(label, 100, baseline)
     put(VALUES[row]!, 150, baseline)
   })
+  // A label turned -90° on the raster (reads bottom to top): drawn turned 180° in
+  // user space on this /Rotate 90 page. Its run starts at raster (500, 700) and
+  // climbs; the box is x 490..500 and y 700 − 2·advance..700.
+  page.drawText(ROTATED_LABEL, { x: 700 / 2, y: 500 / 2, size: 5, font, rotate: degrees(180) })
   return doc.save()
+}
+
+/** Helvetica advance of `s` at 5 pt, in user space (what pdf.js reports as width). */
+async function helveticaAdvance(s: string): Promise<number> {
+  const doc = await PDFDocument.create()
+  return (await doc.embedFont(StandardFonts.Helvetica)).widthOfTextAtSize(s, 5)
 }
 
 async function blankSheet(): Promise<Uint8Array> {
@@ -66,9 +77,28 @@ describe('extractPageText', () => {
     expect(r.blocks.map((b) => [b.tag, b.name, b.fields.CT])).toEqual([['DB-77', 'TEST STORE', '100/5A']])
   })
 
+  it('/Rotate 90: allItems holds every run, the -90° label included; items does not', async () => {
+    const res = await extractPageText({ data: await rotatedSheet() }, 1, legacy)
+    if (!res.ok) throw new Error(res.error)
+    expect(res.allItems.length).toBeGreaterThanOrEqual(res.items.length)
+    // Every upright run is in allItems unchanged.
+    for (const item of res.items) expect(res.allItems).toContainEqual(item)
+    expect(res.items.find((i) => i.str === ROTATED_LABEL)).toBeUndefined()
+    const shop = res.allItems.find((i) => i.str === ROTATED_LABEL)!
+    expect(shop).toBeDefined()
+    // pdf.js reports width = advance (user space) and height = font size; on the
+    // scale-2 raster the turned box is font-height wide and advance tall.
+    const advance = 2 * (await helveticaAdvance(ROTATED_LABEL))
+    expect(shop.x).toBeCloseTo(490, 1)
+    expect(shop.width).toBeCloseTo(10, 1)
+    expect(shop.baseline).toBeCloseTo(700, 1)
+    expect(shop.height).toBeCloseTo(advance, 1)
+    expect(shop.top).toBeCloseTo(700 - advance, 1)
+  })
+
   it('a page with no text layer returns no items (the panel turns that into a sentence)', async () => {
     const res = await extractPageText({ data: await blankSheet() }, 1, legacy)
-    expect(res).toMatchObject({ ok: true, items: [] })
+    expect(res).toMatchObject({ ok: true, items: [], allItems: [] })
   })
 
   it('a page beyond the document is refused with a sentence', async () => {

@@ -111,7 +111,8 @@ const num = (v: unknown): number | null => {
 
 /**
  * Every SHOP run in the raw text layer, at any angle, with its direction on the raster in degrees.
- * The detector reads upright runs only (text-space.ts), so this is the yardstick for what it missed.
+ * The detector reads every run (allTextItemsToImageSpace in text-space.ts); this independent count is
+ * the yardstick for anything it still missed.
  */
 async function rawShopRuns(bytes: Uint8Array, pageIndex: number): Promise<Array<{ tag: string; deg: number }>> {
   const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as {
@@ -235,7 +236,7 @@ async function runSheet(sheetId: string, fill: boolean, tmp: string) {
   writeFileSync(pdfPath, bytes)
   const page = await extractPageText({ data: bytes.slice() }, Number(sheet.page_index), legacy)
   if (!page.ok) throw new Error(`text layer: ${page.error}`)
-  const labels = detectShopLabels(page.items)
+  const labels = detectShopLabels(page.allItems)
   const review: ShopReview = reviewShopLabels({ labels, nodes, shapes, replaced: sheet.replaced_at !== null })
 
   console.log(`\n## Sheet ${sheetId}`)

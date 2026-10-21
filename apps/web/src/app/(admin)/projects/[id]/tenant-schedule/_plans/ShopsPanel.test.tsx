@@ -94,7 +94,7 @@ function fakeBacking(): HTMLCanvasElement {
 let getContext: { mockRestore: () => void }
 beforeEach(() => {
   for (const f of Object.values(m)) f.mockReset()
-  m.extract.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 6000, height: 6000 })
+  m.extract.mockResolvedValue({ ok: true, items: ITEMS, allItems: ITEMS, rawItemCount: ITEMS.length, width: 6000, height: 6000 })
   m.mask.mockReturnValue({ width: 100, height: 80, ink: new Uint8Array(8000) })
   getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     drawImage: vi.fn(),
@@ -122,11 +122,21 @@ describe('ShopsPanel', () => {
   })
 
   it('zero labels shows the draw-by-hand sentence and no buttons', async () => {
-    m.extract.mockResolvedValue({ ok: true, items: [t('MALL', 10, 10)], rawItemCount: 1, width: 100, height: 100 })
+    m.extract.mockResolvedValue({ ok: true, items: [t('MALL', 10, 10)], allItems: [t('MALL', 10, 10)], rawItemCount: 1, width: 100, height: 100 })
     render(<ShopsPanel {...props()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for shops' }))
     expect(await screen.findByText('No SHOP labels found on this sheet; draw the shops by hand.')).not.toBeNull()
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Scan sheet for shops'])
+  })
+
+  it('reads every run on the page: a SHOP label turned -90° (only in allItems) is listed', async () => {
+    // The rotated run's box is tall and narrow: font height wide, advance tall.
+    const rotated: ImageTextItem = { str: 'SHOP 7', x: 500, top: 400, width: 10, height: 36, baseline: 436 }
+    m.extract.mockResolvedValue({ ok: true, items: [], allItems: [rotated], rawItemCount: 1, width: 1000, height: 1000 })
+    render(<ShopsPanel {...props({ nodes: [...NODES, node('n7', '7', 'Golf')], shapes: [], shapesById: new Map() })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for shops' }))
+    expect(await screen.findByRole('button', { name: 'Draw SHOP 7' })).not.toBeNull()
+    expect(screen.queryByText('No SHOP labels found on this sheet; draw the shops by hand.')).toBeNull()
   })
 
   it('Link N calls linkShapesByLabelAction with every link row and then offers Undo', async () => {
