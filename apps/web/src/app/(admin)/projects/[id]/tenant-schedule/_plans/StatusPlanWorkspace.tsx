@@ -36,7 +36,7 @@ import { CanvasLegend, canvasLegendEntries } from './CanvasLegend'
 import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
 import { RealignBlocksPanel } from './RealignBlocksPanel'
-import { shouldAutoScan } from '@/lib/status-plans/auto-scan'
+import { countLinkedShapes, shouldAutoScan } from '@/lib/status-plans/auto-scan'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
 
@@ -218,6 +218,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     sheetId: sheet.id,
     primary: shouldAutoScan({
       purpose, canEdit, isPdf: sheet.isPdf, hasFileUrl: !!sheet.signedUrl, shapeCount: sheetShapes.length,
+      linkedShapeCount: countLinkedShapes(sheetShapes), replaced: sheet.replacedAt !== null,
     }),
   })
   const [scanOpen, setScanOpen] = useState(decideScan)
