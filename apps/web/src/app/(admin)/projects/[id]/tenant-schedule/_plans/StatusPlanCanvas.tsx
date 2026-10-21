@@ -21,7 +21,7 @@ import { hatchSegments, pointsError, rectToPoints, visualCentre, type Box, type 
 import { calibrateTenantPlanSheetAction } from '@/actions/tenant-plan-sheets.actions'
 import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
 import { Tooltip } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/markup-tooltip'
-import { useSheetImage, backingSize } from '@/lib/sheet/use-sheet-image'
+import { useSheetImage, backingSize, type SheetBacking } from '@/lib/sheet/use-sheet-image'
 import { useSheetViewport } from '@/lib/sheet/use-sheet-viewport'
 import { FOCUS_COLOUR, FOCUS_FILL, FOCUS_PULSE_MS, FOCUS_TICK_MS, focusPending, pulseVisible } from '@/lib/status-plans/focus'
 import {
@@ -32,6 +32,7 @@ import {
   type CanvasEvent,
   type CanvasState,
   type CanvasTool,
+  type PendingLink,
   type ShapeCommit,
 } from '@/lib/status-plans/canvas-reducer'
 import { roundPoints } from '@/lib/status-plans/canvas-shape'
@@ -62,8 +63,12 @@ export interface StatusPlanCanvasProps {
   height?: string
   /** Drawn over the top-left of the drawing (the colour key); HTML, outside the Konva stage. */
   overlay?: ReactNode
-  /** Proposed outlines (re-align preview), drawn dashed over the shapes; never selectable. */
+  /** Proposed outlines (re-align preview, a suggested shop outline), drawn dashed over the shapes; never selectable. */
   proposals?: number[][]
+  /** "Draw" from the Shops panel: arm the polygon tool for this tenant. A new nonce re-arms. */
+  arm?: { link: PendingLink; nonce: number } | null
+  /** The page bitmap as it is drawn (null while loading), for the suggested-outline fill. */
+  onBacking?: (b: SheetBacking | null) => void
 }
 
 /** Screen pixels within which a press counts as "on" a corner. */
@@ -136,6 +141,24 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     if (p.requestedTool) send({ type: 'tool', tool: p.requestedTool.tool })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.requestedTool?.nonce])
+
+  // The Shops panel reads the same bitmap the canvas draws.
+  useEffect(() => {
+    p.onBacking?.(img)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [img])
+
+  // ── Draw from the Shops panel ──────────────────────────────────────────────
+  // Like focus: each nonce is applied once, and only once the drawing is there to draw on.
+  // Escape, another tool or another Draw clears the pending link (canvas-reducer).
+  const appliedArmNonce = useRef<number | null>(null)
+  useEffect(() => {
+    const a = p.arm
+    if (!a || !img || !canEdit || appliedArmNonce.current === a.nonce) return
+    appliedArmNonce.current = a.nonce
+    send({ type: 'armDraw', link: a.link })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.arm?.nonce, img])
 
   // ── Show on drawing ─────────────────────────────────────────────────────────
   // Runs after the viewport hook's first-load auto-fit (declared earlier, so its effect

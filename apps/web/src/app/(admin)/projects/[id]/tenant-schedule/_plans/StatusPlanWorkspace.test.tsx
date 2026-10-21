@@ -19,11 +19,12 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][] }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][]; arm?: { link: { nodeId: string; detectedTag: string }; nonce: number } | null }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
       {' '}proposals:{JSON.stringify(props.proposals ?? [])}
       {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
+      {' '}arm:{props.arm ? `${props.arm.link.nodeId}/${props.arm.link.detectedTag}#${props.arm.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10], link: null })}>stub-create</button>
       <button onClick={() => props.onCreate({ shape: 'polygon', points: [0, 0, 10, 0, 10, 10], link: { nodeId: 'n7', detectedTag: 'DB-7' } })}>stub-create-linked</button>
@@ -56,6 +57,8 @@ vi.mock('@/lib/status-plans/extract-page-text', () => ({ extractPageText: detect
 vi.mock('@/actions/status-plan-detection.actions', () => ({ acceptDetectedBlocksAction: detection.acceptDetectedBlocksAction }))
 const realign = vi.hoisted(() => ({ realignShapesAction: vi.fn() }))
 vi.mock('@/actions/status-plan-realign.actions', () => realign)
+const linking = vi.hoisted(() => ({ linkShapesByLabelAction: vi.fn(), unlinkShapesAction: vi.fn() }))
+vi.mock('@/actions/status-plan-link.actions', () => linking)
 
 import { StatusPlanWorkspace } from './StatusPlanWorkspace'
 
@@ -82,7 +85,11 @@ function props(o: Partial<StatusPlanPageProps> = {}): StatusPlanPageProps {
 const schematic = (o: Partial<StatusPlanPageProps> = {}) =>
   props({ plan: { ...props().plan, purpose: 'distribution_schematic', name: 'Line diagram' }, shopLinks: {}, ...o })
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  // A floor plan with no linked shop scans itself on open; by default that scan never answers.
+  detection.extractPageText.mockReset().mockReturnValue(new Promise(() => {}))
+})
 
 describe('StatusPlanWorkspace', () => {
   it('shows the legend counts from live facts', () => {
@@ -208,6 +215,38 @@ describe('StatusPlanWorkspace', () => {
     render(<StatusPlanWorkspace {...schematic({ shapes: [], canEdit: false })} />)
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(detection.extractPageText).not.toHaveBeenCalled()
+  })
+
+  it('renders ShopsPanel for tenant_layout and not DetectBlocksPanel; the reverse for distribution_schematic', () => {
+    const pdf = { sheet: { ...SHEET, signedUrl: 'https://s/x', isPdf: true } }
+    const { unmount } = render(<StatusPlanWorkspace {...props({ ...pdf, shapes: [{ ...SHAPE, nodeId: 'n1' }] })} />)
+    expect(screen.getByRole('region', { name: 'Shops on this sheet' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scan sheet for shops' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Scan sheet for blocks' })).toBeNull()
+    unmount()
+    render(<StatusPlanWorkspace {...schematic(pdf)} />)
+    expect(screen.getByRole('button', { name: 'Scan sheet for blocks' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Shops on this sheet' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan sheet for shops' })).toBeNull()
+  })
+
+  it('a floor plan with no linked shop scans itself on open, with the Shops panel above the drawing', () => {
+    const { container } = render(<StatusPlanWorkspace {...props()} />)
+    const primary = container.querySelector('[data-slot="shops-scan-primary"]')!
+    expect(primary).not.toBeNull()
+    expect(primary.compareDocumentPosition(screen.getByTestId('canvas')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(detection.extractPageText).toHaveBeenCalledWith({ url: 'https://s/x' }, 1)
+    expect(container.querySelector('[data-slot="shops-panel"]')).toBeNull()
+  })
+
+  it('Draw on a Shops row arms the canvas with the tenant link', async () => {
+    detection.extractPageText.mockResolvedValue({
+      ok: true, items: [{ str: 'SHOP ZZ01', x: 900, baseline: 900, top: 890, width: 54, height: 10 }], rawItemCount: 1, width: 2000, height: 2000,
+    })
+    render(<StatusPlanWorkspace {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Draw SHOP ZZ01' }))
+    expect(canvasText()).toContain('arm:n1/SHOP ZZ01#1')
+    expect(canvasText()).toContain('focus:500,490,1354,1300#1')
   })
 
   it('Re-align blocks shows for an editor on a line diagram with a rectangle, and nowhere else', () => {
