@@ -12,6 +12,12 @@ import { pointsError, rectToPoints } from '@esite/shared/status-plans'
 
 export type CanvasTool = 'select' | 'polygon' | 'rect' | 'pan' | 'calibrate'
 
+/** A tenant the next polygon is drawn for, so it saves already linked. */
+export interface PendingLink {
+  nodeId: string
+  detectedTag: string
+}
+
 export interface CanvasState {
   tool: CanvasTool
   /** Polygon corners placed so far, flat. */
@@ -20,15 +26,19 @@ export interface CanvasState {
   rect: { x0: number; y0: number; x1: number; y1: number } | null
   /** Calibration points, flat, at most two. */
   calib: number[]
+  /** Set by `armDraw`; the next polygon commit carries it. Rectangles never do. */
+  pendingLink: PendingLink | null
 }
 
 export interface ShapeCommit {
   shape: 'polygon' | 'rect'
   points: number[]
+  link: PendingLink | null
 }
 
 export type CanvasEvent =
   | { type: 'tool'; tool: CanvasTool }
+  | { type: 'armDraw'; link: PendingLink }
   | { type: 'press'; x: number; y: number; tolPx: number }
   | { type: 'move'; x: number; y: number }
   | { type: 'release'; x: number; y: number; tolPx: number }
@@ -44,12 +54,12 @@ export interface CanvasStep {
 }
 
 export function initialCanvasState(tool: CanvasTool = 'select'): CanvasState {
-  return { tool, draft: [], rect: null, calib: [] }
+  return { tool, draft: [], rect: null, calib: [], pendingLink: null }
 }
 
 /** Nothing in progress: Escape should fall through to "deselect". */
 export function isIdle(s: CanvasState): boolean {
-  return s.draft.length === 0 && s.rect === null && s.calib.length === 0
+  return s.draft.length === 0 && s.rect === null && s.calib.length === 0 && s.pendingLink === null
 }
 
 /**
@@ -75,13 +85,16 @@ function finishPolygon(s: CanvasState, tolPx: number): CanvasStep {
   if (!pts) return { state: { ...s, draft: [] }, commit: null, error: null }
   const err = pointsError('polygon', roundPoints(pts))
   if (err) return { state: s, commit: null, error: err }
-  return { state: { ...s, draft: [] }, commit: { shape: 'polygon', points: pts }, error: null }
+  return { state: { ...s, draft: [], pendingLink: null }, commit: { shape: 'polygon', points: pts, link: s.pendingLink }, error: null }
 }
 
 export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
   switch (e.type) {
     case 'tool':
       return same(initialCanvasState(e.tool))
+
+    case 'armDraw':
+      return same({ ...s, tool: 'polygon', draft: [], rect: null, pendingLink: e.link })
 
     case 'press': {
       if (s.tool === 'polygon') {
@@ -105,7 +118,7 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
       const { x0, y0 } = s.rect
       const next = { ...s, rect: null }
       if (Math.abs(e.x - x0) < e.tolPx || Math.abs(e.y - y0) < e.tolPx) return same(next)
-      return { state: next, commit: { shape: 'rect', points: rectToPoints(x0, y0, e.x, e.y) }, error: null }
+      return { state: next, commit: { shape: 'rect', points: rectToPoints(x0, y0, e.x, e.y), link: null }, error: null }
     }
 
     case 'finish': {
@@ -114,6 +127,7 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
     }
 
     case 'escape':
+      if (s.pendingLink) return same({ ...s, draft: [], pendingLink: null })
       if (s.draft.length) return same({ ...s, draft: [] })
       if (s.rect) return same({ ...s, rect: null })
       if (s.calib.length) return same({ ...s, calib: [] })

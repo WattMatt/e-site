@@ -17,7 +17,7 @@ const press = (x: number, y: number): CanvasEvent => ({ type: 'press', x, y, tol
 describe('polygon tool', () => {
   it('clicks place corners; pressing the first corner closes and commits', () => {
     const { state, commits } = run(initialCanvasState('polygon'), [press(0, 0), press(100, 0), press(100, 50), press(2, 1)])
-    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50] }])
+    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50], link: null }])
     expect(state.draft).toEqual([])
   })
 
@@ -25,7 +25,7 @@ describe('polygon tool', () => {
     const { commits } = run(initialCanvasState('polygon'), [
       press(0, 0), press(100, 0), press(100, 50), press(100.5, 50.5), { type: 'finish', tolPx: TOL },
     ])
-    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50] }])
+    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50], link: null }])
   })
 
   it('finishing with fewer than 3 corners discards', () => {
@@ -48,7 +48,7 @@ describe('rectangle tool', () => {
     const { commits, state } = run(initialCanvasState('rect'), [
       press(300, 260), { type: 'move', x: 200, y: 200 }, { type: 'release', x: 100, y: 100, tolPx: TOL },
     ])
-    expect(commits).toEqual([{ shape: 'rect', points: [100, 100, 300, 100, 300, 260, 100, 260] }])
+    expect(commits).toEqual([{ shape: 'rect', points: [100, 100, 300, 100, 300, 260, 100, 260], link: null }])
     expect(state.rect).toBeNull()
   })
 
@@ -109,7 +109,7 @@ describe('client-side shape check before commit', () => {
   it('a good polygon commits, clears the draft and has no error', () => {
     const start = run(initialCanvasState('polygon'), [press(0, 0), press(100, 0), press(100, 50)]).state
     const step = canvasReducer(start, { type: 'finish', tolPx: TOL })
-    expect(step.commit).toEqual({ shape: 'polygon', points: [0, 0, 100, 0, 100, 50] })
+    expect(step.commit).toEqual({ shape: 'polygon', points: [0, 0, 100, 0, 100, 50], link: null })
     expect(step.state.draft).toEqual([])
     expect(step.error).toBeNull()
   })
@@ -120,5 +120,57 @@ describe('dragVertex to zero size', () => {
     const { pointsError } = await import('@esite/shared/status-plans')
     const pts = dragVertex({ shape: 'rect', points: [0, 0, 100, 0, 100, 50, 0, 50] }, 2, 0, 0)
     expect(pointsError('rect', pts)).toBe('The rectangle has no area — drag it larger.')
+  })
+})
+
+describe('pending tenant link', () => {
+  const link = { nodeId: 'n1', detectedTag: 'DB-12' }
+  const triangle = [press(0, 0), press(100, 0), press(100, 50)]
+
+  it('armDraw switches to polygon with the link pending', () => {
+    const start = { ...initialCanvasState('rect'), draft: [1, 2], rect: { x0: 0, y0: 0, x1: 5, y1: 5 } }
+    const step = canvasReducer(start, { type: 'armDraw', link })
+    expect(step.commit).toBeNull()
+    expect(step.state.tool).toBe('polygon')
+    expect(step.state.draft).toEqual([])
+    expect(step.state.rect).toBeNull()
+    expect(step.state.pendingLink).toEqual(link)
+  })
+
+  it('a polygon commit carries the link and clears it', () => {
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link }).state
+    const { state, commits } = run(armed, [...triangle, { type: 'finish', tolPx: TOL }])
+    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50], link }])
+    expect(state.pendingLink).toBeNull()
+    expect(state.tool).toBe('polygon')
+  })
+
+  it('a refused polygon keeps the link pending', () => {
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link }).state
+    const { state, commits } = run(armed, [press(0, 0), press(100, 100), press(100, 0), press(0, 100), { type: 'finish', tolPx: TOL }])
+    expect(commits).toEqual([])
+    expect(state.pendingLink).toEqual(link)
+  })
+
+  it('tool change and escape clear the pending link', () => {
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link }).state
+    expect(canvasReducer(armed, { type: 'tool', tool: 'select' }).state.pendingLink).toBeNull()
+    const drawing = run(armed, [press(0, 0)]).state
+    expect(drawing.pendingLink).toEqual(link)
+    expect(canvasReducer(drawing, { type: 'escape' }).state.pendingLink).toBeNull()
+    expect(canvasReducer(armed, { type: 'escape' }).state.pendingLink).toBeNull()
+  })
+
+  it('a commit without armDraw carries link null', () => {
+    const poly = run(initialCanvasState('polygon'), [...triangle, { type: 'finish', tolPx: TOL }])
+    expect(poly.commits[0]!.link).toBeNull()
+    const rect = run(initialCanvasState('rect'), [press(0, 0), { type: 'release', x: 50, y: 50, tolPx: TOL }])
+    expect(rect.commits[0]!.link).toBeNull()
+  })
+
+  it('a rectangle never takes the link', () => {
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link }).state
+    const { commits } = run({ ...armed, tool: 'rect' }, [press(0, 0), { type: 'release', x: 50, y: 50, tolPx: TOL }])
+    expect(commits[0]!.link).toBeNull()
   })
 })

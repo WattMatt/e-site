@@ -156,7 +156,10 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   const replaceShape = (s: CanvasShape) => setShapes((prev) => prev.map((x) => (x.id === s.id ? s : x)))
 
   const onCreate = (c: ShapeCommit) =>
-    run(() => createStatusPlanShapeAction({ sheetId: sheet.id, shape: c.shape, points: c.points }), (s) => {
+    run(() => createStatusPlanShapeAction({
+      sheetId: sheet.id, shape: c.shape, points: c.points,
+      nodeId: c.link?.nodeId ?? null, detectedTag: c.link?.detectedTag ?? null,
+    }), (s) => {
       setShapes((prev) => [...prev, s])
       setSelectedId(s.id)
     })

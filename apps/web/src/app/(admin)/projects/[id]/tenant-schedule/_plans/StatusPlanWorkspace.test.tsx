@@ -25,7 +25,8 @@ vi.mock('next/dynamic', () => ({
       {' '}proposals:{JSON.stringify(props.proposals ?? [])}
       {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
-      <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
+      <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10], link: null })}>stub-create</button>
+      <button onClick={() => props.onCreate({ shape: 'polygon', points: [0, 0, 10, 0, 10, 10], link: { nodeId: 'n7', detectedTag: 'DB-7' } })}>stub-create-linked</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
       <button onClick={() => props.onCalibrated({ ...SHEET, pixelsPerMeter: 25, updatedAt: 'u2' })}>stub-calibrated</button>
       {props.overlay}
@@ -118,11 +119,20 @@ describe('StatusPlanWorkspace', () => {
     await waitFor(() => expect(canvasText()).toContain('shapes:0'))
   })
 
+  it('a polygon drawn for a tenant is created already linked, still source manual', async () => {
+    actions.createStatusPlanShapeAction.mockResolvedValue({ ok: true, data: { ...SHAPE, id: 's3' } })
+    render(<StatusPlanWorkspace {...props()} />)
+    await act(async () => { fireEvent.click(screen.getByText('stub-create-linked')) })
+    expect(actions.createStatusPlanShapeAction).toHaveBeenCalledWith({
+      sheetId: 'sh1', shape: 'polygon', points: [0, 0, 10, 0, 10, 10], nodeId: 'n7', detectedTag: 'DB-7',
+    })
+  })
+
   it('a new shape is created on the current sheet, added and selected', async () => {
     actions.createStatusPlanShapeAction.mockResolvedValue({ ok: true, data: { ...SHAPE, id: 's2' } })
     render(<StatusPlanWorkspace {...props()} />)
     await act(async () => { fireEvent.click(screen.getByText('stub-create')) })
-    expect(actions.createStatusPlanShapeAction).toHaveBeenCalledWith({ sheetId: 'sh1', shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })
+    expect(actions.createStatusPlanShapeAction).toHaveBeenCalledWith({ sheetId: 'sh1', shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10], nodeId: null, detectedTag: null })
     expect(canvasText()).toMatch(/shapes:2\s+selected:s2/)
   })
 
