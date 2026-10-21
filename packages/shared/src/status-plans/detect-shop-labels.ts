@@ -15,7 +15,7 @@ import { isTagShaped, normaliseTag, stripLeadingZeros } from './match-nodes'
 import type { ImageTextItem } from './text-space'
 
 /** `SHOP 92A`, `Shop 10a`, `SHOP K04`, `SHOP 20/21`. Group 1 is the tag as printed. */
-export const SHOP_LABEL_RE = /^SHOP\s*([0-9A-Z][0-9A-Z/.\-]*)$/i
+export const SHOP_LABEL_RE = /^SHOP\s*([0-9A-Z][0-9A-Z/.-]*)$/i
 
 /** A name or an m² figure belongs to a label when its centre is within this many image pixels of the label's centre. */
 export const NEAR_PX = 120
@@ -23,7 +23,7 @@ export const NEAR_PX = 120
 /** The word on its own, the first half of a label split across two runs. */
 const SHOP_WORD_RE = /^SHOP$/i
 /** What the second half of a split label looks like. */
-const TAG_ONLY_RE = /^[0-9A-Z][0-9A-Z/.\-]*$/i
+const TAG_ONLY_RE = /^[0-9A-Z][0-9A-Z/.-]*$/i
 /** The join tolerances: the tag's baseline within this × the SHOP run's height … */
 const JOIN_BASELINE = 0.35
 /** … and its left edge within this × that height of the SHOP run's right edge. */
