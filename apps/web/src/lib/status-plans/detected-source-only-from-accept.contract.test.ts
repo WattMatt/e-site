@@ -79,11 +79,59 @@ function argumentText(src: string, openParenEnd: number): string {
   return src.slice(openParenEnd, openParenEnd + 2000)
 }
 
-/** The nearest `function name` declaration above `index`, or null. */
+/** Index just past the bracket that closes the one opened at `open`, or -1. */
+function matchClose(src: string, open: number, o: string, c: string): number {
+  let depth = 0
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === o) depth++
+    else if (src[i] === c && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+/**
+ * [start, end) of a function declaration's body braces, or null. `from` is the
+ * index just after the declaration's name. A return type annotation may itself
+ * contain braces (`): Promise<{ a: 1 }> {`), so the body brace is the first `{`
+ * at nesting depth 0 whose previous character does not continue a type.
+ */
+function bodyRange(src: string, from: number): [number, number] | null {
+  const paren = src.indexOf('(', from)
+  if (paren === -1) return null
+  let i = matchClose(src, paren, '(', ')')
+  if (i === -1) return null
+  let depth = 0
+  for (; i < src.length; i++) {
+    const c = src[i]!
+    if (c === '<' || c === '(' || c === '[') depth++
+    else if (c === '>' || c === ')' || c === ']') depth--
+    else if (c === '{') {
+      const prev = src.slice(0, i).trimEnd().slice(-1)
+      if (depth <= 0 && !':|&,<(['.includes(prev)) {
+        const end = matchClose(src, i, '{', '}')
+        return end === -1 ? null : [i, end]
+      }
+      const end = matchClose(src, i, '{', '}')
+      if (end === -1) return null
+      i = end - 1
+    } else if (c === ';' && depth <= 0) return null // overload signature, no body
+  }
+  return null
+}
+
+/**
+ * The innermost `function name` declaration whose body (brace-matched, in the
+ * comment-stripped text) actually contains `index`; null when none does. A call
+ * moved into an arrow or `const` handler outside `acceptSuggestion` is therefore
+ * never attributed to it, even when `acceptSuggestion` is declared above it.
+ * (Braces inside string literals are not special-cased.)
+ */
 function enclosingFunction(src: string, index: number): string | null {
-  const re = /\bfunction\s+([A-Za-z_$][\w$]*)/g
   let name: string | null = null
-  for (const m of src.slice(0, index).matchAll(re)) name = m[1]!
+  for (const m of src.slice(0, index).matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)/g)) {
+    const range = bodyRange(src, m.index! + m[0].length)
+    if (range && range[0] < index && index < range[1]) name = m[1]!
+  }
   return name
 }
 
