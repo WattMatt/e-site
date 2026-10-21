@@ -69,9 +69,26 @@ describe('createStatusPlanShapeAction', () => {
     const res = await createStatusPlanShapeAction({ sheetId: SH, shape: 'polygon', points: TRI })
     expect(res).toMatchObject({ ok: true, data: { id: S, sheetId: SH, points: [10, 10, 200.12, 10, 200, 150], updatedAt: TS } })
     expect(writes()[0]!.payload).toEqual({
-      status_plan_id: PL, sheet_id: SH, shape: 'polygon', points: [10, 10, 200.12, 10, 200, 150], node_id: null, area_type: null, source: 'manual',
+      status_plan_id: PL, sheet_id: SH, shape: 'polygon', points: [10, 10, 200.12, 10, 200, 150], node_id: null, area_type: null, source: 'manual', detected_tag: null,
     })
     expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), P, ORG_WRITE_ROLES)
+  })
+
+  it('writes source detected and the tag when given, manual and null otherwise', async () => {
+    setup({ ...ctx, 'tenants.status_plan_shapes:insert': [{ data: { ...SHAPE_ROW, source: 'detected', detected_tag: 'SHOP 6' } }] })
+    const res = await createStatusPlanShapeAction({ sheetId: SH, shape: 'polygon', points: TRI, source: 'detected', detectedTag: 'SHOP 6' })
+    expect(res).toMatchObject({ ok: true, data: { source: 'detected', detectedTag: 'SHOP 6' } })
+    expect(writes()[0]!.payload).toMatchObject({ source: 'detected', detected_tag: 'SHOP 6' })
+
+    setup({ ...ctx, 'tenants.status_plan_shapes:insert': [{ data: SHAPE_ROW }] })
+    await createStatusPlanShapeAction({ sheetId: SH, shape: 'polygon', points: TRI })
+    expect(writes()[0]!.payload).toMatchObject({ source: 'manual', detected_tag: null })
+
+    // A tag over the column limit, or an unknown source, is refused before the database.
+    setup({})
+    expect((await createStatusPlanShapeAction({ sheetId: SH, shape: 'polygon', points: TRI, detectedTag: 'x'.repeat(65) })).ok).toBe(false)
+    expect((await createStatusPlanShapeAction({ sheetId: SH, shape: 'polygon', points: TRI, source: 'robot' as never })).ok).toBe(false)
+    expect(calls).toEqual([])
   })
 
   it('refuses a rectangle that is not 4 corners without a round trip', async () => {
