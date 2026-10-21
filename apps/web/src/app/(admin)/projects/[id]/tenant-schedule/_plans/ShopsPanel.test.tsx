@@ -377,6 +377,7 @@ describe('ShopsPanel', () => {
     fireEvent.click(within(moved).getByRole('button', { name: 'Show SHOP 8 shape' }))
     expect(onFocus).toHaveBeenLastCalledWith({ minX: 5000, minY: 5000, maxX: 5300, maxY: 5300 })
     fireEvent.click(within(moved).getByRole('button', { name: 'Redraw SHOP 8' }))
-    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n8', detectedTag: '8' })
+    // Redraw replaces the tenant's own shape (s8): a second shape for n8 would break the per-plan link.
+    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n8', detectedTag: '8', replaceShapeId: 's8' })
   })
 })

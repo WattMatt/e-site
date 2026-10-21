@@ -168,6 +168,36 @@ describe('pending tenant link', () => {
     expect(rect.commits[0]!.link).toBeNull()
   })
 
+  it('armDraw clears calibration points left by the calibrate tool', () => {
+    const calibrating = run(initialCanvasState('calibrate'), [press(10, 10), press(200, 10)]).state
+    expect(calibrating.calib).toEqual([10, 10, 200, 10])
+    const armed = canvasReducer(calibrating, { type: 'armDraw', link }).state
+    expect(armed.calib).toEqual([])
+    expect(armed.tool).toBe('polygon')
+  })
+
+  it('a Redraw link (replaceShapeId) is carried through armDraw to the commit', () => {
+    const redraw = { ...link, replaceShapeId: 's8' }
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link: redraw }).state
+    expect(armed.pendingLink).toEqual(redraw)
+    const { commits } = run(armed, [...triangle, { type: 'finish', tolPx: TOL }])
+    expect(commits).toEqual([{ shape: 'polygon', points: [0, 0, 100, 0, 100, 50], link: redraw }])
+  })
+
+  it('restoreDraft puts a refused polygon back with its link, only when nothing else was started', () => {
+    const redraw = { ...link, replaceShapeId: 's8' }
+    const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link: redraw }).state
+    const done = run(armed, [...triangle, { type: 'finish', tolPx: TOL }])
+    const back = canvasReducer(done.state, { type: 'restoreDraft', commit: done.commits[0]! }).state
+    expect(back.draft).toEqual([0, 0, 100, 0, 100, 50])
+    expect(back.pendingLink).toEqual(redraw)
+    // Started another shape, or left the polygon tool, in the meantime: nothing is restored.
+    const busy = run(done.state, [press(5, 5)]).state
+    expect(canvasReducer(busy, { type: 'restoreDraft', commit: done.commits[0]! }).state).toBe(busy)
+    const other = canvasReducer(done.state, { type: 'tool', tool: 'select' }).state
+    expect(canvasReducer(other, { type: 'restoreDraft', commit: done.commits[0]! }).state).toBe(other)
+  })
+
   it('a rectangle never takes the link', () => {
     const armed = canvasReducer(initialCanvasState('select'), { type: 'armDraw', link }).state
     const { commits } = run({ ...armed, tool: 'rect' }, [press(0, 0), { type: 'release', x: 50, y: 50, tolPx: TOL }])

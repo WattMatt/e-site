@@ -16,7 +16,8 @@
  *  - Link N shapes / Link: linkShapesByLabelAction (all-or-nothing), then Undo
  *    for that batch until the next scan;
  *  - Draw / Redraw: arms the canvas's polygon tool with the tenant, so the
- *    shape the person draws saves already linked (the canvas saves it);
+ *    shape the person draws saves already linked (the canvas saves it); Redraw
+ *    on a moved row replaces the outline of the tenant's existing shape;
  *  - Suggest outline: a flood fill from the label over the page bitmap, gated
  *    on the scale and the schedule's GLA. An offered outline is only previewed;
  *    `acceptSuggestion` is the one place a 'detected' shape is created.
@@ -286,8 +287,9 @@ export function ShopsPanel({
     }
   }
 
-  function draw(row: ShopReviewRow, nodeId: string) {
-    onArmDraw({ nodeId, detectedTag: row.label.tag })
+  /** Draw a tenant's shape; on a `moved` row, Redraw replaces the outline of the shape the tenant already owns. */
+  function draw(row: ShopReviewRow, nodeId: string, replaceShapeId?: string) {
+    onArmDraw(replaceShapeId ? { nodeId, detectedTag: row.label.tag, replaceShapeId } : { nodeId, detectedTag: row.label.tag })
     onFocus(padBox(row.label.box, DRAW_PAD_PX))
   }
 
@@ -504,7 +506,7 @@ export function ShopsPanel({
                   <span style={muted}>{row.reason}</span>
                   <button type="button" onClick={() => onFocus(padBox(row.label.box, DRAW_PAD_PX))} aria-label={`Show ${labelText(row)} label`}>Show label</button>
                   <button type="button" onClick={() => showShape(row.shapeId)} aria-label={`Show ${labelText(row)} shape`}>Show shape</button>
-                  <button type="button" disabled={busy} onClick={() => draw(row, row.nodeId!)} aria-label={`Redraw ${labelText(row)}`}>Redraw</button>
+                  <button type="button" disabled={busy} onClick={() => draw(row, row.nodeId!, row.shapeId ?? undefined)} aria-label={`Redraw ${labelText(row)}`}>Redraw</button>
                 </div>
               ))}
             </section>

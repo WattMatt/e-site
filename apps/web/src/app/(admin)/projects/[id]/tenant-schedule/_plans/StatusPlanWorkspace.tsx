@@ -168,14 +168,26 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   }
   const replaceShape = (s: CanvasShape) => setShapes((prev) => prev.map((x) => (x.id === s.id ? s : x)))
 
-  const onCreate = (c: ShapeCommit) =>
-    run(() => createStatusPlanShapeAction({
+  const onCreate = (c: ShapeCommit) => {
+    // Redraw on a moved row: the tenant already owns a shape on this plan, so the
+    // drawn outline replaces that shape's points (its link and detected tag stay).
+    const replaceId = c.link?.replaceShapeId
+    if (replaceId) {
+      const s = shapesRef.current.find((x) => x.id === replaceId)
+      if (!s) return Promise.resolve({ error: 'That shape is gone — reload to see the plan.' })
+      return run(() => updateStatusPlanShapeAction({ shapeId: s.id, expectedUpdatedAt: s.updatedAt, points: c.points }), (u) => {
+        replaceShape(u)
+        setSelectedId(u.id)
+      })
+    }
+    return run(() => createStatusPlanShapeAction({
       sheetId: sheet.id, shape: c.shape, points: c.points,
       nodeId: c.link?.nodeId ?? null, detectedTag: c.link?.detectedTag ?? null,
     }), (s) => {
       setShapes((prev) => [...prev, s])
       setSelectedId(s.id)
     })
+  }
 
   const onReshape = (shapeId: string, points: number[]) => {
     const s = shapesRef.current.find((x) => x.id === shapeId)
@@ -226,8 +238,9 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   // A sheet that needs it scans itself on open (auto-scan.ts), with the review above
   // the drawing. Decided once per sheet OPEN (not per render): accepting blocks or
   // linking shops must not move the panel and remount it mid-review. A replaced file
-  // (same sheet id, new replacedAt) is a new open, so the floor plan re-scans once.
-  const scanKey = `${sheet.id}:${sheet.replacedAt ?? ''}`
+  // (same sheet id, new replacedAt) is a new open, so the floor plan re-scans once;
+  // a line diagram's decision stays keyed on the sheet alone, as it always was.
+  const scanKey = purpose === 'tenant_layout' ? `${sheet.id}:${sheet.replacedAt ?? ''}` : sheet.id
   const decideScan = () => ({
     key: scanKey,
     primary: shouldAutoScan({
@@ -291,7 +304,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       onPreview={setShopPreview}
     />
   ) : null
-  const shopsSlot = shopsPanel && !scanPrimary ? <div data-slot="shops-panel">{shopsPanel}</div> : null
+  const shopsSlot = shopsPanel && !scanPrimary ? <div data-slot="shops-panel" className="data-panel" style={{ padding: 12 }}>{shopsPanel}</div> : null
 
   // Line diagrams with rectangles: move them onto their tables' drawn borders (links kept).
   // The proposed outlines are drawn dashed on the canvas while the preview is open.
@@ -315,7 +328,10 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       />
     </div>
   ) : null
-  const sideSlot = schematicSlot || realignPanel || shopsSlot ? <>{schematicSlot}{realignPanel}{shopsSlot}</> : null
+  // The Shops panel is NOT in ShapePanel's `extra` slot: ShapePanel renders that slot at a
+  // different child position with and without a selection, which would remount the panel
+  // (scan, Undo batch and suggestions lost) on every select and deselect.
+  const sideSlot = schematicSlot || realignPanel ? <>{schematicSlot}{realignPanel}</> : null
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -424,6 +440,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
             onDelete={requestDelete}
             extra={sideSlot}
           />
+          {shopsSlot}
           <PlanLegend
             purpose={purpose}
             onShowShape={showShape}

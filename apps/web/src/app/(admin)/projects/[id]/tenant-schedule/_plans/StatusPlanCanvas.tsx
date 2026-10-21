@@ -133,7 +133,11 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
   async function commit(c: ShapeCommit) {
     setLocalError(null)
     const res = await p.onCreate(c)
-    if (res.error) setLocalError(res.error)
+    if (res.error) {
+      setLocalError(res.error)
+      // A refused Redraw keeps the outline that was drawn (the reducer only restores it if nothing else began).
+      if (c.link?.replaceShapeId) send({ type: 'restoreDraft', commit: c })
+    }
   }
   const tol = () => HIT_PX / scaleRef.current
 

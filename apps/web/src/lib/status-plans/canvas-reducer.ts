@@ -16,6 +16,12 @@ export type CanvasTool = 'select' | 'polygon' | 'rect' | 'pan' | 'calibrate'
 export interface PendingLink {
   nodeId: string
   detectedTag: string
+  /**
+   * Redraw of a shape the tenant already owns (a `moved` row): the commit
+   * replaces that shape's outline instead of creating a second shape, which
+   * the per-plan unique link would refuse.
+   */
+  replaceShapeId?: string
 }
 
 export interface CanvasState {
@@ -45,6 +51,8 @@ export type CanvasEvent =
   | { type: 'finish'; tolPx: number }
   | { type: 'escape' }
   | { type: 'undoPoint' }
+  /** A save refused the committed polygon: put it back as the draft, link and all, if nothing else was started. */
+  | { type: 'restoreDraft'; commit: ShapeCommit }
 
 export interface CanvasStep {
   state: CanvasState
@@ -94,7 +102,7 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
       return same(initialCanvasState(e.tool))
 
     case 'armDraw':
-      return same({ ...s, tool: 'polygon', draft: [], rect: null, pendingLink: e.link })
+      return same({ ...s, tool: 'polygon', draft: [], rect: null, calib: [], pendingLink: e.link })
 
     case 'press': {
       if (s.tool === 'polygon') {
@@ -135,6 +143,10 @@ export function canvasReducer(s: CanvasState, e: CanvasEvent): CanvasStep {
 
     case 'undoPoint':
       return s.draft.length ? same({ ...s, draft: s.draft.slice(0, -2) }) : same(s)
+
+    case 'restoreDraft':
+      if (e.commit.shape !== 'polygon' || s.tool !== 'polygon' || !isIdle(s)) return same(s)
+      return same({ ...s, draft: e.commit.points.slice(), pendingLink: e.commit.link })
   }
 }
 

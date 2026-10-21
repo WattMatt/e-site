@@ -19,13 +19,15 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][]; arm?: { link: { nodeId: string; detectedTag: string }; nonce: number } | null }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][]; arm?: { link: { nodeId: string; detectedTag: string; replaceShapeId?: string }; nonce: number } | null }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
       {' '}proposals:{JSON.stringify(props.proposals ?? [])}
       {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       {' '}arm:{props.arm ? `${props.arm.link.nodeId}/${props.arm.link.detectedTag}#${props.arm.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
+      <button onClick={() => props.onSelect(null)}>stub-deselect</button>
+      <button onClick={() => props.onCreate({ shape: 'polygon', points: [0, 0, 40, 0, 40, 30], link: { nodeId: 'n1', detectedTag: 'ZZ01', replaceShapeId: 's1' } })}>stub-create-redraw</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10], link: null })}>stub-create</button>
       <button onClick={() => props.onCreate({ shape: 'polygon', points: [0, 0, 10, 0, 10, 10], link: { nodeId: 'n7', detectedTag: 'DB-7' } })}>stub-create-linked</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
@@ -250,6 +252,74 @@ describe('StatusPlanWorkspace', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Draw SHOP ZZ01' }))
     expect(canvasText()).toContain('arm:n1/ZZ01#1')
     expect(canvasText()).toContain('focus:500,490,1354,1300#1')
+  })
+
+  it('the Shops panel keeps its review when a shape is selected and deselected', async () => {
+    const label = { str: 'SHOP ZZ02', x: 900, baseline: 900, top: 890, width: 54, height: 10 }
+    detection.extractPageText.mockResolvedValue({ ok: true, items: [label], allItems: [label], rawItemCount: 1, width: 2000, height: 2000 })
+    const { container } = render(<StatusPlanWorkspace {...props({
+      // One shop already linked: no auto scan, so the panel sits in the side column.
+      shapes: [{ ...SHAPE, nodeId: 'n1' }, { ...SHAPE, id: 's2', points: [800, 800, 1100, 800, 1100, 1000, 800, 1000] }],
+      nodes: [...props().nodes, { id: 'n2', code: 'DB-ZZ02', kind: 'tenant_db', shopNumber: 'ZZ02', shopName: 'Copper Kettle', scheduledM2: 60, decommissioned: false }],
+    })} />)
+    expect(container.querySelector('[data-slot="shops-panel"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for shops' }))
+    expect(await screen.findByRole('button', { name: 'Link SHOP ZZ02' })).toBeTruthy()
+    const summary = screen.getByText(/1 label · 1 item read/).textContent
+    fireEvent.click(screen.getByText('stub-select-s1'))
+    expect(canvasText()).toContain('selected:s1')
+    expect(screen.getByRole('button', { name: 'Link SHOP ZZ02' })).toBeTruthy()
+    fireEvent.click(screen.getByText('stub-deselect'))
+    expect(canvasText()).toContain('selected:none')
+    expect(screen.getByRole('button', { name: 'Link SHOP ZZ02' })).toBeTruthy()
+    expect(screen.getByText(/1 label · 1 item read/).textContent).toBe(summary)
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
+  })
+
+  it('Redraw of a moved shop replaces that shape\'s outline with its live updatedAt, never creates a second shape', async () => {
+    const linked = { ...SHAPE, nodeId: 'n1' }
+    render(<StatusPlanWorkspace {...props({ shapes: [linked] })} />)
+    // An earlier write moved the shape's updatedAt on: t1 → t2.
+    actions.updateStatusPlanShapeAction.mockResolvedValueOnce({ ok: true, data: { ...linked, areaType: null, updatedAt: 't2' } })
+    fireEvent.click(screen.getByText('stub-select-s1'))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Unassign' })) })
+    fireEvent.click(screen.getByText('stub-deselect'))
+    actions.updateStatusPlanShapeAction.mockResolvedValueOnce({ ok: true, data: { ...linked, shape: 'polygon', points: [0, 0, 40, 0, 40, 30], updatedAt: 't3' } })
+    await act(async () => { fireEvent.click(screen.getByText('stub-create-redraw')) })
+    expect(actions.createStatusPlanShapeAction).not.toHaveBeenCalled()
+    expect(actions.updateStatusPlanShapeAction).toHaveBeenLastCalledWith({ shapeId: 's1', expectedUpdatedAt: 't2', points: [0, 0, 40, 0, 40, 30] })
+    expect(canvasText()).toMatch(/shapes:1\s+selected:s1/)
+    // A stale updatedAt: the action's sentence shows, nothing is folded in.
+    actions.updateStatusPlanShapeAction.mockResolvedValueOnce({ ok: false, error: 'This shape was changed by someone else — reload to see it.', conflict: true })
+    await act(async () => { fireEvent.click(screen.getByText('stub-create-redraw')) })
+    expect(actions.updateStatusPlanShapeAction).toHaveBeenLastCalledWith({ shapeId: 's1', expectedUpdatedAt: 't3', points: [0, 0, 40, 0, 40, 30] })
+    expect(screen.getByRole('alert').textContent).toContain('changed by someone else')
+    expect(actions.createStatusPlanShapeAction).not.toHaveBeenCalled()
+    expect(canvasText()).toContain('shapes:1')
+  })
+
+  it('a line diagram\'s scan decision is not re-made when the sheet\'s replacedAt changes', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 2000, height: 2000 })
+    const { container } = render(<StatusPlanWorkspace {...schematic({ shapes: [], sheet: { ...SHEET, replacedAt: 't9', signedUrl: 'https://s/x', isPdf: true } })} />)
+    expect(await screen.findByText('Scanned this sheet — 1 block: 1 matched · 0 need you')).not.toBeNull()
+    detection.acceptDetectedBlocksAction.mockResolvedValue({
+      ok: true,
+      data: [{ id: 's9', sheetId: 'sh1', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all 1 matched' }))
+    expect(await screen.findByText('Every detected block has been handled.')).not.toBeNull()
+    // Re-anchoring clears replacedAt; the sheet now has a shape, so a fresh decision would move the review aside.
+    sheetActions.reanchorTenantPlanSheetAction.mockResolvedValue({ ok: true, data: { ...SHEET, replacedAt: null, updatedAt: 'u1' } })
+    fireEvent.click(screen.getByRole('button', { name: /Shapes checked/ }))
+    await waitFor(() => expect(screen.queryByText(/file was replaced/)).toBeNull())
+    expect(container.querySelector('[data-slot="schematic-scan-primary"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="schematic-detection"]')).toBeNull()
+    expect(screen.getByText('Every detected block has been handled.')).toBeTruthy()
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
   })
 
   it('Re-align blocks shows for an editor on a line diagram with a rectangle, and nowhere else', () => {
