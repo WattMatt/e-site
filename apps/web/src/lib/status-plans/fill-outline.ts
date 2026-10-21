@@ -32,8 +32,10 @@ export interface InkMask {
 
 /**
  * `pixels` is the region as filled (used for the gate's m²); `grownPixels` is the region after the
- * GROW_PX growth, which is what `polygon` encloses before simplification. Polygon coordinates are
- * pixel-edge corners in image pixels, flat `[x0, y0, x1, y1, …]`.
+ * GROW_PX growth. The polygon traces the grown region's outer boundary and drops holes, so before
+ * simplification it encloses exactly `grownPixels` only when no hole survives the grow; label text
+ * inside a shop normally does survive, and then the polygon encloses `grownPixels` plus the holes.
+ * Polygon coordinates are pixel-edge corners in image pixels, flat `[x0, y0, x1, y1, …]`.
  */
 export type FillOutcome =
   | { kind: 'ok'; pixels: number; grownPixels: number; polygon: number[] }
@@ -101,10 +103,16 @@ interface Region {
 /**
  * 4-connected scanline fill of non-ink, unvisited pixels from (sx, sy), marking them `label` in
  * `visited`. Returns null (a leak) the moment the count passes `cap`.
+ *
+ * Also a leak: touching a free pixel that carries another seed's label. A fill that completes covers
+ * its whole connected area, so another label next to ours can only be the partial marks of a fill
+ * that aborted at the cap in this same area. Treating those marks as walls would report the leftover
+ * as a shop with a made-up edge.
  */
 function scanlineFill(mask: InkMask, visited: Uint8Array, label: number, sx: number, sy: number, cap: number): Region | null {
   const { width: w, height: h, ink } = mask
   const region: Region = { label, count: 0, minX: sx, minY: sy, maxX: sx, maxY: sy }
+  const foreign = (j: number) => visited[j] !== 0 && visited[j] !== label && !ink[j]
   const stack: number[] = [sy * w + sx]
   while (stack.length > 0) {
     const idx = stack.pop() as number
@@ -115,6 +123,7 @@ function scanlineFill(mask: InkMask, visited: Uint8Array, label: number, sx: num
     let r = l
     while (l > 0 && !ink[row + l - 1] && !visited[row + l - 1]) l--
     while (r < w - 1 && !ink[row + r + 1] && !visited[row + r + 1]) r++
+    if ((l > 0 && foreign(row + l - 1)) || (r < w - 1 && foreign(row + r + 1))) return null
     visited.fill(label, row + l, row + r + 1)
     region.count += r - l + 1
     if (region.count > cap) return null
@@ -129,6 +138,7 @@ function scanlineFill(mask: InkMask, visited: Uint8Array, label: number, sx: num
       let inRun = false
       for (let x = l; x <= r; x++) {
         const j = nrow + x
+        if (foreign(j)) return null
         const free = !ink[j] && !visited[j]
         if (free && !inRun) stack.push(j)
         inRun = free
@@ -162,7 +172,10 @@ export function fillFromAnchor(mask: InkMask, anchor: Pt): FillOutcome {
   const cap = Math.floor(LEAK_CAP * w * h)
   const visited = new Uint8Array(w * h)
   // Keep the largest region that stays under the cap (spec §4.6). Labels 1..n; a leaked fill keeps
-  // its partial marks under its own label, so it is never chosen.
+  // its partial marks under its own label, so it is never chosen, and any later fill that reaches
+  // those marks is a leak too (see scanlineFill).
+  // Labels live in a Uint8Array, so the grid must stay within 255 seeds.
+  if (seeds.length > 255) throw new Error('SEED_GRID yields more than 255 seeds; the label store is a Uint8Array.')
   let best: Region | null = null
   let leaked = false
   seeds.forEach((idx, i) => {
@@ -220,7 +233,7 @@ const DY = [0, 1, 0, -1]
  * clockwise walk on screen). Starts at the top-left corner of the top-most, left-most pixel heading
  * east. Diagonal neighbours count as connected, so the walk goes around the whole outer contour and
  * holes are never entered. Returns only the corners where the direction changes, as flat integer
- * corner coordinates; before simplification the polygon's area equals the pixels it encloses.
+ * corner coordinates; the polygon's area equals the mask's pixels plus any holes it encloses.
  */
 function traceOuterEdges(m: Uint8Array, w: number, h: number): number[] {
   const at = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] === 1

@@ -30,16 +30,23 @@ function raster(w: number, h: number, draw: (set: (x: number, y: number) => void
 }
 
 /** A rectangle of 1 px walls with its corners at (x0, y0) and (x0 + w, y0 + h). */
-function room(set: (x: number, y: number) => void, x0: number, y0: number, w: number, h: number, gap?: { y: number; len: number }) {
+function room(
+  set: (x: number, y: number) => void,
+  x0: number,
+  y0: number,
+  w: number,
+  h: number,
+  gap?: { wall: 'right' | 'bottom'; at: number; len: number },
+) {
+  // The gap, when asked for, is cut out of the named wall from `at` for `len` pixels.
+  const inGap = (wall: 'right' | 'bottom', v: number) => gap?.wall === wall && v >= gap.at && v < gap.at + gap.len
   for (let x = x0; x <= x0 + w; x++) {
     set(x, y0)
-    set(x, y0 + h)
+    if (!inGap('bottom', x)) set(x, y0 + h)
   }
   for (let y = y0; y <= y0 + h; y++) {
     set(x0, y)
-    // The gap, when asked for, is cut out of the right-hand wall.
-    if (gap && y >= gap.y && y < gap.y + gap.len) continue
-    set(x0 + w, y)
+    if (!inGap('right', y)) set(x0 + w, y)
   }
 }
 
@@ -155,9 +162,25 @@ describe('fill-outline', () => {
     // Control: the same room without the gap fills.
     expect(fillFromAnchor(closed, { x: 460, y: 340 }).kind).toBe('ok')
     const gapped = inkMaskFromImageData(
-      raster(PAGE_W, PAGE_H, (set) => room(set, 400, 300, 120, 80, { y: 338, len: 3 })),
+      raster(PAGE_W, PAGE_H, (set) => room(set, 400, 300, 120, 80, { wall: 'right', at: 338, len: 3 })),
     )
     expect(fillFromAnchor(gapped, { x: 460, y: 340 })).toEqual({ kind: 'leak' })
+  })
+
+  it('an ink anchor in a gapped room still leaks', () => {
+    // A glyph blob at the anchor sends the fill to the seed grid. Whichever seed reaches the gap
+    // first aborts at the cap; no later seed may then fill the leftover and report it as a shop.
+    // The gap is slid along the whole bottom wall so every seed order is exercised.
+    for (let at = 402; at <= 516; at += 3) {
+      const mask = inkMaskFromImageData(
+        raster(PAGE_W, PAGE_H, (set) => {
+          room(set, 400, 300, 120, 80, { wall: 'bottom', at, len: 3 })
+          for (let y = 337; y <= 343; y++) for (let x = 455; x <= 465; x++) set(x, y)
+        }),
+      )
+      expect(mask.ink[340 * PAGE_W + 460]).toBe(1)
+      expect({ at, outcome: fillFromAnchor(mask, { x: 460, y: 340 }) }).toEqual({ at, outcome: { kind: 'leak' } })
+    }
   })
 
   it('an interior line halves the region, so the gate refuses it with the numbers', () => {
