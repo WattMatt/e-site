@@ -48,7 +48,7 @@ import {
   fillFromAnchor,
   gateSuggestion,
   inkMaskFromImageData,
-  labelBoxPixels,
+  minRegionPixels,
   otherLabelAnchors,
   type InkMask,
 } from '@/lib/status-plans/fill-outline'
@@ -330,8 +330,8 @@ export function ShopsPanel({
     } catch {
       return { offered: false, reason: UNREADABLE_BITMAP } // e.g. a cross-origin image taints the canvas
     }
-    // A pocket smaller than the label's own text is a glyph counter, never the shop.
-    const outcome = fillFromAnchor(mask, row.label.anchor, { minPixels: labelBoxPixels(row.label.box) })
+    // A pocket under the scale's floor is a glyph counter, never the shop.
+    const outcome = fillFromAnchor(mask, row.label.anchor, { minPixels: minRegionPixels(pixelsPerMeter) })
     const gla = row.nodeId ? nodeById.get(row.nodeId)?.scheduledM2 ?? null : null
     // An outline that encloses another label covers another shop as well, and is refused.
     const gate = gateSuggestion(outcome, pixelsPerMeter, gla, otherLabelAnchors(scanned?.labels.labels ?? [], row.label))

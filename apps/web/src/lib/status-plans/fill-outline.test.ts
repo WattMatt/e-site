@@ -6,11 +6,14 @@ import {
   INK_LUMA,
   LEAK_CAP,
   MAX_VERTICES,
+  MIN_REGION_PX,
+  MIN_SHOP_M2,
   SEED_GRID,
   SIMPLIFY_EPS_PX,
   fillFromAnchor,
   gateSuggestion,
   inkMaskFromImageData,
+  minRegionPixels,
   type FillOutcome,
   type InkMask,
 } from './fill-outline'
@@ -79,6 +82,17 @@ describe('fill-outline constants', () => {
     expect([INK_LUMA, LEAK_CAP, GROW_PX, SIMPLIFY_EPS_PX, MAX_VERTICES]).toEqual([170, 0.015, 2, 2, 1000])
     expect(SEED_GRID).toEqual({ dx: 24, dy: 16, step: 8 })
     expect(GATE_BAND).toEqual({ min: 0.8, max: 1.2 })
+    expect([MIN_REGION_PX, MIN_SHOP_M2]).toEqual([100, 2])
+  })
+
+  it('minRegionPixels is 2 m² at the sheet scale, never under 100 px, and 100 px without a scale', () => {
+    expect(minRegionPixels(11.36)).toBeCloseTo(258.1, 1) // KINGSWALK-like
+    expect(minRegionPixels(18.91)).toBeCloseTo(715.2, 1) // SAXBY-like
+    expect(minRegionPixels(null)).toBe(100)
+    expect(minRegionPixels(5)).toBe(100) // 2 × 25 = 50 px, lifted to the 100 px floor
+    expect(minRegionPixels(0)).toBe(100)
+    expect(minRegionPixels(-3)).toBe(100)
+    expect(minRegionPixels(Number.NaN)).toBe(100)
   })
 })
 
@@ -334,8 +348,10 @@ describe('fill-outline', () => {
     expect(counter).toBe(19 * 13)
     // Without a floor the counter wins and reads as a 247 px "shop".
     expect(expectOk(fillFromAnchor(gapped, anchor)).pixels).toBe(counter)
-    // With the label's box area as the floor, nothing is left but the leak.
-    expect(fillFromAnchor(gapped, anchor, { minPixels: 400 })).toEqual({ kind: 'leak' })
+    // With the floor at a KINGSWALK-like scale (2 m² at 11.36 px/m ≈ 258 px), nothing is left but the leak.
+    const floor = minRegionPixels(11.36)
+    expect(floor).toBeGreaterThan(counter)
+    expect(fillFromAnchor(gapped, anchor, { minPixels: floor })).toEqual({ kind: 'leak' })
     // Control: the same glyph in a closed room still fills the room.
     const closed = inkMaskFromImageData(
       raster(PAGE_W, PAGE_H, (set) => {
@@ -343,7 +359,7 @@ describe('fill-outline', () => {
         glyph(set)
       }),
     )
-    expect(expectOk(fillFromAnchor(closed, anchor, { minPixels: 400 })).pixels).toBe(
+    expect(expectOk(fillFromAnchor(closed, anchor, { minPixels: floor })).pixels).toBe(
       enclosedFree(closed, 400, 300, 520, 380) - counter,
     )
     // Nothing leaked and nothing reached the floor: no region.

@@ -273,8 +273,8 @@ describe('ShopsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))
     expect(screen.getByText('Outline 50.0 m² vs GLA 50.0 m²')).not.toBeNull()
     expect(onPreview).toHaveBeenLastCalledWith(polygon)
-    // The floor is the label's own box: 36 × 10 px.
-    expect(m.fill).toHaveBeenCalledWith(expect.anything(), { x: 1118, y: 95 }, { minPixels: 360 })
+    // The floor comes from the scale, not the label: max(100, 2 m² × 10² px/m²) = 200 px.
+    expect(m.fill).toHaveBeenCalledWith(expect.anything(), { x: 1118, y: 95 }, { minPixels: 200 })
     expect(m.create).not.toHaveBeenCalled() // nothing is saved before Accept
 
     // The mask is built once per bitmap.

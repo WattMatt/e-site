@@ -6,7 +6,7 @@
  * trace its outline and simplify it. The gate decides whether the result may be offered: only with a
  * scale, a GLA, no leak, and a fill within GATE_BAND of the GLA. Nothing here saves anything.
  */
-import { pointInShape, shapeAreaPx, type Box, type Pt } from '@esite/shared/status-plans'
+import { pointInShape, shapeAreaPx, type Pt } from '@esite/shared/status-plans'
 
 /** Luma below this is ink. Wall lines are black or dark grey; hatching and fills are lighter. */
 export const INK_LUMA = 170
@@ -22,6 +22,10 @@ export const MAX_VERTICES = 1000
 export const SEED_GRID = { dx: 24, dy: 16, step: 8 }
 /** fill m² / GLA must fall in this band (inclusive) for the outline to be offered. */
 export const GATE_BAND = { min: 0.8, max: 1.2 }
+/** The fill's floor without a scale: a glyph counter is under 50 px at 2 px per PDF point. */
+export const MIN_REGION_PX = 100
+/** The fill's floor with a scale: the smallest tenant on either production sheet is 9.6 m². */
+export const MIN_SHOP_M2 = 2
 
 /** 1 = ink after a 1 px (3 × 3) dilation, which closes anti-aliased hairline gaps. */
 export interface InkMask {
@@ -50,16 +54,20 @@ export interface OtherLabelAnchor {
 }
 
 export interface FillOptions {
-  /**
-   * Regions with fewer pixels are never the winner (default 0). Callers pass the label's own box
-   * area: a pocket smaller than the text that names a shop is a glyph counter, not the shop.
-   */
+  /** Regions with fewer pixels are never the winner (default 0). Callers pass `minRegionPixels(ppm)`. */
   minPixels?: number
 }
 
-/** The fill's floor for a label: its own text box area in pixels (FillOptions.minPixels). */
-export function labelBoxPixels(box: Box): number {
-  return Math.max(0, box.maxX - box.minX) * Math.max(0, box.maxY - box.minY)
+/**
+ * The fill's floor (FillOptions.minPixels): max(MIN_REGION_PX, MIN_SHOP_M2 × ppm²) with a usable
+ * scale, else MIN_REGION_PX. A region below it is a glyph counter or a gap between letters, never a
+ * shop: a counter is under 50 px, and the smallest tenant on either production sheet is 9.6 m².
+ * It depends on the scale only, never on the label, so a label turned 45° (whose axis-aligned box
+ * is 3–4 × its text) gets the same floor as an upright one.
+ */
+export function minRegionPixels(pixelsPerMeter: number | null): number {
+  if (pixelsPerMeter == null || !(pixelsPerMeter > 0)) return MIN_REGION_PX
+  return Math.max(MIN_REGION_PX, MIN_SHOP_M2 * pixelsPerMeter * pixelsPerMeter)
 }
 
 /** Every label on the sheet except `self` (by identity), as the gate's `otherAnchors`. */

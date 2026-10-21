@@ -48,7 +48,7 @@ import {
   fillFromAnchor,
   gateSuggestion,
   inkMaskFromImageData,
-  labelBoxPixels,
+  minRegionPixels,
   otherLabelAnchors,
   GATE_BAND,
   GROW_PX,
@@ -306,7 +306,7 @@ async function runSheet(sheetId: string, fill: boolean, tmp: string) {
   const draws = review.rows.filter((r) => r.state === 'draw')
   const out = draws.map((r) => {
     // The same inputs ShopsPanel.suggestFor passes.
-    const outcome = fillFromAnchor(mask, r.label.anchor, { minPixels: labelBoxPixels(r.label.box) })
+    const outcome = fillFromAnchor(mask, r.label.anchor, { minPixels: minRegionPixels(ppm) })
     const gla = r.nodeId ? nodeById.get(r.nodeId)?.scheduledM2 ?? null : null
     const gate = gateSuggestion(outcome, ppm, gla, otherLabelAnchors(labels.labels, r.label))
     const fillM2 = gate.fillM2
