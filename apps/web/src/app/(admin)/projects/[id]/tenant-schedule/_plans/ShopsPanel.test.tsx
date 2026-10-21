@@ -131,7 +131,7 @@ describe('ShopsPanel', () => {
 
   it('Link N calls linkShapesByLabelAction with every link row and then offers Undo', async () => {
     const onLinked = vi.fn()
-    const linked = [{ ...CANVAS[0]!, nodeId: 'n1', detectedTag: 'SHOP 1', updatedAt: 'v-s1' }, { ...CANVAS[3]!, nodeId: 'n9', detectedTag: 'SHOP 9', updatedAt: 'v-s9' }]
+    const linked = [{ ...CANVAS[0]!, nodeId: 'n1', detectedTag: '1', updatedAt: 'v-s1' }, { ...CANVAS[3]!, nodeId: 'n9', detectedTag: '9', updatedAt: 'v-s9' }]
     m.link.mockResolvedValue({ ok: true, data: linked })
     const { rerender } = render(<ShopsPanel {...props({ onLinked })} />)
     await scan()
@@ -140,8 +140,8 @@ describe('ShopsPanel', () => {
     expect(m.link).toHaveBeenCalledWith({
       sheetId: 'sheet-1',
       links: [
-        { shapeId: 's1', nodeId: 'n1', detectedTag: 'SHOP 1', expectedUpdatedAt: 'u-s1' },
-        { shapeId: 's9', nodeId: 'n9', detectedTag: 'SHOP 9', expectedUpdatedAt: 'u-s9' },
+        { shapeId: 's1', nodeId: 'n1', detectedTag: '1', expectedUpdatedAt: 'u-s1' },
+        { shapeId: 's9', nodeId: 'n9', detectedTag: '9', expectedUpdatedAt: 'u-s9' },
       ],
     })
     expect(onLinked.mock.calls[0]![0]).toEqual(linked)
@@ -162,13 +162,78 @@ describe('ShopsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
   })
 
+  it('Undo presents the updated_at the link returned and leaves out a shape re-linked since', async () => {
+    const onLinked = vi.fn()
+    const linked = [{ ...CANVAS[0]!, nodeId: 'n1', detectedTag: '1', updatedAt: 'v-s1' }, { ...CANVAS[3]!, nodeId: 'n9', detectedTag: '9', updatedAt: 'v-s9' }]
+    m.link.mockResolvedValue({ ok: true, data: linked })
+    const { rerender } = render(<ShopsPanel {...props({ onLinked })} />)
+    await scan()
+    fireEvent.click(screen.getByRole('button', { name: 'Link 2 shapes' }))
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1))
+
+    // After the link: s1 was reshaped (still n1, newer updated_at); s9 was re-assigned to another shop.
+    const live = CANVAS.map((s) =>
+      s.id === 's1' ? { ...linked[0]!, updatedAt: 'w-s1' }
+      : s.id === 's9' ? { ...linked[1]!, nodeId: 'n4', updatedAt: 'w-s9' }
+      : s)
+    rerender(<ShopsPanel {...props({ onLinked, shapes: live.map(toReview), shapesById: new Map(live.map((s) => [s.id, s])) })} />)
+    m.unlink.mockResolvedValue({ ok: false, error: 'This shape was changed by someone else — reload to see it.', conflict: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await waitFor(() => expect(m.unlink).toHaveBeenCalledTimes(1))
+    expect(m.unlink).toHaveBeenCalledWith({ sheetId: 'sheet-1', unlinks: [{ shapeId: 's1', expectedUpdatedAt: 'v-s1' }] })
+    expect((await screen.findByRole('alert')).textContent).toContain('changed by someone else')
+    expect(onLinked).toHaveBeenCalledTimes(1)
+  })
+
+  it('Undo with every shape re-linked since sends nothing and says so', async () => {
+    const onLinked = vi.fn()
+    const linked = [{ ...CANVAS[0]!, nodeId: 'n1', detectedTag: '1', updatedAt: 'v-s1' }]
+    m.link.mockResolvedValue({ ok: true, data: linked })
+    const { rerender } = render(<ShopsPanel {...props({ onLinked })} />)
+    await scan()
+    fireEvent.click(screen.getByRole('button', { name: 'Link SHOP 1' }))
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1))
+    const live = CANVAS.map((s) => (s.id === 's1' ? { ...s, nodeId: null, updatedAt: 'w-s1' } : s))
+    rerender(<ShopsPanel {...props({ onLinked, shapes: live.map(toReview), shapesById: new Map(live.map((s) => [s.id, s])) })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByRole('alert').textContent).toBe('Nothing to undo: these shapes have been changed since they were linked.')
+    expect(m.unlink).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
+  })
+
+  it('a suggestion is dropped and its outline cleared once its row is no longer to be drawn', async () => {
+    const onPreview = vi.fn()
+    const onFocus = vi.fn()
+    const polygon = [1050, 50, 1250, 50, 1250, 300, 1050, 300]
+    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon })
+    const base = props({ onPreview, onFocus, backing: fakeBacking() })
+    const { rerender } = render(<ShopsPanel {...base} />)
+    await scan()
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))
+    expect(onPreview).toHaveBeenLastCalledWith(polygon)
+
+    // The person draws SHOP 2 by hand (or the workspace folds a created shape in): the row is now linked.
+    const drawn = { ...canvasShape('s21', 1000, 0, 'n2') }
+    const live = [...CANVAS, drawn]
+    rerender(<ShopsPanel {...base} shapes={live.map(toReview)} shapesById={new Map(live.map((s) => [s.id, s]))} />)
+    await waitFor(() => expect(onPreview).toHaveBeenLastCalledWith(null))
+    expect(screen.queryByRole('button', { name: 'Accept outline for SHOP 2' })).toBeNull()
+    expect(screen.queryByText('Outline 50.0 m² vs GLA 50.0 m²')).toBeNull()
+
+    // Show on the now-linked row focuses it and never re-previews the old outline.
+    const previews = onPreview.mock.calls.length
+    fireEvent.click(within(screen.getByRole('region', { name: 'On the plan' })).getByRole('button', { name: 'Show SHOP 2 on the drawing' }))
+    expect(onFocus).toHaveBeenCalled()
+    expect(onPreview.mock.calls.length).toBe(previews)
+  })
+
   it('Draw arms the polygon tool with the node and tag and focuses the padded label box', async () => {
     const onArmDraw = vi.fn()
     const onFocus = vi.fn()
     render(<ShopsPanel {...props({ onArmDraw, onFocus })} />)
     await scan()
     fireEvent.click(screen.getByRole('button', { name: 'Draw SHOP 2' }))
-    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n2', detectedTag: 'SHOP 2' })
+    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n2', detectedTag: '2' })
     // Label box 1100..1136 × 90..100, padded by 400 on every side.
     expect(onFocus).toHaveBeenCalledWith({ minX: 700, minY: -310, maxX: 1536, maxY: 500 })
     fireEvent.click(screen.getByRole('button', { name: 'Show SHOP 2 on the drawing' }))
@@ -191,7 +256,7 @@ describe('ShopsPanel', () => {
     const polygon = [1050, 50, 1250, 50, 1250, 300, 1050, 300]
     // 5,000 px at 10 px/m = 50 m², the GLA exactly.
     m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon })
-    const created: CanvasShape = { ...canvasShape('s20', 1050, 50, 'n2'), points: polygon, source: 'detected', detectedTag: 'SHOP 2' }
+    const created: CanvasShape = { ...canvasShape('s20', 1050, 50, 'n2'), points: polygon, source: 'detected', detectedTag: '2' }
     m.create.mockResolvedValue({ ok: true, data: created })
     render(<ShopsPanel {...props({ onPreview, onCreated, backing: fakeBacking() })} />)
     await scan()
@@ -209,7 +274,7 @@ describe('ShopsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Accept outline for SHOP 2' }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created))
     expect(m.create).toHaveBeenCalledWith({
-      sheetId: 'sheet-1', shape: 'polygon', points: polygon, nodeId: 'n2', detectedTag: 'SHOP 2', source: 'detected',
+      sheetId: 'sheet-1', shape: 'polygon', points: polygon, nodeId: 'n2', detectedTag: '2', source: 'detected',
     })
     expect(onPreview).toHaveBeenLastCalledWith(null)
     expect(screen.queryByRole('button', { name: 'Accept outline for SHOP 2' })).toBeNull()
@@ -270,7 +335,7 @@ describe('ShopsPanel', () => {
     fireEvent.change(pickers[0]!, { target: { value: 'n6' } })
     expect(draw.disabled).toBe(false)
     fireEvent.click(draw)
-    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n6', detectedTag: 'SHOP 6' })
+    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n6', detectedTag: '6' })
   })
 
   it('moved rows render only on a replaced sheet', async () => {
@@ -289,6 +354,6 @@ describe('ShopsPanel', () => {
     fireEvent.click(within(moved).getByRole('button', { name: 'Show SHOP 8 shape' }))
     expect(onFocus).toHaveBeenLastCalledWith({ minX: 5000, minY: 5000, maxX: 5300, maxY: 5300 })
     fireEvent.click(within(moved).getByRole('button', { name: 'Redraw SHOP 8' }))
-    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n8', detectedTag: 'SHOP 8' })
+    expect(onArmDraw).toHaveBeenCalledWith({ nodeId: 'n8', detectedTag: '8' })
   })
 })

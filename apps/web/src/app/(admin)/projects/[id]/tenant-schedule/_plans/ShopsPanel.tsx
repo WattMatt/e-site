@@ -165,6 +165,19 @@ export function ShopsPanel({
   // The ink mask is built once per page bitmap (~165 ms on an A0); a new bitmap invalidates it.
   const maskRef = useRef<{ backing: SheetBacking; mask: InkMask } | null>(null)
 
+  // A suggestion belongs to a row still waiting to be drawn. Once its row is linked, drawn by
+  // hand, or gone (row keys are stable across states), drop it and take its outline off the canvas.
+  useEffect(() => {
+    const drawable = new Set(review?.rows.filter((r) => r.state === 'draw').map((r) => r.key) ?? [])
+    const stale = Object.keys(suggestions).filter((k) => !drawable.has(k))
+    if (stale.length === 0) return
+    setSuggestions((prev) => { const next = { ...prev }; for (const k of stale) delete next[k]; return next })
+    if (previewKey !== null && stale.includes(previewKey)) {
+      setPreviewKey(null)
+      onPreviewRef.current(null)
+    }
+  }, [review, suggestions, previewKey])
+
   if (!canEdit) return null
 
   if (!isPdf) {
@@ -222,7 +235,7 @@ export function ShopsPanel({
       const res = await linkShapesByLabelAction({
         sheetId,
         links: rows.map(({ row, shapeId, nodeId }) => ({
-          shapeId, nodeId, detectedTag: labelText(row), expectedUpdatedAt: shapesById.get(shapeId)?.updatedAt ?? '',
+          shapeId, nodeId, detectedTag: row.label.tag, expectedUpdatedAt: shapesById.get(shapeId)?.updatedAt ?? '',
         })),
       })
       if (!res.ok) { setSaveError(res.error); return }
@@ -235,14 +248,25 @@ export function ShopsPanel({
     }
   }
 
+  /**
+   * Undo presents the updated_at each link RETURNED, so a shape edited since is refused as stale
+   * by the action; a shape whose live link is no longer the one this batch made (re-assigned in
+   * the shape panel) is left out, so Undo never takes back the person's own later choice.
+   */
   async function undo() {
     if (!batch) return
+    const still = batch.filter((s) => shapesById.get(s.id)?.nodeId === s.nodeId)
+    if (still.length === 0) {
+      setBatch(null)
+      setSaveError('Nothing to undo: these shapes have been changed since they were linked.')
+      return
+    }
     setBusy(true)
     setSaveError(null)
     try {
       const res = await unlinkShapesAction({
         sheetId,
-        unlinks: batch.map((s) => ({ shapeId: s.id, expectedUpdatedAt: shapesById.get(s.id)?.updatedAt ?? s.updatedAt })),
+        unlinks: still.map((s) => ({ shapeId: s.id, expectedUpdatedAt: s.updatedAt })),
       })
       if (!res.ok) { setSaveError(res.error); return }
       setBatch(null)
@@ -255,13 +279,13 @@ export function ShopsPanel({
   }
 
   function draw(row: ShopReviewRow, nodeId: string) {
-    onArmDraw({ nodeId, detectedTag: labelText(row) })
+    onArmDraw({ nodeId, detectedTag: row.label.tag })
     onFocus(padBox(row.label.box, DRAW_PAD_PX))
   }
 
   function show(row: ShopReviewRow) {
     const s = suggestions[row.key]
-    if (s?.offered) {
+    if (row.state === 'draw' && s?.offered) {
       setPreviewKey(row.key)
       onPreview(s.polygon)
     }
@@ -348,7 +372,7 @@ export function ShopsPanel({
     setSaveError(null)
     try {
       const res = await createStatusPlanShapeAction({
-        sheetId, shape: 'polygon', points: polygon, nodeId: row.nodeId, detectedTag: labelText(row), source: 'detected',
+        sheetId, shape: 'polygon', points: polygon, nodeId: row.nodeId, detectedTag: row.label.tag, source: 'detected',
       })
       if (!res.ok) { setSaveError(res.error); return }
       dismiss(row)

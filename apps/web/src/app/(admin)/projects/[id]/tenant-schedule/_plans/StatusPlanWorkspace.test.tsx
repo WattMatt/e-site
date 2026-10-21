@@ -245,7 +245,7 @@ describe('StatusPlanWorkspace', () => {
     })
     render(<StatusPlanWorkspace {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Draw SHOP ZZ01' }))
-    expect(canvasText()).toContain('arm:n1/SHOP ZZ01#1')
+    expect(canvasText()).toContain('arm:n1/ZZ01#1')
     expect(canvasText()).toContain('focus:500,490,1354,1300#1')
   })
 
