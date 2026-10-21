@@ -75,7 +75,7 @@ Three conclusions drive the design:
 
 `packages/shared/src/status-plans/detect-shop-labels.ts`
 
-Input: the page's `ImageTextItem[]` (already upright-only, image space). Output:
+Input: every text run on the page at any rotation (`allItems` from `extractPageText`, boxed by the run's four corners under the viewport transform). The 300 detector keeps reading the upright-only `items`. On the production sheets 25 of 109 KINGSWALK labels and 13 of 29 SAXBY labels are rotated (±45°, −90°) and would otherwise be lost. *(Amended 2026-10-21 after the acceptance run; the first draft read the upright-only `items`.)* Output:
 
 ```ts
 interface DetectedShopLabel {
@@ -147,11 +147,11 @@ Pressing **Draw** on a `draw` row:
 Algorithm (my calls, each a named constant with the reason beside it):
 
 - Threshold luma < 170 as "ink"; dilate ink by 1 px to close anti-aliased hairline gaps.
-- Seed from the anchor; the anchor can sit on a glyph, so probe a grid of ±24 × ±16 px in 8 px steps and keep the largest region that stays under the cap.
+- Seed from the anchor and a grid of ±24 × ±16 px in 8 px steps, always (a free anchor pixel may be the gap between two glyphs); keep the largest region under the cap. *(Amended 2026-10-21: the first build seeded only a free anchor, which filled the 2–4 px gap between glyphs on KINGSWALK 24A, 45A, 45B, 48C and 92A and reported 0 m².)* A region smaller than `minRegionPixels(ppm) = max(100 px, 2 m² × ppm²)` is never a shop (a glyph counter is under 50 px); when a seed leaked and no larger region remains, the outcome is a leak. An outline that encloses another shop's label anchor is refused ("The fill covers SHOP <other> as well; draw this shop by hand.").
 - Scanline flood fill over non-ink pixels; abort as a **leak** when the region exceeds `LEAK_CAP = 1.5 %` of the page's pixels (a shop is never that; the mall is).
 - Grow the region by 2 px before tracing, because the fill measures the inside face of the wall while GLA is measured further out (the spike's fills ran at about 0.85 × GLA before this correction).
 - Trace the outer contour, simplify with Douglas–Peucker at ε = 2 px, drop holes, cap at 1,000 vertices (the DB allows 2,000 points; a shop needs far fewer).
-- **Gate:** the suggestion is offered only when the sheet has a scale, the tenant has a GLA, the fill did not leak, and `0.80 ≤ fill m² / GLA ≤ 1.20`. Anything else is reported with its number ("fill came to 839.9 m² for a 50.2 m² shop, not offered"). No scale: "calibrate the sheet first". No GLA: "no GLA on the schedule for this shop".
+- **Gate:** the suggestion is offered only when the sheet has a scale, the tenant has a GLA, the fill did not leak, and `0.80 ≤ fill m² / GLA ≤ 1.20`. The fill m² is the area of the polygon Accept would save (the grown, traced outline), divided by pixels-per-metre squared; the ungrown pixel count is diagnostic only. *(Amended 2026-10-21: gating on the ungrown count meant the 2 px grow never reached the gate.)* Anything else is reported with its number ("fill came to 839.9 m² for a 50.2 m² shop, not offered"). No scale: "calibrate the sheet first". No GLA: "no GLA on the schedule for this shop".
 - **Accept** saves through `createStatusPlanShapeAction` as `shape: 'polygon'`, `source: 'detected'`, `node_id`, `detected_tag`. Nothing is saved before Accept, and the contract test in §6 pins that.
 
 Performance budget: one fill under 200 ms on a 6,740 × 4,768 bitmap in the main thread; if the builder measures worse on an A0, move it to a Web Worker. Either is acceptable.
@@ -196,8 +196,8 @@ A `draw` row with a suggestion ready shows the fill's m² against the GLA and an
 - `link-shapes.actions.test.ts`: purpose gate, role gate, stale `updated_at`, duplicate node in batch, compensation after a mid-batch failure with one put-back that fails.
 - `StatusPlanWorkspace.test.tsx`: the Shops panel renders only for `tenant_layout`; the 300 panels only for `distribution_schematic`.
 - A contract test that no code path calls `createStatusPlanShapeAction` with `source: 'detected'` outside the Accept handler.
-- Production acceptance before the signed-in walk: a scratch run of `detectShopLabels` + `reviewShopLabels` against the two live sheets' text layers and live shapes (read-only) reproduces the table in §1: KINGSWALK 42 `link`, SAXBY 28 `linked` and shop 31 `not_on_schedule`, zero `conflict` and zero `linked_outside` on both (the spike found none; a non-zero count is a review bug, not drawing noise).
-- Fill acceptance, read-only, on KINGSWALK's `draw` rows with the shipped constants: **at least 45 of the 64 are offered** (the spike, before the 2 px grow and with the wider band, had 69 of 109 shops in range and 23 leaks). The band may be tuned only within 0.80–1.20 and the grow only within 1–3 px to reach that; a result below it with those constants is a tracer or fill defect, not a tuning job. SAXBY is reported but has no target: its drawing subdivides shops and the spike predicts single digits.
+- Production acceptance before the signed-in walk: a read-only run of `detectShopLabels` + `reviewShopLabels` against the two live sheets' text layers and live shapes (`apps/web/scripts/status-plans/shop-labels-acceptance.ts`). *(Amended 2026-10-21 to the measured result.)* Expected: KINGSWALK `link` 42, `linked` 3, `conflict` 0, `linked_outside` 0, `not_on_schedule` = the decommissioned tenants on the drawing (7 kiosks on 2026-10-21); SAXBY `conflict` 0, one explained `linked_outside` (SHOP 10a, label 1.85 m below its 10 m² ATM outline), `not_on_schedule` = decommissioned SHOP 13 (shop 31 has no label on the sheet). Measured on commit `02252d88`, after rotated labels were read: **KINGSWALK** 109/109 labels read, `link` 43 (one more than expected: SHOP 36, read at −90°), `linked` 3, `conflict` 0, `linked_outside` 0, `not_on_schedule` 7 (K01–K06, K08), `draw` 56; **SAXBY** 29/29 labels read, `linked` 27, `linked_outside` 1 (SHOP 10a), `not_on_schedule` 1 (SHOP 13), `conflict` 0, `draw` 0. Production's links changed during 2026-10-21, so these counts differ from the morning spike in §1.
+- Fill acceptance, read-only, on KINGSWALK's `draw` rows with the shipped constants: the acceptance script reports the offered count and, per refused `draw` row, which of leak / out of band / no scale / no GLA applied; there is no numeric target — the 45-of-64 figure was derived from the spike's 0.6–1.6 band and is withdrawn. The band stays 0.80–1.20. Measured on `02252d88`: **offered on 32 of 56**; the 24 refusals are 12 "covers another shop" (§4.6), 7 leak, 5 out of band (89C, 18, 68, 45B, 80A), 0 no scale, 0 no GLA. SAXBY has no `draw` rows.
 - The signed-in walk is the owner's: open KINGSWALK's floor plan, press Link 42, draw one shop from a prompt, accept one suggested outline, replace the sheet with the same file and confirm 0 moved.
 
 ## 7. Left to the builder
@@ -213,7 +213,7 @@ A `draw` row with a suggestion ready shows the fill's m² against the GLA and an
 - The design is measured on the electrical site plans in production; a leasing plan is accepted, and its text layer is unverified (§1). If the owner knows the leasing plan is the real input, send one sheet and the §6 acceptance run moves to it before the build.
 - A tenant whose label sits outside its linked shape is reported as `linked_outside`, not nagged as a conflict (§4.3).
 - A finished plan is not rescanned on every open; the Scan button is always there (§4.7).
-- The fill target is 45 of KINGSWALK's 64 `draw` rows with constants tuned only inside the stated ranges (§6).
+- There is no fill target: the 45-of-64 figure was derived from the spike's 0.6–1.6 band and is withdrawn. The acceptance run reports the offered count with each refusal's reason, and the owner judges the number; the band stays 0.80–1.20 (§6). *(Amended 2026-10-21.)*
 - Fill suggestions are per-shop and never automatic (anti-goal 1).
 - A conflict is never resolved by the scan; the shape panel is the only place a link changes hands.
 - No migration and no new product-event names in this slice.

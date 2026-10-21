@@ -450,6 +450,8 @@ Workspace test: `renders ShopsPanel for tenant_layout and not DetectBlocksPanel;
 - [ ] **Step 3: Run with `--fill` on KINGSWALK.** Expected: offered ≥ 45 of the 64 `draw` rows. If below, tune only within `GATE_BAND` 0.80–1.20 and `GROW_PX` 1–3 and re-run; still below → treat as a Task 4 defect. Record SAXBY's number without a target.
 - [ ] **Step 4: Paste both tables into the PR body** and commit the script: `git commit -m "chore(status-plans): read-only acceptance run for floor-plan labels"`
 
+> **Note (2026-10-21):** Pass marks superseded by Tasks 11–12; see the ledger rulings dated 2026-10-21. The first run found two defects rather than a tuning gap: rotated labels never reached the detector (Task 11), and the fill seeded only a free anchor and gated on the ungrown region (Task 12). The `not_on_schedule` expectation became "the decommissioned tenants present on the drawing" (KINGSWALK's 7 kiosks K01–K06, K08; SAXBY's SHOP 13). The "≥ 45 of 64" fill target was withdrawn: the run reports the offered count and each refusal's reason, and the band stays 0.80–1.20.
+
 ---
 
 ### Task 10: Docs and PR
@@ -458,3 +460,71 @@ Workspace test: `renders ShopsPanel for tenant_layout and not DetectBlocksPanel;
 - [ ] **Step 2:** CLAUDE.md "Shipped" entry (the spec's §1 table, the acceptance numbers, what is not verified: the signed-in walk) and a vault `sessions.md` entry.
 - [ ] **Step 3:** Run the three suites (`web`, `@esite/shared`, `@esite/db`), type-check and lint; `next build` once because a `'use server'` file was added.
 - [ ] **Step 4:** Push `feat/floor-plan-label-detection` over SSH, open the PR into `main` as ready (not draft), bind it, and request review. The owner's walk (spec §6) is listed in the PR as not verified.
+
+---
+
+> Tasks 11 and 12 were added on 2026-10-21 after the Task 9 acceptance run, and are recorded here as executed (brief text unchanged, with an "As executed" note under each).
+
+### Task 11: Rotated labels reach the shop detector
+
+**Why:** the acceptance run (Task 9) found that `extractPageText` → `textItemsToImageSpace` keeps only near-horizontal runs (`MAX_SKEW = 0.09` in `packages/shared/src/status-plans/text-space.ts`). On the production floor plans 25 of 109 KINGSWALK labels and 13 of 29 SAXBY labels are rotated (±45°, −90°) and were never seen. A scratch simulation feeding the rotated runs in gives 109/109 and 29/29 with no new conflicts.
+
+**Files:**
+- Modify: `packages/shared/src/status-plans/text-space.ts` (add a second export; leave `textItemsToImageSpace` byte-identical in behaviour)
+- Test: `packages/shared/src/status-plans/text-space.test.ts`
+- Modify: `apps/web/src/lib/status-plans/extract-page-text.ts` (`PageTextResult` gains `allItems`)
+- Test: `apps/web/src/lib/status-plans/extract-page-text.test.ts`
+- Modify: `apps/web/src/app/(admin)/projects/[id]/tenant-schedule/_plans/ShopsPanel.tsx` (scan passes `page.allItems` to `detectShopLabels`)
+- Test: `ShopsPanel.test.tsx` (the mocked `extractPageText` result carries `allItems`; one test proves a rotated label is detected)
+- Modify: `apps/web/scripts/status-plans/shop-labels-acceptance.ts` (uses `allItems`)
+
+**Interfaces:**
+- Produces in `text-space.ts`:
+  ```ts
+  /** Every text run on the page, at any rotation. box = bounding box of the run's four corners under the viewport transform. */
+  export function allTextItemsToImageSpace(items: readonly unknown[], viewportTransform: Matrix): ImageTextItem[]
+  ```
+  For an upright run the result is identical to `textItemsToImageSpace`'s item. For a rotated run: `x = minX`, `top = minY`, `width = maxX − minX`, `height = maxY − minY`, `baseline = maxY`, `str` unchanged. Runs with a degenerate transform (zero width or height) are dropped as today.
+- Produces in `extract-page-text.ts`: `PageTextResult` gains `allItems: ImageTextItem[]`; `items` is unchanged (the 300 detector keeps reading `items`).
+- Consumes: pdf.js text items `{ str, transform: [a,b,c,d,e,f], width, height }`. The run's corners in PDF user space are `o = (e, f)`, `o + u·width`, `o + v·height`, `o + u·width + v·height` where `u = (a, b) / |(a, b)|` and `v = (c, d) / |(c, d)|`; apply the viewport transform to each, then take the bounding box.
+
+- [ ] **Step 1: Failing tests.** `text-space.test.ts`: `allTextItemsToImageSpace` returns the same item as `textItemsToImageSpace` for an upright run; a −90° run (`transform: [0, s, −s, 0, e, f]`) yields a box whose width is the run's font height and whose height is its advance width, with `x/top/baseline` as defined; a 45° run yields the rotated rectangle's bounding box (assert minX/maxX/minY/maxY within 0.01). `extract-page-text.test.ts`: the rotated fixture sheet already used there yields `allItems.length ≥ items.length`, and a label rotated −90° appears in `allItems` and not in `items`. `ShopsPanel.test.tsx`: a mocked page whose `allItems` holds `SHOP 7` rotated and whose `items` does not → the panel lists shop 7.
+- [ ] **Step 2: Run red** (`pnpm --filter @esite/shared exec vitest run text-space`, `pnpm --filter web exec vitest run extract-page-text ShopsPanel`).
+- [ ] **Step 3: Implement.** Keep `textItemsToImageSpace` as it is; share the per-item corner maths between the two functions without changing the upright function's output.
+- [ ] **Step 4: Run green**, then `pnpm --filter @esite/shared test`, `pnpm --filter web test`, both type-checks, eslint on touched files.
+- [ ] **Step 5: Commit** `feat(status-plans): read rotated SHOP labels on the floor plan`.
+
+> **As executed:** commit `7b60e627`. `items` stayed byte-identical over 400k random runs; the Shops panel and the acceptance script read `allItems`. Deferred: the split-run join on a rotated box uses the advance as the "height", so a split rotated label never joins (neither production sheet splits a label).
+
+---
+
+### Task 12: Fill seeds every grid point, the gate judges the saved polygon, acceptance re-run
+
+**Why:** the acceptance run (Task 9) found two fill defects. (1) When the anchor pixel is free, `seedsFor` (`apps/web/src/lib/status-plans/fill-outline.ts` ~:157) seeds only there; on KINGSWALK shops 24A, 45A, 45B, 48C and 92A the anchor is the 2–4 px gap between two glyphs, the fill reports `ok` at 0.0 m², the gate refuses with a misleading reason, and the real room is never tried. (2) The gate measures the UNGROWN region (`~:352`), so `GROW_PX` never reaches it and the wall-ink-plus-dilation bias (about 0.4 m per side at 2 px/pt) survives, pushing most fills to ~0.85 × GLA.
+
+**Files:**
+- Modify: `apps/web/src/lib/status-plans/fill-outline.ts`
+- Test: `apps/web/src/lib/status-plans/fill-outline.test.ts`
+- Modify (re-run only, no code change expected): `apps/web/scripts/status-plans/shop-labels-acceptance.ts` — if its gate call or table needs the new field, change it.
+
+**Interfaces (unchanged names, changed rules):**
+- `fillFromAnchor(mask, anchor)`: every seed in `SEED_GRID` (the anchor plus ±24 × ±16 in steps of 8) is evaluated whether or not the anchor pixel is ink; the largest `ok` region under the cap wins; the leak-mark rule from Task 4's fix round stands (a seed that meets another seed's aborted marks is a leak, and once a seed leaks no later seed may report `ok` for that area).
+- `gateSuggestion(outcome, pixelsPerMeter, glaM2)`: `fillM2 = shapeAreaPx(outcome.polygon) / pixelsPerMeter²` (the polygon that Accept would save; it already equals `grownPixels` plus any holes). `pixels` stays on the outcome for diagnostics. Sentences and the band are unchanged.
+- Constants unchanged: `GATE_BAND` 0.80–1.20, `GROW_PX = 2`.
+
+- [ ] **Step 1: Failing tests.** (a) `seeds the whole grid when the anchor is free but sits between two glyphs`: a closed room with two ink blobs at the anchor separated by a 3 px free gap; the anchor is in the gap; expect `ok` with `pixels` within 1 % of the room's interior count, not the gap. (b) `the gate measures the grown polygon`: a closed room whose ungrown interior is 0.78 × GLA and whose grown polygon is 0.84 × GLA (pick a room size and GLA so both hold at ppm = 10 with `GROW_PX = 2`); expect `offered: true` and `fillM2` equal to `shapeAreaPx(polygon)/100` within 0.5 %. Keep every existing test green (the interior-line test must still refuse; adjust its GLA if the grown polygon now lands inside the band, and say so).
+- [ ] **Step 2: Run red** (`pnpm --filter web exec vitest run fill-outline`).
+- [ ] **Step 3: Implement** the two rule changes.
+- [ ] **Step 4: Run green**, then `pnpm --filter web test`, type-check, eslint.
+- [ ] **Step 5: Re-run the acceptance script** on both production sheets with `--fill` (read-only; env `SUPABASE_SERVICE_ROLE_KEY` from `/Volumes/Extreme SSD/DEVELOPER/APPS/ESITE.V1/esite/.secrets/supabase.md`, never persisted). Record verbatim: review counts per sheet, `draw` rows with each gate outcome (fill m², GLA m², reason), the offered count, and the explained `linked_outside`/`conflict` rows. There is no numeric target: report the number and, for every refused `draw` row, which of leak / out-of-band / no scale / no GLA it was.
+- [ ] **Step 6: Commit** `fix(status-plans): fill seeds the whole grid and the gate judges the saved polygon`.
+
+> **As executed:** commit `fc47379c`, then two fix rounds from the controller's rulings.
+>
+> - **`acdd8007`:** an outline that encloses another shop's label anchor is refused ("The fill covers SHOP <other> as well; draw this shop by hand."). SHOP 64 had been offered at 1.158 × GLA with a polygon that also covered SHOP 62. A glyph counter left over after a seed leaked is reported as `leak`, not "out of band".
+> - **`02252d88`:** the minimum region depends on the scale, not the label box: `minRegionPixels(ppm) = max(MIN_REGION_PX 100, MIN_SHOP_M2 2 × ppm²)`, or 100 px without a scale. A 45° label's box is 16–42 m², which would have refused small shops.
+>
+> Final re-run on `02252d88`:
+>
+> - **KINGSWALK:** 109/109 labels read; `link` 43, `linked` 3, `conflict` 0, `linked_outside` 0, `not_on_schedule` 7 (decommissioned kiosks K01–K06, K08), `draw` 56. Fill offered on **32 of 56**; the 24 refusals are covers another shop 12, leak 7, out of band 5 (89C, 18, 68, 45B, 80A), no scale 0, no GLA 0.
+> - **SAXBY:** 29/29 labels read; `linked` 27, `linked_outside` 1 (SHOP 10a: label 1.85 m below its 10 m² ATM outline), `not_on_schedule` 1 (SHOP 13, decommissioned), `conflict` 0, `draw` 0.
