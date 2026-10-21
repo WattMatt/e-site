@@ -94,7 +94,7 @@ export function reviewShopLabels(input: ShopReviewInput): ShopReview {
   // Smallest first, so the first containing shape is the one that wins an overlap.
   const holders = shapes.filter((s) => s.areaType == null).map((s) => ({ s, area: shapeAreaPx(s.points) })).sort((a, b) => a.area - b.area)
 
-  const rows: ShopReviewRow[] = labels.labels.map((label, i) => {
+  const rows: ShopReviewRow[] = labels.labels.map((label, i): ShopReviewRow => {
     const norm = normaliseTag(label.tag)
     const dupes = labels.duplicates[stripLeadingZeros(norm)] ?? 0
     const base = { key: dupes > 1 ? `${norm}#${i}` : norm, label, nodeId: null, shapeId: null, otherShapeId: null, candidateIds: [] as string[], reason: null, areaNote: null }
@@ -110,7 +110,8 @@ export function reviewShopLabels(input: ShopReviewInput): ShopReview {
     if (match.state !== 'matched') {
       // Not among the live shops: say so, and say when the schedule has it as decommissioned.
       const gone = candidatesOf(matchBlock({ tag: label.tag, name: label.name }, goneIndex)).length > 0
-      return { ...base, state: 'not_on_schedule', reason: gone ? 'decommissioned' : 'not on the schedule' }
+      const unreadable = match.state === 'no_tag' || match.state === 'part_of'
+      return { ...base, state: 'not_on_schedule', reason: gone ? 'decommissioned' : unreadable ? 'tag could not be read' : 'not on the schedule' }
     }
 
     const node = nodeById.get(match.nodeId)!
@@ -137,6 +138,17 @@ export function reviewShopLabels(input: ShopReviewInput): ShopReview {
     }
     return { ...row, state: 'draw' }
   })
+
+  // Two labels in one unlinked shape: the link action takes a shape once, so neither is offered as a link.
+  const linkClaims = new Map<string, ShopReviewRow[]>()
+  for (const r of rows) {
+    if (r.state === 'link' && r.shapeId) linkClaims.set(r.shapeId, [...(linkClaims.get(r.shapeId) ?? []), r])
+  }
+  for (const claimants of linkClaims.values()) {
+    if (claimants.length < 2) continue
+    const reason = `two labels inside one shape: ${claimants.map((r) => r.label.tag).join(', ')}`
+    for (const r of claimants) { r.state = 'conflict'; r.reason = reason }
+  }
 
   const used = new Set(rows.flatMap((r) => (r.shapeId ? [r.shapeId] : [])))
   for (const r of rows) if (r.otherShapeId) used.add(r.otherShapeId)

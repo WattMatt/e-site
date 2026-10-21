@@ -49,6 +49,16 @@ describe('reviewShopLabels', () => {
     expect(r.rows[0]).toMatchObject({ state: 'conflict', nodeId: 'n12', shapeId: 's1', otherShapeId: 's2' })
   })
 
+  it('conflict: two labels inside one unlinked shape', () => {
+    const r = review([label('12', 30, 30), label('13', 70, 70)], [node('n12', '12'), node('n13', '13')], [rect('s1', 0, 0, 100, 100)])
+    expect(r.rows.map((x) => x.state)).toEqual(['conflict', 'conflict'])
+    expect(r.rows.map((x) => x.shapeId)).toEqual(['s1', 's1'])
+    expect(r.rows.map((x) => x.reason)).toEqual(['two labels inside one shape: 12, 13', 'two labels inside one shape: 12, 13'])
+    expect(r.counts.link).toBe(0)
+    expect(r.counts.conflict).toBe(2)
+    expect(r.unlabelled).toEqual([])
+  })
+
   it('linked_outside: node linked elsewhere and nothing contains the label', () => {
     const r = review([label('12', 300, 300)], [node('n12', '12')], [rect('s2', 500, 500, 600, 600, 'n12')])
     expect(r.rows[0]).toMatchObject({ state: 'linked_outside', nodeId: 'n12', shapeId: 's2', otherShapeId: null, reason: 'label outside the shape' })
@@ -82,6 +92,9 @@ describe('reviewShopLabels', () => {
     const none = review([label('99', 50, 50)], [node('n12', '12')], [])
     expect(none.rows[0]).toMatchObject({ state: 'not_on_schedule', nodeId: null })
     expect(none.rows[0]!.reason).not.toBe('decommissioned')
+
+    const unread = review([label('MB-1.1 BULK CHECK METER', 50, 50)], [node('n12', '12')], [])
+    expect(unread.rows[0]).toMatchObject({ state: 'not_on_schedule', reason: 'tag could not be read' })
 
     const gone = review([label('12', 50, 50)], [node('n12', '12', null, true)], [rect('s1', 0, 0, 100, 100)])
     expect(gone.rows[0]).toMatchObject({ state: 'not_on_schedule', nodeId: null, reason: 'decommissioned' })
