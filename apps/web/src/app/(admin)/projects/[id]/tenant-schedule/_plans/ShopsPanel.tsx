@@ -44,7 +44,14 @@ import {
 import { extractPageText } from '@/lib/status-plans/extract-page-text'
 import { linkShapesByLabelAction, unlinkShapesAction } from '@/actions/status-plan-link.actions'
 import { createStatusPlanShapeAction } from '@/actions/status-plan.actions'
-import { fillFromAnchor, gateSuggestion, inkMaskFromImageData, type InkMask } from '@/lib/status-plans/fill-outline'
+import {
+  fillFromAnchor,
+  gateSuggestion,
+  inkMaskFromImageData,
+  labelBoxPixels,
+  otherLabelAnchors,
+  type InkMask,
+} from '@/lib/status-plans/fill-outline'
 import { backingSize, type SheetBacking } from '@/lib/sheet/use-sheet-image'
 import type { PendingLink } from '@/lib/status-plans/canvas-reducer'
 import type { CanvasShape } from '@/lib/status-plans/types'
@@ -323,9 +330,11 @@ export function ShopsPanel({
     } catch {
       return { offered: false, reason: UNREADABLE_BITMAP } // e.g. a cross-origin image taints the canvas
     }
-    const outcome = fillFromAnchor(mask, row.label.anchor)
+    // A pocket smaller than the label's own text is a glyph counter, never the shop.
+    const outcome = fillFromAnchor(mask, row.label.anchor, { minPixels: labelBoxPixels(row.label.box) })
     const gla = row.nodeId ? nodeById.get(row.nodeId)?.scheduledM2 ?? null : null
-    const gate = gateSuggestion(outcome, pixelsPerMeter, gla)
+    // An outline that encloses another label covers another shop as well, and is refused.
+    const gate = gateSuggestion(outcome, pixelsPerMeter, gla, otherLabelAnchors(scanned?.labels.labels ?? [], row.label))
     if (!gate.offered) return { offered: false, reason: gate.reason }
     // The gate offers only a fill that completed; anything else is refused, never guessed.
     if (outcome.kind !== 'ok') return { offered: false, reason: UNREADABLE_BITMAP }

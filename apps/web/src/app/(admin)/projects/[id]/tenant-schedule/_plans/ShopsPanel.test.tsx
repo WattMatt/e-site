@@ -273,7 +273,8 @@ describe('ShopsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))
     expect(screen.getByText('Outline 50.0 m² vs GLA 50.0 m²')).not.toBeNull()
     expect(onPreview).toHaveBeenLastCalledWith(polygon)
-    expect(m.fill).toHaveBeenCalledWith(expect.anything(), { x: 1118, y: 95 })
+    // The floor is the label's own box: 36 × 10 px.
+    expect(m.fill).toHaveBeenCalledWith(expect.anything(), { x: 1118, y: 95 }, { minPixels: 360 })
     expect(m.create).not.toHaveBeenCalled() // nothing is saved before Accept
 
     // The mask is built once per bitmap.
@@ -297,6 +298,18 @@ describe('ShopsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))
     expect(screen.getByText('The fill ran into the mall; draw this shop by hand.')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Accept outline for SHOP 2' })).toBeNull()
+  })
+
+  it('a suggestion that encloses another label is refused, naming that shop', async () => {
+    const onPreview = vi.fn()
+    // Covers SHOP 2's own label and SHOP 1's anchor (118, 95); its own label never counts.
+    m.fill.mockReturnValue({ kind: 'ok', pixels: 5000, grownPixels: 5200, polygon: [0, 0, 1200, 0, 1200, 200, 0, 200] })
+    render(<ShopsPanel {...props({ onPreview, backing: fakeBacking() })} />)
+    await scan()
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest outline for SHOP 2' }))
+    expect(screen.getByText('The fill covers SHOP 1 as well; draw this shop by hand.')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Accept outline for SHOP 2' })).toBeNull()
+    expect(onPreview).not.toHaveBeenCalledWith(expect.arrayContaining([1200]))
   })
 
   it('Suggest all runs every draw row and says how far it got', async () => {

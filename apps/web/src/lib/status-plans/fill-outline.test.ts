@@ -228,7 +228,7 @@ describe('fill-outline', () => {
     // The gate measures the grown polygon: x 400..460 × y 300..380 is 61 × 81 = 4,941 px, which at
     // 10 px per metre is 49.41 m² (0.55 of the GLA); the schedule says the whole room, 90.1 m².
     expect(shapeAreaPx(ok.polygon)).toBe(61 * 81)
-    const gate = gateSuggestion(outcome, 10, 90.1)
+    const gate = gateSuggestion(outcome, 10, 90.1, [])
     expect(gate).toEqual({
       offered: false,
       reason: 'The fill came to 49.4 m² for a 90.1 m² shop, not offered.',
@@ -303,10 +303,79 @@ describe('fill-outline', () => {
     const polygonPx = shapeAreaPx(ok.polygon)
     expect(polygonPx).toBe(110 * 110)
     expect(polygonPx / 100 / 144.05).toBeCloseTo(0.84, 3)
-    const gate = gateSuggestion(outcome, 10, 144.05)
+    const gate = gateSuggestion(outcome, 10, 144.05, [])
     expect(gate.offered).toBe(true)
     if (!gate.offered) throw new Error('not offered')
     expect(Math.abs(gate.fillM2 - polygonPx / 100) / (polygonPx / 100)).toBeLessThan(0.005)
+  })
+
+  it('a region smaller than minPixels is never the winner: a glyph counter in a gapped room is a leak', () => {
+    // An "O" at the anchor: its counter (x 438..456 × y 334..346 after dilation, 247 px) is the only
+    // enclosed pocket, because the room around it has a 3 px gap in its right wall.
+    const glyph = (set: (x: number, y: number) => void) => {
+      for (let x = 436; x <= 462; x++) {
+        set(x, 332)
+        set(x, 348)
+      }
+      for (let y = 332; y <= 348; y++) {
+        set(436, y)
+        for (let x = 458; x <= 462; x++) set(x, y)
+      }
+    }
+    const anchor = { x: 447, y: 340 }
+    const gapped = inkMaskFromImageData(
+      raster(PAGE_W, PAGE_H, (set) => {
+        room(set, 400, 300, 120, 80, { wall: 'right', at: 338, len: 3 })
+        glyph(set)
+      }),
+    )
+    expect(gapped.ink[anchor.y * PAGE_W + anchor.x]).toBe(0)
+    const counter = enclosedFree(gapped, 436, 332, 462, 348)
+    expect(counter).toBe(19 * 13)
+    // Without a floor the counter wins and reads as a 247 px "shop".
+    expect(expectOk(fillFromAnchor(gapped, anchor)).pixels).toBe(counter)
+    // With the label's box area as the floor, nothing is left but the leak.
+    expect(fillFromAnchor(gapped, anchor, { minPixels: 400 })).toEqual({ kind: 'leak' })
+    // Control: the same glyph in a closed room still fills the room.
+    const closed = inkMaskFromImageData(
+      raster(PAGE_W, PAGE_H, (set) => {
+        room(set, 400, 300, 120, 80)
+        glyph(set)
+      }),
+    )
+    expect(expectOk(fillFromAnchor(closed, anchor, { minPixels: 400 })).pixels).toBe(
+      enclosedFree(closed, 400, 300, 520, 380) - counter,
+    )
+    // Nothing leaked and nothing reached the floor: no region.
+    const w = 60
+    const h = 40
+    const ink = new Uint8Array(w * h).fill(1)
+    for (let y = 18; y < 23; y++) for (let x = 28; x < 33; x++) ink[y * w + x] = 0
+    expect(expectOk(fillFromAnchor({ width: w, height: h, ink }, { x: 30, y: 20 })).pixels).toBe(25)
+    expect(fillFromAnchor({ width: w, height: h, ink }, { x: 30, y: 20 }, { minPixels: 100 })).toEqual({ kind: 'no_region' })
+  })
+
+  it('the gate refuses a fill that encloses another label, before the GLA and the band', () => {
+    // Grown polygon 121 × 81 = 9,801 px = 98.01 m² at 10 px/m; in band for a 100 m² GLA.
+    const outcome = fillFromAnchor(inkMaskFromImageData(raster(PAGE_W, PAGE_H, (set) => room(set, 400, 300, 120, 80))), {
+      x: 460,
+      y: 340,
+    })
+    expectOk(outcome)
+    const inside = { x: 500, y: 360, tag: '62' }
+    const outside = { x: 600, y: 340, tag: '62' }
+    const covers = { offered: false, reason: 'The fill covers SHOP 62 as well; draw this shop by hand.', fillM2: 98.01 }
+    expect(gateSuggestion(outcome, 10, 100, [inside])).toEqual(covers)
+    expect(gateSuggestion(outcome, 10, 100, [outside])).toEqual({ offered: true, fillM2: 98.01, glaM2: 100 })
+    // It is checked before the GLA and the band, and names the first enclosed label.
+    expect(gateSuggestion(outcome, 10, null, [inside])).toEqual(covers)
+    expect(gateSuggestion(outcome, 10, 300, [inside])).toEqual(covers)
+    expect(gateSuggestion(outcome, 10, 100, [outside, { x: 410, y: 310, tag: '64' }, inside])).toMatchObject({
+      reason: 'The fill covers SHOP 64 as well; draw this shop by hand.',
+    })
+    // Scale still comes first; a leak never reaches the check.
+    expect(gateSuggestion(outcome, null, 100, [inside])).toEqual({ offered: false, reason: 'Calibrate the sheet first.', fillM2: null })
+    expect(gateSuggestion({ kind: 'leak' }, 10, 100, [inside]).offered).toBe(false)
   })
 
   it('gate: no scale, no GLA, leak, out of band, in band', () => {
@@ -314,30 +383,30 @@ describe('fill-outline', () => {
     // `grownPixels` are diagnostics only.
     const ok: FillOutcome = { kind: 'ok', pixels: 40_000, grownPixels: 41_000, polygon: [0, 0, 200, 0, 200, 200, 0, 200] }
 
-    expect(gateSuggestion(ok, null, 100)).toEqual({ offered: false, reason: 'Calibrate the sheet first.', fillM2: null })
-    expect(gateSuggestion(ok, 20, null)).toEqual({ offered: false, reason: 'No GLA on the schedule for this shop.', fillM2: 100 })
-    expect(gateSuggestion({ kind: 'leak' }, 20, 100)).toEqual({
+    expect(gateSuggestion(ok, null, 100, [])).toEqual({ offered: false, reason: 'Calibrate the sheet first.', fillM2: null })
+    expect(gateSuggestion(ok, 20, null, [])).toEqual({ offered: false, reason: 'No GLA on the schedule for this shop.', fillM2: 100 })
+    expect(gateSuggestion({ kind: 'leak' }, 20, 100, [])).toEqual({
       offered: false,
       reason: 'The fill ran into the mall; draw this shop by hand.',
       fillM2: null,
     })
-    expect(gateSuggestion(ok, 20, 50.2)).toEqual({
+    expect(gateSuggestion(ok, 20, 50.2, [])).toEqual({
       offered: false,
       reason: 'The fill came to 100.0 m² for a 50.2 m² shop, not offered.',
       fillM2: 100,
     })
-    expect(gateSuggestion(ok, 20, 110)).toEqual({ offered: true, fillM2: 100, glaM2: 110 })
+    expect(gateSuggestion(ok, 20, 110, [])).toEqual({ offered: true, fillM2: 100, glaM2: 110 })
 
     // The band is inclusive at both ends, and a zero or negative scale or GLA fails closed.
     // (100 m² / 125 m² is exactly 0.8; 120 m² / 100 m² is exactly 1.2.)
-    expect(gateSuggestion(ok, 20, 125).offered).toBe(true)
+    expect(gateSuggestion(ok, 20, 125, []).offered).toBe(true)
     const big: FillOutcome = { ...ok, polygon: [0, 0, 240, 0, 240, 200, 0, 200] } // 48,000 px
-    expect(gateSuggestion(big, 20, 100)).toEqual({ offered: true, fillM2: 120, glaM2: 100 })
-    expect(gateSuggestion(big, 20, 99.9).offered).toBe(false)
-    expect(gateSuggestion(ok, 20, 125.1).offered).toBe(false)
-    expect(gateSuggestion(ok, 0, 100)).toMatchObject({ offered: false, reason: 'Calibrate the sheet first.' })
-    expect(gateSuggestion(ok, 20, 0)).toMatchObject({ offered: false, reason: 'No GLA on the schedule for this shop.' })
-    expect(gateSuggestion({ kind: 'no_region' }, 20, 100)).toEqual({
+    expect(gateSuggestion(big, 20, 100, [])).toEqual({ offered: true, fillM2: 120, glaM2: 100 })
+    expect(gateSuggestion(big, 20, 99.9, []).offered).toBe(false)
+    expect(gateSuggestion(ok, 20, 125.1, []).offered).toBe(false)
+    expect(gateSuggestion(ok, 0, 100, [])).toMatchObject({ offered: false, reason: 'Calibrate the sheet first.' })
+    expect(gateSuggestion(ok, 20, 0, [])).toMatchObject({ offered: false, reason: 'No GLA on the schedule for this shop.' })
+    expect(gateSuggestion({ kind: 'no_region' }, 20, 100, [])).toEqual({
       offered: false,
       reason: 'No white space at the label.',
       fillM2: null,

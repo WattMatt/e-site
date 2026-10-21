@@ -44,7 +44,16 @@ import {
   type ShopReviewShape,
 } from '@esite/shared/status-plans'
 import { extractPageText, type PdfjsModule } from '../../src/lib/status-plans/extract-page-text'
-import { fillFromAnchor, gateSuggestion, inkMaskFromImageData, GATE_BAND, GROW_PX, type InkMask } from '../../src/lib/status-plans/fill-outline'
+import {
+  fillFromAnchor,
+  gateSuggestion,
+  inkMaskFromImageData,
+  labelBoxPixels,
+  otherLabelAnchors,
+  GATE_BAND,
+  GROW_PX,
+  type InkMask,
+} from '../../src/lib/status-plans/fill-outline'
 
 const URL_BASE = process.env.SUPABASE_URL ?? 'https://cbskbnvvgcybmfikxgky.supabase.co'
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
@@ -296,9 +305,10 @@ async function runSheet(sheetId: string, fill: boolean, tmp: string) {
 
   const draws = review.rows.filter((r) => r.state === 'draw')
   const out = draws.map((r) => {
-    const outcome = fillFromAnchor(mask, r.label.anchor)
+    // The same inputs ShopsPanel.suggestFor passes.
+    const outcome = fillFromAnchor(mask, r.label.anchor, { minPixels: labelBoxPixels(r.label.box) })
     const gla = r.nodeId ? nodeById.get(r.nodeId)?.scheduledM2 ?? null : null
-    const gate = gateSuggestion(outcome, ppm, gla)
+    const gate = gateSuggestion(outcome, ppm, gla, otherLabelAnchors(labels.labels, r.label))
     const fillM2 = gate.fillM2
     return { r, outcome, gla, gate, fillM2, ratio: fillM2 != null && gla ? fillM2 / gla : null }
   })

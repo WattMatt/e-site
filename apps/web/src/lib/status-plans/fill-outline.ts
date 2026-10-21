@@ -6,7 +6,7 @@
  * trace its outline and simplify it. The gate decides whether the result may be offered: only with a
  * scale, a GLA, no leak, and a fill within GATE_BAND of the GLA. Nothing here saves anything.
  */
-import { shapeAreaPx, type Pt } from '@esite/shared/status-plans'
+import { pointInShape, shapeAreaPx, type Box, type Pt } from '@esite/shared/status-plans'
 
 /** Luma below this is ink. Wall lines are black or dark grey; hatching and fills are lighter. */
 export const INK_LUMA = 170
@@ -41,6 +41,31 @@ export type FillOutcome =
   | { kind: 'ok'; pixels: number; grownPixels: number; polygon: number[] }
   | { kind: 'leak' }
   | { kind: 'no_region' }
+
+/** Another detected label on the same sheet: where it sits and what it says. */
+export interface OtherLabelAnchor {
+  x: number
+  y: number
+  tag: string
+}
+
+export interface FillOptions {
+  /**
+   * Regions with fewer pixels are never the winner (default 0). Callers pass the label's own box
+   * area: a pocket smaller than the text that names a shop is a glyph counter, not the shop.
+   */
+  minPixels?: number
+}
+
+/** The fill's floor for a label: its own text box area in pixels (FillOptions.minPixels). */
+export function labelBoxPixels(box: Box): number {
+  return Math.max(0, box.maxX - box.minX) * Math.max(0, box.maxY - box.minY)
+}
+
+/** Every label on the sheet except `self` (by identity), as the gate's `otherAnchors`. */
+export function otherLabelAnchors(labels: readonly { tag: string; anchor: Pt }[], self: object): OtherLabelAnchor[] {
+  return labels.filter((l) => l !== self).map((l) => ({ x: l.anchor.x, y: l.anchor.y, tag: l.tag }))
+}
 
 export type SuggestionGate =
   | { offered: true; fillM2: number; glaM2: number }
@@ -167,16 +192,18 @@ function seedsFor(mask: InkMask, anchor: Pt): number[] {
   return grid.sort((a, b) => a.d2 - b.d2).map((s) => s.idx)
 }
 
-export function fillFromAnchor(mask: InkMask, anchor: Pt): FillOutcome {
+export function fillFromAnchor(mask: InkMask, anchor: Pt, opts: FillOptions = {}): FillOutcome {
   const { width: w, height: h } = mask
+  const minPixels = opts.minPixels ?? 0
   const seeds = seedsFor(mask, anchor)
   if (seeds.length === 0) return { kind: 'no_region' }
 
   const cap = Math.floor(LEAK_CAP * w * h)
   const visited = new Uint8Array(w * h)
-  // Keep the largest region that stays under the cap (spec §4.6). Labels 1..n; a leaked fill keeps
-  // its partial marks under its own label, so it is never chosen, and any later fill that reaches
-  // those marks is a leak too (see scanlineFill).
+  // Keep the largest region that stays under the cap and is at least minPixels (spec §4.6). A region
+  // under minPixels is ignored; if nothing else is left, a leak anywhere makes the outcome a leak.
+  // Labels 1..n; a leaked fill keeps its partial marks under its own label, so it is never chosen,
+  // and any later fill that reaches those marks is a leak too (see scanlineFill).
   // Labels live in a Uint8Array, so the grid must stay within 255 seeds.
   if (seeds.length > 255) throw new Error('SEED_GRID yields more than 255 seeds; the label store is a Uint8Array.')
   let best: Region | null = null
@@ -185,7 +212,7 @@ export function fillFromAnchor(mask: InkMask, anchor: Pt): FillOutcome {
     if (visited[idx]) return
     const region = scanlineFill(mask, visited, i + 1, idx % w, (idx / w) | 0, cap)
     if (region === null) leaked = true
-    else if (best === null || region.count > best.count) best = region
+    else if (region.count >= minPixels && (best === null || region.count > best.count)) best = region
   })
   if (best === null) return leaked ? { kind: 'leak' } : { kind: 'no_region' }
   return outline(mask, visited, best)
@@ -346,15 +373,24 @@ const m2 = (v: number) => v.toFixed(1)
 
 /**
  * Fails closed. The drawing's own failures (leak, no white space) are reported first because no
- * calibration or schedule edit would change them; then scale, then GLA, then the band.
+ * calibration or schedule edit would change them; then scale; then a polygon that encloses another
+ * label's anchor (`otherAnchors`: every OTHER detected label on the sheet), since an outline over
+ * two shops is wrong whatever its area; then GLA, then the band.
  */
-export function gateSuggestion(outcome: FillOutcome, pixelsPerMeter: number | null, glaM2: number | null): SuggestionGate {
+export function gateSuggestion(
+  outcome: FillOutcome,
+  pixelsPerMeter: number | null,
+  glaM2: number | null,
+  otherAnchors: readonly OtherLabelAnchor[],
+): SuggestionGate {
   if (outcome.kind === 'leak') return { offered: false, reason: 'The fill ran into the mall; draw this shop by hand.', fillM2: null }
   if (outcome.kind === 'no_region') return { offered: false, reason: 'No white space at the label.', fillM2: null }
   if (pixelsPerMeter == null || !(pixelsPerMeter > 0)) return { offered: false, reason: 'Calibrate the sheet first.', fillM2: null }
   // The polygon Accept would save (grown region plus any holes), not the ungrown fill: the fill stops
   // at the wall's inside face, and GROW_PX exists to move the measured edge out towards the GLA line.
   const fillM2 = shapeAreaPx(outcome.polygon) / (pixelsPerMeter * pixelsPerMeter)
+  const covered = otherAnchors.find((a) => pointInShape(a.x, a.y, outcome.polygon))
+  if (covered) return { offered: false, reason: `The fill covers SHOP ${covered.tag} as well; draw this shop by hand.`, fillM2 }
   if (glaM2 == null || !(glaM2 > 0)) return { offered: false, reason: 'No GLA on the schedule for this shop.', fillM2 }
   const ratio = fillM2 / glaM2
   if (ratio < GATE_BAND.min || ratio > GATE_BAND.max) {
