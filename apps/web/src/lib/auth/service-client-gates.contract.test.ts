@@ -23,6 +23,7 @@ const GATES = [
 /** Files with no project data, or gated by their caller / a signature. path (relative to src) -> reason */
 const DECLARED: Record<string, string> = {
   'lib/supabase/server.ts': 'defines the clients',
+  'mcp/audit.ts': 'MCP audit RPC; acts only after the bearer user was verified',
   'actions/inspections-certify.actions.ts': 'service read of the project managers to notify, only after the DB guard accepted the caller certifying (00235); returns ids to the dispatcher, never to the client',
   'instrumentation.ts': 'env presence check only',
   'middleware.ts': 'auth infra; reads own user_organisations',
