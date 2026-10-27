@@ -25,12 +25,13 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { redirect } from 'next/navigation'
+import { redirect, unstable_rethrow } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole, requireRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { dispatchNotification } from '@/lib/notifications'
 import { afterWebSubmitOfWhatsAppForm } from '@/lib/whatsapp-forms/after-submit'
+import { submitBlocker } from '@/lib/inspections/submit-check'
 import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -38,7 +39,7 @@ type AnyClient = SupabaseClient<any, any, any>
 
 // ─── helpers ────────────────────────────────────────────────────────────
 
-async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
+async function requirePmOrAbove(supabase: AnyClient, orgId: string, refusal = 'Forbidden: project_manager or above only') {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
@@ -51,7 +52,7 @@ async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
     .single()
 
   if (!data || !['owner', 'admin', 'project_manager'].includes(data.role as string)) {
-    throw new Error('Forbidden: project_manager or above only')
+    throw new Error(refusal)
   }
   return user
 }
@@ -266,16 +267,40 @@ export interface CreateInspectionInput {
   scheduledAt: string | null
 }
 
-export async function createInspectionAction(input: CreateInspectionInput): Promise<string> {
+/** A refusal the person can read. Next.js replaces a thrown server-action message in production. */
+type ActionResult<T> = { ok: true; value: T } | { ok: false; error: string }
+function refused(e: unknown): { ok: false; error: string } {
+  // requireFeature / the role gates redirect (paywall, login) by throwing; let that through.
+  unstable_rethrow(e)
+  const message = (e as { message?: unknown })?.message
+  return { ok: false, error: typeof message === 'string' && message ? message : 'Something went wrong. Reload and try again.' }
+}
+
+export async function createInspectionAction(input: CreateInspectionInput): Promise<ActionResult<string>> {
+  try {
+    return { ok: true, value: await createInspection(input) }
+  } catch (e) {
+    return refused(e)
+  }
+}
+
+async function createInspection(input: CreateInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
-  const user = await requirePmOrAbove(supabase, input.organisationId)
-  await requireFeature(input.organisationId, 'inspections', supabase)
+  // The PROJECT's organisation, never the one the form sent: the form used to send the caller's
+  // first organisation, so a member of two organisations was checked against the wrong one.
+  const organisationId = await getOrgIdForProject(supabase, input.projectId)
+  const user = await requirePmOrAbove(
+    supabase,
+    organisationId,
+    "Only an owner, admin or project manager of this project's organisation can create inspections.",
+  )
+  await requireFeature(organisationId, 'inspections', supabase)
 
   const { data, error } = await supabase
     .schema('inspections')
     .from('inspections')
     .insert({
-      organisation_id: input.organisationId,
+      organisation_id: organisationId,
       project_id: input.projectId,
       template_id: input.templateId,
       target_node_type: input.targetNodeType,
@@ -321,25 +346,39 @@ export interface UpdateInspectionAssignmentInput {
 }
 
 /**
- * Reassign an existing inspection's Inspector + Verifier. Allowed at ANY status
- * (per design 2026-06-02). PM+ only — identical gate to createInspectionAction.
- * Notifies the new Inspector only when they actually changed and aren't the actor.
+ * Reassign an existing inspection's Inspector + Verifier while it is open. PM+ only (the
+ * transition guard, 00235, decides). On a separate-verifier template the database refuses a
+ * verifier who is the inspector or has already answered (00250); that sentence is returned.
+ * Notifies the new Inspector when they changed, and a new Verifier when the inspection is
+ * already waiting on them; never the actor.
  */
 export async function updateInspectionAssignmentAction(
   input: UpdateInspectionAssignmentInput,
-): Promise<void> {
+): Promise<ActionResult<void>> {
+  try {
+    await updateInspectionAssignment(input)
+    return { ok: true, value: undefined }
+  } catch (e) {
+    return refused(e)
+  }
+}
+
+async function updateInspectionAssignment(input: UpdateInspectionAssignmentInput): Promise<void> {
   const supabase = (await createClient()) as AnyClient
   const user = await requireProjectPmOrAbove(supabase, input.projectId)
   await requireFeature(input.organisationId, 'inspections', supabase)
 
-  // Read the current assignee to decide whether a notification is warranted.
+  // Read the current assignment to decide which notifications are warranted.
   const { data: current } = await supabase
     .schema('inspections')
     .from('inspections')
-    .select('assigned_to_id')
+    .select('assigned_to_id, verifier_id, status, target_label')
     .eq('id', input.inspectionId)
     .single()
-  const previousAssignee = (current as { assigned_to_id: string | null } | null)?.assigned_to_id ?? null
+  const cur = current as
+    | { assigned_to_id: string | null; verifier_id: string | null; status: string | null; target_label: string | null }
+    | null
+  const previousAssignee = cur?.assigned_to_id ?? null
 
   const { error } = await supabase
     .schema('inspections')
@@ -359,6 +398,23 @@ export async function updateInspectionAssignmentAction(
       body: 'You are now the inspector on this inspection.',
       route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
       type: 'inspection_assigned',
+      entityType: 'inspection',
+      entityId: input.inspectionId,
+    })
+  }
+
+  // A verifier swapped in after submit would otherwise never hear that it is waiting on them.
+  if (
+    cur?.status === 'awaiting_verification' &&
+    input.verifierId !== cur.verifier_id &&
+    input.verifierId !== user.id
+  ) {
+    await dispatchNotification({
+      userIds: [input.verifierId],
+      title: 'Inspection awaiting your verification',
+      body: `"${cur.target_label ?? 'inspection'}" is ready for sign-off. You are now its verifier.`,
+      route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+      type: 'inspection_awaiting_verification',
       entityType: 'inspection',
       entityId: input.inspectionId,
     })
@@ -531,11 +587,30 @@ export async function deleteRepeatingGroupEntryAction(input: {
  * Move an inspection from in_progress (or re-inspect_required) to
  * awaiting_verification and notify the assigned verifier.
  */
+/**
+ * Returns { ok, error } rather than throwing: Next.js replaces a thrown server-action message with
+ * a generic sentence in production, so a refusal would never reach the person.
+ */
 export async function submitInspectionAction(
   inspectionId: string,
   projectId: string,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await submitInspection(inspectionId, projectId)
+    return { ok: true }
+  } catch (e) {
+    unstable_rethrow(e)
+    const message = (e as { message?: unknown })?.message
+    return { ok: false, error: typeof message === 'string' && message ? message : 'Submitting failed. Reload and try again.' }
+  }
+}
+
+async function submitInspection(inspectionId: string, projectId: string): Promise<void> {
   const supabase = (await createClient()) as AnyClient
+
+  // The browser runs the same completeness check; this one cannot be skipped by a stale tab.
+  const blocker = await submitBlocker(supabase, inspectionId)
+  if (blocker) throw new Error(blocker)
 
   const { data: moved, error } = await supabase
     .schema('inspections')

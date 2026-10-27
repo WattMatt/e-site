@@ -52,7 +52,7 @@ export async function listTemplatesAction(organisationId: string) {
     .schema('inspections')
     .from('templates')
     .select(
-      'id, template_id, version, name, description, category, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at',
+      'id, template_id, version, name, description, category, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at, requires_separate_verifier:schema_json->requires_separate_verifier',
     )
     .eq('organisation_id', organisationId)
     .order('template_id', { ascending: true })
@@ -70,6 +70,8 @@ export async function listTemplatesAction(organisationId: string) {
     node_subtypes: string[] | null
     deliverable_type: 'coc' | 'inspection_only' | 'factory_test'
     is_active: boolean
+    /** The template's own flag, when it sets one; see requiresSeparateVerifier(). */
+    requires_separate_verifier?: unknown
     created_at: string
     updated_at: string
   }>

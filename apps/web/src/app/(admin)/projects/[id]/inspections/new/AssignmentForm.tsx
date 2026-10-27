@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createInspectionAction } from '@/actions/inspections.actions'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { requiresSeparateVerifier } from '@esite/shared'
 
 type Node = { type: 'board' | 'source'; id: string; label: string }
 type Member = { user_id: string; full_name: string | null; email: string | null; role: string | null }
@@ -13,6 +14,7 @@ type Template = {
   name: string
   deliverable_type: string
   applies_to_node_types: string[]
+  requires_separate_verifier?: unknown
 }
 
 interface Props {
@@ -35,6 +37,8 @@ const FIELD_LABEL: React.CSSProperties = {
   letterSpacing: '0.06em',
   marginBottom: 6,
 }
+
+const FIELD_HELP: React.CSSProperties = { fontSize: 11, color: 'var(--c-text-dim)', marginTop: 6, marginBottom: 0 }
 
 const FIELD_INPUT: React.CSSProperties = {
   width: '100%',
@@ -85,14 +89,22 @@ export default function AssignmentForm({
       )
     : nodes
 
-  const eligibleVerifiers = members.filter((m) => m.role && VERIFIER_ROLES.includes(m.role))
+  // On a CoC / factory-test template (or one that asks for it) the verifier must be someone other
+  // than the inspector; the database refuses it (00250), so the form does not offer it.
+  const separate = selectedTemplate
+    ? requiresSeparateVerifier(selectedTemplate.deliverable_type, selectedTemplate.requires_separate_verifier)
+    : false
+  const eligibleVerifiers = members.filter(
+    (m) => m.role && VERIFIER_ROLES.includes(m.role) && !(separate && assignedToId && m.user_id === assignedToId),
+  )
+  const verifierStillValid = !verifierId || eligibleVerifiers.some((m) => m.user_id === verifierId)
 
   async function onSubmit() {
     setError(null)
     setBusy(true)
     try {
       if (!templateId) throw new Error('Pick a template')
-      if (!verifierId) throw new Error('Assign a verifier')
+      if (!verifierId || !verifierStillValid) throw new Error('Assign a verifier')
 
       let targetNodeType: 'board' | 'source' | 'adhoc' = 'adhoc'
       let targetNodeId: string | null = null
@@ -112,7 +124,7 @@ export default function AssignmentForm({
 
       if (!targetLabel) throw new Error('Target label required')
 
-      const id = await createInspectionAction({
+      const res = await createInspectionAction({
         organisationId,
         projectId,
         templateId,
@@ -124,7 +136,8 @@ export default function AssignmentForm({
         verifierId,
         scheduledAt: scheduledAt || null,
       })
-      router.push(`/projects/${projectId}/inspections/${id}`)
+      if (!res.ok) throw new Error(res.error)
+      router.push(`/projects/${projectId}/inspections/${res.value}`)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -226,7 +239,7 @@ export default function AssignmentForm({
 
           <div>
             <label htmlFor="assigned_to" style={FIELD_LABEL}>
-              ASSIGNED TO (OPTIONAL)
+              INSPECTOR (OPTIONAL)
             </label>
             <select
               id="assigned_to"
@@ -234,14 +247,17 @@ export default function AssignmentForm({
               value={assignedToId}
               onChange={(e) => setAssignedToId(e.target.value)}
             >
-              <option value="">— unassigned (anyone can pick up) —</option>
-              {members.map((m) => (
+              <option value="">— unassigned (anyone on the project can pick it up) —</option>
+              {/* A client viewer can read but never answer (RLS), so they are not offered as inspector:
+                    the inspection would be assigned to someone who can never start it. */}
+                {members.filter((m) => m.role !== 'client_viewer').map((m) => (
                 <option key={m.user_id} value={m.user_id}>
                   {labelFor(m)}
                   {m.role ? ` (${m.role})` : ''}
                 </option>
               ))}
             </select>
+            <p style={FIELD_HELP}>The person who goes to site and fills in the inspection.</p>
           </div>
 
           <div>
@@ -251,7 +267,7 @@ export default function AssignmentForm({
             <select
               id="verifier"
               style={FIELD_INPUT}
-              value={verifierId}
+              value={verifierStillValid ? verifierId : ''}
               onChange={(e) => setVerifierId(e.target.value)}
             >
               <option value="">— select —</option>
@@ -261,6 +277,12 @@ export default function AssignmentForm({
                 </option>
               ))}
             </select>
+            <p style={FIELD_HELP}>
+              Checks the submitted inspection, then certifies it or sends it back. Only this person can do
+              that, and they are told when it is submitted.
+              {separate &&
+                ' This template needs a separate verifier: it cannot be the inspector, and the verifier cannot fill in answers.'}
+            </p>
             {eligibleVerifiers.length === 0 && (
               <p style={{ fontSize: 11, color: 'var(--c-red)', marginTop: 6 }}>
                 No project member with verifier-eligible role (owner / admin / project_manager).

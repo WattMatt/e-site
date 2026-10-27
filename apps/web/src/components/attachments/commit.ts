@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AttachmentEntityType, StagedAttachment } from './types'
+import { prepareIfImage } from '@/lib/image/prepare'
 
 export interface CommitArgs {
   supabase: SupabaseClient<any>
@@ -26,7 +27,9 @@ export async function commitStagedAttachments({
   if (staged.length === 0) return
 
   for (let i = 0; i < staged.length; i++) {
-    const item = staged[i]!
+    const staged_ = staged[i]!
+    // A photo picked from a phone is stored as JPEG (prepare.ts); documents and markups as they are.
+    const item = staged_.kind === 'file' ? { ...staged_, file: await prepareIfImage(staged_.file) } : staged_
     const safeName = sanitise(
       item.kind === 'file' ? item.file.name : item.fileName,
     )

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { extensionForImage, prepareImageUpload } from '@/lib/image/compress'
+import { compressImage } from '@/lib/image/compress'
 import type { AnnotationData } from '@/components/attachments/types'
 import type { SceneGraph } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/MarkupCanvas'
 
@@ -156,12 +156,12 @@ export async function uploadQcEntryPhotos(
   const baseSort = await nextSortOrder(supabase, opts.entryId)
   for (let i = 0; i < files.length; i++) {
     const raw = files[i]
-    const file = await prepareImageUpload(raw)
+    const file = await compressImage(raw)
     if (file.size > QC_PHOTO_MAX_BYTES) {
       throw new Error(`"${raw.name}" exceeds the 20 MB limit.`)
     }
     const seq = baseSort + i
-    const ext = extensionForImage(file)
+    const ext = file.name.split('.').pop() ?? 'jpg'
     await uploadAndInsert(supabase, opts, {
       body: file,
       contentType: file.type,

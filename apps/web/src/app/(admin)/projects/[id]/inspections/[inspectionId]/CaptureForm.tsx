@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { evaluateInspection, isFieldVisible } from '@esite/shared'
-import type { Template, Response as InspectionResponse, Section, SubSection, Field } from '@esite/shared'
+import { evaluateInspection, isFieldVisible, describeMissing } from '@esite/shared'
+import type { Template, Response as InspectionResponse, Field } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -11,6 +11,7 @@ import { useArmedConfirm } from '@/lib/solar/useArmedConfirm'
 import { upsertResponseAction, submitInspectionAction } from '@/actions/inspections.actions'
 import FieldRenderer from './FieldRenderer'
 import CertifyModal from './CertifyModal'
+import { PhotoTallyContext, type PhotoTally, type CapturedSignature } from './fields/photo-tally'
 
 type Mode = 'capture' | 'preview'
 
@@ -20,8 +21,11 @@ interface Props {
   template: Template
   initialResponses: InspectionResponse[]
   initialPhotos?: { section_id: string; field_id: string }[]
+  initialSignatures?: CapturedSignature[]
   status?: string
   verifierId?: string | null
+  /** The template needs a verifier who did not fill it in (00250): the verifier gets no flip mode. */
+  separateVerifier?: boolean
   currentUserId: string | null
   mode: Mode
   readOnly?: boolean
@@ -33,16 +37,38 @@ export default function CaptureForm({
   template,
   initialResponses,
   initialPhotos,
+  initialSignatures,
   status,
   verifierId,
+  separateVerifier = false,
   currentUserId,
   mode,
   readOnly: readOnlyProp,
 }: Props) {
   const [responses, setResponses] = useState<InspectionResponse[]>(initialResponses)
-  // Photos are loaded server-side (no client-side mutation surface in this commit).
-  // signature_required validation is deferred — see page.tsx comment above the query.
-  const photos = initialPhotos ?? []
+  // Loaded on the server, then kept current by every photo/file/signature field through
+  // PhotoTallyContext, so section progress and the Submit check see an upload without a reload.
+  const [photos, setPhotos] = useState<{ section_id: string; field_id: string }[]>(initialPhotos ?? [])
+  const [signatures, setSignatures] = useState<CapturedSignature[]>(initialSignatures ?? [])
+  const photoTally = useMemo<PhotoTally>(
+    () => ({
+      signatures,
+      // The upload route replaces an earlier signature on the same field, so do the same here.
+      signed: (sig) =>
+        setSignatures((prev) => [
+          ...prev.filter((x) => !(x.section_id === sig.section_id && x.field_id === sig.field_id)),
+          sig,
+        ]),
+      added: (section_id, field_id) => setPhotos((prev) => [...prev, { section_id, field_id }]),
+      removed: (section_id, field_id) =>
+        setPhotos((prev) => {
+          const i = prev.findIndex((p) => p.section_id === section_id && p.field_id === field_id)
+          return i < 0 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]
+        }),
+    }),
+    [signatures],
+  )
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string>(template.sections[0]?.section_id ?? '')
   const [savingFields, setSavingFields] = useState<Set<string>>(new Set())
   const [showCertify, setShowCertify] = useState(false)
@@ -57,43 +83,112 @@ export default function CaptureForm({
   const isCertifiedOrAbandoned = status === 'certified' || status === 'abandoned'
   const isVerifier =
     currentUserId !== null && verifierId === currentUserId && status === 'awaiting_verification'
+  // Flipping an answer is an answer: on a separate-verifier template it would be recorded as the
+  // verifier's contribution and bar them from certifying (certification_blockers, 00235).
+  const canFlip = isVerifier && !separateVerifier
   const readOnly =
     readOnlyProp || isPreview || isCertifiedOrAbandoned || status === 'awaiting_verification'
 
   const evaluation = useMemo(
-    () => evaluateInspection(template, responses, { photos }),
-    [template, responses, photos],
+    () => evaluateInspection(template, responses, { photos, signatures }),
+    [template, responses, photos, signatures],
   )
 
-  const sectionStats = useMemo(() => {
-    const stats = new Map<string, { answered: number; total: number; missing: number }>()
-    const tally = (s: Section, f: Field, subsection: SubSection | undefined, acc: { total: number; answered: number; missing: number }) => {
-      if (f.type === 'header' || f.type === 'computed') return
-      if (!isFieldVisible(f, responses, { section: s, subsection })) return
-      acc.total++
-      const r = responses.find((rr) => rr.section_id === s.section_id && rr.field_id === f.field_id)
-      const has =
-        r &&
-        (r.value_bool != null ||
-          r.value_number != null ||
-          (r.value_text?.length ?? 0) > 0 ||
-          (r.value_array?.length ?? 0) > 0)
-      if (has) acc.answered++
-      else if (f.required) acc.missing++
-    }
-    for (const s of template.sections) {
-      const acc = { total: 0, answered: 0, missing: 0 }
-      for (const f of s.fields ?? []) tally(s, f, undefined, acc)
-      for (const ss of s.subsections ?? []) {
-        for (const f of ss.fields) tally(s, f, ss, acc)
-      }
-      stats.set(s.section_id, acc)
-    }
-    return stats
-  }, [template, responses])
+  // Every gap, named, with what completes it: shown in the summary so "Submit refuses a finished
+  // form" can never happen silently.
+  const missingItems = useMemo(
+    () => describeMissing(template, evaluation.missingRequired, { photos, signatures }),
+    [template, evaluation.missingRequired, photos, signatures],
+  )
+  const jumpTo = useCallback((sectionId: string, fieldId: string) => {
+    setActiveSection(sectionId)
+    // The section renders on the next paint; look for the entry after it.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`field-${sectionId}-${fieldId}`) ?? document.getElementById(`field-${sectionId}-${fieldId.split('[')[0]}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el?.classList.add('ring-required')
+      setTimeout(() => el?.classList.remove('ring-required'), 2500)
+    })
+  }, [])
+
+  // One count for the rail and the summary: photo, file and signature fields count as answered
+  // once uploaded (the rail used to count typed answers only, so photo sections read 0/4).
+  const sectionStats = evaluation.sectionStats
+
+  // Saves waiting out their debounce, and saves on the wire. Submit flushes both, so it never
+  // races the last answer (the server checks completeness against what is saved).
+  const pendingSaves = useRef<Map<string, () => Promise<void>>>(new Map())
+  const inflight = useRef<Set<Promise<void>>>(new Set())
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // Template defaults shown on open but not yet written: writing them makes the viewer a
+  // contributor (response_history), which on a separate-verifier template bars them from
+  // verifying, so they are written only with the person's first real edit or at Submit.
+  const deferredDefaults = useRef<Array<{ sectionId: string; fieldId: string; patch: Partial<InspectionResponse> }>>([])
+
+  const startSave = useCallback((key: string) => {
+    const run = pendingSaves.current.get(key)
+    if (!run) return
+    pendingSaves.current.delete(key)
+    const t = debouncers.current.get(key)
+    if (t) clearTimeout(t)
+    debouncers.current.delete(key)
+    const p = run().finally(() => inflight.current.delete(p))
+    inflight.current.add(p)
+  }, [])
+
+  const scheduleSave = useCallback(
+    (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>) => {
+      const key = `${sectionId}:${fieldId}`
+      pendingSaves.current.set(key, async () => {
+        setSavingFields((prev) => new Set(prev).add(key))
+        try {
+          await upsertResponseAction({
+            inspectionId,
+            sectionId,
+            fieldId,
+            value: {
+              value_bool: patch.value_bool ?? null,
+              value_number: patch.value_number ?? null,
+              value_text: patch.value_text ?? null,
+              value_array: patch.value_array ?? null,
+              value_json: patch.value_json ?? null,
+              pass_state: patch.pass_state,
+              fail_reason: patch.fail_reason ?? null,
+            },
+          })
+        } catch (err) {
+          console.error('Autosave failed', err)
+          setSaveError('An answer did not save. Check your connection, then change it again.')
+        } finally {
+          setSavingFields((prev) => {
+            const n = new Set(prev)
+            n.delete(key)
+            return n
+          })
+        }
+      })
+      const existing = debouncers.current.get(key)
+      if (existing) clearTimeout(existing)
+      debouncers.current.set(key, setTimeout(() => startSave(key), 800))
+    },
+    [inspectionId, startSave],
+  )
+
+  const writeDeferredDefaults = useCallback(() => {
+    const due = deferredDefaults.current
+    deferredDefaults.current = []
+    for (const d of due) scheduleSave(d.sectionId, d.fieldId, d.patch)
+  }, [scheduleSave])
+
+  /** Writes everything still pending and waits for it. */
+  const flushSaves = useCallback(async () => {
+    writeDeferredDefaults()
+    for (const key of [...pendingSaves.current.keys()]) startSave(key)
+    await Promise.all([...inflight.current])
+  }, [startSave, writeDeferredDefaults])
 
   const updateResponse = useCallback(
-    (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>) => {
+    (sectionId: string, fieldId: string, patch: Partial<InspectionResponse>, persist = true) => {
       setResponses((prev) => {
         const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
         if (idx >= 0) {
@@ -105,50 +200,22 @@ export default function CaptureForm({
       })
 
       if (isPreview) return
-
-      const key = `${sectionId}:${fieldId}`
-      const existing = debouncers.current.get(key)
-      if (existing) clearTimeout(existing)
-
-      debouncers.current.set(
-        key,
-        setTimeout(async () => {
-          setSavingFields((prev) => new Set(prev).add(key))
-          try {
-            await upsertResponseAction({
-              inspectionId,
-              sectionId,
-              fieldId,
-              value: {
-                value_bool: patch.value_bool ?? null,
-                value_number: patch.value_number ?? null,
-                value_text: patch.value_text ?? null,
-                value_array: patch.value_array ?? null,
-                value_json: patch.value_json ?? null,
-                pass_state: patch.pass_state,
-                fail_reason: patch.fail_reason ?? null,
-              },
-            })
-          } catch (err) {
-            console.error('Autosave failed', err)
-          } finally {
-            setSavingFields((prev) => {
-              const n = new Set(prev)
-              n.delete(key)
-              return n
-            })
-          }
-        }, 800),
-      )
+      if (!persist) {
+        deferredDefaults.current.push({ sectionId, fieldId, patch })
+        return
+      }
+      writeDeferredDefaults()
+      scheduleSave(sectionId, fieldId, patch)
     },
-    [inspectionId, isPreview],
+    [isPreview, scheduleSave, writeDeferredDefaults],
   )
 
-  // Seed template default_value into responses once on mount, so a field's
-  // default is both shown AND persisted to the DB (the fill widgets only show
-  // defaults; without this, an untouched default never lands in inspections.
-  // responses). Repeating-group sub-fields are seeded per entry by their own
-  // widgets, not here. Runs once; skipped in read-only/preview.
+  // Seed template default_value into responses once on mount, so a field's default is shown and
+  // counted, and later persisted to the DB (the fill widgets only show defaults; without this an
+  // untouched default never lands in inspections.responses). It is written with the person's first
+  // real edit or at Submit, never merely by opening the page (see deferredDefaults).
+  // Repeating-group sub-fields are seeded per entry by their own widgets, not here.
+  // Runs once; skipped in read-only/preview.
   const seededDefaultsRef = useRef(false)
   useEffect(() => {
     if (seededDefaultsRef.current) return
@@ -161,9 +228,9 @@ export default function CaptureForm({
       if (exists) return
       if (f.type === 'number') {
         if (typeof f.default_value !== 'number') return
-        updateResponse(sectionId, f.field_id, { value_number: f.default_value })
+        updateResponse(sectionId, f.field_id, { value_number: f.default_value }, false)
       } else {
-        updateResponse(sectionId, f.field_id, { value_text: String(f.default_value) })
+        updateResponse(sectionId, f.field_id, { value_text: String(f.default_value) }, false)
       }
     }
     for (const s of template.sections) {
@@ -176,11 +243,10 @@ export default function CaptureForm({
   const onSubmit = async () => {
     if (evaluation.missingRequired.length > 0) {
       const first = evaluation.missingRequired[0]
-      setActiveSection(first.sectionId)
-      const el = document.getElementById(`field-${first.sectionId}-${first.fieldId}`)
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el?.classList.add('ring-required')
-      setTimeout(() => el?.classList.remove('ring-required'), 2500)
+      const n = evaluation.missingRequired.length
+      const where = template.sections.find((x) => x.section_id === first.sectionId)?.title ?? first.sectionId
+      setSubmitError(`${n} required ${n === 1 ? 'item is' : 'items are'} still missing (listed under Still required). The first is in "${where}".`)
+      jumpTo(first.sectionId, first.fieldId)
       return
     }
     if (!projectId) return
@@ -190,8 +256,14 @@ export default function CaptureForm({
     }
     submitConfirm.disarm()
     setSubmitting(true)
+    setSubmitError(null)
     try {
-      await submitInspectionAction(inspectionId, projectId)
+      await flushSaves()
+      const res = await submitInspectionAction(inspectionId, projectId)
+      if (!res.ok) {
+        setSubmitError(res.error)
+        return
+      }
       router.refresh()
     } finally {
       setSubmitting(false)
@@ -208,6 +280,7 @@ export default function CaptureForm({
         : 'warning'
 
   return (
+    <PhotoTallyContext.Provider value={photoTally}>
     <div className="stack-below-lg"
       style={{
         display: 'grid',
@@ -219,7 +292,7 @@ export default function CaptureForm({
       {/* Left rail — section nav */}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, position: 'sticky', top: 16 }}>
         {template.sections.map((s) => {
-          const st = sectionStats.get(s.section_id) ?? { answered: 0, total: 0, missing: 0 }
+          const st = sectionStats[s.section_id] ?? { answered: 0, total: 0, missing: 0 }
           const isActive = activeSection === s.section_id
           return (
             <button
@@ -289,8 +362,8 @@ export default function CaptureForm({
                       response={response}
                       inspectionId={inspectionId}
                       sectionId={section.section_id}
-                      readOnly={readOnly && !isVerifier}
-                      verifierFlipMode={isVerifier}
+                      readOnly={readOnly && !canFlip}
+                      verifierFlipMode={canFlip}
                       onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                       allResponses={responses}
                       onUpsert={(fid, patch) => updateResponse(section.section_id, fid, patch)}
@@ -347,8 +420,8 @@ export default function CaptureForm({
                             response={response}
                             inspectionId={inspectionId}
                             sectionId={section.section_id}
-                            readOnly={readOnly && !isVerifier}
-                            verifierFlipMode={isVerifier}
+                            readOnly={readOnly && !canFlip}
+                            verifierFlipMode={canFlip}
                             onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                           />
                           {savingFields.has(key) && (
@@ -389,9 +462,24 @@ export default function CaptureForm({
               <div style={{ color: 'var(--c-text-mid)' }}>
                 Answered: {evaluation.answeredFieldCount} / {evaluation.visibleFieldCount}
               </div>
-              {evaluation.missingRequired.length > 0 && (
-                <div style={{ color: 'var(--c-red)' }}>
-                  Required missing: {evaluation.missingRequired.length}
+              {missingItems.length > 0 && (
+                <div>
+                  <div style={{ color: 'var(--c-red)', marginBottom: 4 }}>Still required: {missingItems.length}</div>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {missingItems.map((m) => (
+                      <li key={`${m.sectionId}:${m.fieldId}`}>
+                        <button
+                          type="button"
+                          onClick={() => jumpTo(m.sectionId, m.fieldId)}
+                          style={{ all: 'unset', cursor: 'pointer', display: 'block', fontSize: 12, color: 'var(--c-text)' }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{m.label}</span>
+                          <span style={{ color: 'var(--c-red)' }}> · {m.need}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-dim)' }}>{m.sectionTitle}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
               {evaluation.failedFields.length > 0 && (
@@ -403,7 +491,7 @@ export default function CaptureForm({
           </CardBody>
         </Card>
 
-        {!isPreview && !isCertifiedOrAbandoned && !isVerifier && (
+        {!isPreview && !isCertifiedOrAbandoned && !isVerifier && !readOnlyProp && (
           <Button
             onClick={onSubmit}
             disabled={status === 'awaiting_verification' || submitting}
@@ -417,6 +505,16 @@ export default function CaptureForm({
                   ? 'Tap again to submit'
                   : 'Submit for verification'}
           </Button>
+        )}
+        {saveError && (
+          <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--c-red)' }}>
+            {saveError}
+          </p>
+        )}
+        {submitError && (
+          <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--c-red)' }}>
+            {submitError}
+          </p>
         )}
 
         {isVerifier && (
@@ -435,5 +533,6 @@ export default function CaptureForm({
         />
       )}
     </div>
+    </PhotoTallyContext.Provider>
   )
 }

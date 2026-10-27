@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import SignatureCanvas from 'react-signature-canvas'
 import { Button } from '@/components/ui/Button'
+import { dataUrlToBlob } from '@/lib/image/data-url'
 
 const FIELD_STYLE: React.CSSProperties = {
   width: '100%',
@@ -21,12 +22,15 @@ export default function SignatureModal({
   fieldId,
   sectionId,
   onClose,
+  onSaved,
 }: {
   inspectionId: string
   role: 'inspector' | 'verifier' | 'client' | 'witness'
   fieldId?: string
   sectionId?: string
   onClose: () => void
+  /** Called once the signature is stored, with the signatory's name. */
+  onSaved?: (signatoryName: string) => void
 }) {
   const ref = useRef<SignatureCanvas>(null)
   const [name, setName] = useState('')
@@ -48,7 +52,9 @@ export default function SignatureModal({
     setSaving(true)
     try {
       const dataUrl = ref.current!.toDataURL('image/png')
-      const blob = await (await fetch(dataUrl)).blob()
+      // Decoded in memory: fetch(dataUrl) is refused by the CSP (connect-src has no data:) and
+      // made every signature save fail with "Failed to fetch" (see lib/image/data-url.ts).
+      const blob = dataUrlToBlob(dataUrl)
       const fd = new FormData()
       fd.append('file', blob, 'signature.png')
       fd.append('inspectionId', inspectionId)
@@ -66,6 +72,7 @@ export default function SignatureModal({
         const t = await res.text()
         throw new Error(`Save failed (HTTP ${res.status}): ${t}`)
       }
+      onSaved?.(name.trim())
       onClose()
     } catch (e) {
       setError((e as Error).message)

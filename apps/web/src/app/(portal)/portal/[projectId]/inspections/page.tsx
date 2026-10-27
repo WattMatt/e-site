@@ -4,7 +4,7 @@ import { PortalCard, EmptyState, StatusBadge, thStyle, tdStyle, fmtDate } from '
 
 export const dynamic = 'force-dynamic'
 
-/** Inspection outcomes summary — curated service read (RLS blocks client JWT). */
+/** Certified inspections only — curated service read; see listPortalInspections. */
 export default async function PortalInspectionsPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params
   const inspections = await listPortalInspections(projectId)
@@ -13,7 +13,7 @@ export default async function PortalInspectionsPage({ params }: { params: Promis
   return (
     <PortalCard>
       {inspections.length === 0 ? (
-        <EmptyState label="No inspections recorded on this site." />
+        <EmptyState label="No certified inspections on this site yet." />
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>

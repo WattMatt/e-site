@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, snagService, rfiService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
+import { projectService, snagService, rfiService, formatDate, formatZAR, COST_VIEW_ROLES, getInspectionOverview } from '@esite/shared'
+import InspectionsOverviewPanel from '@/components/inspections/InspectionsOverviewPanel'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 interface Props {
@@ -42,12 +43,16 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
 
-  const [project, snagStats, snags, rfis] = await Promise.all([
+  const { data: { user } } = await supabase.auth.getUser()
+  const [project, snagStats, snags, rfis, inspections] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
     snagService.getStats(supabase as any, id),
     snagService.list(supabase as any, id).catch(() => []),
     rfiService.list(supabase as any, id).catch(() => []),
+    getInspectionOverview(supabase as any, { projectId: id }, user?.id ?? null),
   ])
+  const c = inspections.counts
+  const hasInspections = c.open + c.awaiting + c.sentBack + c.certified > 0
 
   if (!project) notFound()
 
@@ -84,7 +89,7 @@ export default async function ProjectDetailPage({ params }: Props) {
           <div className="kpi-value">{snagStats.open + snagStats.in_progress}</div>
         </div>
         <div className={`kpi-card ${snagStats.pending_sign_off > 0 ? 'kpi-warning' : ''}`}>
-          <div className="kpi-label">Pending Sign-off</div>
+          <div className="kpi-label">Snags Pending Sign-off</div>
           <div className="kpi-value">{snagStats.pending_sign_off}</div>
         </div>
         <div className="kpi-card kpi-success">
@@ -96,6 +101,12 @@ export default async function ProjectDetailPage({ params }: Props) {
           <div className="kpi-value">{openRfis}</div>
         </div>
       </div>
+
+      {hasInspections && (
+        <div className="animate-fadeup animate-fadeup-1">
+          <InspectionsOverviewPanel overview={inspections} projectId={id} />
+        </div>
+      )}
 
       {/* Two-column: details + recent snags */}
       <div

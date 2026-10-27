@@ -10,6 +10,7 @@ import {
 import type {
   AnnotationData, AnnotationShape, AnnotationTool, AnnotationColor,
 } from './types'
+import { dataUrlToBlob } from '@/lib/image/data-url'
 
 // react-konva imports must be client-only. Next 15 RSC can't bundle them.
 const Stage   = dynamic(() => import('react-konva').then(m => m.Stage),   { ssr: false })
@@ -183,7 +184,8 @@ export function FloorPlanAnnotator({
     setSaving(true)
     try {
       const dataUrl = stageRef.current.toDataURL({ mimeType: 'image/png', pixelRatio: 2 })
-      const blob = await (await fetch(dataUrl)).blob()
+      // Decoded in memory: fetch(dataUrl) is refused by the CSP (connect-src has no data:).
+      const blob = dataUrlToBlob(dataUrl)
       const annotationData: AnnotationData = {
         version: 1,
         canvas,

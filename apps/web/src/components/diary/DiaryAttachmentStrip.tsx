@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { DiaryAttachment } from '@esite/shared'
 import { deleteDiaryAttachmentAction } from '@/actions/diary.actions'
 import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 /** A diary attachment plus a signed URL generated server-side. */
 export interface DiaryAttachmentView extends DiaryAttachment {
@@ -142,7 +143,7 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
           </div>
         ))}
         {canEdit && ([
-          { label: '📷 Photo', accept: 'image/*' },
+          { label: '📷 Photo', accept: PHOTO_ACCEPT },
           { label: '🎥 Video', accept: 'video/*' },
           { label: '📄 Doc', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
         ] as const).map(ctrl => (

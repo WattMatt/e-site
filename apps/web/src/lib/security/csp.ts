@@ -46,7 +46,8 @@ export function buildContentSecurityPolicy({
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${posthog.assetsHost} https://js.sentry-cdn.com`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com",
+    // Stored photos are shown from signed storage URLs; locally that is the http 127.0.0.1 stack.
+    `img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com${dev ? ' http://127.0.0.1:* http://localhost:*' : ''}`,
     "font-src 'self' data:",
     `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co ${posthogConnectSrc}${sentryIngestOrigin ? ` ${sentryIngestOrigin}` : ''} https://api.paystack.co https://tiles.openfreemap.org${
       // The local Supabase stack (sign-in, storage uploads) is http on 127.0.0.1/localhost.

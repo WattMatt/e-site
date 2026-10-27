@@ -146,6 +146,16 @@ describe('column allow-lists', () => {
     expect(cols).toContain('status')
   })
 
+  it('inspections: certified only, the rule RLS gives a client viewer (00235)', async () => {
+    getOrgContextMock.mockResolvedValueOnce(clientCtx)
+    const gate = makeQueryClient({ id: 'pm-row' })
+    const query = makeQueryClient([])
+    createServiceClientMock.mockReturnValueOnce(gate.client).mockReturnValueOnce(query.client)
+    await listPortalInspections(PROJECT_ID)
+    expect(query.chain.eq).toHaveBeenCalledWith('project_id', PROJECT_ID)
+    expect(query.chain.eq).toHaveBeenCalledWith('status', 'certified')
+  })
+
   it('gcr report list selects metadata only', async () => {
     getOrgContextMock.mockResolvedValueOnce(clientCtx)
     const gate = makeQueryClient({ id: 'pm-row' })

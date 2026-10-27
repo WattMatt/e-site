@@ -17,7 +17,7 @@
  * with unreachable objects while leaving the table empty.
  */
 
-import { extensionForImage, prepareImageUpload } from '@/lib/image/compress'
+import { compressImage } from '@/lib/image/compress'
 import { storageKeySegment } from '@esite/shared'
 import type { SiteFormSignatureBlock } from '@esite/shared'
 
@@ -73,13 +73,14 @@ export async function uploadFormPhoto(
     caption?: string | null
   },
 ): Promise<{ id: string } | { error: string }> {
+  // Always a JPEG; a photo that cannot be read is refused with a sentence (prepare.ts).
   let prepared: File
   try {
-    prepared = await prepareImageUpload(opts.file)
+    prepared = await compressImage(opts.file)
   } catch (e) {
     return { error: (e as Error).message }
   }
-  const ext = extensionForImage(prepared)
+  const ext = 'jpg'
 
   // The field id can contain a repeating-group suffix like `circuits[0].photo`,
   // which is not safe in a storage key. Flatten it for the path only; the row

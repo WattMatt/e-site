@@ -53,7 +53,7 @@ describe('AssignmentEditor', () => {
   })
 
   it('calls updateInspectionAssignmentAction on Save', async () => {
-    updateMock.mockResolvedValue(undefined)
+    updateMock.mockResolvedValue({ ok: true, value: undefined })
     render(<AssignmentEditor {...baseProps} canEdit={true} />)
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -74,4 +74,26 @@ describe('AssignmentEditor', () => {
       rerender(<AssignmentEditor {...baseProps} canEdit={false} />)
     }).not.toThrow()
   })
+
+  it('shows the database refusal as a sentence', async () => {
+    updateMock.mockResolvedValue({ ok: false, error: 'Alice has already filled in answers on this inspection, so they cannot verify it.' })
+    render(<AssignmentEditor {...baseProps} canEdit />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    })
+    expect(screen.getByText(/already filled in answers/)).toBeTruthy()
+    expect(refreshMock).not.toHaveBeenCalled()
+  })
+
+  it('on a separate-verifier template, will not offer someone who entered answers as verifier', () => {
+    render(<AssignmentEditor {...baseProps} verifierId="u-carol" canEdit separateVerifier contributorIds={['u-alice']}
+      members={[...MEMBERS, { user_id: 'u-carol', full_name: 'Carol', email: null, role: 'admin' }]} />)
+    const verifierSelect = screen.getByLabelText(/VERIFIER/) as HTMLSelectElement
+    const opt = (re: RegExp) => [...verifierSelect.options].find((o) => re.test(o.textContent ?? ''))!
+    const alice = opt(/Alice Smith/)
+    expect(alice.disabled).toBe(true)
+    expect(alice.textContent).toMatch(/cannot verify: has entered answers/)
+    expect(opt(/Carol/).disabled).toBe(false)
+  })
 })
+

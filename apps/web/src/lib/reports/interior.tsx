@@ -394,14 +394,21 @@ interface SectionProps {
   title: string
   accent: string
   children: React.ReactNode
+  /** Rendered in one unbreakable block with the heading, so the heading never ends a page alone. */
+  lead?: React.ReactNode
 }
 
-export function Section({ title, accent, children }: SectionProps) {
-  return (
-    <View style={s.section} wrap>
+export function Section({ title, accent, children, lead }: SectionProps) {
+  const heading = (
+    <>
       {/* Accent rule — minPresenceAhead keeps heading with its content at page breaks */}
       <View style={[s.sectionRule, { backgroundColor: accent, height: spacing.sectionRuleHeight }]} minPresenceAhead={40} />
       <Text style={s.sectionHeading} minPresenceAhead={40}>{title}</Text>
+    </>
+  )
+  return (
+    <View style={s.section} wrap>
+      {lead ? <View wrap={false}>{heading}{lead}</View> : heading}
       {children}
     </View>
   )
@@ -540,23 +547,32 @@ interface PhotoGridProps {
 }
 
 export function PhotoGrid({ field, accent }: PhotoGridProps) {
+  // One unbreakable block per row of photos, the label inside the first: a label never ends a
+  // page with its photos overleaf, and a photo is never shrunk into the space left above the
+  // footer (react-pdf did both when the grid could break anywhere).
+  const rows: (typeof field.photos)[] = []
+  for (let i = 0; i < field.photos.length; i += spacing.photoGridCols) rows.push(field.photos.slice(i, i + spacing.photoGridCols))
+  const cell = (photo: (typeof field.photos)[number], i: number) => (
+    <View key={i} style={s.photoCell}>
+      {photo.dataUri ? (
+        <Image src={photo.dataUri} style={s.photoCellImage} />
+      ) : (
+        <View style={s.photoCellPlaceholder}>
+          <Text style={s.photoCellPlaceholderText}>[image unavailable]</Text>
+        </View>
+      )}
+      <Text style={s.photoCaptionText}>{photo.caption}</Text>
+    </View>
+  )
   return (
     <View style={s.photoGrid}>
-      <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text>
-      <View style={s.photoGridRow}>
-        {field.photos.map((photo, i) => (
-          <View key={i} style={s.photoCell}>
-            {photo.dataUri ? (
-              <Image src={photo.dataUri} style={s.photoCellImage} />
-            ) : (
-              <View style={s.photoCellPlaceholder}>
-                <Text style={s.photoCellPlaceholderText}>[image unavailable]</Text>
-              </View>
-            )}
-            <Text style={s.photoCaptionText}>{photo.caption}</Text>
-          </View>
-        ))}
-      </View>
+      {rows.length === 0 && field.label && <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text>}
+      {rows.map((row, r) => (
+        <View key={r} wrap={false}>
+          {r === 0 && field.label && <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text>}
+          <View style={s.photoGridRow}>{row.map((photo, i) => cell(photo, r * spacing.photoGridCols + i))}</View>
+        </View>
+      ))}
       {field.omittedCount > 0 && (
         <Text style={s.photoOmittedNote}>{`+${field.omittedCount} omitted`}</Text>
       )}

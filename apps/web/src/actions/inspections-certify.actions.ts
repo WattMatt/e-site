@@ -16,7 +16,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
 import { requireFeature } from '@/lib/features'
 import { generateAndFileInspectionReport } from '@/lib/reports/file-inspection-report'
@@ -51,32 +51,38 @@ async function getInspectionContributors(
 }
 
 /**
- * Returns the user_ids of project_members whose org-level role is
- * owner / admin / project_manager. Two-step query because PostgREST embed
- * across `projects` and `public` schemas is unreliable (PGRST200 — see
- * Session 22 cable-schedule notes).
+ * The people who manage this project: active project members whose role in the project's own
+ * organisation is owner / admin / project_manager, or who were made project manager on the
+ * project itself.
+ *
+ * Read with the service client, after the database has already accepted the caller's move. Read
+ * through the caller's session, `user_organisations` shows only the caller's own row (RLS), so
+ * the list was the certifier alone, who is then left out as the actor: no project manager was
+ * ever told an inspection was certified (walkthrough, 2026-10-13). Two queries because a
+ * PostgREST embed across `projects` and `public` is unreliable (PGRST200).
  */
-async function getProjectManagerIds(
-  supabase: AnyClient,
-  projectId: string,
-): Promise<string[]> {
-  const { data: members } = await supabase
-    .schema('projects')
-    .from('project_members')
-    .select('user_id')
-    .eq('project_id', projectId)
-  const memberIds = ((members ?? []) as Array<{ user_id: string }>)
-    .map((m) => m.user_id)
-    .filter(Boolean)
-  if (memberIds.length === 0) return []
+async function getProjectManagerIds(projectId: string): Promise<string[]> {
+  const service = createServiceClient() as AnyClient
+  const [{ data: project }, { data: members }] = await Promise.all([
+    service.schema('projects').from('projects').select('organisation_id').eq('id', projectId).maybeSingle(),
+    service.schema('projects').from('project_members').select('user_id, role').eq('project_id', projectId).eq('is_active', true),
+  ])
+  const rows = (members ?? []) as Array<{ user_id: string; role: string | null }>
+  const orgId = (project as { organisation_id?: string } | null)?.organisation_id
+  if (rows.length === 0 || !orgId) return []
 
-  const { data: roles } = await supabase
+  const { data: roles } = await service
     .from('user_organisations')
     .select('user_id, role')
-    .in('user_id', memberIds)
-  return ((roles ?? []) as Array<{ user_id: string; role: string }>)
-    .filter((r) => ['owner', 'admin', 'project_manager'].includes(r.role))
-    .map((r) => r.user_id)
+    .eq('organisation_id', orgId)
+    .eq('is_active', true)
+    .in('user_id', rows.map((m) => m.user_id))
+  const orgManagers = new Set(
+    ((roles ?? []) as Array<{ user_id: string; role: string }>)
+      .filter((r) => ['owner', 'admin', 'project_manager'].includes(r.role))
+      .map((r) => r.user_id),
+  )
+  return [...new Set(rows.filter((m) => m.role === 'project_manager' || orgManagers.has(m.user_id)).map((m) => m.user_id))]
 }
 
 /**
@@ -114,7 +120,14 @@ export interface CertifyInspectionInput {
   cocNumber?: string
 }
 
-async function certifyInspection(input: CertifyInspectionInput): Promise<string> {
+/** What a certify produced: the issued number, and whether its report was generated and filed. */
+export interface CertifyOutcome {
+  number: string
+  /** False when the certificate stands but the report failed: the verifier is told to regenerate it. */
+  reportIssued: boolean
+}
+
+async function certifyInspection(input: CertifyInspectionInput): Promise<CertifyOutcome> {
   const supabase = (await createClient()) as AnyClient
   const {
     data: { user },
@@ -172,8 +185,10 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
 
   // Best-effort branded report → projects.reports + handover auto-file (Node
   // renderer; no glyph bug). The cert is a committed DB fact — a render/file
-  // failure logs but never blocks certification, and is retryable via
-  // regenerateInspectionReportAction.
+  // failure never blocks certification, is retryable via
+  // regenerateInspectionReportAction, and is now REPORTED back to the verifier
+  // (it used to be logged only, leaving a certified inspection with no report).
+  let reportIssued = false
   try {
     const result = await generateAndFileInspectionReport({
       inspectionId: input.inspectionId,
@@ -183,6 +198,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
     })
     if ('error' in result)
       console.warn('inspection report generate/file failed (cert still valid):', result.error)
+    else reportIssued = true
   } catch (e) {
     console.warn('inspection report generate/file threw (cert still valid):', (e as Error).message)
   }
@@ -208,7 +224,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
   // remains valid even if the recipient queries fail.
   try {
     const contributors = await getInspectionContributors(supabase, input.inspectionId)
-    const pms = await getProjectManagerIds(supabase, input.projectId)
+    const pms = await getProjectManagerIds(input.projectId)
     const recipients = [...new Set([...contributors, ...pms].filter((id) => id !== user.id))]
     if (recipients.length > 0) {
       await dispatchNotification({
@@ -227,7 +243,7 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<string>
 
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
   revalidatePath(`/projects/${input.projectId}/inspections`)
-  return issuedNumber
+  return { number: issuedNumber, reportIssued }
 }
 
 // ─── sendBackForReinspectionAction ─────────────────────────────────────
@@ -249,7 +265,7 @@ async function sendBackForReinspection(input: SendBackInput): Promise<void> {
   const { data: insp } = await supabase
     .schema('inspections')
     .from('inspections')
-    .select('verifier_id, organisation_id')
+    .select('verifier_id, organisation_id, assigned_to_id')
     .eq('id', input.inspectionId)
     .single()
   if (!insp || insp.verifier_id !== user.id) {
@@ -265,11 +281,14 @@ async function sendBackForReinspection(input: SendBackInput): Promise<void> {
     .eq('status', 'awaiting_verification')
   if (error) throw error
 
-  // Notify all contributors that the inspection needs more work, with the
-  // verifier's notes. Verifier-self excluded (they wrote the notes).
+  // Notify the assigned inspector and every contributor that the inspection needs more work, with
+  // the verifier's notes. Verifier-self excluded (they wrote the notes). The assignee is named
+  // explicitly: on ZZ status-guard test the generator was sent back while its only contributor
+  // was the verifier, so the inspector it was assigned to heard nothing (2026-10-12).
   try {
     const contributors = await getInspectionContributors(supabase, input.inspectionId)
-    const recipients = contributors.filter((id) => id !== user.id)
+    const assignee = (insp as { assigned_to_id?: string | null }).assigned_to_id ?? null
+    const recipients = [...new Set([...(assignee ? [assignee] : []), ...contributors])].filter((id) => id !== user.id)
     if (recipients.length > 0) {
       await dispatchNotification({
         userIds: recipients,
@@ -315,7 +334,7 @@ function refusal(e: unknown): { ok: false; error: string } {
 
 export async function certifyInspectionAction(
   input: CertifyInspectionInput,
-): Promise<VerifierActionResult<string>> {
+): Promise<VerifierActionResult<CertifyOutcome>> {
   try {
     return { ok: true, value: await certifyInspection(input) }
   } catch (e) {

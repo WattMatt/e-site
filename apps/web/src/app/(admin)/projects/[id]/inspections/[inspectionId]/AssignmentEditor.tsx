@@ -40,6 +40,10 @@ interface Props {
   verifierName: string | null
   members: Member[]
   canEdit: boolean
+  /** The template needs a verifier who is not the inspector and has not answered (00250). */
+  separateVerifier?: boolean
+  /** People who have entered answers on this inspection. */
+  contributorIds?: string[]
 }
 
 export default function AssignmentEditor({
@@ -52,6 +56,8 @@ export default function AssignmentEditor({
   verifierName,
   members,
   canEdit,
+  separateVerifier = false,
+  contributorIds = [],
 }: Props) {
   const router = useRouter()
   const [assignedTo, setAssignedTo] = useState(assignedToId ?? '')
@@ -61,6 +67,14 @@ export default function AssignmentEditor({
   const [saved, setSaved] = useState(false)
 
   const eligibleVerifiers = members.filter((m) => m.role && VERIFIER_ROLES.includes(m.role))
+  // Why a member may not verify this one, or null. The database refuses the same cases (00250);
+  // naming them here saves a round trip that ends in an error.
+  const cannotVerify = (userId: string): string | null => {
+    if (!separateVerifier) return null
+    if (assignedTo && userId === assignedTo) return 'is the inspector'
+    if (contributorIds.includes(userId)) return 'has entered answers'
+    return null
+  }
 
   async function onSave() {
     setError(null)
@@ -68,13 +82,16 @@ export default function AssignmentEditor({
     setBusy(true)
     try {
       if (!verifier) throw new Error('Assign a verifier')
-      await updateInspectionAssignmentAction({
+      const why = cannotVerify(verifier)
+      if (why) throw new Error(`That verifier ${why}. This template needs a separate verifier: choose someone else.`)
+      const res = await updateInspectionAssignmentAction({
         inspectionId,
         projectId,
         organisationId,
         assignedToId: assignedTo || null,
         verifierId: verifier,
       })
+      if (!res.ok) throw new Error(res.error)
       setSaved(true)
       router.refresh()
     } catch (e) {
@@ -118,8 +135,10 @@ export default function AssignmentEditor({
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
               >
-                <option value="">— unassigned (anyone can pick up) —</option>
-                {members.map((m) => (
+                <option value="">— unassigned (anyone on the project can pick it up) —</option>
+                {/* A client viewer can read but never answer (RLS), so they are not offered as inspector:
+                    the inspection would be assigned to someone who can never start it. */}
+                {members.filter((m) => m.role !== 'client_viewer').map((m) => (
                   <option key={m.user_id} value={m.user_id}>
                     {labelFor(m)}
                     {m.role ? ` (${m.role})` : ''}
@@ -138,14 +157,23 @@ export default function AssignmentEditor({
                 onChange={(e) => setVerifier(e.target.value)}
               >
                 <option value="">— select —</option>
-                {eligibleVerifiers.map((m) => (
-                  <option key={m.user_id} value={m.user_id}>
-                    {labelFor(m)} ({m.role})
-                  </option>
-                ))}
+                {eligibleVerifiers.map((m) => {
+                  const why = cannotVerify(m.user_id)
+                  return (
+                    <option key={m.user_id} value={m.user_id} disabled={!!why && m.user_id !== verifier}>
+                      {labelFor(m)} ({m.role}){why ? ` — cannot verify: ${why}` : ''}
+                    </option>
+                  )
+                })}
               </select>
             </div>
           </div>
+          <p style={{ fontSize: 11, color: 'var(--c-text-dim)', margin: 0 }}>
+            The inspector fills in the inspection and submits it. The verifier then certifies it or sends it back;
+            only the verifier can.
+            {separateVerifier &&
+              ' This template needs a separate verifier: not the inspector, and not anyone who has entered answers.'}
+          </p>
 
           {error && <div style={{ fontSize: 12, color: 'var(--c-red)' }}>{error}</div>}
           {saved && !error && (

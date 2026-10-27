@@ -6,16 +6,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // database; the database's sentence is surfaced; only the computed result and (for a CoC) the
 // typed number are sent; the issued number is read back rather than allocated here.
 
-const { createClientMock, requireFeatureMock, dispatchNotificationMock, revalidatePathMock, fileReportMock } =
+const { createClientMock, createServiceClientMock, requireFeatureMock, dispatchNotificationMock, revalidatePathMock, fileReportMock } =
   vi.hoisted(() => ({
     createClientMock: vi.fn(),
+    createServiceClientMock: vi.fn(),
     requireFeatureMock: vi.fn(),
     dispatchNotificationMock: vi.fn(),
     revalidatePathMock: vi.fn(),
     fileReportMock: vi.fn(),
   }))
 
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock, createServiceClient: createServiceClientMock }))
 vi.mock('@/lib/features', () => ({ requireFeature: requireFeatureMock }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
@@ -49,11 +50,12 @@ function makeClient(opts: {
   responses: Array<{ section_id: string; field_id: string; value_bool: boolean }>
   blocker?: string | null
   issued?: { coc_number: string } | null
+  assignee?: string | null
 }) {
   const update = vi.fn(() => qb({ data: opts.issued === undefined ? { coc_number: 'INS-KW-2026-0001' } : opts.issued, error: null }))
   const rpc = vi.fn(() => Promise.resolve({ data: opts.blocker ?? null, error: null }))
   const tables: Record<string, unknown> = {
-    inspections: { data: { id: 'i-1', status: 'awaiting_verification', verifier_id: 'v-1', organisation_id: 'o-1', template_id: 't-1' }, error: null },
+    inspections: { data: { id: 'i-1', status: 'awaiting_verification', verifier_id: 'v-1', organisation_id: 'o-1', template_id: 't-1', assigned_to_id: opts.assignee ?? null }, error: null },
     templates: { data: { deliverable_type: opts.deliverable ?? 'inspection_only', schema_json: TEMPLATE }, error: null },
     responses: { data: opts.responses, error: null },
     photos: { data: [], error: null },
@@ -72,8 +74,23 @@ function makeClient(opts: {
   return { client, update, rpc }
 }
 
+/** Records every filter, so a test can prove the lookup is scoped to the project's org and active rows. */
+function makeService(data: Record<string, unknown>) {
+  const filters: Array<[string, string, unknown]> = []
+  const q = (table: string): any => {
+    const p: any = Promise.resolve({ data: data[table] ?? [], error: null })
+    p.select = () => q(table)
+    p.eq = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
+    p.in = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
+    p.maybeSingle = () => Promise.resolve({ data: data[table] ?? null, error: null })
+    return p
+  }
+  return { client: { from: q, schema: () => ({ from: q }) }, filters }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  createServiceClientMock.mockReturnValue(makeService({}).client)
   requireFeatureMock.mockResolvedValue(undefined)
   fileReportMock.mockResolvedValue({ ok: true })
 })
@@ -119,7 +136,7 @@ describe('certifyInspectionAction', () => {
 
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: 'ignored' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'conditional_pass', coc_number: null })
-    expect(issued).toEqual({ ok: true, value: 'INS-KW-2026-0001' })
+    expect(issued).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
   })
 
   it('sends the typed number, trimmed, for a CoC', async () => {
@@ -133,7 +150,7 @@ describe('certifyInspectionAction', () => {
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: '  ECB-77 ' })
     expect(rpc).toHaveBeenCalledWith('certification_blockers', { _inspection_id: 'i-1', _coc_number: 'ECB-77' })
     expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'pass', coc_number: 'ECB-77' })
-    expect(issued).toEqual({ ok: true, value: 'ECB-77' })
+    expect(issued).toEqual({ ok: true, value: { number: 'ECB-77', reportIssued: true } })
   })
 
   it('says so when nothing was certified (the inspection moved on)', async () => {
@@ -149,6 +166,21 @@ describe('certifyInspectionAction', () => {
   })
 })
 
+describe('certifyInspectionAction — the report', () => {
+  const certifyWith = async (fileResult: unknown) => {
+    const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
+    createClientMock.mockResolvedValue(client)
+    fileReportMock.mockResolvedValue(fileResult)
+    return certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })
+  }
+  it('says the report was issued when it was', async () => {
+    expect(await certifyWith({ reportId: 'r-1' })).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
+  })
+  it('still certifies, but says so, when the report failed', async () => {
+    expect(await certifyWith({ error: 'storage down' })).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: false } })
+  })
+})
+
 describe('sendBackForReinspectionAction', () => {
   it('returns the refusal as data when the note is blank, without writing', async () => {
     const { client, update } = makeClient({ responses: [] })
@@ -159,5 +191,56 @@ describe('sendBackForReinspectionAction', () => {
       error: 'Re-inspection notes are required',
     })
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('tells the assigned inspector, even when the only contributor was the verifier', async () => {
+    const { client } = makeClient({ responses: [], assignee: 'a-1' })
+    createClientMock.mockResolvedValue(client)
+
+    expect(await sendBackForReinspectionAction({ inspectionId: 'i-1', projectId: 'p-1', notes: 'Relabel the CT' })).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(dispatchNotificationMock).toHaveBeenCalledTimes(1)
+    expect(dispatchNotificationMock.mock.calls[0][0]).toMatchObject({
+      userIds: ['a-1'],
+      type: 'inspection_re_inspect_required',
+    })
+  })
+})
+
+describe('certify tells the people who manage the project', () => {
+  it('org owners/admins/PMs and project-scoped PMs on the project, never the certifier or a contractor', async () => {
+    const svc = makeService({
+      projects: { organisation_id: 'o-1' },
+      project_members: [
+        { user_id: 'v-1', role: 'project_manager' }, // the certifier
+        { user_id: 'olivia', role: 'project_manager' },
+        { user_id: 'pm-site', role: 'project_manager' }, // a contractor company made PM on this project
+        { user_id: 'carl', role: 'contractor' },
+        { user_id: 'owner-2', role: 'inspector' },
+      ],
+      user_organisations: [
+        { user_id: 'v-1', role: 'admin' },
+        { user_id: 'olivia', role: 'owner' },
+        { user_id: 'pm-site', role: 'contractor' },
+        { user_id: 'carl', role: 'contractor' },
+        { user_id: 'owner-2', role: 'admin' },
+      ],
+    })
+    createServiceClientMock.mockReturnValue(svc.client)
+    const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
+    createClientMock.mockResolvedValue(client)
+
+    const out = await certifyInspectionAction({ projectId: 'p-1', inspectionId: 'i-1' })
+    expect(out.ok).toBe(true)
+    const sent = dispatchNotificationMock.mock.calls.find((c) => c[0].type === 'inspection_certified')![0]
+    expect([...sent.userIds].sort()).toEqual(['olivia', 'owner-2', 'pm-site'])
+    expect(svc.filters).toEqual(expect.arrayContaining([
+      ['project_members', 'project_id', 'p-1'],
+      ['project_members', 'is_active', true],
+      ['user_organisations', 'organisation_id', 'o-1'],
+      ['user_organisations', 'is_active', true],
+    ]))
   })
 })

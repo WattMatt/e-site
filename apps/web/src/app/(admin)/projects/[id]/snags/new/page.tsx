@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { uploadSnagPhoto } from '@/lib/image/compress'
 import { notifySnagCreatedAction } from '@/actions/snag.actions'
 import Link from 'next/link'
+import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
 const CATEGORIES = ['general', 'electrical', 'mechanical', 'civil', 'safety', 'quality', 'documentation']
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
@@ -91,19 +92,17 @@ export default function NewSnagPage({ params }: Props) {
       await notifySnagCreatedAction(snag.id)
 
       if (photoFiles.length > 0) {
-        // Shared helper: resolves a real image type (a blank File.type would
-        // upload as octet-stream, which the bucket refuses), compresses, and
-        // removes the object if the row insert fails.
+        // Shared path: the photo is prepared (JPEG from any device, prepare.ts) and a failed row
+        // insert removes its file, so nothing is stored that nobody can see.
         await Promise.all(photoFiles.map((file, i) =>
-          uploadSnagPhoto(supabase as unknown as Parameters<typeof uploadSnagPhoto>[0], {
+          uploadSnagPhoto(supabase as never, {
             file,
-            orgId,
+            orgId: orgId as string,
             projectId,
             snagId: snag.id,
             photoType: 'evidence',
             sortOrder: i,
             uploadedBy: user.id,
-            caption: file.name,
           }),
         ))
       }
@@ -207,7 +206,7 @@ export default function NewSnagPage({ params }: Props) {
             )}
           </div>
           <div style={{ padding: '16px 18px' }}>
-            <PhotoSourcePicker accept="image/*" onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
+            <PhotoSourcePicker accept={PHOTO_ACCEPT} onFiles={files => setPhotoFiles(prev => addPhotos(prev, files))} />
             {photoFiles.length > 0 && (
               <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoFiles.map((f, i) => (

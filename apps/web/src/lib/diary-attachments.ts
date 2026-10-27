@@ -1,6 +1,6 @@
 import { attachmentKindFromMime, storageKeySegment } from '@esite/shared'
-import { detectImageMime } from '@/lib/image/compress'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { prepareIfImage } from '@/lib/image/prepare'
 
 /** `accept` for the document file input. Photo/video inputs use `image/*` /
  *  `video/*` so phone browsers surface the camera; the bucket enforces the
@@ -25,13 +25,12 @@ const DOC_EXT_MIME: Record<string, string> = {
 }
 
 /**
- * The content type to upload with. `File.type` is blank when the OS doesn't
- * know the extension (e.g. .HEIC on Windows); a blank type uploads as
- * application/octet-stream, which the bucket's MIME allow-list refuses.
+ * The content type to upload with. Photos arrive here already re-encoded as JPEG (prepareIfImage).
+ * A document's `File.type` is blank when the OS doesn't know the extension; a blank type uploads
+ * as application/octet-stream, which the bucket's MIME allow-list refuses.
  */
-async function resolveContentType(file: File, ext: string): Promise<string> {
-  if (file.type) return file.type
-  return (await detectImageMime(file)) || DOC_EXT_MIME[ext] || ''
+function resolveContentType(file: File, ext: string): string {
+  return file.type || DOC_EXT_MIME[ext] || ''
 }
 
 /**
@@ -52,13 +51,15 @@ export async function uploadDiaryAttachments(
   // restart at 0 and collide with committed rows, scrambling display order.
   const baseSort = await nextSortOrder(supabase, entryId)
   for (let i = 0; i < files.length; i++) {
-    const file = files[i]
+    const raw = files[i]
+    // Photos are stored as JPEG whatever the device supplied (prepare.ts); videos and documents as-is.
+    const file = await prepareIfImage(raw)
     if (file.size > DIARY_ATTACHMENT_MAX_BYTES) {
       throw new Error(`"${file.name}" exceeds the 100 MB limit.`)
     }
     const seq = baseSort + i
     const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : 'bin'
-    const contentType = await resolveContentType(file, ext)
+    const contentType = resolveContentType(file, ext)
     if (!contentType) {
       throw new Error(`"${file.name}" is not a supported file type (photo, video, PDF, Word or Excel).`)
     }
@@ -85,7 +86,7 @@ export async function uploadDiaryAttachments(
       await supabase.storage.from('diary-attachments').remove([path]).catch(() => {})
       throw rowErr
     }
-    onFileUploaded?.(file)
+    onFileUploaded?.(raw)
   }
 }
 

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { storageKeySegment } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
-import { extensionForImage, prepareImageUpload } from '@/lib/image/compress'
+import { usePhotoTally } from './photo-tally'
+import { prepareImageForUpload } from '@/lib/image/prepare'
 
 export interface FieldPhoto {
   id: string
@@ -23,12 +24,6 @@ function friendlyUploadError(raw: string): string {
   }
   if (msg.includes('maximum allowed size') || msg.includes('too large') || msg.includes('exceeded')) {
     return 'Photo exceeds the 10 MB storage limit.'
-  }
-  if (msg.includes('mime')) {
-    return 'That file type is not accepted. Use a JPEG, PNG or HEIC photo.'
-  }
-  if (msg.includes('invalid key')) {
-    return 'Upload failed: the storage path was rejected. Please report this field to support.'
   }
   return raw
 }
@@ -53,6 +48,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
   const supabase = createClient()
   // Capture routes live under /projects/[id]/… — the param is the project id.
   const params = useParams<{ id?: string }>()
+  const tally = usePhotoTally()
   const [photos, setPhotos] = useState<FieldPhoto[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,9 +86,9 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
       setUploading(true)
       setError(null)
       try {
-        // Resolves a real image MIME (never a blank type → octet-stream),
-        // converts HEIC where the browser can't, downscales to JPEG.
-        const prepared = await prepareImageUpload(file)
+        // Any device's photo, HEIC included, becomes a JPEG every browser and report can use;
+        // one that cannot be read is refused with a sentence rather than stored as-is.
+        const { file: prepared, width, height } = await prepareImageForUpload(file)
 
         // Storage RLS keys off path segment [2] (the inspection id); the
         // leading project segment keeps paths consistent with historic
@@ -115,11 +111,10 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
         } = await supabase.auth.getUser()
         if (!user) throw new Error('Not signed in')
 
-        // Repeating-group field ids look like `sub_feeds[0].breaker_size` —
-        // `[` `]` are invalid in a storage key. Flatten every data-derived
-        // segment for the path only; the photos row keeps the real field_id.
-        const baseName = storageKeySegment(prepared.name.replace(/\.[^.]+$/, ''))
-        const path = `${projectId}/${inspectionId}/${storageKeySegment(sectionId)}/${storageKeySegment(fieldId)}/${Date.now()}-${baseName}.${extensionForImage(prepared)}`
+        // Repeating-group field ids look like `sub_feeds[0].breaker_size` — `[` `]` are invalid in
+        // a storage key ("Invalid key", production 2026-10-27). Flatten every data-derived segment
+        // for the path only; the photos row keeps the real field_id.
+        const path = `${projectId}/${inspectionId}/${storageKeySegment(sectionId)}/${storageKeySegment(fieldId)}/${Date.now()}-${storageKeySegment(prepared.name)}`
         const { error: upErr } = await supabase.storage
           .from('inspection-photos')
           .upload(path, prepared, { contentType: prepared.type })
@@ -135,6 +130,8 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
             field_id: fieldId,
             storage_path: path,
             file_size_bytes: prepared.size,
+            width_px: width,
+            height_px: height,
             uploaded_by: user.id,
           })
           .select('id')
@@ -152,13 +149,14 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
           ...prev,
           { id: (row as { id: string }).id, storage_path: path, signed_url: sig?.signedUrl ?? undefined },
         ])
+        tally.added(sectionId, fieldId)
       } catch (e) {
         setError((e as Error).message)
       } finally {
         setUploading(false)
       }
     },
-    [supabase, inspectionId, sectionId, fieldId, params],
+    [supabase, inspectionId, sectionId, fieldId, params, tally],
   )
 
   const remove = useCallback(
@@ -194,8 +192,11 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
               'Delete not permitted — only the uploader or a project manager can remove a photo, and only while the inspection is editable.',
             )
           }
+          // Already gone (second device, double tap): whoever deleted it reported it. Reporting it
+          // again would drop another photo of this field from the page's count.
           return // already gone server-side; keep the optimistic removal
         }
+        tally.removed(sectionId, fieldId)
         // Row is gone; the file delete is best-effort (an orphaned object is
         // invisible — no photos row points at it).
         if (target) {
@@ -209,7 +210,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
         setError((e as Error).message)
       }
     },
-    [photos, supabase],
+    [photos, supabase, sectionId, fieldId, tally],
   )
 
   return { photos, uploading, error, upload, remove }

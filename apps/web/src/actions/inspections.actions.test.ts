@@ -36,9 +36,9 @@ vi.mock('@/lib/auth/require-role', async (importOriginal) => ({
 vi.mock('@/lib/features', () => ({ requireFeature: requireFeatureMock }))
 vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
-vi.mock('next/navigation', () => ({ redirect: redirectMock }))
+vi.mock('next/navigation', () => ({ redirect: redirectMock, unstable_rethrow: (e: unknown) => { if ((e as Error)?.message === 'NEXT_REDIRECT') throw e } }))
 
-import { listProjectMembersAction, updateInspectionAssignmentAction } from './inspections.actions'
+import { listProjectMembersAction, updateInspectionAssignmentAction, createInspectionAction } from './inspections.actions'
 
 // ─── Chainable + awaitable query-builder stub ───────────────────────────────
 // Returns a Promise (so `await qb(r)` === r) that also exposes the supabase
@@ -140,6 +140,8 @@ function makeUpdateClient({
   role,
   orgRole = role,
   previousAssignee,
+  previousVerifier = 'u-verifier',
+  status = 'in_progress',
   updateError = null,
 }: {
   /** The caller's EFFECTIVE project role (user_effective_project_role). */
@@ -148,6 +150,8 @@ function makeUpdateClient({
   orgRole?: string
   previousAssignee: string | null
   updateError?: { message: string } | null
+  previousVerifier?: string | null
+  status?: string
 }) {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'caller-id' } } }) },
@@ -158,7 +162,8 @@ function makeUpdateClient({
     // schema('inspections').from('inspections') → select (current) + update
     schema: () => ({
       from: () => ({
-        select: () => qb({ data: { assigned_to_id: previousAssignee }, error: null }),
+        select: () =>
+          qb({ data: { assigned_to_id: previousAssignee, verifier_id: previousVerifier, status, target_label: 'MINISUB 1' }, error: null }),
         update: () => qb({ error: updateError }),
       }),
     }),
@@ -177,9 +182,9 @@ describe('updateInspectionAssignmentAction', () => {
     createClientMock.mockResolvedValue(makeUpdateClient({ role: 'contractor', previousAssignee: null }))
     requireFeatureMock.mockResolvedValue(undefined)
 
-    await expect(
-      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' }),
-    ).rejects.toThrow(/Forbidden/)
+    const res = await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' })
+    expect(res.ok).toBe(false)
+    expect(!res.ok && res.error).toMatch(/Forbidden/)
   })
 
   it('admits a member promoted to project_manager on the project, whatever their org role', async () => {
@@ -228,8 +233,96 @@ describe('updateInspectionAssignmentAction', () => {
     )
     requireFeatureMock.mockResolvedValue(undefined)
 
-    await expect(
-      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' }),
-    ).rejects.toThrow('boom')
+    expect(await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })).toEqual({ ok: false, error: 'boom' })
+  })
+
+  it('notifies a verifier swapped in while the inspection is already waiting on them', async () => {
+    createClientMock.mockResolvedValue(
+      makeUpdateClient({ role: 'admin', previousAssignee: 'u-a', previousVerifier: 'u-old-v', status: 'awaiting_verification' }),
+    )
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    expect(await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-a' })).toEqual({ ok: true, value: undefined })
+    expect(dispatchNotificationMock).toHaveBeenCalledTimes(1)
+    expect(dispatchNotificationMock.mock.calls[0][0]).toMatchObject({
+      userIds: ['u-verifier'],
+      type: 'inspection_awaiting_verification',
+    })
+  })
+
+  it('does not notify a new verifier before the inspection has been submitted', async () => {
+    createClientMock.mockResolvedValue(
+      makeUpdateClient({ role: 'admin', previousAssignee: 'u-a', previousVerifier: 'u-old-v', status: 'in_progress' }),
+    )
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-a' })
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('lets a redirect through instead of reporting it as an error (paywall, expired session)', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'admin', previousAssignee: null }))
+    requireFeatureMock.mockImplementation(() => redirectMock())
+
+    await expect(updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })).rejects.toThrow('NEXT_REDIRECT')
+  })
+})
+
+describe('createInspectionAction checks the PROJECT\'s organisation, not the one the form sent', () => {
+  function makeCreateClient(orgRole: string) {
+    const roleFilters: Array<[string, unknown]> = []
+    const inserted: unknown[] = []
+    const chain = (data: unknown, record?: Array<[string, unknown]>): any => {
+      const p: any = Promise.resolve({ data, error: null })
+      p.select = () => chain(data, record)
+      p.eq = (c: string, v: unknown) => (record?.push([c, v]), chain(data, record))
+      p.single = () => Promise.resolve({ data, error: null })
+      p.maybeSingle = () => Promise.resolve({ data, error: null })
+      return p
+    }
+    return {
+      roleFilters,
+      inserted,
+      client: {
+        auth: { getUser: () => Promise.resolve({ data: { user: { id: 'caller-id' } } }) },
+        from: () => chain({ role: orgRole }, roleFilters),
+        schema: (name: string) => ({
+          from: () =>
+            name === 'projects'
+              ? chain({ organisation_id: 'org-of-project' })
+              : { insert: (row: unknown) => (inserted.push(row), chain({ id: 'new-insp' })) },
+        }),
+      },
+    }
+  }
+  const input = {
+    organisationId: 'callers-first-org',
+    projectId: 'p-1',
+    templateId: 't-1',
+    targetNodeType: 'adhoc',
+    targetNodeId: null,
+    targetLabel: 'DB 1',
+    targetLocation: null,
+    assignedToId: null,
+    verifierId: 'u-verifier',
+    scheduledAt: null,
+  } as any
+
+  it('creates in the project organisation, checking the role there', async () => {
+    const m = makeCreateClient('project_manager')
+    createClientMock.mockResolvedValue(m.client)
+    requireFeatureMock.mockResolvedValue(undefined)
+    expect(await createInspectionAction(input)).toEqual({ ok: true, value: 'new-insp' })
+    expect(m.roleFilters).toContainEqual(['organisation_id', 'org-of-project'])
+    expect(m.inserted[0]).toMatchObject({ organisation_id: 'org-of-project', project_id: 'p-1' })
+    expect(requireFeatureMock).toHaveBeenCalledWith('org-of-project', 'inspections', expect.anything())
+  })
+
+  it('refuses a contractor with a sentence, and writes nothing', async () => {
+    const m = makeCreateClient('contractor')
+    createClientMock.mockResolvedValue(m.client)
+    const res = await createInspectionAction(input)
+    expect(res).toEqual({ ok: false, error: "Only an owner, admin or project manager of this project's organisation can create inspections." })
+    expect(m.inserted).toEqual([])
   })
 })
