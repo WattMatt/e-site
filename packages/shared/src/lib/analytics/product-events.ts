@@ -42,6 +42,8 @@ export const PRODUCT_EVENTS = [
   'solar_downtime_saved',
   'solar_monthly_report_generated',
   'solar_handover_updated',
+  // MCP (00257).
+  'mcp_tool_called',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 
