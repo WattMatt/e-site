@@ -37,6 +37,7 @@
     "date-fns": "^4.1.0",
     "docxtemplater": "^3.68.7",
     "exceljs": "^4.4.0",
+    "heic2any": "0.0.4",
     "jszip": "^3.10.1",
     "konva": "^10.2.5",
     "lucide-react": "^0.441.0",

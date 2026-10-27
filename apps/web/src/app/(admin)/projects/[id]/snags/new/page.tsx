@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createSnagSchema, type CreateSnagInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { uploadSnagPhoto } from '@/lib/image/compress'
 import { notifySnagCreatedAction } from '@/actions/snag.actions'
 import Link from 'next/link'
 
@@ -90,20 +91,21 @@ export default function NewSnagPage({ params }: Props) {
       await notifySnagCreatedAction(snag.id)
 
       if (photoFiles.length > 0) {
-        await Promise.all(photoFiles.map(async (file, i) => {
-          const ext = file.name.split('.').pop() ?? 'jpg'
-          const path = `${orgId}/${projectId}/${snag.id}/${Date.now()}-${i}.${ext}`
-          const { error: upErr } = await supabase.storage.from('snag-photos').upload(path, file, { contentType: file.type })
-          if (upErr) throw upErr
-          await supabase.schema('field').from('snag_photos').insert({
-            snag_id: snag.id,
-            file_path: path,
+        // Shared helper: resolves a real image type (a blank File.type would
+        // upload as octet-stream, which the bucket refuses), compresses, and
+        // removes the object if the row insert fails.
+        await Promise.all(photoFiles.map((file, i) =>
+          uploadSnagPhoto(supabase as unknown as Parameters<typeof uploadSnagPhoto>[0], {
+            file,
+            orgId,
+            projectId,
+            snagId: snag.id,
+            photoType: 'evidence',
+            sortOrder: i,
+            uploadedBy: user.id,
             caption: file.name,
-            photo_type: 'evidence',
-            sort_order: i,
-            uploaded_by: user.id,
-          })
-        }))
+          }),
+        ))
       }
 
       router.push(`/snags/${snag.id}`)
