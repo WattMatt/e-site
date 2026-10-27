@@ -20,6 +20,7 @@
     "@fontsource-variable/mona-sans": "^5.2.8",
     "@hookform/resolvers": "^3.9.0",
     "@marsidev/react-turnstile": "^1.5.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@monaco-editor/react": "^4.7.0",
     "@opentelemetry/redis-common": "^0.38.3",
     "@react-pdf/renderer": "^4.5.1",
