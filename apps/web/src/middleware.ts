@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
+import { hasVerifiedMfaFactor } from './lib/auth/has-verified-mfa-factor'
 
 // Compliance pages reached from an email inbox or from the public privacy
 // notice, by a recipient who is very often NOT signed in — and who, when they
@@ -154,26 +155,6 @@ async function isTenderParticipant(userId: string, email: string | null | undefi
     .eq('email', email.toLowerCase())
     .in('status', ['prepared', 'sent'])
   return (invited ?? 0) > 0
-}
-
-async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${userId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-          apikey:        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        },
-        cache: 'no-store',
-      },
-    )
-    if (!res.ok) return false
-    const body = await res.json() as { factors?: { status: string }[] }
-    return (body.factors ?? []).some((f) => f.status === 'verified')
-  } catch {
-    return false
-  }
 }
 
 export async function middleware(request: NextRequest) {
