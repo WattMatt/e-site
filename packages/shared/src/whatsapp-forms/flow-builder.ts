@@ -21,6 +21,7 @@
  *  - header    → shown as a sub-heading; computed → never captured
  */
 import type { Field, Template } from '../inspections/types'
+import { RATING_OPTIONS } from '../inspections/types'
 
 export const FLOW_JSON_VERSION = '7.3'
 
@@ -81,7 +82,7 @@ export interface FlowCapability {
 }
 
 /** Field types that become a Flow input. */
-const INPUT_TYPES = new Set(['pass_fail', 'number', 'text', 'textarea', 'dropdown', 'multi_select', 'date'])
+const INPUT_TYPES = new Set(['pass_fail', 'number', 'text', 'textarea', 'dropdown', 'multi_select', 'date', 'rating'])
 
 export function fit(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim()
@@ -119,6 +120,7 @@ function componentCount(f: Field): number {
 function componentFor(f: Field): keyof typeof FLOW_LIMITS.label {
   switch (f.type) {
     case 'pass_fail': return 'RadioButtonsGroup'
+    case 'rating': return 'RadioButtonsGroup'
     case 'dropdown': return 'Dropdown'
     case 'multi_select': return 'CheckboxGroup'
     case 'date': return 'DatePicker'
@@ -156,12 +158,6 @@ export function flowCapability(t: Template): FlowCapability {
       if (f.type === 'repeating_group') reasons.push(`repeating group "${f.field_id}" is a table`)
       if (f.type === 'file') {
         if (f.required) reasons.push(`required file "${f.field_id}" cannot be sent over WhatsApp`)
-        else skippedFields.push(ref(s.section_id, f))
-      }
-      // A rating decides the verdict (Poor fails the inspection); the Flow has no rating input yet,
-      // so a required one keeps the template off WhatsApp rather than leaving it unanswerable.
-      if (f.type === 'rating') {
-        if (f.required) reasons.push(`required rating "${f.field_id}" cannot be answered over WhatsApp yet`)
         else skippedFields.push(ref(s.section_id, f))
       }
       if (f.type === 'photo') photoFields.push(ref(s.section_id, f))
@@ -247,6 +243,10 @@ function inputComponents(f: Field, key: string): Component[] {
     case 'dropdown':
     case 'multi_select':
       out.push({ ...base, 'data-source': options })
+      break
+    case 'rating':
+      // Same ids the web Rating control stores; Poor fails the inspection.
+      out.push({ ...base, 'data-source': RATING_OPTIONS.map((o) => ({ id: o, title: humaniseToken(o) })) })
       break
   }
   return out

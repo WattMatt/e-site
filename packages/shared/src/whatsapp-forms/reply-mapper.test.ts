@@ -57,6 +57,21 @@ describe('mapFlowReply', () => {
     expect(out.responses.map((r) => r.field_id)).toEqual(['fire_extinguisher_in_date'])
   })
 
+  it('maps a rating the way the web control stores it, Poor as a fail, and refuses anything else', () => {
+    const t: Template = {
+      ...MINI,
+      sections: [{ section_id: 'r', title: 'R', fields: [{ field_id: 'cond', label: 'Condition', type: 'rating', required: true }] }],
+    }
+    const key = flowFieldKeys(t).find((k) => k.fieldId === 'cond')!.key
+    expect(mapFlowReply(t, { [key]: 'poor' }).responses).toEqual([
+      { section_id: 'r', field_id: 'cond', value_text: 'poor', pass_state: 'fail' },
+    ])
+    expect(mapFlowReply(t, { [key]: 'good' }).responses[0]).toMatchObject({ value_text: 'good', pass_state: 'pass' })
+    expect(mapFlowReply(t, { [key]: 'excellent' }).errors).toEqual([
+      { sectionId: 'r', fieldId: 'cond', message: 'must be Good, Fair or Poor' },
+    ])
+  })
+
   it('ignores keys it did not issue instead of writing them anywhere', () => {
     const out = mapFlowReply(MINI, { flow_token: 't', injected_field: 'x', [key('enclosure_integrity')]: 'pass' })
     expect(out.responses.map((r) => r.field_id)).toEqual(['enclosure_integrity'])
