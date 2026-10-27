@@ -8,6 +8,7 @@
  * error for that field alone; the rest of the reply still applies.
  */
 import type { Template } from '../inspections/types'
+import { RATING_OPTIONS } from '../inspections/types'
 import { flowFieldKeys } from './flow-builder'
 
 export const MAX_TEXT = 4000
@@ -90,6 +91,11 @@ export function mapFlowReply(t: Template, reply: Record<string, unknown>): MapRe
       case 'date':
         if (!isIsoDate(v)) { err('not a date'); break }
         responses.push({ ...base, value_text: v })
+        break
+      case 'rating':
+        // Stored as the web Rating control stores it: Poor is a fail (it fails the inspection).
+        if (!(RATING_OPTIONS as readonly string[]).includes(v)) { err('must be Good, Fair or Poor'); break }
+        responses.push({ ...base, value_text: v, pass_state: v === 'poor' ? 'fail' : 'pass' })
         break
       case 'dropdown':
         if (!(f.options ?? []).includes(v)) { err('not one of the listed options'); break }
