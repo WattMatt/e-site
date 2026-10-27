@@ -41,11 +41,22 @@ describe('flowCapability', () => {
     expect((radio!['data-source'] as Array<{ id: string }>).map((o) => o.id)).toEqual(['good', 'fair', 'poor'])
   })
 
-  it('refuses repeating groups, conditions and required files, naming each', () => {
+  it('leaves an optional table (the Snag List) to the web instead of refusing the template', () => {
+    const t: Template = {
+      ...MINI,
+      sections: [...MINI.sections, { section_id: 'snags', title: 'Snag List', fields: [{ field_id: 'snag_list', label: 'Snag list', type: 'repeating_group', fields: [{ field_id: 'description', label: 'Description', type: 'textarea' }] }] }],
+    }
+    const cap = flowCapability(t)
+    expect(cap.ok).toBe(true)
+    expect(cap.skippedFields.map((f) => f.fieldId)).toContain('snag_list')
+    expect(buildInspectionFlow(t).screens.length).toBe(buildInspectionFlow(MINI).screens.length)
+  })
+
+  it('refuses required repeating groups, conditions and required files, naming each', () => {
     const t: Template = {
       ...MINI,
       sections: [
-        { section_id: 'a', title: 'A', fields: [{ field_id: 'g', label: 'G', type: 'repeating_group', fields: [] }] },
+        { section_id: 'a', title: 'A', fields: [{ field_id: 'g', label: 'G', type: 'repeating_group', required: true, fields: [] }] },
         { section_id: 'b', title: 'B', conditional_on: { field_id: 'x', equals: true }, fields: [] },
         { section_id: 'c', title: 'C', fields: [{ field_id: 'f', label: 'F', type: 'file', required: true }] },
         { section_id: 'd', title: 'D', fields: [{ field_id: 'y', label: 'Y', type: 'text', conditional_on: { field_id: 'x', equals: 1 } }] },
