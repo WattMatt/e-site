@@ -112,20 +112,34 @@ it('esite_project_get omits contract for a contractor and refuses an invisible p
   expect(m.getById).toHaveBeenCalledTimes(2)
 })
 
+it('esite_project_get returns members: null, not an error, when the member list is refused (cross-org member)', async () => {
+  m.requireProjectAccess.mockResolvedValue({ ok: true })
+  m.getById.mockResolvedValue({ ...row(1, { id: P1 }), project_members: [] })
+  m.getProjectSettingsCached.mockResolvedValue(null)
+  m.listProjectContacts.mockResolvedValue({ contacts: [] })
+  m.listProjectMembers.mockResolvedValue({ error: 'Forbidden' })
+  m.requireEffectiveRole.mockResolvedValue({ ok: false, error: 'no' })
+  const out = await run('esite_project_get', { projectId: P1 })
+  expect(out.members).toBeNull()
+  expect(out.project.id).toBe(P1)
+})
+
 it('esite_project_history refuses an invisible project, and hides retention from non-cost roles', async () => {
   m.requireProjectAccess.mockResolvedValue({ ok: false, status: 404, error: 'Project not found' })
   await expect(run('esite_project_history', { projectId: P2 })).rejects.toThrow('Project not found')
   expect(m.getProjectHistoryCached).not.toHaveBeenCalled()
 
   m.requireProjectAccess.mockResolvedValue({ ok: true })
-  m.getProjectHistoryCached.mockResolvedValue([{ id: 'h', operation: 'UPDATE', snapshot: { units: 'metric', retentionPct: 5 }, diff: { retentionPct: [5, 10], units: ['a', 'b'] }, changedBy: 'u', changedAt: 't' }])
+  m.getProjectHistoryCached.mockResolvedValue([{ id: 'h', operation: 'UPDATE', snapshot: { units: 'metric', retentionPct: 5 }, diff: { retention_pct: [5, 10], units: ['a', 'b'] }, changedBy: 'u', changedAt: 't' }])
   m.requireEffectiveRole.mockResolvedValue({ ok: false, error: 'no' })
   const lean = await run('esite_project_history', { projectId: P1, limit: 999 })
   expect(m.getProjectHistoryCached).toHaveBeenCalledWith(P1, 200)
   expect(lean.rows[0].snapshot).toEqual({ units: 'metric' })
   expect(lean.rows[0].diff).toEqual({ units: ['a', 'b'] })
+  expect('retention_pct' in lean.rows[0].diff).toBe(false)
 
   m.requireEffectiveRole.mockResolvedValue({ ok: true, role: 'owner' })
   const full = await run('esite_project_history', { projectId: P1 })
   expect(full.rows[0].snapshot.retentionPct).toBe(5)
+  expect(full.rows[0].diff.retention_pct).toEqual([5, 10])
 })

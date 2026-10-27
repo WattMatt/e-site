@@ -1,3 +1,4 @@
+import { it, expect } from 'vitest'
 import fs from 'node:fs'; import path from 'node:path'
 const dir = path.join(__dirname); const files = fs.readdirSync(dir, { recursive: true }).map(String).filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts'))
 const SERVICE = /createServiceClient|SUPABASE_SERVICE_ROLE_KEY|service_role/

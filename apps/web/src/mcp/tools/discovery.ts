@@ -25,7 +25,8 @@ async function assertVisible(ctx: ToolContext, id: string): Promise<void> {
 }
 
 // Retention is a commercial figure: it travels with the contract block, never with the settings or history of a reader without cost access.
-const COST_SETTING_KEYS = ['retentionPct'] as const
+// History diffs are keyed by raw column name (snake_case); snapshots and settings are camelCased. Strip both spellings.
+const COST_SETTING_KEYS = ['retentionPct', 'retention_pct'] as const
 function withoutCostKeys<T extends Record<string, unknown> | null | undefined>(obj: T): T {
   if (!obj) return obj
   const copy = { ...obj } as Record<string, unknown>
@@ -120,7 +121,6 @@ export const esiteProjectGet = defineTool({
       canSeeContractFigures(ctx, id),
     ])
     if ('error' in contacts) throw new Error('listProjectContacts failed')
-    if ('error' in members) throw new Error('listProjectMembers failed')
     const p = project as Record<string, any>
     return {
       project: {
@@ -153,7 +153,8 @@ export const esiteProjectGet = defineTool({
           }
         : null,
       contacts: contacts.contacts,
-      members: members.members.map((m) => ({
+      // listProjectMembers gates on a role in the project's org; a cross-org member passes the project gate but not that one.
+      members: 'error' in members ? null : members.members.map((m) => ({
         userId: m.user_id, fullName: m.full_name, email: m.email, role: m.role, orgRole: m.org_role, isActive: m.is_active,
       })),
     }
