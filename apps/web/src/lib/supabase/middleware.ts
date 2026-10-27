@@ -2,22 +2,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { type NextRequest, NextResponse } from 'next/server'
 import type { Database } from '@esite/db'
 import type { SupabaseClient } from '@supabase/supabase-js'
-
-interface JwtClaims {
-  aal?: 'aal1' | 'aal2'
-  amr?: { method: string }[]
-}
-
-function decodeAccessTokenClaims(token: string): JwtClaims | null {
-  try {
-    const payloadB64 = token.split('.')[1]
-    if (!payloadB64) return null
-    const json = Buffer.from(payloadB64, 'base64url').toString('utf-8')
-    return JSON.parse(json) as JwtClaims
-  } catch {
-    return null
-  }
-}
+import { decodeAccessTokenClaims, type JwtClaims } from './jwt'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })

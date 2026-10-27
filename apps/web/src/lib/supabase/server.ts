@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { createClient as createSupabaseClient, type SupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import type { Database } from '@esite/db'
+import { getBearerContext } from './request-auth'
 
 // @supabase/ssr@0.5.x returns SupabaseClient<DB, SchemaName, Schema> (3 args) but
 // supabase-js@2.50+ expanded SupabaseClient to 5 type params. Passing Schema as the
@@ -10,6 +11,19 @@ import type { Database } from '@esite/db'
 // generic chain correctly: SchemaNameOrClientOptions→'public', SchemaName→'public',
 // Schema→Database['public'], ClientOptions→{PostgrestVersion:"14.5"}.
 export async function createClient(): Promise<SupabaseClient<Database>> {
+  // Request-scoped bearer override (MCP route): act as the bearer user and never read cookies.
+  const bearer = getBearerContext()
+  if (bearer) {
+    return createSupabaseClient<Database>(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        global: { headers: { Authorization: `Bearer ${bearer.accessToken}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      }
+    ) as unknown as SupabaseClient<Database>
+  }
+
   const cookieStore = await cookies()
 
   return createServerClient<Database>(

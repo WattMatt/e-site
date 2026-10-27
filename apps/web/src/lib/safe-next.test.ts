@@ -15,6 +15,7 @@ describe('safeNext', () => {
     expect(safeNext('/onboarding')).toBe('/onboarding')
     expect(safeNext('/settings/users')).toBe('/settings/users')
     expect(safeNext('/portal?welcome=1')).toBe('/portal?welcome=1')
+    expect(safeNext('/oauth/consent?authorization_id=abc')).toBe('/oauth/consent?authorization_id=abc')
   })
 
   it('rejects absolute/protocol-relative/external', () => {

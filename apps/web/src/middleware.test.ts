@@ -98,6 +98,30 @@ describe('middleware — session gate', () => {
     expect(url.searchParams.get('next')).toBe('/dashboard')
   })
 
+  it('keeps the query in ?next and strips it from the login URL (OAuth consent round trip)', async () => {
+    const res = await run('/oauth/consent?authorization_id=x')
+    const url = locationOf(res)
+    expect(url.pathname).toBe('/login')
+    expect(url.searchParams.get('next')).toBe('/oauth/consent?authorization_id=x')
+    expect(url.searchParams.has('authorization_id')).toBe(false)
+    expect([...url.searchParams.keys()]).toEqual(['next'])
+  })
+
+  it('keeps the query in ?next on the MFA redirect too', async () => {
+    state.user = CONFIRMED
+    state.aal = 'aal1'
+    state.orgCount = 1
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ factors: [{ status: 'verified' }] }) })),
+    )
+    const res = await run('/oauth/consent?authorization_id=x')
+    const url = locationOf(res)
+    expect(url.pathname).toBe('/verify-mfa')
+    expect(url.searchParams.get('next')).toBe('/oauth/consent?authorization_id=x')
+    expect([...url.searchParams.keys()]).toEqual(['next'])
+  })
+
   it('carries deep paths through ?next', async () => {
     const res = await run('/projects/abc-123/settings/rates')
     const url = locationOf(res)

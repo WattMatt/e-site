@@ -45,6 +45,7 @@ const ALLOWED_PREFIXES = [
   '/unsubscribe',
   '/privacy/request',
   '/cookies',
+  '/oauth',
 ]
 
 export function safeNext(raw: string | null | undefined): string | null {
