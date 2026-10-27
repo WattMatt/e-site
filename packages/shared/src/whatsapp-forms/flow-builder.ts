@@ -155,7 +155,12 @@ export function flowCapability(t: Template): FlowCapability {
         if (opts.some((o) => !String(o ?? '').trim())) reasons.push(`field "${f.field_id}" has a blank option`)
         if (new Set(opts).size !== opts.length) reasons.push(`field "${f.field_id}" has a duplicate option`)
       }
-      if (f.type === 'repeating_group') reasons.push(`repeating group "${f.field_id}" is a table`)
+      // A table cannot be a Flow. An optional one (e.g. the Snag List every template carries since
+      // 00255) is left to the web, like an optional file; a required one keeps the template off.
+      if (f.type === 'repeating_group') {
+        if (f.required || (f.min_count ?? 0) > 0) reasons.push(`repeating group "${f.field_id}" is a table`)
+        else skippedFields.push(ref(s.section_id, f))
+      }
       if (f.type === 'file') {
         if (f.required) reasons.push(`required file "${f.field_id}" cannot be sent over WhatsApp`)
         else skippedFields.push(ref(s.section_id, f))

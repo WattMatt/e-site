@@ -14,6 +14,10 @@
 
 -- Which template row every inspection uses, before the migration ran in this transaction is not
 -- observable here, so the check is that no inspection points at a new version.
+CREATE FUNCTION pg_temp.no_snags(s jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $f$
+  SELECT jsonb_set(s, '{sections}', (SELECT jsonb_agg(x ORDER BY o) FROM jsonb_array_elements(s->'sections') WITH ORDINALITY e(x, o)
+                                      WHERE x->>'section_id' <> 'snags'))
+$f$;
 CREATE TEMP TABLE _expect (org uuid, template_id text, base text, next text, labels text[]);
 INSERT INTO _expect VALUES
   ('dddddddd-0000-0000-0000-000000000001', 'distribution-board-inspection', '1.0', '1.1', ARRAY['Enclosure condition']),
@@ -34,7 +38,9 @@ SELECT * FROM (
     FROM _expect e
   UNION ALL
   SELECT e.template_id || ' ' || e.next || ' is ' || e.base || ' with only the approved types changed',
-         coalesce((SELECT (replace(n.schema_json::text, '"type": "rating"', '"type": "pass_fail"')::jsonb || jsonb_build_object('version', b.schema_json->'version')) = b.schema_json
+         -- 00255 later added a Snag List section to most templates (to a base too, when it was in
+         -- use); it is not part of 00254's change, so it is left out of both sides.
+         coalesce((SELECT (replace(pg_temp.no_snags(n.schema_json)::text, '"type": "rating"', '"type": "pass_fail"')::jsonb || jsonb_build_object('version', b.schema_json->'version')) = pg_temp.no_snags(b.schema_json)
                      FROM inspections.templates n JOIN inspections.templates b
                        ON b.organisation_id = n.organisation_id AND b.template_id = n.template_id AND b.version = e.base
                     WHERE n.organisation_id = e.org AND n.template_id = e.template_id AND n.version = e.next), false)
