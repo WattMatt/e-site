@@ -179,10 +179,11 @@ export default function MobileCaptureScreen() {
 
   const onSubmit = async () => {
     if (!template || !ev || !inspectionId) return
-    if (ev.missingRequired.length > 0) {
+    // A missing photo never blocks an inspection: blockingMissing leaves photo fields out.
+    if (ev.blockingMissing.length > 0) {
       Alert.alert(
         'Required fields missing',
-        `${ev.missingRequired.length} required field${ev.missingRequired.length === 1 ? '' : 's'} need answers before submitting.`,
+        `${ev.blockingMissing.length} required field${ev.blockingMissing.length === 1 ? '' : 's'} need answers before submitting.`,
       )
       return
     }

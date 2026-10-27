@@ -46,7 +46,6 @@ function renderFileField() {
     inspectionId: 'insp-1',
     sectionId: 'sec-1',
     readOnly: false,
-    verifierFlipMode: false,
     onChange: () => {},
   } as unknown as RendererProps
   return render(<FileField {...props} />)

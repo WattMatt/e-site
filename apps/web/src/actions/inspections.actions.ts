@@ -568,17 +568,34 @@ export async function deleteRepeatingGroupEntryAction(input: {
 
   // Use a LIKE filter to match every sub-field response for this entry.
   // The synthetic pattern guarantees `<group>[<index>].` uniquely scopes
-  // the entry — different indices/groups don't collide.
-  const prefix = `${input.groupFieldId}[${input.index}].`
-  const { error } = await supabase
+  // the entry — different indices/groups don't collide. `_` (in every snake_case
+  // field id) and `%` are LIKE wildcards, so they are escaped to match literally.
+  const prefix = `${input.groupFieldId}[${input.index}].`.replace(/[\\%_]/g, '\\$&')
+
+  // responses_delete_contributor (00253) gates this; RLS filters a refused delete to 0 rows with
+  // no error, so a 0 count is checked: rows still there means the delete was not allowed (an empty
+  // entry that was never saved legitimately deletes nothing).
+  const { error, count } = await supabase
     .schema('inspections')
     .from('responses')
-    .delete()
+    .delete({ count: 'exact' })
     .eq('inspection_id', input.inspectionId)
     .eq('section_id', input.sectionId)
     .like('field_id', `${prefix}%`)
-
   if (error) throw error
+  if (!count) {
+    const { data: still } = await supabase
+      .schema('inspections')
+      .from('responses')
+      .select('field_id')
+      .eq('inspection_id', input.inspectionId)
+      .eq('section_id', input.sectionId)
+      .like('field_id', `${prefix}%`)
+      .limit(1)
+    if (still && still.length > 0) {
+      throw new Error('This entry could not be removed: the inspection is no longer editable, or your role cannot change it.')
+    }
+  }
 }
 
 // ─── submitInspectionAction ─────────────────────────────────────────────

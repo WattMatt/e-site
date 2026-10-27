@@ -145,8 +145,10 @@ SELECT * FROM (VALUES
      (SELECT v FROM _o WHERE k = 'v:photo_coc') LIKE 'ERR %row-level security%'),
   ('awaiting verification, the verifier cannot flip an answer on a CoC inspection',
      (SELECT v FROM _o WHERE k = 'v:flip_coc') = '0'),
-  ('awaiting verification, the verifier may still correct an answer on an inspection-only template',
-     (SELECT v FROM _o WHERE k = 'v:flip_io') = '1'),
+  -- 00253 (owner decision 2026-10-27): a verifier never edits answers on any template; they
+  -- certify or send back. 00250 alone allowed it here ('1').
+  ('awaiting verification, the verifier cannot correct an answer on an inspection-only template either',
+     (SELECT v FROM _o WHERE k = 'v:flip_io') = '0'),
   ('on an inspection-only template the verifier may still answer',
      (SELECT v FROM _o WHERE k = 'v:answer_io') = '1'),
   ('someone who answered cannot be made verifier of a CoC inspection',

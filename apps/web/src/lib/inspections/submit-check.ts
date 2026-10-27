@@ -9,7 +9,7 @@ type AnyClient = SupabaseClient<any, any, any>
  *
  * The capture page runs the same check in the browser, but that only stops a Submit pressed on
  * the page: the server action took any submit as complete, so a stale tab or a direct call could
- * send an inspection with required answers, photos or signatures missing to the verifier.
+ * send an inspection with required answers or signatures missing to the verifier.
  * Reads through the caller's session, so RLS decides what counts.
  */
 export async function submitBlocker(supabase: AnyClient, inspectionId: string): Promise<string | null> {
@@ -33,10 +33,12 @@ export async function submitBlocker(supabase: AnyClient, inspectionId: string): 
     photos: (photos ?? []) as { section_id: string; field_id: string }[],
     signatures: (signatures ?? []) as { section_id?: string; field_id?: string }[],
   })
-  if (result.missingRequired.length === 0) return null
+  // A missing photo never blocks an inspection (it may carry a reason instead): blockingMissing
+  // is missingRequired without photo fields.
+  if (result.blockingMissing.length === 0) return null
 
-  const n = result.missingRequired.length
-  const first = result.missingRequired[0]
+  const n = result.blockingMissing.length
+  const first = result.blockingMissing[0]
   const where = template.sections.find((s) => s.section_id === first.sectionId)?.title ?? first.sectionId
   return `${n} required ${n === 1 ? 'item is' : 'items are'} still missing. The first is in "${where}". Complete ${n === 1 ? 'it' : 'them'} and submit again.`
 }

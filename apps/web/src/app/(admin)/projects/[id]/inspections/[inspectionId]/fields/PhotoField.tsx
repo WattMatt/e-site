@@ -6,7 +6,7 @@ import { useFieldPhotos } from './useFieldPhotos'
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox'
 import { PHOTO_ACCEPT } from '@/lib/image/prepare'
 
-export default function PhotoField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
+export default function PhotoField({ field, inspectionId, sectionId, readOnly, response, onChange }: RendererProps) {
   const { photos, uploading, error, upload, remove } = useFieldPhotos(
     inspectionId,
     sectionId,
@@ -132,6 +132,32 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
         )}
       </div>
       {error && <p style={{ fontSize: 11, color: 'var(--c-red)', margin: 0 }}>{error}</p>}
+      {/* A required photo that can't be taken never blocks or fails the inspection; the reason
+          (optional) is kept on this field's answer as value_text and printed in the report. */}
+      {field.required && photos.length === 0 && !uploading && (readOnly ? (
+        response?.value_text ? (
+          <p style={{ fontSize: 11, color: 'var(--c-text-mid)', margin: 0 }}>No photo: {response.value_text}</p>
+        ) : null
+      ) : (
+        <input
+          type="text"
+          placeholder="No photo? Reason (optional), e.g. board locked"
+          aria-label={`${field.label}: reason no photo was taken`}
+          defaultValue={response?.value_text ?? ''}
+          onBlur={(e) => {
+            const reason = e.target.value.trim()
+            if (reason !== (response?.value_text ?? '')) onChange({ value_text: reason || null })
+          }}
+          style={{
+            fontSize: 12,
+            padding: '6px 8px',
+            borderRadius: 6,
+            border: '1px solid var(--c-border)',
+            background: 'var(--c-panel)',
+            color: 'var(--c-text)',
+          }}
+        />
+      ))}
       {lightbox !== null &&
         (() => {
           const lightboxPhotos: LightboxPhoto[] = photos

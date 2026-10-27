@@ -47,8 +47,13 @@ describe('submitBlocker', () => {
   it('names how many are missing and where the first one is', async () => {
     const client = fakeClient({ ...base, photos: [{ section_id: 'wiring', field_id: 'a' }], signatures: [] })
     expect(await submitBlocker(client, 'i-1')).toBe(
-      '2 required items are still missing. The first is in "Wiring images". Complete them and submit again.',
+      '1 required item is still missing. The first is in "Sign-off". Complete it and submit again.',
     )
+  })
+
+  it('a missing photo never blocks submit (it may carry a reason instead)', async () => {
+    const client = fakeClient({ ...base, photos: [], signatures: [{ section_id: 'sign', field_id: 'inspector_signature' }] })
+    expect(await submitBlocker(client, 'i-1')).toBeNull()
   })
 
   it('refuses when the inspection cannot be read', async () => {

@@ -11,7 +11,12 @@ export type FieldType =
   | 'file'
   | 'header'
   | 'computed'
-  | 'repeating_group';
+  | 'repeating_group'
+  | 'rating';
+
+// rating fields store one of these in value_text. 'poor' fails the inspection.
+export const RATING_OPTIONS = ['good', 'fair', 'poor'] as const;
+export type RatingValue = (typeof RATING_OPTIONS)[number];
 
 export type NodeType = 'board' | 'source' | 'any';
 export type DeliverableType = 'coc' | 'inspection_only' | 'factory_test';
@@ -38,6 +43,11 @@ export interface Field {
   unit?: string;
   pass_when?: string;
   options?: string[];
+  // dropdown / multi_select only: choices that FAIL the inspection when picked
+  // (e.g. a snag's risk 'high', 'critical'). Together with a rating of 'poor'
+  // these are the only answers that decide the verdict — every other check
+  // (pass_fail ticks, pass_when limits, photos) is recorded, not failing.
+  fail_values?: string[];
   min_count?: number;
   max_count?: number;
   conditional_on?: ConditionalOn;
@@ -114,9 +124,21 @@ export interface Response {
 }
 
 export interface EvaluationResult {
-  overallResult: 'pass' | 'fail' | 'conditional_pass';
+  // 'fail' iff a visible rating is Poor or a visible answer is one of its field's fail_values.
+  overallResult: 'pass' | 'fail';
+  // The answers that fail the inspection (decide overallResult).
   failedFields: { sectionId: string; fieldId: string; reason: string }[];
+  // Recorded observations that do NOT fail it: a pass_fail ticked Fail, a reading outside its
+  // pass_when, a repeating group over max_count, too few photos.
+  flaggedFields: { sectionId: string; fieldId: string; reason: string }[];
+  // Every required field without an answer, photos included (site forms and WhatsApp complete
+  // on this list).
   missingRequired: { sectionId: string; fieldId: string }[];
+  // Inspections: what blocks submit/certify. missingRequired minus photo fields — a missing
+  // photo never blocks or fails an inspection; it carries an optional reason instead.
+  blockingMissing: { sectionId: string; fieldId: string }[];
+  // Required photo fields with no photo, with the inspector's reason when one was given.
+  missingPhotos: { sectionId: string; fieldId: string; reason: string | null }[];
   visibleFieldCount: number;
   answeredFieldCount: number;
   /** Progress per section_id, counted by the same rules as the totals. Every template section has an entry. */
@@ -126,6 +148,6 @@ export interface EvaluationResult {
 export interface SectionProgress {
   answered: number;
   total: number;
-  /** Required fields (or required photo/signature counts) still missing in this section. */
+  /** Required answers still missing in this section that block submit (a missing photo never does). */
   missing: number;
 }

@@ -2,6 +2,7 @@
 
 import { useId } from 'react';
 import type { Field } from '@esite/shared';
+import { dropOption, renameOption, toggleFailValue } from './failValues';
 
 interface Props {
   sectionId: string;
@@ -14,15 +15,17 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
   const labelId = useId();
   const options = field.options ?? [];
 
+  const failValues = field.fail_values ?? [];
+
   function updateOption(index: number, value: string) {
     const next = [...options];
     next[index] = value;
-    onChange({ options: next });
+    onChange({ options: next, fail_values: renameOption(field.fail_values, options[index], value) });
   }
 
   function removeOption(index: number) {
     const next = options.filter((_: string, i: number) => i !== index);
-    onChange({ options: next.length > 0 ? next : [] });
+    onChange({ options: next.length > 0 ? next : [], fail_values: dropOption(field.fail_values, options[index]) });
   }
 
   function addOption() {
@@ -92,6 +95,18 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
               onChange={(e) => updateOption(i, e.target.value)}
               className="border rounded px-3 py-1.5 flex-1 text-sm"
             />
+            <label
+              className="flex items-center gap-1 text-xs text-[var(--c-text-mid)] whitespace-nowrap"
+              title="Picking this option fails the inspection (e.g. a snag's high or critical risk)"
+            >
+              <input
+                type="checkbox"
+                checked={failValues.includes(opt)}
+                disabled={opt.trim() === ''}
+                onChange={(e) => onChange({ fail_values: toggleFailValue(field.fail_values, opt, e.target.checked) })}
+              />
+              Fails inspection
+            </label>
             <button
               type="button"
               onClick={() => removeOption(i)}

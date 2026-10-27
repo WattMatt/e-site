@@ -30,6 +30,16 @@ describe('flowCapability', () => {
     expect(cap.skippedFields.map((f) => f.fieldId)).toEqual(['service_report'])
   })
 
+  it('keeps a template with a required rating off WhatsApp, and skips an optional one visibly', () => {
+    const t = (required: boolean): Template => ({
+      ...MINI,
+      sections: [{ section_id: 'r', title: 'R', fields: [{ field_id: 'cond', label: 'Condition', type: 'rating', required }] }],
+    })
+    expect(flowCapability(t(true)).ok).toBe(false)
+    expect(flowCapability(t(true)).reasons.join('\n')).toMatch(/required rating "cond"/)
+    expect(flowCapability(t(false)).skippedFields.map((f) => f.fieldId)).toEqual(['cond'])
+  })
+
   it('refuses repeating groups, conditions and required files, naming each', () => {
     const t: Template = {
       ...MINI,

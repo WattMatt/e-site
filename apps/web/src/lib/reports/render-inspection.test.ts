@@ -55,8 +55,10 @@ const fixtureData: InspectionReportData = {
     sansReference: 'SANS 10142-1:2020',
     tally: { pass: 8, fail: 1, na: 2 },
     failed: [
-      { label: 'Earth continuity — Circuit breaker rating', sansRef: 'SANS 10142-1 §6.4' },
+      { label: 'Earth continuity — Circuit breaker rating', reason: 'rated Poor', sansRef: 'SANS 10142-1 §6.4' },
     ],
+    observations: [{ label: 'Labelling', reason: 'faded', sansRef: null }],
+    missingPhotos: [{ label: 'Board photo', reason: 'Board locked' }],
   },
   sections: [
     {

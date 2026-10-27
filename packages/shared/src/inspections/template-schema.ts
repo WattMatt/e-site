@@ -3,7 +3,7 @@ import type { Field } from './types';
 
 const fieldTypeEnum = z.enum([
   'pass_fail','number','text','textarea','dropdown','multi_select','date',
-  'photo','signature','file','header','computed','repeating_group',
+  'photo','signature','file','header','computed','repeating_group','rating',
 ]);
 
 // fieldSchema is z.lazy so the `fields` array on a repeating_group field
@@ -19,6 +19,7 @@ const fieldSchema: z.ZodType<Field> = z.lazy(() =>
     unit: z.string().optional(),
     pass_when: z.string().optional(),
     options: z.array(z.string()).optional(),
+    fail_values: z.array(z.string().min(1)).optional(),
     min_count: z.number().int().positive().optional(),
     max_count: z.number().int().positive().optional(),
     conditional_on: z.union([
@@ -45,6 +46,13 @@ const fieldSchema: z.ZodType<Field> = z.lazy(() =>
     return true;
   }, {
     message: 'repeating_group requires non-empty fields[] and may not contain nested repeating_group entries',
+  }).refine((f) => {
+    if (!f.fail_values || f.fail_values.length === 0) return true;
+    if (f.type !== 'dropdown' && f.type !== 'multi_select') return false;
+    const opts = new Set((f.options ?? []).map((o) => o.toLowerCase()));
+    return f.fail_values.every((v) => opts.has(v.toLowerCase()));
+  }, {
+    message: 'fail_values is only for dropdown / multi_select fields and every value must be one of the options',
   }),
 );
 

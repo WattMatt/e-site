@@ -24,7 +24,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { toReportJpeg } from './report-image'
 import { toWinAnsiSafe } from './winansi-text'
-import { evaluateField, type Field as EngineField } from '@esite/shared'
+import { evaluateField, evaluateInspection, type Field as EngineField, type Template as EngineTemplate } from '@esite/shared'
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 // (These EXACTLY match the local prop interfaces in interior.tsx; Task 4
@@ -99,10 +99,15 @@ export interface ReportSummary {
   verifier: string | null
   startedAt: string | null
   certifiedAt: string | null
-  overallResult: string | null     // 'pass' | 'fail' | 'conditional_pass' | null
+  overallResult: string | null     // 'pass' | 'fail' (legacy rows may hold 'conditional_pass') | null
   sansReference: string | null
   tally: { pass: number; fail: number; na: number }   // across ALL pass_fail responses incl. group entries
-  failed: Array<{ label: string; sansRef?: string | null }>
+  /** What fails the inspection (engine failedFields): a Poor rating, a fail_values answer. */
+  failed: Array<{ label: string; reason: string; sansRef?: string | null }>
+  /** Recorded, not failing (engine flaggedFields): Fail ticks, readings outside their limit. */
+  observations: Array<{ label: string; reason: string; sansRef?: string | null }>
+  /** Required photos not taken, with the inspector's reason when given. Never failing. */
+  missingPhotos: Array<{ label: string; reason: string | null }>
 }
 export interface InspectionReportData {
   inspectionId: string
@@ -694,66 +699,63 @@ export async function gatherInspectionReportData(
     by: resolveName(h.responded_by),
   }))
 
-  // 11. Summary — tally + failed list across ALL pass_fail responses, incl.
-  //     group entries (failed-field labels mirror render.ts ~lines 553–600).
-  //
-  //     The outer flattenSectionFields loop hits group fields (type='repeating_group')
-  //     as opaque entries. The inner block then RE-ENTERS the group's sub-fields via
-  //     collectGroupEntryIndices + synthetic ids so group entries are tallied
-  //     individually. This mirrors the split in the section-model builder (step 7)
-  //     where flattenSectionFields intentionally skips group recursion.
+  // 11. Summary — the pass/fail tally across ALL pass_fail responses (group entries included),
+  //     and the verdict lists from the SAME engine evaluation the capture page and certify use, so
+  //     the report can never disagree with the stored result: hidden fields are excluded, a Fail
+  //     tick or an out-of-limit reading is an observation, and only a Poor rating or a fail_values
+  //     answer fails.
   const tally = { pass: 0, fail: 0, na: 0 }
-  const failed: Array<{ label: string; sansRef?: string | null }> = []
   for (const section of sections) {
     for (const field of flattenSectionFields(section)) {
       if (field.type === 'repeating_group') {
         const indices = collectGroupEntryIndices(field.field_id, responseList, section.section_id)
         for (const i of indices) {
           for (const sub of (field.fields ?? []) as FlatField[]) {
+            if (sub.type !== 'pass_fail') continue
             const synthetic = `${field.field_id}[${i}].${sub.field_id}`
-            const resp = responseList.find(
-              (r) => r.section_id === section.section_id && r.field_id === synthetic,
-            )
-            if (sub.type === 'pass_fail') {
-              const pill = passStateToPill(resp)
-              if (pill === 'pass') tally.pass++
-              else if (pill === 'fail') tally.fail++
-              else if (pill === 'na') tally.na++
-            }
-            const isFail =
-              (sub.type === 'pass_fail' && passStateToPill(resp) === 'fail') ||
-              (sub.type === 'number' && resp?.pass_state === 'fail')
-            if (isFail) {
-              failed.push({
-                label: `${section.title} · ${field.label ?? field.field_id} [entry ${i + 1}] · ${sub.label ?? sub.field_id}`,
-                sansRef: sub.sans_ref ?? null,
-              })
-            }
+            const pill = passStateToPill(responseList.find((r) => r.section_id === section.section_id && r.field_id === synthetic))
+            if (pill === 'pass') tally.pass++
+            else if (pill === 'fail') tally.fail++
+            else if (pill === 'na') tally.na++
           }
         }
         continue
       }
-
-      const resp = responseList.find(
-        (r) => r.section_id === section.section_id && r.field_id === field.field_id,
-      )
-      if (field.type === 'pass_fail') {
-        const pill = passStateToPill(resp)
-        if (pill === 'pass') tally.pass++
-        else if (pill === 'fail') tally.fail++
-        else if (pill === 'na') tally.na++
-      }
-      const isFail =
-        (field.type === 'pass_fail' && passStateToPill(resp) === 'fail') ||
-        (field.type === 'number' && resp?.pass_state === 'fail')
-      if (isFail) {
-        failed.push({
-          label: `${section.title} · ${field.label ?? field.field_id}`,
-          sansRef: field.sans_ref ?? null,
-        })
-      }
+      if (field.type !== 'pass_fail') continue
+      const pill = passStateToPill(responseList.find((r) => r.section_id === section.section_id && r.field_id === field.field_id))
+      if (pill === 'pass') tally.pass++
+      else if (pill === 'fail') tally.fail++
+      else if (pill === 'na') tally.na++
     }
   }
+
+  const evaluation = evaluateInspection(
+    { ...(template?.schema_json ?? {}), sections } as EngineTemplate,
+    responseList,
+    {
+      photos: photoList.map((p) => ({ section_id: p.section_id, field_id: p.field_id })),
+      signatures: sigList.map((g) => ({ section_id: g.section_id ?? undefined, field_id: g.field_id ?? undefined })),
+    },
+  )
+  const labelOf = (sectionId: string, fieldId: string): { label: string; sansRef: string | null } => {
+    const section = sections.find((x) => x.section_id === sectionId)
+    const title = section?.title ?? sectionId
+    const m = /^([a-z0-9_]+)\[(\d+)\]\.([a-z0-9_]+)$/.exec(fieldId)
+    const all = section ? (flattenSectionFields(section) as FlatField[]) : []
+    if (m) {
+      const group = all.find((f) => f.field_id === m[1])
+      const sub = ((group?.fields ?? []) as FlatField[]).find((f) => f.field_id === m[3])
+      return {
+        label: `${title} · ${group?.label ?? m[1]} [entry ${Number(m[2]) + 1}] · ${sub?.label ?? m[3]}`,
+        sansRef: sub?.sans_ref ?? null,
+      }
+    }
+    const f = all.find((x) => x.field_id === fieldId)
+    return { label: `${title} · ${f?.label ?? fieldId}`, sansRef: f?.sans_ref ?? null }
+  }
+  const failed = evaluation.failedFields.map((f) => ({ ...labelOf(f.sectionId, f.fieldId), reason: f.reason }))
+  const observations = evaluation.flaggedFields.map((f) => ({ ...labelOf(f.sectionId, f.fieldId), reason: f.reason }))
+  const missingPhotos = evaluation.missingPhotos.map((m) => ({ label: labelOf(m.sectionId, m.fieldId).label, reason: m.reason }))
 
   // Inspectors = distinct history contributors ∪ assigned inspector.
   const inspectorIds = new Set<string>()
@@ -776,6 +778,8 @@ export async function gatherInspectionReportData(
     sansReference: (template?.sans_reference as string | null) ?? null,
     tally,
     failed,
+    observations,
+    missingPhotos,
   }
 
   // 12. brandingInput — org/project accents + the three logo data URIs from the

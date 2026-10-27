@@ -32,6 +32,7 @@ const TEMPLATE = {
       fields: [
         { field_id: 'q1', type: 'pass_fail', label: 'Q1', required: true },
         { field_id: 'q2', type: 'pass_fail', label: 'Q2' },
+        { field_id: 'cond', type: 'rating', label: 'Condition' },
       ],
     },
   ],
@@ -47,10 +48,12 @@ function qb(result: unknown): any {
 
 function makeClient(opts: {
   deliverable?: string
-  responses: Array<{ section_id: string; field_id: string; value_bool: boolean }>
+  responses: Array<{ section_id: string; field_id: string; value_bool?: boolean; value_text?: string }>
   blocker?: string | null
   issued?: { coc_number: string } | null
   assignee?: string | null
+  /** Extra service-client rows (the PM lookup). The saved answers are always served from it too. */
+  serviceData?: Record<string, unknown>
 }) {
   const update = vi.fn(() => qb({ data: opts.issued === undefined ? { coc_number: 'INS-KW-2026-0001' } : opts.issued, error: null }))
   const rpc = vi.fn(() => Promise.resolve({ data: opts.blocker ?? null, error: null }))
@@ -71,21 +74,26 @@ function makeClient(opts: {
       from: (t: string) => ({ select: () => qb(tables[t] ?? { data: [], error: null }), update }),
     }),
   }
-  return { client, update, rpc }
+  // The verdict is evaluated from a SERVICE read and written with the service client (00253).
+  const svc = makeService({ responses: opts.responses, photos: [], signatures: [], ...(opts.serviceData ?? {}) })
+  createServiceClientMock.mockReturnValue(svc.client)
+  return { client, update, rpc, svc }
 }
 
 /** Records every filter, so a test can prove the lookup is scoped to the project's org and active rows. */
 function makeService(data: Record<string, unknown>) {
   const filters: Array<[string, string, unknown]> = []
+  const upserts: Array<[string, unknown]> = []
   const q = (table: string): any => {
     const p: any = Promise.resolve({ data: data[table] ?? [], error: null })
     p.select = () => q(table)
     p.eq = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
     p.in = (c: string, v: unknown) => (filters.push([table, c, v]), q(table))
     p.maybeSingle = () => Promise.resolve({ data: data[table] ?? null, error: null })
+    p.upsert = (row: unknown) => (upserts.push([table, row]), Promise.resolve({ error: null }))
     return p
   }
-  return { client: { from: q, schema: () => ({ from: q }) }, filters }
+  return { client: { from: q, schema: () => ({ from: q }) }, filters, upserts }
 }
 
 beforeEach(() => {
@@ -96,16 +104,22 @@ beforeEach(() => {
 })
 
 describe('certifyInspectionAction', () => {
-  it('refuses a FAIL before asking or writing anything: the verifier sends it back instead', async () => {
-    const { client, update, rpc } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: false }] })
+  it('refuses a FAIL (a Poor rating) before asking or writing anything: the verifier sends it back instead', async () => {
+    const { client, update, rpc, svc } = makeClient({
+      responses: [
+        { section_id: 's1', field_id: 'q1', value_bool: true },
+        { section_id: 's1', field_id: 'cond', value_text: 'poor' },
+      ],
+    })
     createClientMock.mockResolvedValue(client)
 
-    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/Send it back/) })
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/rated Poor.*Send it back/) })
     expect(rpc).not.toHaveBeenCalled()
     expect(update).not.toHaveBeenCalled()
+    expect(svc.upserts).toEqual([])
   })
 
-  it('refuses when a required check is unanswered (the engine reads that as FAIL)', async () => {
+  it('refuses when a required check is unanswered', async () => {
     const { client, update } = makeClient({ responses: [] })
     createClientMock.mockResolvedValue(client)
 
@@ -125,7 +139,27 @@ describe('certifyInspectionAction', () => {
     expect(update).not.toHaveBeenCalled()
   })
 
-  it('sends the computed result (conditional pass when only an optional check failed) and returns the issued number', async () => {
+  it('writes the server verdict with the service client, then certifies (the guard reads that verdict)', async () => {
+    const { client, update, svc } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
+    createClientMock.mockResolvedValue(client)
+
+    expect((await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).ok).toBe(true)
+    expect(svc.upserts).toEqual([['verdicts', { inspection_id: 'i-1', overall_result: 'pass', computed_by: 'v-1' }]])
+    expect(update).toHaveBeenCalledTimes(1)
+  })
+
+  it('writes no verdict when the database refuses the certifier', async () => {
+    const { client, svc } = makeClient({
+      responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }],
+      blocker: 'Only the assigned verifier can certify this inspection.',
+    })
+    createClientMock.mockResolvedValue(client)
+
+    expect((await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).ok).toBe(false)
+    expect(svc.upserts).toEqual([])
+  })
+
+  it('a Fail tick is recorded, not failing: the result is pass, and the issued number is returned', async () => {
     const { client, update } = makeClient({
       responses: [
         { section_id: 's1', field_id: 'q1', value_bool: true },
@@ -135,7 +169,7 @@ describe('certifyInspectionAction', () => {
     createClientMock.mockResolvedValue(client)
 
     const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: 'ignored' })
-    expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'conditional_pass', coc_number: null })
+    expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'pass', coc_number: null })
     expect(issued).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
   })
 
@@ -211,7 +245,9 @@ describe('sendBackForReinspectionAction', () => {
 
 describe('certify tells the people who manage the project', () => {
   it('org owners/admins/PMs and project-scoped PMs on the project, never the certifier or a contractor', async () => {
-    const svc = makeService({
+    const { client, svc } = makeClient({
+      responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }],
+      serviceData: {
       projects: { organisation_id: 'o-1' },
       project_members: [
         { user_id: 'v-1', role: 'project_manager' }, // the certifier
@@ -227,9 +263,8 @@ describe('certify tells the people who manage the project', () => {
         { user_id: 'carl', role: 'contractor' },
         { user_id: 'owner-2', role: 'admin' },
       ],
+      },
     })
-    createServiceClientMock.mockReturnValue(svc.client)
-    const { client } = makeClient({ responses: [{ section_id: 's1', field_id: 'q1', value_bool: true }] })
     createClientMock.mockResolvedValue(client)
 
     const out = await certifyInspectionAction({ projectId: 'p-1', inspectionId: 'i-1' })

@@ -53,6 +53,8 @@ function makeDefaultField(type: Field['type'], field_id: string): SectionField {
       return { field_id, type: 'computed', label: 'New field', formula: 'count_visible_answered' };
     case 'header':
       return { field_id, type: 'header', label: 'Section header' };
+    case 'rating':
+      return { field_id, type: 'rating', label: 'New rating', required: true };
     case 'repeating_group':
       // repeating_group requires non-empty fields[] — seed with one text sub-field.
       return {

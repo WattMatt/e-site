@@ -766,7 +766,9 @@ describe('gatherInspectionReportData — summary tally + failed list', () => {
   it('lists failed field labels including a group-entry label', async () => {
     setup()
     const data = await gatherInspectionReportData(INSPECTION_ID)
-    const labels = data.summary.failed.map((f) => f.label)
+    // Fail ticks are observations (recorded, never failing the inspection) since the 2026-10-27 rule.
+    expect(data.summary.failed).toEqual([])
+    const labels = data.summary.observations.map((f) => f.label)
     // top-level fail
     expect(labels.some((l) => l.includes('Bond OK?'))).toBe(true)
     // group-entry fail (the cert labels these with the entry + sub-field)
@@ -795,7 +797,7 @@ describe('gatherInspectionReportData — every drawn string is WinAnsi-safe', ()
     const data = await gatherInspectionReportData(INSPECTION_ID)
     const row = data.sections[0].rows.find((r) => r.fieldId === 'pf_bad')!
     expect(row.label).toBe('Loop <= 0.2 Ohm -> bond')
-    expect(data.summary.failed.some((f) => f.label.includes('Loop <= 0.2 Ohm'))).toBe(true)
+    expect(data.summary.observations.some((f) => f.label.includes('Loop <= 0.2 Ohm'))).toBe(true)
     // nothing the report draws carries a character outside WinAnsi
     const drawn: string[] = []
     const walk = (v: unknown, k = ''): void => {

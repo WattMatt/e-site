@@ -1,4 +1,5 @@
 import type { ConditionalOn, Field, Response, Section, SubSection, Template, EvaluationResult, SectionProgress } from './types';
+import { RATING_OPTIONS } from './types';
 
 type PassState = 'pass' | 'fail' | 'na' | 'not_checked';
 
@@ -20,13 +21,21 @@ export function evaluateField(field: Field, value: Response): { passState: PassS
     case 'dropdown':
     case 'date':
       if (!value.value_text || value.value_text.length === 0) return { passState: 'not_checked' };
+      if (verdictFailure(field, value)) return { passState: 'fail', reason: verdictFailure(field, value) ?? undefined };
       if (field.pass_when) return evaluateTextThreshold(field.pass_when, value.value_text);
       return { passState: 'pass' };
 
     case 'multi_select':
       if (!value.value_array || value.value_array.length === 0) return { passState: 'not_checked' };
+      if (verdictFailure(field, value)) return { passState: 'fail', reason: verdictFailure(field, value) ?? undefined };
       if (field.pass_when) return evaluateMultiSelectThreshold(field.pass_when, value.value_array);
       return { passState: 'pass' };
+
+    case 'rating':
+      if (!value.value_text) return { passState: 'not_checked' };
+      return value.value_text.toLowerCase() === 'poor'
+        ? { passState: 'fail', reason: 'rated Poor' }
+        : { passState: 'pass' };
 
     case 'photo':
     case 'signature':
@@ -219,196 +228,201 @@ export interface InspectionAttachments {
   signatures?: { section_id?: string; field_id?: string }[];
 }
 
+/**
+ * The verdict rule. An answer fails the INSPECTION only when it is
+ *   • a rating of 'poor', or
+ *   • one of its dropdown / multi_select field's `fail_values` (e.g. snag risk 'high').
+ * Returns the reason, or null. Everything else evaluateField can call 'fail' (a pass_fail
+ * ticked Fail, a reading outside pass_when) is a recorded observation, not a failure.
+ */
+export function verdictFailure(field: Field, value: Response): string | null {
+  if (field.type === 'rating') {
+    const v = value.value_text?.toLowerCase();
+    return v === 'poor' ? 'rated Poor' : null;
+  }
+  const fails = (field.fail_values ?? []).map((f) => f.toLowerCase());
+  if (fails.length === 0) return null;
+  if (field.type === 'dropdown') {
+    const v = value.value_text?.toLowerCase();
+    return v && fails.includes(v) ? `${value.value_text} recorded` : null;
+  }
+  if (field.type === 'multi_select') {
+    const hit = (value.value_array ?? []).filter((x) => fails.includes(x.toLowerCase()));
+    return hit.length > 0 ? `${hit.join(', ')} recorded` : null;
+  }
+  return null;
+}
+
+/** An answer exists. An explicit N/A is a deliberate answer, at top level and in groups alike. */
+function isAnswered(r: Response | undefined): boolean {
+  return !!r && (
+    (r.value_bool !== undefined && r.value_bool !== null) ||
+    (r.value_number !== undefined && r.value_number !== null) ||
+    (!!r.value_text && r.value_text.length > 0) ||
+    (!!r.value_array && r.value_array.length > 0) ||
+    r.pass_state === 'na'
+  );
+}
+
+/**
+ * The responses a repeating-group entry's sub-field conditions are judged against: the entry's
+ * own answers re-keyed to their bare sub-field ids (so `conditional_on: { field_id: 'kind' }`
+ * finds the SIBLING in the same entry), ahead of every other response.
+ */
+function entryScopedResponses(groupFieldId: string, index: number, responses: Response[]): Response[] {
+  const own: Response[] = [];
+  for (const r of responses) {
+    const k = parseRepeatingGroupKey(r.field_id);
+    if (k && k.group === groupFieldId && k.index === index) own.push({ ...r, field_id: k.sub });
+  }
+  return [...own, ...responses];
+}
+
+/** A required photo field's missing-photo reason, stored as value_text on that field's response. */
+export function photoMissingReason(r: Response | undefined): string | null {
+  const t = r?.value_text?.trim();
+  return t ? t : null;
+}
+
 export function evaluateInspection(
   template: Template,
   responses: Response[],
   attachments?: InspectionAttachments,
 ): EvaluationResult {
-  const failedFields: { sectionId: string; fieldId: string; reason: string }[] = [];
-  const missingRequired: { sectionId: string; fieldId: string }[] = [];
+  const failedFields: EvaluationResult['failedFields'] = [];
+  const flaggedFields: EvaluationResult['flaggedFields'] = [];
+  const missingRequired: EvaluationResult['missingRequired'] = [];
+  const missingPhotos: EvaluationResult['missingPhotos'] = [];
   let visibleFieldCount = 0;
   let answeredFieldCount = 0;
   // Per-section progress, counted by the same rules as the totals above, so a section made
-  // only of photo fields reads 4/4 once its photos are in (it read 0/4 when the capture page
-  // counted typed answers on its own).
+  // only of photo fields reads 4/4 once its photos are in.
   const sectionStats: Record<string, SectionProgress> = {};
   const tally = (sectionId: string): SectionProgress =>
     (sectionStats[sectionId] ??= { answered: 0, total: 0, missing: 0 });
   for (const s of template.sections) tally(s.section_id);
+  const answered = (sectionId: string) => {
+    answeredFieldCount++;
+    tally(sectionId).answered++;
+  };
+
+  const findResponse = (sectionId: string, fieldId: string) =>
+    responses.find((r) => r.section_id === sectionId && r.field_id === fieldId);
+
+  // Judge one answered (or unanswered) value field. Verdict failures and observations are
+  // separate lists; a field is one or the other, never both.
+  const judge = (sectionId: string, fieldId: string, field: Field, r: Response | undefined) => {
+    if (!r) return;
+    const fail = verdictFailure(field, r);
+    if (fail) {
+      failedFields.push({ sectionId, fieldId, reason: fail });
+      return;
+    }
+    const ev = evaluateField(field, r);
+    if (ev.passState === 'fail') flaggedFields.push({ sectionId, fieldId, reason: ev.reason ?? 'failed' });
+  };
+
+  // photo / signature / file fields count uploads, not response values.
+  const judgeAttachment = (sectionId: string, fieldId: string, field: Field) => {
+    if (attachments === undefined) {
+      // Backwards-compat: no attachments info → treat as answered, no validation.
+      if (field.required) answered(sectionId);
+      return;
+    }
+    const collection =
+      field.type === 'signature'
+        ? (attachments.signatures ?? []).filter((x) => x.field_id === fieldId && x.section_id === sectionId)
+        : (attachments.photos ?? []).filter((x) => x.field_id === fieldId && x.section_id === sectionId);
+    const count = collection.length;
+    if (count > 0) answered(sectionId);
+    if (!field.required) return;
+    const minRequired = Math.max(field.min_count ?? 1, 1);
+    if (count >= minRequired) return;
+    missingRequired.push({ sectionId, fieldId });
+    if (field.type === 'photo') {
+      // Never blocks or fails an inspection: listed with the inspector's reason, if any.
+      missingPhotos.push({ sectionId, fieldId, reason: photoMissingReason(findResponse(sectionId, fieldId)) });
+    }
+    if (count > 0) {
+      const noun = field.type === 'signature' ? 'signatures' : field.type === 'file' ? 'files' : 'photos';
+      flaggedFields.push({ sectionId, fieldId, reason: `only ${count} of ${minRequired} required ${noun} uploaded` });
+    }
+  };
 
   for (const { section, subsection, field } of iterateAllFields(template)) {
     if (field.type === 'header' || field.type === 'computed') continue;
     if (!isFieldVisible(field, responses, { section, subsection })) continue;
 
-    // repeating_group: iterate entries, evaluate each sub-field with the
-    // synthetic field_id `<group>[<i>].<sub>`. Counts entries against
-    // min_count/max_count (entry count, not response count).
+    // repeating_group: iterate entries, evaluate each sub-field with the synthetic field_id
+    // `<group>[<i>].<sub>`. Counts entries against min_count/max_count.
     if (field.type === 'repeating_group') {
       const subFields = field.fields ?? [];
       const indices = listRepeatingGroupEntryIndices(field.field_id, responses);
       const entryCount = indices.length;
 
-      // entry-count bookkeeping at the group level
       if (field.required || (field.min_count ?? 0) > 0) {
         const minEntries = Math.max(field.min_count ?? (field.required ? 1 : 0), field.required ? 1 : 0);
-        if (entryCount < minEntries) {
-          missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
-        }
+        if (entryCount < minEntries) missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
       }
       if (field.max_count != null && entryCount > field.max_count) {
-        failedFields.push({
+        flaggedFields.push({
           sectionId: section.section_id,
           fieldId: field.field_id,
           reason: `${entryCount} entries exceeds max_count ${field.max_count}`,
         });
       }
 
-      // visibility/answered metrics: each entry contributes (visible sub-fields, answered sub-fields).
-      // Sub-field photos/signatures/files are counted via the same attachments lookup
-      // but keyed on the synthetic field_id; for v1 we treat them as legacy (no min_count enforcement).
       for (const i of indices) {
+        const scoped = entryScopedResponses(field.field_id, i, responses);
         for (const sub of subFields) {
           if (sub.type === 'header' || sub.type === 'computed') continue;
+          if (!isFieldVisible(sub, scoped)) continue;
           visibleFieldCount++;
           tally(section.section_id).total++;
           const syntheticId = buildRepeatingGroupKey(field.field_id, i, sub.field_id);
-          const r = responses.find(
-            (rr) => rr.section_id === section.section_id && rr.field_id === syntheticId,
-          );
-          const has = !!r && (
-            (r.value_bool !== undefined && r.value_bool !== null) ||
-            (r.value_number !== undefined && r.value_number !== null) ||
-            (!!r.value_text && r.value_text.length > 0) ||
-            (!!r.value_array && r.value_array.length > 0)
-          );
-          // attachments — check the synthetic field_id against the photo/signature collections
-          const isAttachmentSub = sub.type === 'photo' || sub.type === 'signature' || sub.type === 'file';
-          if (isAttachmentSub && attachments) {
-            const collection =
-              sub.type === 'signature'
-                ? (attachments.signatures ?? []).filter((s) => s.field_id === syntheticId && s.section_id === section.section_id)
-                : (attachments.photos ?? []).filter((ph) => ph.field_id === syntheticId && ph.section_id === section.section_id);
-            if (collection.length > 0) { answeredFieldCount++; tally(section.section_id).answered++; }
-            if (sub.required && collection.length === 0) {
-              missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
-            }
+          if (sub.type === 'photo' || sub.type === 'signature' || sub.type === 'file') {
+            judgeAttachment(section.section_id, syntheticId, sub);
             continue;
           }
-          if (has) { answeredFieldCount++; tally(section.section_id).answered++; }
-          if (sub.required && !has) {
-            missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
-          } else if (r) {
-            const ev = evaluateField(sub, r);
-            if (ev.passState === 'fail') {
-              failedFields.push({ sectionId: section.section_id, fieldId: syntheticId, reason: ev.reason ?? 'failed' });
-            }
-          }
+          const r = findResponse(section.section_id, syntheticId);
+          if (isAnswered(r)) answered(section.section_id);
+          else if (sub.required) missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
+          judge(section.section_id, syntheticId, sub, r);
         }
       }
       continue;
     }
 
     visibleFieldCount++;
-
     tally(section.section_id).total++;
 
-    // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
     if (field.type === 'photo' || field.type === 'file' || field.type === 'signature') {
-      if (attachments === undefined) {
-        // Backwards-compat: no attachments info → engine assumes legacy pass (no validation)
-        if (!field.required) continue;
-        // Count as answered for visibility metrics — legacy callers don't surface min_count
-        { answeredFieldCount++; tally(section.section_id).answered++; }
-        continue;
-      }
-
-      const collection =
-        field.type === 'signature'
-          ? (attachments.signatures ?? []).filter(s => s.field_id === field.field_id && s.section_id === section.section_id)
-          : (attachments.photos ?? []).filter(p => p.field_id === field.field_id && p.section_id === section.section_id);
-      const count = collection.length;
-      const minRequired = field.required ? Math.max(field.min_count ?? 1, 1) : (field.min_count ?? 0);
-
-      if (count > 0) { answeredFieldCount++; tally(section.section_id).answered++; }
-
-      if (field.required && count < minRequired) {
-        missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
-        if (minRequired > 1) {
-          const noun = field.type === 'signature' ? 'signatures' : field.type === 'file' ? 'files' : 'photos';
-          failedFields.push({
-            sectionId: section.section_id,
-            fieldId: field.field_id,
-            reason: `only ${count} of ${minRequired} required ${noun} uploaded`,
-          });
-        }
-      }
+      judgeAttachment(section.section_id, field.field_id, field);
       continue;
     }
 
-    const response = responses.find(r => r.section_id === section.section_id && r.field_id === field.field_id);
-    const hasAnswer = !!response && (
-      (response.value_bool !== undefined && response.value_bool !== null) ||
-      (response.value_number !== undefined && response.value_number !== null) ||
-      (!!response.value_text && response.value_text.length > 0) ||
-      (!!response.value_array && response.value_array.length > 0) ||
-      // An explicit N/A on a pass_fail field is a deliberate answer.
-      response.pass_state === 'na'
-    );
-
-    if (hasAnswer) { answeredFieldCount++; tally(section.section_id).answered++; }
-
-    if (field.required && !hasAnswer) {
-      missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
-      continue;
-    }
-
-    if (response) {
-      const ev = evaluateField(field, response);
-      if (ev.passState === 'fail') {
-        failedFields.push({ sectionId: section.section_id, fieldId: field.field_id, reason: ev.reason ?? 'failed' });
-      }
-    }
+    const response = findResponse(section.section_id, field.field_id);
+    if (isAnswered(response)) answered(section.section_id);
+    else if (field.required) missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
+    judge(section.section_id, field.field_id, field, response);
   }
 
-  let overallResult: EvaluationResult['overallResult'];
-  if (missingRequired.length > 0) {
-    overallResult = 'fail';
-  } else {
-    // A failed field counts as a "required failure" iff its template definition is required.
-    // Look up across both direct-fields and subsection-fields to catch every shape.
-    // For repeating_group synthetic IDs (`<group>[<i>].<sub>`), resolve to the
-    // sub-field definition via the group field's `fields[]`.
-    const requiredFailed = failedFields.some(ff => {
-      const parsed = parseRepeatingGroupKey(ff.fieldId);
-      if (parsed) {
-        for (const { section, field } of iterateAllFields(template)) {
-          if (section.section_id !== ff.sectionId) continue;
-          if (field.field_id !== parsed.group || field.type !== 'repeating_group') continue;
-          const sub = (field.fields ?? []).find((sf) => sf.field_id === parsed.sub);
-          if (sub?.required) return true;
-        }
-        return false;
-      }
-      for (const { section, field } of iterateAllFields(template)) {
-        if (section.section_id === ff.sectionId && field.field_id === ff.fieldId && field.required) return true;
-        // group-level overflow failures (max_count exceeded) count as required failures iff the group itself is required
-        if (
-          section.section_id === ff.sectionId &&
-          field.field_id === ff.fieldId &&
-          field.type === 'repeating_group' &&
-          field.required
-        ) return true;
-      }
-      return false;
-    });
-    if (requiredFailed) overallResult = 'fail';
-    else if (failedFields.length > 0) overallResult = 'conditional_pass';
-    else overallResult = 'pass';
-  }
+  const photoIds = new Set(missingPhotos.map((m) => `${m.sectionId}|${m.fieldId}`));
+  const blockingMissing = missingRequired.filter((m) => !photoIds.has(`${m.sectionId}|${m.fieldId}`));
+  // A section's "missing" is what blocks submit; a missing photo never does.
+  for (const m of blockingMissing) tally(m.sectionId).missing++;
 
-  for (const m of missingRequired) tally(m.sectionId).missing++;
-
-  return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount, sectionStats };
+  return {
+    overallResult: failedFields.length > 0 ? 'fail' : 'pass',
+    failedFields,
+    flaggedFields,
+    missingRequired,
+    blockingMissing,
+    missingPhotos,
+    visibleFieldCount,
+    answeredFieldCount,
+    sectionStats,
+  };
 }
 
 // Declarative computed-field formulas. v1 covers the patterns the inspections-catalogue

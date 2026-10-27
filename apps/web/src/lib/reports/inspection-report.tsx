@@ -86,6 +86,20 @@ const ss = StyleSheet.create({
     color: '#9CA3AF',
     marginLeft: 8,
   },
+  observationHeading: {
+    fontSize: 9,
+    fontFamily: 'Helvetica-Bold',
+    marginTop: 8,
+    marginBottom: 4,
+    color: '#92400E',
+  },
+  noteHeading: {
+    fontSize: 9,
+    fontFamily: 'Helvetica-Bold',
+    marginTop: 8,
+    marginBottom: 4,
+    color: '#374151',
+  },
   // Group sub-heading
   groupLabel: {
     fontSize: spacing.sectionHeadingFontSize - 2,
@@ -121,7 +135,7 @@ function formatWhen(iso: string | null): string {
 
 // ---------------------------------------------------------------------------
 // Helper — overall result label + pill colours
-// Maps 'conditional_pass' to accent (amber) since it's not a passPillColors key.
+// Maps a legacy 'conditional_pass' (stored before 00253) to accent (amber); new results are pass or fail.
 // ---------------------------------------------------------------------------
 
 function overallResultDisplay(
@@ -162,6 +176,8 @@ function Summary({ summary, accent }: SummaryProps) {
     sansReference,
     tally,
     failed,
+    observations,
+    missingPhotos,
   } = summary
 
   const overall = overallResultDisplay(overallResult, accent)
@@ -215,17 +231,40 @@ function Summary({ summary, accent }: SummaryProps) {
         ))}
       </View>
 
-      {/* Failed fields list */}
+      {/* What fails the inspection: a Poor rating or an answer the template marks as failing. */}
       {failed.length === 0 ? (
-        <Text style={ss.failedEmpty}>No failed fields.</Text>
+        <Text style={ss.failedEmpty}>Nothing fails this inspection.</Text>
       ) : (
         <View>
-          <Text style={ss.failedHeading}>Failed fields ({failed.length})</Text>
+          <Text style={ss.failedHeading}>Fails the inspection ({failed.length})</Text>
           {failed.map((f, i) => (
             <View key={i}>
-              <Text style={ss.failedItem}>{f.label}</Text>
+              <Text style={ss.failedItem}>{f.label} — {f.reason}</Text>
               {f.sansRef && <Text style={ss.failedSansRef}>{f.sansRef}</Text>}
             </View>
+          ))}
+        </View>
+      )}
+
+      {/* Recorded, not failing: a check marked Fail, a reading outside its limit. */}
+      {observations.length > 0 && (
+        <View>
+          <Text style={ss.observationHeading}>Observations — recorded, do not fail the inspection ({observations.length})</Text>
+          {observations.map((f, i) => (
+            <View key={i}>
+              <Text style={ss.failedItem}>{f.label} — {f.reason}</Text>
+              {f.sansRef && <Text style={ss.failedSansRef}>{f.sansRef}</Text>}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Required photos not taken, with the inspector's reason. */}
+      {missingPhotos.length > 0 && (
+        <View>
+          <Text style={ss.noteHeading}>Photos not taken ({missingPhotos.length})</Text>
+          {missingPhotos.map((m, i) => (
+            <Text key={i} style={ss.failedItem}>{m.label} — {m.reason ?? 'no reason given'}</Text>
           ))}
         </View>
       )}
