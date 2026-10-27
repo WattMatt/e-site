@@ -48,8 +48,9 @@ SELECT * FROM (
                      FROM inspections.templates t WHERE t.id = r.id), false)
     FROM _rows r
   UNION ALL
+  -- The LV row also strips `assess` from its top-level fields: 00256 adds it to the 20 photo items.
   SELECT r.label || ': nothing else changed',
-         coalesce((SELECT md5((CASE WHEN r.lv THEN (jsonb_set(t.schema_json, '{sections}', (SELECT jsonb_agg(x ORDER BY o) FROM jsonb_array_elements(t.schema_json->'sections') WITH ORDINALITY e(x, o) WHERE x->>'section_id' <> 'snags'))) #- ARRAY['sections', '5', 'fields', '1', 'fail_values'] ELSE jsonb_set(t.schema_json, '{sections}', (SELECT jsonb_agg(x ORDER BY o) FROM jsonb_array_elements(t.schema_json->'sections') WITH ORDINALITY e(x, o) WHERE x->>'section_id' <> 'snags')) END)::text) = r.h
+         coalesce((SELECT md5((CASE WHEN r.lv THEN (jsonb_set(t.schema_json, '{sections}', (SELECT jsonb_agg(jsonb_set(x, '{fields}', coalesce((SELECT jsonb_agg((f - 'assess') ORDER BY fi) FROM jsonb_array_elements(x->'fields') WITH ORDINALITY ff(f, fi)), '[]'::jsonb)) ORDER BY o) FROM jsonb_array_elements(t.schema_json->'sections') WITH ORDINALITY e(x, o) WHERE x->>'section_id' <> 'snags'))) #- ARRAY['sections', '5', 'fields', '1', 'fail_values'] ELSE jsonb_set(t.schema_json, '{sections}', (SELECT jsonb_agg(x ORDER BY o) FROM jsonb_array_elements(t.schema_json->'sections') WITH ORDINALITY e(x, o) WHERE x->>'section_id' <> 'snags')) END)::text) = r.h
                      FROM inspections.templates t WHERE t.id = r.id), false)
     FROM _rows r
   UNION ALL

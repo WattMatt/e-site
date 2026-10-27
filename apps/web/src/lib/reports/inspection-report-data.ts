@@ -24,7 +24,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { toReportJpeg } from './report-image'
 import { toWinAnsiSafe } from './winansi-text'
-import { evaluateField, evaluateInspection, type Field as EngineField, type Template as EngineTemplate } from '@esite/shared'
+import { assessedResult, evaluateField, evaluateInspection, type Field as EngineField, type Template as EngineTemplate } from '@esite/shared'
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 // (These EXACTLY match the local prop interfaces in interior.tsx; Task 4
@@ -598,6 +598,22 @@ export async function gatherInspectionReportData(
     // Photo fields: top-level ones, then repeating-group photo sub-fields (flattenSectionFields
     // does not recurse into a group), one grid per (group, entry, photo sub-field).
     for (const field of flattenSectionFields(section)) {
+      if (field.type === 'photo' && (field as { assess?: boolean }).assess) {
+        // An assessed item (LV Line Shop): its Pass / Fail / N/A and comment as a result row, with
+        // its photos (markups included) under it, so the finding and the evidence sit together.
+        const resp = responseList.find((r) => r.section_id === section.section_id && r.field_id === field.field_id)
+        const pf = await renderPhotoField(section.section_id, field.field_id, String(field.label ?? field.field_id))
+        rows.push({
+          fieldId: field.field_id,
+          label: String(field.label ?? field.field_id),
+          kind: 'result',
+          pass: assessedResult(resp),
+          failReason: (resp?.value_text as string | null) ?? null,
+          sansRef: field.sans_ref ?? null,
+          ...(pf ? { photos: pf } : {}),
+        })
+        continue
+      }
       if (field.type === 'photo') {
         const pf = await renderPhotoField(section.section_id, field.field_id, String(field.label ?? field.field_id))
         // A photo field with nothing in it (an optional one left empty) prints nothing: a bare label

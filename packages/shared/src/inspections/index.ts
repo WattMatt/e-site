@@ -4,6 +4,7 @@ export {
   evaluateField,
   evaluateInspection,
   verdictFailure,
+  assessedResult,
   photoMissingReason,
   isFieldVisible,
   computeDerivedField,

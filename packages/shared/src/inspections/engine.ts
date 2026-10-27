@@ -236,6 +236,11 @@ export interface InspectionAttachments {
  * ticked Fail, a reading outside pass_when) is a recorded observation, not a failure.
  */
 export function verdictFailure(field: Field, value: Response): string | null {
+  if (field.type === 'photo') {
+    if (!field.assess || assessedResult(value) !== 'fail') return null;
+    const comment = value.value_text?.trim();
+    return comment ? `marked Fail: ${comment}` : 'marked Fail';
+  }
   if (field.type === 'rating') {
     const v = value.value_text?.toLowerCase();
     return v === 'poor' ? 'rated Poor' : null;
@@ -250,6 +255,15 @@ export function verdictFailure(field: Field, value: Response): string | null {
     const hit = (value.value_array ?? []).filter((x) => fails.includes(x.toLowerCase()));
     return hit.length > 0 ? `${hit.join(', ')} recorded` : null;
   }
+  return null;
+}
+
+/** An assessed photo item's result, or null when none is marked yet. */
+export function assessedResult(r: Response | undefined): 'pass' | 'fail' | 'na' | null {
+  if (!r) return null;
+  if (r.pass_state === 'na') return 'na';
+  if (r.pass_state === 'fail' || r.value_bool === false) return 'fail';
+  if (r.pass_state === 'pass' || r.value_bool === true) return 'pass';
   return null;
 }
 
@@ -306,6 +320,8 @@ export function evaluateInspection(
     tally(sectionId).answered++;
   };
 
+  const photoGaps = new Set<{ sectionId: string; fieldId: string }>();
+
   const findResponse = (sectionId: string, fieldId: string) =>
     responses.find((r) => r.section_id === sectionId && r.field_id === fieldId);
 
@@ -334,13 +350,25 @@ export function evaluateInspection(
         ? (attachments.signatures ?? []).filter((x) => x.field_id === fieldId && x.section_id === sectionId)
         : (attachments.photos ?? []).filter((x) => x.field_id === fieldId && x.section_id === sectionId);
     const count = collection.length;
-    if (count > 0) answered(sectionId);
+    const assessed = field.type === 'photo' && !!field.assess;
+    if (assessed) {
+      // The item's result is its answer; a Fail fails the inspection; on a required item the
+      // result (not the photo) is required.
+      const r = findResponse(sectionId, fieldId);
+      const result = assessedResult(r);
+      if (result) answered(sectionId);
+      else if (field.required) missingRequired.push({ sectionId, fieldId, kind: 'result' });
+      const fail = r ? verdictFailure(field, r) : null;
+      if (fail) failedFields.push({ sectionId, fieldId, reason: fail });
+    } else if (count > 0) answered(sectionId);
     if (!field.required) return;
     const minRequired = Math.max(field.min_count ?? 1, 1);
     if (count >= minRequired) return;
-    missingRequired.push({ sectionId, fieldId });
+    const photoGap = { sectionId, fieldId };
+    missingRequired.push(photoGap);
     if (field.type === 'photo') {
       // Never blocks or fails an inspection: listed with the inspector's reason, if any.
+      photoGaps.add(photoGap);
       missingPhotos.push({ sectionId, fieldId, reason: photoMissingReason(findResponse(sectionId, fieldId)) });
     }
     if (count > 0) {
@@ -407,8 +435,8 @@ export function evaluateInspection(
     judge(section.section_id, field.field_id, field, response);
   }
 
-  const photoIds = new Set(missingPhotos.map((m) => `${m.sectionId}|${m.fieldId}`));
-  const blockingMissing = missingRequired.filter((m) => !photoIds.has(`${m.sectionId}|${m.fieldId}`));
+  // The photo gaps themselves (by identity: an assessed item can also miss its result, which DOES block).
+  const blockingMissing = missingRequired.filter((m) => !photoGaps.has(m));
   // A section's "missing" is what blocks submit; a missing photo never does.
   for (const m of blockingMissing) tally(m.sectionId).missing++;
 

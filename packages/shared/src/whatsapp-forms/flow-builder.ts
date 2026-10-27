@@ -165,6 +165,9 @@ export function flowCapability(t: Template): FlowCapability {
         if (f.required) reasons.push(`required file "${f.field_id}" cannot be sent over WhatsApp`)
         else skippedFields.push(ref(s.section_id, f))
       }
+      // An assessed photo item (Pass / Fail / N/A + comment, Fail fails) has no Flow input yet; a
+      // required one would leave the WhatsApp form uncompletable, so the template stays on the web.
+      if (f.type === 'photo' && f.assess && f.required) reasons.push(`assessed photo item "${f.field_id}" cannot be judged over WhatsApp yet`)
       if (f.type === 'photo') photoFields.push(ref(s.section_id, f))
       if (f.type === 'signature') signatureFields.push(ref(s.section_id, f))
       if (f.type === 'dropdown' || f.type === 'multi_select') {

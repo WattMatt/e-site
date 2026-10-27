@@ -52,6 +52,15 @@ describe('flowCapability', () => {
     expect(buildInspectionFlow(t).screens.length).toBe(buildInspectionFlow(MINI).screens.length)
   })
 
+  it('keeps a template with a required assessed photo item on the web', () => {
+    const t: Template = {
+      ...MINI,
+      sections: [{ section_id: 'w', title: 'W', fields: [{ field_id: 'glanding', label: 'Glanding', type: 'photo', required: true, assess: true }] }],
+    }
+    expect(flowCapability(t).ok).toBe(false)
+    expect(flowCapability(t).reasons.join('\n')).toMatch(/assessed photo item "glanding"/)
+  })
+
   it('refuses required repeating groups, conditions and required files, naming each', () => {
     const t: Template = {
       ...MINI,
