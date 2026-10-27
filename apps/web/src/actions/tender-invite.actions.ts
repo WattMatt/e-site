@@ -295,6 +295,14 @@ export async function sendTenderInvitationsAction(tenderId: string, invitationId
   const orgName = (org as { name?: string } | null)?.name ?? 'The engineer'
   const { data: proj } = await svc.schema('projects').from('projects').select('name').eq('id', g.tender.project_id).maybeSingle()
   const projectName = (proj as { name?: string } | null)?.name ?? ''
+  // The particulars and the size of the issue pack, for the email's own words.
+  const { data: tRow } = await g.supabase.schema('projects').from('tenders').select('reference').eq('id', tenderId).maybeSingle()
+  const { count: documentCount } = await g.supabase
+    .schema('projects')
+    .from('tender_documents')
+    .select('id', { count: 'exact', head: true })
+    .eq('tender_id', tenderId)
+    .is('clarification_id', null)
   const { allowed } = await filterSuppressed(svc as never, (invs ?? []).map((i: { email: string }) => i.email))
   const skipped: string[] = []
   let sent = 0
@@ -332,7 +340,9 @@ export async function sendTenderInvitationsAction(tenderId: string, invitationId
       email: inv.email,
       pkg: g.tender.package,
       title: g.tender.title,
+      reference: (tRow as { reference?: string | null } | null)?.reference ?? null,
       closingAt: g.tender.closing_at,
+      documentCount: documentCount ?? 0,
       link: invitationAccessLink(token, access),
       code: access.code,
     })

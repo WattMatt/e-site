@@ -12,6 +12,7 @@ import {
   askQuestionAction,
   deleteDocumentAction,
   downloadPricingWorkbookAction,
+  downloadTenderDocumentAction,
   getDocumentUploadUrlAction,
   getPricingAction,
   getPricedUploadUrlAction,
@@ -23,6 +24,7 @@ import {
   submitTenderAction,
   type PricingState,
 } from '@/actions/tender-submission.actions'
+import { formatFileSize, tenderDocumentCategoryLabel } from '@/lib/tender/documents'
 
 const money = (n: number) => `R ${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`
 const cents = (x: number) => Math.round(x * 100 + (x >= 0 ? 1e-7 : -1e-7))
@@ -96,7 +98,12 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
       if (dirty.size) return setMsg({ ok: false, text: 'Save your rates first.' })
       const r = await submitTenderAction(tenderId)
       if ('error' in r) return setMsg({ ok: false, text: r.error })
-      setMsg({ ok: true, text: `Submitted ${new Date(r.data.submittedAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })} — tender total ${money(r.data.total)} excl. VAT. Sealed until closing.` })
+      setMsg({
+        ok: true,
+        text:
+          `Submitted ${new Date(r.data.submittedAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })} — tender total ${money(r.data.total)} excl. VAT. Sealed until closing.` +
+          (r.data.receiptEmailed ? ' A receipt has been emailed to you.' : ''),
+      })
       router.refresh()
     })
 
@@ -206,6 +213,29 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
           </div>
         </CardBody>
       </Card>
+
+      {state.issuedDocuments.filter((d) => d.clarification_id == null).length > 0 && (
+        <Card>
+          <CardHeader><span className="data-panel-title">Tender documents</span></CardHeader>
+          <CardBody>
+            <p style={{ marginTop: 0, fontSize: 13 }}>
+              Issued with this tender. Read them before pricing — your tender is deemed to allow for everything they describe.
+            </p>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 6, fontSize: 14 }}>
+              {state.issuedDocuments.filter((d) => d.clarification_id == null).map((d) => (
+                <li key={d.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(async () => {
+                    const r = await downloadTenderDocumentAction(tenderId, d.id)
+                    if ('error' in r) return setMsg({ ok: false, text: r.error })
+                    window.location.href = r.data.url
+                  })}>Download</Button>
+                  <span><strong>{d.label}</strong> — {d.file_name} ({formatFileSize(d.file_size)}) · {tenderDocumentCategoryLabel(d.category)}</span>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><span className="data-panel-title">Price the bill of quantities</span></CardHeader>
@@ -365,6 +395,16 @@ export function PricingWorkspace({ tenderId, state }: { tenderId: string; state:
               <li key={c.id} style={{ borderLeft: `3px solid ${c.kind === 'addendum' ? 'var(--c-amber)' : 'var(--c-border)'}`, paddingLeft: 8 }}>
                 <strong>{c.kind === 'addendum' ? 'Addendum: ' : c.mine ? 'Your question: ' : 'Question: '}{c.title}</strong>
                 <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
+                {state.issuedDocuments.filter((d) => d.clarification_id === c.id).map((d) => (
+                  <div key={d.id} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}>
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(async () => {
+                      const r = await downloadTenderDocumentAction(tenderId, d.id)
+                      if ('error' in r) return setMsg({ ok: false, text: r.error })
+                      window.location.href = r.data.url
+                    })}>Download</Button>
+                    <span>📎 {d.label} — {d.file_name} ({formatFileSize(d.file_size)})</span>
+                  </div>
+                ))}
                 {c.answer && <div style={{ whiteSpace: 'pre-wrap' }}><em>Answer:</em> {c.answer}</div>}
                 {c.kind === 'question' && c.mine && !c.published_at && <div style={{ fontSize: 12 }}>{c.answer ? 'Answered privately.' : 'Awaiting an answer.'}</div>}
                 {c.kind === 'addendum' && (

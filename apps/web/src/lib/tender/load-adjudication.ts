@@ -9,6 +9,8 @@ export interface AdjudicationLoad {
   projectName: string
   draftsAtClosing: string[]
   profiles: Record<string, AdjCompliance['profile']>
+  /** Every submitted bidder's uploaded documents, downloadable now that the seal is lifted. */
+  bidderDocuments: { id: string; participantId: string; requirementId: string; fileName: string }[]
 }
 
 const READ_FAILED = 'Could not read the tender. Try again.'
@@ -60,13 +62,13 @@ export async function loadAdjudication(tenderId: string): Promise<{ ok: true; da
   const companyOf = new Map(parts.data.map((p) => [p.id, p.company_name]))
   const subIds = submitted.map((s) => s.id)
   type Line = { submission_id: string; item_id: string; rate: number | null; not_priced: boolean }
-  type Doc = { submission_id: string; requirement_id: string; file_name: string }
+  type Doc = { id: string; submission_id: string; requirement_id: string; file_name: string }
   const [lines, docs] = subIds.length
     ? await Promise.all([
         readAll<Line>((f, t) =>
           sb.from('tender_submission_lines').select('submission_id, item_id, rate, not_priced').eq('tender_id', tenderId).in('submission_id', subIds).order('submission_id').order('item_id').range(f, t)),
         readAll<Doc>((f, t) =>
-          sb.from('tender_submission_documents').select('submission_id, requirement_id, file_name').eq('tender_id', tenderId).in('submission_id', subIds).order('id').range(f, t)),
+          sb.from('tender_submission_documents').select('id, submission_id, requirement_id, file_name').eq('tender_id', tenderId).in('submission_id', subIds).order('id').range(f, t)),
       ])
     : [{ data: [] as Line[] }, { data: [] as Doc[] }]
   if ('error' in lines) return { ok: false, error: READ_FAILED }
@@ -116,6 +118,13 @@ export async function loadAdjudication(tenderId: string): Promise<{ ok: true; da
   const draftsAtClosing = subs.data
     .filter((s) => s.status !== 'submitted')
     .map((s) => companyOf.get(s.participant_id) ?? 'Unknown')
+  const participantOfSub = new Map(submitted.map((s) => [s.id, s.participant_id]))
+  const bidderDocuments = docs.data.map((d) => ({
+    id: d.id,
+    participantId: participantOfSub.get(d.submission_id) ?? '',
+    requirementId: d.requirement_id,
+    fileName: d.file_name,
+  }))
 
   return {
     ok: true,
@@ -125,6 +134,7 @@ export async function loadAdjudication(tenderId: string): Promise<{ ok: true; da
       projectName: (proj.data as { name?: string } | null)?.name ?? '',
       draftsAtClosing,
       profiles,
+      bidderDocuments,
     },
   }
 }

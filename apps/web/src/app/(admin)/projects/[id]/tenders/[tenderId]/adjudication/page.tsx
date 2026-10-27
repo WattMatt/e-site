@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { loadAdjudication } from '@/lib/tender/load-adjudication'
 import { formatRand } from '../../_components/format'
 import { AdjudicationActions } from '../../_components/AdjudicationActions'
+import { BidderDocLink } from '../../_components/BidderDocLink'
 import { cidbLabel } from '@/lib/tender/profile'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +27,7 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
       </div>
     )
   }
-  const { adjudication: a, tender, draftsAtClosing, profiles } = res.data
+  const { adjudication: a, tender, draftsAtClosing, profiles, bidderDocuments } = res.data
   const pct = Math.round(a.threshold * 100)
   if (tender.project_id !== id) redirect(`/projects/${id}/tenders`)
   const bidders = a.totals
@@ -110,6 +111,29 @@ export default async function AdjudicationPage({ params }: { params: Promise<{ i
           )}
         </CardBody>
       </Card>
+
+      {bidderDocuments.length > 0 && (
+        <Card>
+          <CardHeader><span className="data-panel-title">Bidder documents ({bidderDocuments.length})</span></CardHeader>
+          <CardBody>
+            <p style={{ marginTop: 0, fontSize: 13 }}>Uploaded by the bidders, readable now that the seal is lifted.</p>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8, fontSize: 13 }}>
+              {bidders.map((t) => {
+                const docs = bidderDocuments.filter((d) => d.participantId === t.participantId)
+                if (docs.length === 0) return null
+                return (
+                  <li key={t.participantId}>
+                    <strong>{t.company}</strong>
+                    <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', marginLeft: 8 }}>
+                      {docs.map((d) => <BidderDocLink key={d.id} tenderId={tenderId} documentId={d.id} fileName={d.fileName} />)}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><span className="data-panel-title">Arithmetic check</span></CardHeader>
