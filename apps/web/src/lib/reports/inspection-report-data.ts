@@ -737,8 +737,12 @@ export async function gatherInspectionReportData(
         }
         continue
       }
-      if (field.type !== 'pass_fail') continue
-      const pill = passStateToPill(responseList.find((r) => r.section_id === section.section_id && r.field_id === field.field_id))
+      // An assessed photo item (LV Line Shop) is a Pass / Fail / N/A result too: it counts in the
+      // tally, else a report whose only Fail is an assessed item shows "0 FAIL" over the failure.
+      const assessed = field.type === 'photo' && (field as { assess?: boolean }).assess
+      if (field.type !== 'pass_fail' && !assessed) continue
+      const resp = responseList.find((r) => r.section_id === section.section_id && r.field_id === field.field_id)
+      const pill = assessed ? assessedResult(resp) : passStateToPill(resp)
       if (pill === 'pass') tally.pass++
       else if (pill === 'fail') tally.fail++
       else if (pill === 'na') tally.na++
