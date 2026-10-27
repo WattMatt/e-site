@@ -1,4 +1,5 @@
-import { attachmentKindFromMime } from '@esite/shared'
+import { attachmentKindFromMime, storageKeySegment } from '@esite/shared'
+import { detectImageMime } from '@/lib/image/compress'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** `accept` for the document file input. Photo/video inputs use `image/*` /
@@ -11,6 +12,27 @@ export const DIARY_ATTACHMENT_ACCEPT_DOC =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 export const DIARY_ATTACHMENT_MAX_BYTES = 104857600 // 100 MiB
+
+/** Extension fallback for the non-image types the bucket allows. */
+const DOC_EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+}
+
+/**
+ * The content type to upload with. `File.type` is blank when the OS doesn't
+ * know the extension (e.g. .HEIC on Windows); a blank type uploads as
+ * application/octet-stream, which the bucket's MIME allow-list refuses.
+ */
+async function resolveContentType(file: File, ext: string): Promise<string> {
+  if (file.type) return file.type
+  return (await detectImageMime(file)) || DOC_EXT_MIME[ext] || ''
+}
 
 /**
  * Uploads files to the diary-attachments bucket and inserts attachment rows.
@@ -35,11 +57,15 @@ export async function uploadDiaryAttachments(
       throw new Error(`"${file.name}" exceeds the 100 MB limit.`)
     }
     const seq = baseSort + i
-    const ext = file.name.split('.').pop() ?? 'bin'
-    const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${seq}.${ext}`
+    const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : 'bin'
+    const contentType = await resolveContentType(file, ext)
+    if (!contentType) {
+      throw new Error(`"${file.name}" is not a supported file type (photo, video, PDF, Word or Excel).`)
+    }
+    const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${seq}.${storageKeySegment(ext)}`
     const { error: upErr } = await supabase.storage
       .from('diary-attachments')
-      .upload(path, file, { contentType: file.type })
+      .upload(path, file, { contentType })
     if (upErr) throw upErr
     const { error: rowErr } = await supabase
       .schema('projects')
@@ -48,9 +74,9 @@ export async function uploadDiaryAttachments(
         diary_entry_id: entryId,
         file_path: path,
         file_name: file.name,
-        mime_type: file.type,
+        mime_type: contentType,
         file_size_bytes: file.size,
-        kind: attachmentKindFromMime(file.type),
+        kind: attachmentKindFromMime(contentType),
         sort_order: seq,
         uploaded_by: userId,
       })
