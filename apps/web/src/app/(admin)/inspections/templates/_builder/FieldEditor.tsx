@@ -8,6 +8,7 @@ import { TextareaFieldEditor }   from './field-editors/TextareaFieldEditor';
 import { DateFieldEditor }       from './field-editors/DateFieldEditor';
 import { DropdownFieldEditor }   from './field-editors/DropdownFieldEditor';
 import { MultiSelectFieldEditor} from './field-editors/MultiSelectFieldEditor';
+import { RatingFieldEditor }     from './field-editors/RatingFieldEditor';
 import { PhotoFieldEditor }      from './field-editors/PhotoFieldEditor';
 import { SignatureFieldEditor }  from './field-editors/SignatureFieldEditor';
 import { FileFieldEditor }       from './field-editors/FileFieldEditor';
@@ -53,6 +54,9 @@ export function FieldEditor({ sectionId, field, sectionFields, onChange, onRemov
       break;
     case 'multi_select':
       editor = <MultiSelectFieldEditor {...shared} field={field as Field & { type: 'multi_select' }} />;
+      break;
+    case 'rating':
+      editor = <RatingFieldEditor      {...shared} field={field as Field & { type: 'rating' }} />;
       break;
     case 'photo':
       editor = <PhotoFieldEditor       {...shared} field={field as Field & { type: 'photo' }} />;

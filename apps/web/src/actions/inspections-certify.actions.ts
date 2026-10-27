@@ -86,15 +86,12 @@ async function getProjectManagerIds(projectId: string): Promise<string[]> {
 }
 
 /**
- * The overall result the engine computes from what was saved: answers, photos and signatures,
- * the same inputs the capture form evaluates.
+ * The engine's evaluation of what was saved: answers, photos and signatures, the same inputs the
+ * capture form evaluates. Read with the SERVICE client so the verdict is computed from every saved
+ * row, never from what one caller's RLS lets them see.
  */
-async function computeOverallResult(
-  supabase: AnyClient,
-  inspectionId: string,
-  template: Template,
-): Promise<'pass' | 'fail' | 'conditional_pass'> {
-  const db = supabase.schema('inspections')
+async function evaluateSaved(inspectionId: string, template: Template) {
+  const db = (createServiceClient() as AnyClient).schema('inspections')
   const [responses, photos, signatures] = await Promise.all([
     db.from('responses')
       .select('section_id, field_id, value_bool, value_number, value_text, value_array, value_json, pass_state, fail_reason')
@@ -110,7 +107,7 @@ async function computeOverallResult(
       section_id: s.section_id ?? undefined,
       field_id: s.field_id ?? undefined,
     })),
-  }).overallResult
+  })
 }
 
 export interface CertifyInspectionInput {
@@ -151,14 +148,19 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
     .single()
   const deliverable = template?.deliverable_type as string | undefined
 
-  // The result is the engine's, from the saved answers, never the verifier's choice. A FAIL (a
-  // required check failed or is missing) is not certified: the verifier sends it back instead.
-  const overallResult = await computeOverallResult(supabase, input.inspectionId, template?.schema_json as Template)
-  if (overallResult === 'fail') {
-    throw new Error(
-      'This inspection fails: a required check failed or is unanswered. Send it back for re-inspection instead of certifying.',
-    )
+  // The result is the engine's, from the saved answers, never the verifier's choice. It fails only
+  // on a Poor rating or an answer its template marks as failing (e.g. a high/critical snag); a
+  // FAIL is not certified, the verifier sends it back instead.
+  const evaluation = await evaluateSaved(input.inspectionId, template?.schema_json as Template)
+  if (evaluation.blockingMissing.length > 0) {
+    const n = evaluation.blockingMissing.length
+    throw new Error(`${n} required ${n === 1 ? 'item is' : 'items are'} still unanswered. Send it back for completion instead of certifying.`)
   }
+  if (evaluation.overallResult === 'fail') {
+    const reasons = evaluation.failedFields.map((f) => f.reason).slice(0, 3).join('; ')
+    throw new Error(`This inspection fails (${reasons}). Send it back for re-inspection instead of certifying.`)
+  }
+  const overallResult = evaluation.overallResult
 
   // Who may certify, separate verifier, signature qualifications and the CoC number are one
   // database rule (00235), which the transition guard also enforces. Asked first so the verifier
@@ -169,6 +171,19 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
     .rpc('certification_blockers', { _inspection_id: input.inspectionId, _coc_number: cocNumber })
   if (blockErr) throw blockErr
   if (blocker) throw new Error(blocker as string)
+
+  // The database certifies only against a verdict the server wrote after the inspection was
+  // submitted (00253): the transition guard copies overall_result from inspections.verdicts and
+  // ignores whatever the update sends, so a direct PostgREST PATCH cannot certify a forged PASS.
+  // Written with the service client — signed-in users cannot write verdicts at all.
+  const { error: verdictErr } = await (createServiceClient() as AnyClient)
+    .schema('inspections')
+    .from('verdicts')
+    .upsert(
+      { inspection_id: input.inspectionId, overall_result: overallResult, computed_by: user.id },
+      { onConflict: 'inspection_id' },
+    )
+  if (verdictErr) throw verdictErr
 
   // certified_at and the INS/FAT number are stamped by the guard; anything sent for them is ignored.
   const { data: certified, error: updErr } = await supabase

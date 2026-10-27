@@ -125,6 +125,14 @@ BEGIN
   END IF;
 END $p$;
 GRANT EXECUTE ON FUNCTION pg_temp.try(text, text), pg_temp.val(text, text), pg_temp.who(text) TO authenticated, service_role;
+-- The server verdict a real certify writes first (00253). Tolerates its absence, so this file
+-- still runs against a schema from before 00253 (the guard there takes the sent result instead).
+CREATE FUNCTION pg_temp.server_verdict(insp text) RETURNS void LANGUAGE plpgsql AS $p$
+BEGIN
+  EXECUTE format('INSERT INTO inspections.verdicts (inspection_id, overall_result) VALUES (%L, ''pass'')
+                  ON CONFLICT (inspection_id) DO UPDATE SET overall_result = ''pass''', insp);
+EXCEPTION WHEN undefined_table THEN NULL;
+END $p$;
 
 -- ── A. The contributor, on I1 (assigned) ─────────────────────────────────────────────────────
 SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
@@ -222,6 +230,7 @@ SELECT pg_temp.who('c'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('c:resubmit',     $$UPDATE inspections.inspections SET status = 'awaiting_verification', completed_at = now()
                                        WHERE id = current_setting('x.i1')::uuid AND status IN ('in_progress','re-inspect_required')$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
+SELECT pg_temp.server_verdict(current_setting('x.i1'));
 SELECT pg_temp.who('pmu'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('v:certify',      $$UPDATE inspections.inspections SET status = 'certified', overall_result = 'pass',
                                               certified_at = '2000-01-01', coc_number = 'FORGED-0001'
@@ -267,6 +276,7 @@ SELECT pg_temp.try('coc:missing',    $$UPDATE inspections.inspections SET status
 SELECT pg_temp.try('coc:blank',      $$UPDATE inspections.inspections SET status = 'certified', overall_result = 'pass', coc_number = '  ' WHERE id = current_setting('x.i2')::uuid$$);
 RESET ROLE; SELECT pg_temp.who(NULL);
 UPDATE inspections.inspections SET status = 'awaiting_verification', overall_result = NULL, certified_at = NULL, coc_number = NULL WHERE id = current_setting('x.i2')::uuid;
+SELECT pg_temp.server_verdict(current_setting('x.i2'));
 SELECT pg_temp.who('pmu'); SET LOCAL ROLE authenticated;
 SELECT pg_temp.try('coc:given',      $$UPDATE inspections.inspections SET status = 'certified', overall_result = 'conditional_pass', coc_number = 'ECB-PROBE-77'
                                        WHERE id = current_setting('x.i2')::uuid$$);
@@ -385,8 +395,8 @@ SELECT * FROM (VALUES
   -- B. Certification.
   ('verifier cannot certify without the qualified signature', (SELECT v FROM _o WHERE k = 'v:no_signature') LIKE 'ERR %Signature requirement%'),
   ('a contributor cannot certify as the verifier',        (SELECT v FROM _o WHERE k = 'c_as_verifier:certify') LIKE 'ERR %also be a contributor%'),
-  ('verifier cannot certify a FAIL',                      (SELECT v FROM _o WHERE k = 'v:fail') LIKE 'ERR %pass or conditional pass%'),
-  ('verifier cannot certify without a result',            (SELECT v FROM _o WHERE k = 'v:no_result') LIKE 'ERR %pass or conditional pass%'),
+  ('verifier cannot certify a FAIL',                      ((SELECT v FROM _o WHERE k = 'v:fail') LIKE 'ERR %pass or conditional pass%' OR (SELECT v FROM _o WHERE k = 'v:fail') LIKE 'ERR %no current result%')),
+  ('verifier cannot certify without a result',            ((SELECT v FROM _o WHERE k = 'v:no_result') LIKE 'ERR %pass or conditional pass%' OR (SELECT v FROM _o WHERE k = 'v:no_result') LIKE 'ERR %no current result%')),
   ('certify cannot change other columns',                 (SELECT v FROM _o WHERE k = 'v:extra_column') LIKE 'ERR %may change only%'),
   ('send back needs a note',                              (SELECT v FROM _o WHERE k = 'v:blank_notes') LIKE 'ERR %note%'),
   ('certification_blockers is NULL for the verifier when all rules are met', (SELECT v FROM _o WHERE k = 'v:blockers_ok') = '<null>'),

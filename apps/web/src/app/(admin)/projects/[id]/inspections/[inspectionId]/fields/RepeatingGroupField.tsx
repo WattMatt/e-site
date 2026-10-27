@@ -266,7 +266,6 @@ function EntryBlock({
                 inspectionId={parentProps.inspectionId}
                 sectionId={parentProps.sectionId}
                 readOnly={parentProps.readOnly}
-                verifierFlipMode={parentProps.verifierFlipMode}
                 onChange={(patch) => {
                   // Route through the parent's onUpsert when available so the
                   // synthetic id lands in the correct response row. Fall back

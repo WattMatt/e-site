@@ -5,6 +5,7 @@ import PassFailField from './fields/PassFailField'
 import NumberField from './fields/NumberField'
 import TextField from './fields/TextField'
 import DropdownField from './fields/DropdownField'
+import RatingField from './fields/RatingField'
 import DateField from './fields/DateField'
 import PhotoField from './fields/PhotoField'
 import SignatureField from './fields/SignatureField'
@@ -20,7 +21,6 @@ export interface RendererProps {
   inspectionId: string
   sectionId: string
   readOnly: boolean
-  verifierFlipMode: boolean
   onChange: (patch: Partial<InspectionResponse>) => void
   // Optional escape hatch for repeating_group: when provided, the renderer
   // can read sibling sub-field responses (to render hydrated entries on
@@ -45,6 +45,7 @@ const PHOTO_CAPTURE_TYPES: ReadonlySet<string> = new Set([
   'dropdown',
   'multi_select',
   'date',
+  'rating',
 ])
 
 function renderFieldBody(p: RendererProps) {
@@ -59,6 +60,8 @@ function renderFieldBody(p: RendererProps) {
     case 'dropdown':
     case 'multi_select':
       return <DropdownField {...p} />
+    case 'rating':
+      return <RatingField {...p} />
     case 'date':
       return <DateField {...p} />
     case 'photo':
@@ -89,9 +92,7 @@ export default function FieldRenderer(p: RendererProps) {
         inspectionId={p.inspectionId}
         sectionId={p.sectionId}
         fieldId={p.field.field_id}
-        // A verifier reviewing the inspection can flip pass/fail but should not
-        // be capturing fresh photo evidence — treat verifier mode as read-only.
-        readOnly={p.readOnly || p.verifierFlipMode}
+        readOnly={p.readOnly}
       />
     </>
   )

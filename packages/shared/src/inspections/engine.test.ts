@@ -9,6 +9,7 @@ import {
   listRepeatingGroupEntryIndices,
 } from './engine';
 import type { Field, Section, SubSection, Template, Response } from './types';
+import { templateSchema } from './template-schema';
 
 const passFailField: Field = { field_id: 'x', label: 'X', type: 'pass_fail', required: true };
 const numberField: Field = { field_id: 'ir', label: 'IR', type: 'number', unit: 'MΩ', pass_when: '>= 1', required: true };
@@ -185,29 +186,33 @@ describe('evaluateInspection', () => {
     expect(r.failedFields).toHaveLength(0);
   });
 
-  it('overall fail when a required field fails', () => {
+  it('a pass_fail ticked Fail is recorded, not failing — even when required', () => {
     const responses: Response[] = [
       { section_id: 's', field_id: 'a', value_bool: false, fail_reason: 'broken' },
       { section_id: 's', field_id: 'b', value_number: 230 },
     ];
     const r = evaluateInspection(template, responses);
-    expect(r.overallResult).toBe('fail');
-    expect(r.failedFields).toContainEqual({ sectionId: 's', fieldId: 'a', reason: 'broken' });
+    expect(r.overallResult).toBe('pass');
+    expect(r.failedFields).toHaveLength(0);
+    expect(r.flaggedFields).toContainEqual({ sectionId: 's', fieldId: 'a', reason: 'broken' });
   });
 
-  it('conditional_pass when required all pass but optional field failed', () => {
+  it('a reading outside pass_when is flagged, not failing', () => {
     const responses: Response[] = [
       { section_id: 's', field_id: 'a', value_bool: true },
-      { section_id: 's', field_id: 'b', value_number: 230 },
+      { section_id: 's', field_id: 'b', value_number: 200 },
       { section_id: 's', field_id: 'c', value_bool: false, fail_reason: 'cosmetic' },
     ];
-    expect(evaluateInspection(template, responses).overallResult).toBe('conditional_pass');
+    const r = evaluateInspection(template, responses);
+    expect(r.overallResult).toBe('pass');
+    expect(r.flaggedFields.map((f) => f.fieldId).sort()).toEqual(['b', 'c']);
   });
 
-  it('flags missing required fields', () => {
+  it('missing required answers block (blockingMissing) but are not a verdict', () => {
     const r = evaluateInspection(template, []);
     expect(r.missingRequired).toHaveLength(2);
-    expect(r.overallResult).toBe('fail');
+    expect(r.blockingMissing).toHaveLength(2);
+    expect(r.overallResult).toBe('pass');
   });
 
   it('hidden required fields are not flagged as missing', () => {
@@ -229,9 +234,9 @@ describe('evaluateInspection', () => {
     const r = evaluateInspection(t2, responses);
     expect(r.missingRequired).toHaveLength(0);          // x_value not required (hidden)
     expect(r.visibleFieldCount).toBe(1);                 // only has_x visible
-    expect(r.failedFields).toHaveLength(1);              // has_x failed (answered no)
-    expect(r.failedFields[0].fieldId).toBe('has_x');
-    expect(r.overallResult).toBe('fail');                // because has_x is required+failed
+    expect(r.flaggedFields).toHaveLength(1);             // has_x answered no: recorded
+    expect(r.flaggedFields[0].fieldId).toBe('has_x');
+    expect(r.overallResult).toBe('pass');                // a Fail tick never fails the inspection
   });
 
   it('reveals conditional required field when trigger flips on', () => {
@@ -249,7 +254,7 @@ describe('evaluateInspection', () => {
     const r = evaluateInspection(t2, responses);
     expect(r.visibleFieldCount).toBe(2);
     expect(r.missingRequired).toEqual([{ sectionId: 's', fieldId: 'x_value' }]);
-    expect(r.overallResult).toBe('fail');                // missing required → fail
+    expect(r.blockingMissing).toEqual([{ sectionId: 's', fieldId: 'x_value' }]); // blocks submit
   });
 });
 
@@ -317,7 +322,10 @@ describe('evaluateInspection — photo/signature min_count', () => {
     const attachments = { photos: [{ section_id: 's', field_id: 'before_photos' }] };
     const r = evaluateInspection(baseTemplate, [], attachments);
     expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'before_photos' });
-    expect(r.failedFields.some(f => f.fieldId === 'before_photos' && /1 of 3/.test(f.reason))).toBe(true);
+    expect(r.flaggedFields.some(f => f.fieldId === 'before_photos' && /1 of 3/.test(f.reason))).toBe(true);
+    // A photo shortfall never blocks an inspection.
+    expect(r.blockingMissing).toHaveLength(0);
+    expect(r.missingPhotos).toEqual([{ sectionId: 's', fieldId: 'before_photos', reason: null }]);
   });
 
   it('passes required photo with min_count: 3 when 3 uploaded', () => {
@@ -674,10 +682,10 @@ describe('evaluateInspection — repeating_group', () => {
     };
     const r = evaluateInspection(t, []);
     expect(r.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags' });
-    expect(r.overallResult).toBe('fail');
+    expect(r.blockingMissing).toContainEqual({ sectionId: 'obs', fieldId: 'snags' });
   });
 
-  it('max_count: 2 exceeded → overflow flagged in failedFields', () => {
+  it('max_count: 2 exceeded → overflow flagged (recorded, not failing)', () => {
     const t: Template = {
       ...baseTemplate,
       sections: [{ section_id: 'obs', title: 'Observations', fields: [{ ...groupField, max_count: 2 }] }],
@@ -691,7 +699,8 @@ describe('evaluateInspection — repeating_group', () => {
       { section_id: 'obs', field_id: 'snags[2].risk_level', value_text: 'low' },
     ];
     const r = evaluateInspection(t, responses);
-    expect(r.failedFields.some((f) => f.fieldId === 'snags' && /exceeds max_count 2/.test(f.reason))).toBe(true);
+    expect(r.flaggedFields.some((f) => f.fieldId === 'snags' && /exceeds max_count 2/.test(f.reason))).toBe(true);
+    expect(r.overallResult).toBe('pass');
   });
 
   it('entry with a missing required sub-field → flagged with synthetic field_id', () => {
@@ -701,7 +710,7 @@ describe('evaluateInspection — repeating_group', () => {
     ];
     const r = evaluateInspection(baseTemplate, responses);
     expect(r.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags[0].risk_level' });
-    expect(r.overallResult).toBe('fail');
+    expect(r.blockingMissing).toContainEqual({ sectionId: 'obs', fieldId: 'snags[0].risk_level' });
   });
 
   it('photo sub-field with attachments → matched against synthetic field_id', () => {
@@ -752,9 +761,10 @@ describe('evaluateInspection — sectionStats', () => {
     expect(r.sectionStats.obs).toEqual({ answered: 1, total: 2, missing: 0 });
   });
 
-  it('reports the required photos still missing, and only in their own section', () => {
+  it('counts what blocks submit, only in its own section; missing photos never block', () => {
     const r = evaluateInspection(template, [], { photos: [{ section_id: 'wiring', field_id: 'a' }, { section_id: 'obs', field_id: 'b' }] });
-    expect(r.sectionStats.wiring).toEqual({ answered: 1, total: 4, missing: 2 });
+    expect(r.sectionStats.wiring).toEqual({ answered: 1, total: 4, missing: 0 });
+    expect(r.missingPhotos.map((m) => m.fieldId)).toEqual(['b', 'c']);
     expect(r.sectionStats.obs).toEqual({ answered: 0, total: 2, missing: 1 });
   });
 
@@ -762,6 +772,138 @@ describe('evaluateInspection — sectionStats', () => {
     const photos = [{ section_id: 'wiring', field_id: 'c' }];
     const r = evaluateInspection(template, [{ section_id: 'obs', field_id: 'n', value_text: 'x' }], { photos });
     const sum = Object.values(r.sectionStats).reduce((a, s) => ({ answered: a.answered + s.answered, total: a.total + s.total, missing: a.missing + s.missing }), { answered: 0, total: 0, missing: 0 });
-    expect(sum).toEqual({ answered: r.answeredFieldCount, total: r.visibleFieldCount, missing: r.missingRequired.length });
+    expect(sum).toEqual({ answered: r.answeredFieldCount, total: r.visibleFieldCount, missing: r.blockingMissing.length });
+  });
+});
+
+// ─── The verdict rule (2026-10-27) ─────────────────────────────────────────
+// Only a visible rating of Poor, or a visible answer that is one of its field's fail_values
+// (e.g. snag risk high/critical), fails an inspection. Everything else is a record.
+describe('evaluateInspection — verdict rule', () => {
+  const snags: Field = {
+    field_id: 'snag_list', label: 'Snags', type: 'repeating_group',
+    fields: [
+      { field_id: 'description', label: 'Description', type: 'textarea' },
+      { field_id: 'risk_level', label: 'Risk', type: 'dropdown', options: ['low', 'medium', 'high', 'critical'], fail_values: ['high', 'critical'] },
+    ],
+  };
+  const t: Template = {
+    template_id: 't', name: 'T', version: '1', applies_to_node_types: ['any'], deliverable_type: 'inspection_only',
+    sections: [{
+      section_id: 's', title: 'S', fields: [
+        { field_id: 'enclosure', label: 'Enclosure condition', type: 'rating', required: true },
+        { field_id: 'labelled', label: 'Labelled', type: 'pass_fail', required: true },
+        { field_id: 'has_gen', label: 'Generator?', type: 'pass_fail' },
+        { field_id: 'gen_rating', label: 'Generator condition', type: 'rating', conditional_on: { field_id: 'has_gen', equals: true } },
+        { field_id: 'board_photo', label: 'Board photo', type: 'photo', required: true },
+        snags,
+      ],
+    }],
+  };
+  const base: Response[] = [
+    { section_id: 's', field_id: 'enclosure', value_text: 'good' },
+    { section_id: 's', field_id: 'labelled', value_bool: true },
+  ];
+  const photo = { photos: [{ section_id: 's', field_id: 'board_photo' }] };
+
+  it('Good/Fair ratings and passing ticks → pass', () => {
+    expect(evaluateInspection(t, base, photo).overallResult).toBe('pass');
+    const fair = [{ ...base[0], value_text: 'fair' }, base[1]];
+    expect(evaluateInspection(t, fair, photo).overallResult).toBe('pass');
+  });
+
+  it('a Poor rating fails', () => {
+    const r = evaluateInspection(t, [{ ...base[0], value_text: 'poor' }, base[1]], photo);
+    expect(r.overallResult).toBe('fail');
+    expect(r.failedFields).toEqual([{ sectionId: 's', fieldId: 'enclosure', reason: 'rated Poor' }]);
+  });
+
+  it('a Poor rating on a HIDDEN field is ignored', () => {
+    const r = evaluateInspection(t, [...base, { section_id: 's', field_id: 'gen_rating', value_text: 'poor' }], photo);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('a Fail tick is recorded only', () => {
+    const r = evaluateInspection(t, [base[0], { ...base[1], value_bool: false }], photo);
+    expect(r.overallResult).toBe('pass');
+    expect(r.flaggedFields.map((f) => f.fieldId)).toEqual(['labelled']);
+  });
+
+  it.each([['high', 'fail'], ['critical', 'fail'], ['medium', 'pass'], ['low', 'pass']])(
+    'a snag of risk %s → %s', (risk, expected) => {
+      const r = evaluateInspection(t, [
+        ...base,
+        { section_id: 's', field_id: 'snag_list[0].description', value_text: 'Loose gland' },
+        { section_id: 's', field_id: 'snag_list[0].risk_level', value_text: risk },
+      ], photo);
+      expect(r.overallResult).toBe(expected);
+      if (expected === 'fail') expect(r.failedFields[0].fieldId).toBe('snag_list[0].risk_level');
+    },
+  );
+
+  it('fail_values match case-insensitively', () => {
+    const r = evaluateInspection(t, [...base, { section_id: 's', field_id: 'snag_list[2].risk_level', value_text: 'Critical' }], photo);
+    expect(r.overallResult).toBe('fail');
+  });
+
+  it('a missing required photo never blocks or fails; its reason is carried', () => {
+    const none = evaluateInspection(t, base, { photos: [] });
+    expect(none.overallResult).toBe('pass');
+    expect(none.blockingMissing).toHaveLength(0);
+    expect(none.missingRequired).toEqual([{ sectionId: 's', fieldId: 'board_photo' }]); // site forms still see it
+    expect(none.missingPhotos).toEqual([{ sectionId: 's', fieldId: 'board_photo', reason: null }]);
+    const withReason = evaluateInspection(t, [...base, { section_id: 's', field_id: 'board_photo', value_text: ' Board locked ' }], { photos: [] });
+    expect(withReason.missingPhotos[0].reason).toBe('Board locked');
+  });
+
+  it('a repeating-group sub-field condition reads its sibling in the same entry', () => {
+    const g: Template = {
+      ...t,
+      sections: [{ section_id: 's', title: 'S', fields: [{
+        field_id: 'items', label: 'Items', type: 'repeating_group',
+        fields: [
+          { field_id: 'kind', label: 'Kind', type: 'dropdown', options: ['cable', 'breaker'] },
+          { field_id: 'condition', label: 'Breaker condition', type: 'rating', required: true, conditional_on: { field_id: 'kind', equals: 'breaker' } },
+        ],
+      }] }],
+    };
+    const r = evaluateInspection(g, [
+      { section_id: 's', field_id: 'items[0].kind', value_text: 'cable' },
+      { section_id: 's', field_id: 'items[0].condition', value_text: 'poor' }, // hidden in entry 0
+      { section_id: 's', field_id: 'items[1].kind', value_text: 'breaker' },   // condition required + missing
+    ], {});
+    expect(r.overallResult).toBe('pass');
+    expect(r.blockingMissing).toEqual([{ sectionId: 's', fieldId: 'items[1].condition' }]);
+  });
+
+  it('N/A on a required repeating-group sub-field counts as answered', () => {
+    const g: Template = {
+      ...t,
+      sections: [{ section_id: 's', title: 'S', fields: [{
+        field_id: 'items', label: 'Items', type: 'repeating_group',
+        fields: [{ field_id: 'ok', label: 'OK', type: 'pass_fail', required: true }],
+      }] }],
+    };
+    const r = evaluateInspection(g, [{ section_id: 's', field_id: 'items[0].ok', pass_state: 'na' }], {});
+    expect(r.blockingMissing).toHaveLength(0);
+  });
+});
+
+describe('templateSchema — fail_values', () => {
+  const tpl = (field: Record<string, unknown>) => ({
+    template_id: 't', name: 'T', version: '1.0', applies_to_node_types: ['any'], deliverable_type: 'inspection_only',
+    sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'f', label: 'F', ...field }] }],
+  });
+  it('accepts fail_values that are options of a dropdown', () => {
+    expect(templateSchema.safeParse(tpl({ type: 'dropdown', options: ['low', 'high'], fail_values: ['high'] })).success).toBe(true);
+  });
+  it('rejects fail_values that are not options', () => {
+    expect(templateSchema.safeParse(tpl({ type: 'dropdown', options: ['low'], fail_values: ['severe'] })).success).toBe(false);
+  });
+  it('rejects fail_values on a non-choice field', () => {
+    expect(templateSchema.safeParse(tpl({ type: 'text', fail_values: ['x'] })).success).toBe(false);
+  });
+  it('accepts a rating field', () => {
+    expect(templateSchema.safeParse(tpl({ type: 'rating' })).success).toBe(true);
   });
 });

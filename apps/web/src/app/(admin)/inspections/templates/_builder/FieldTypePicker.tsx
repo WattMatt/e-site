@@ -13,7 +13,8 @@ interface FieldTypeCard {
 }
 
 const FIELD_TYPE_CARDS: FieldTypeCard[] = [
-  { type: 'pass_fail',       icon: '✓',  name: 'Pass / Fail',     description: 'Inspector marks pass, fail, or N/A' },
+  { type: 'pass_fail',       icon: '✓',  name: 'Pass / Fail',     description: 'Inspector marks pass, fail, or N/A — recorded, never fails the inspection' },
+  { type: 'rating',          icon: '⭐', name: 'Rating',          description: 'Good / Fair / Poor — Poor fails the inspection' },
   { type: 'number',          icon: '🔢', name: 'Number',          description: 'Numeric measurement with optional unit + threshold' },
   { type: 'text',            icon: '📝', name: 'Text',            description: 'Single-line free text' },
   { type: 'textarea',        icon: '📝', name: 'Textarea',        description: 'Multi-line free text or notes' },

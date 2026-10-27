@@ -83,9 +83,8 @@ export default function CaptureForm({
   const isCertifiedOrAbandoned = status === 'certified' || status === 'abandoned'
   const isVerifier =
     currentUserId !== null && verifierId === currentUserId && status === 'awaiting_verification'
-  // Flipping an answer is an answer: on a separate-verifier template it would be recorded as the
-  // verifier's contribution and bar them from certifying (certification_blockers, 00235).
-  const canFlip = isVerifier && !separateVerifier
+  // The verifier never edits answers (00253): they certify or send back. An edit would let a
+  // verifier quietly downgrade a critical snag or a Poor rating before certifying.
   const readOnly =
     readOnlyProp || isPreview || isCertifiedOrAbandoned || status === 'awaiting_verification'
 
@@ -97,8 +96,8 @@ export default function CaptureForm({
   // Every gap, named, with what completes it: shown in the summary so "Submit refuses a finished
   // form" can never happen silently.
   const missingItems = useMemo(
-    () => describeMissing(template, evaluation.missingRequired, { photos, signatures }),
-    [template, evaluation.missingRequired, photos, signatures],
+    () => describeMissing(template, evaluation.blockingMissing, { photos, signatures }),
+    [template, evaluation.blockingMissing, photos, signatures],
   )
   const jumpTo = useCallback((sectionId: string, fieldId: string) => {
     setActiveSection(sectionId)
@@ -241,9 +240,10 @@ export default function CaptureForm({
   }, [])
 
   const onSubmit = async () => {
-    if (evaluation.missingRequired.length > 0) {
-      const first = evaluation.missingRequired[0]
-      const n = evaluation.missingRequired.length
+    // A missing photo never blocks: blockingMissing leaves photo fields out.
+    if (evaluation.blockingMissing.length > 0) {
+      const first = evaluation.blockingMissing[0]
+      const n = evaluation.blockingMissing.length
       const where = template.sections.find((x) => x.section_id === first.sectionId)?.title ?? first.sectionId
       setSubmitError(`${n} required ${n === 1 ? 'item is' : 'items are'} still missing (listed under Still required). The first is in "${where}".`)
       jumpTo(first.sectionId, first.fieldId)
@@ -272,12 +272,13 @@ export default function CaptureForm({
 
   const section = template.sections.find((s) => s.section_id === activeSection)
 
-  const overallVariant: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'ghost' =
-    evaluation.overallResult === 'pass'
-      ? 'success'
-      : evaluation.overallResult === 'fail'
-        ? 'danger'
-        : 'warning'
+  const overallVariant: 'success' | 'danger' = evaluation.overallResult === 'pass' ? 'success' : 'danger'
+  const fieldLabel = (sectionId: string, fieldId: string) => {
+    const s = template.sections.find((x) => x.section_id === sectionId)
+    const base = fieldId.split('[')[0]
+    const all = [...(s?.fields ?? []), ...(s?.subsections ?? []).flatMap((ss) => ss.fields)]
+    return all.find((f) => f.field_id === fieldId || f.field_id === base)?.label ?? fieldId
+  }
 
   return (
     <PhotoTallyContext.Provider value={photoTally}>
@@ -362,9 +363,8 @@ export default function CaptureForm({
                       response={response}
                       inspectionId={inspectionId}
                       sectionId={section.section_id}
-                      readOnly={readOnly && !canFlip}
-                      verifierFlipMode={canFlip}
-                      onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                      readOnly={readOnly}
+                                            onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                       allResponses={responses}
                       onUpsert={(fid, patch) => updateResponse(section.section_id, fid, patch)}
                     />
@@ -420,9 +420,8 @@ export default function CaptureForm({
                             response={response}
                             inspectionId={inspectionId}
                             sectionId={section.section_id}
-                            readOnly={readOnly && !canFlip}
-                            verifierFlipMode={canFlip}
-                            onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                            readOnly={readOnly}
+                                                        onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
                           />
                           {savingFields.has(key) && (
                             <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>Saving…</span>
@@ -483,8 +482,35 @@ export default function CaptureForm({
                 </div>
               )}
               {evaluation.failedFields.length > 0 && (
-                <div style={{ color: 'var(--c-amber)' }}>
-                  Failed: {evaluation.failedFields.length}
+                <div>
+                  <div style={{ color: 'var(--c-red)', marginBottom: 4 }}>
+                    Fails the inspection: {evaluation.failedFields.length}
+                  </div>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {evaluation.failedFields.map((f) => (
+                      <li key={`${f.sectionId}:${f.fieldId}`}>
+                        <button
+                          type="button"
+                          onClick={() => jumpTo(f.sectionId, f.fieldId)}
+                          style={{ all: 'unset', cursor: 'pointer', display: 'block', fontSize: 12, color: 'var(--c-text)' }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{fieldLabel(f.sectionId, f.fieldId)}</span>
+                          <span style={{ color: 'var(--c-red)' }}> · {f.reason}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {evaluation.flaggedFields.length > 0 && (
+                <div style={{ color: 'var(--c-amber)' }} title="Recorded in the report; these do not fail the inspection">
+                  Observations recorded: {evaluation.flaggedFields.length}
+                </div>
+              )}
+              {evaluation.missingPhotos.length > 0 && (
+                <div style={{ color: 'var(--c-text-mid)' }} title="Does not block submit or fail the inspection">
+                  Photos not taken: {evaluation.missingPhotos.length}
+                  {evaluation.missingPhotos.some((m) => !m.reason) && ' (add a reason under the field if you can)'}
                 </div>
               )}
             </div>
