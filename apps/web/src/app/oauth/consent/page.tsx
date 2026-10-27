@@ -37,9 +37,10 @@ function Message({ children }: { children: React.ReactNode }) {
 export default async function OAuthConsentPage({
   searchParams,
 }: {
-  searchParams: Promise<{ authorization_id?: string }>
+  searchParams: Promise<{ authorization_id?: string | string[] }>
 }) {
-  const { authorization_id: authorizationId } = await searchParams
+  const { authorization_id: rawId } = await searchParams
+  const authorizationId = Array.isArray(rawId) ? rawId[0] : rawId
   if (!authorizationId) {
     return <Message>This authorization request is missing its identifier. Start the connection again from Claude.</Message>
   }

@@ -16,6 +16,19 @@ type Phase =
   | { kind: 'redirecting' }
   | { kind: 'error'; message: string }
 
+const REDIRECT_REFUSED = "The client's redirect address was refused."
+
+/** Only an absolute https URL (or http on loopback, for local clients) may be navigated to. */
+function isSafeRedirect(raw: string): boolean {
+  try {
+    const u = new URL(raw)
+    if (u.protocol === 'https:') return true
+    return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+  } catch {
+    return false
+  }
+}
+
 const BUTTON_BASE = {
   minHeight: 44,
   padding: '0 18px',
@@ -42,6 +55,10 @@ export default function ConsentClient({ authorizationId }: { authorizationId: st
       // The user already consented to this client: Supabase hands back the
       // redirect straight away, so there is nothing to ask.
       if (!('authorization_id' in data)) {
+        if (!isSafeRedirect(data.redirect_url)) {
+          setPhase({ kind: 'error', message: REDIRECT_REFUSED })
+          return
+        }
         setPhase({ kind: 'redirecting' })
         window.location.assign(data.redirect_url)
         return
@@ -74,6 +91,11 @@ export default function ConsentClient({ authorizationId }: { authorizationId: st
           : await oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true })
       if (error || !data) {
         setActionError(error?.message ?? 'Something went wrong. Please try again.')
+        setBusy(false)
+        return
+      }
+      if (!isSafeRedirect(data.redirect_url)) {
+        setActionError(REDIRECT_REFUSED)
         setBusy(false)
         return
       }
@@ -148,7 +170,7 @@ export default function ConsentClient({ authorizationId }: { authorizationId: st
                       ...BUTTON_BASE,
                       flex: '1 1 140px',
                       background: 'var(--c-amber)',
-                      color: '#0A0808',
+                      color: 'var(--c-on-amber)',
                       border: 'none',
                       fontWeight: 700,
                       opacity: busy ? 0.5 : 1,

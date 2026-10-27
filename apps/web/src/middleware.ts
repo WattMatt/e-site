@@ -163,6 +163,18 @@ async function isTenderParticipant(userId: string, email: string | null | undefi
   return (invited ?? 0) > 0
 }
 
+/**
+ * Point a cloned request URL at a gate page (login, verify-mfa) and carry the
+ * original destination in `next` — path AND query, so a deep link such as
+ * /oauth/consent?authorization_id=X survives the round trip. The clone keeps
+ * the original query string, so it is cleared first: the gate URL carries
+ * `next` and nothing else.
+ */
+function setNext(url: URL, pathname: string, search: string) {
+  url.search = ''
+  url.searchParams.set('next', pathname + search)
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
@@ -193,7 +205,7 @@ export async function middleware(request: NextRequest) {
   if (!user && !isPublicPath && !isVerifyEmail && !isVerifyMfa) {
     const url = request.nextUrl.clone()
     url.pathname = isTenderPortalPath(pathname) ? '/tender/login' : '/login'
-    url.searchParams.set('next', pathname)
+    setNext(url, pathname, request.nextUrl.search)
     return NextResponse.redirect(url)
   }
 
@@ -241,7 +253,7 @@ export async function middleware(request: NextRequest) {
     if (await hasVerifiedMfaFactor(user.id)) {
       const url = request.nextUrl.clone()
       url.pathname = VERIFY_MFA_PATH
-      url.searchParams.set('next', pathname)
+      setNext(url, pathname, request.nextUrl.search)
       return NextResponse.redirect(url)
     }
   }

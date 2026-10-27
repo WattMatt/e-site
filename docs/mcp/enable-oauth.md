@@ -55,10 +55,12 @@ The client opens a browser. Sign in to E-Site if asked, check the client name an
 2. Call `esite_whoami`: it names you and lists your memberships.
 3. Call `esite_projects_list`: you see the same projects the web app shows you.
 4. Call `esite_project_get` on a project, and `esite_project_history`.
-5. Repeat step 2 as a project_manager or contractor: `esite_project_get` must show no contract block for a role without COST_VIEW.
+5. Repeat step 4 as a contractor or inspector: `esite_project_get` must show no contract block. An owner, admin or project_manager (the COST_VIEW roles) sees it.
 6. Add the same server in Claude Code and repeat `esite_whoami`.
 7. Negative checks: `curl -i https://www.e-site.live/api/mcp` without a token returns 401 with a `WWW-Authenticate: Bearer resource_metadata=...` header; a client_viewer-only account is refused on the consent page.
 
 ## 5. Rollback
 
-Set `MCP_ENABLED=false` (or remove it) in Vercel and redeploy: `/api/mcp` and the metadata route answer 404 at once. The Supabase OAuth switch can stay on; it only affects OAuth clients and nothing else signs in through it. To revoke an individual client, use the Connected AI clients list once it ships; until then access tokens expire within an hour and removing a person from the organisation or project revokes them at their next call.
+Set `MCP_ENABLED=false` (or remove it) in Vercel and redeploy: `/api/mcp` and the metadata route answer 404 at once. The Supabase OAuth switch can stay on; it only affects OAuth clients and nothing else signs in through it. 
+
+Slice 1 has no per-client revoke, and token expiry is not a revoke: refresh tokens renew access. A person is refused only when they lose every active non-client_viewer organisation membership (deactivate the membership), or when the owner revokes the client's grant in Supabase (auth-js has `oauth.revokeGrant`; it is not wired into E-Site in slice 1).
