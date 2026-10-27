@@ -56,7 +56,7 @@ function needFor(field: Field, count: number): string {
  */
 export function describeMissing(
   template: Template,
-  missing: { sectionId: string; fieldId: string }[],
+  missing: { sectionId: string; fieldId: string; kind?: 'result' }[],
   attachments: InspectionAttachments = {},
 ): MissingItem[] {
   return missing.map((m) => {
@@ -83,7 +83,7 @@ export function describeMissing(
       fieldId: m.fieldId,
       sectionTitle: found?.sectionTitle ?? m.sectionId,
       label: String(found?.field.label ?? m.fieldId),
-      need: found ? needFor(found.field, count) : 'Fill in',
+      need: m.kind === 'result' ? 'Mark pass, fail or N/A' : found ? needFor(found.field, count) : 'Fill in',
     };
   });
 }

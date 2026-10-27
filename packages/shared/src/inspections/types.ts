@@ -48,6 +48,11 @@ export interface Field {
   // these are the only answers that decide the verdict — every other check
   // (pass_fail ticks, pass_when limits, photos) is recorded, not failing.
   fail_values?: string[];
+  // photo only: the item is ASSESSED, not just photographed. The inspector marks Pass / Fail / N/A
+  // on the field's own response (pass_state / value_bool) with a comment (value_text: where / why;
+  // without a photo it is also the reason). Fail FAILS the inspection (owner decision 2026-10-27,
+  // LV Line Shop Board Audit). On a required item the result is required; the photo never is.
+  assess?: boolean;
   min_count?: number;
   max_count?: number;
   conditional_on?: ConditionalOn;
@@ -133,10 +138,10 @@ export interface EvaluationResult {
   flaggedFields: { sectionId: string; fieldId: string; reason: string }[];
   // Every required field without an answer, photos included (site forms and WhatsApp complete
   // on this list).
-  missingRequired: { sectionId: string; fieldId: string }[];
+  missingRequired: { sectionId: string; fieldId: string; kind?: 'result' }[];
   // Inspections: what blocks submit/certify. missingRequired minus photo fields — a missing
   // photo never blocks or fails an inspection; it carries an optional reason instead.
-  blockingMissing: { sectionId: string; fieldId: string }[];
+  blockingMissing: { sectionId: string; fieldId: string; kind?: 'result' }[];
   // Required photo fields with no photo, with the inspector's reason when one was given.
   missingPhotos: { sectionId: string; fieldId: string; reason: string | null }[];
   visibleFieldCount: number;

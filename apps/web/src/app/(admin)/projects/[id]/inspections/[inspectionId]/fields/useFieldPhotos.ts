@@ -14,6 +14,9 @@ export interface FieldPhoto {
   taken_at?: string | null
   gps_lat?: number | null
   gps_lng?: number | null
+  caption?: string | null
+  width_px?: number | null
+  height_px?: number | null
 }
 
 /** Map raw storage/PostgREST failures to messages a field worker can act on. */
@@ -60,7 +63,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
       const { data } = await (supabase as any)
         .schema('inspections')
         .from('photos')
-        .select('id, storage_path, taken_at, gps_lat, gps_lng')
+        .select('id, storage_path, taken_at, gps_lat, gps_lng, caption, width_px, height_px')
         .eq('inspection_id', inspectionId)
         .eq('section_id', sectionId)
         .eq('field_id', fieldId)
@@ -82,7 +85,8 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
   }, [supabase, inspectionId, sectionId, fieldId])
 
   const upload = useCallback(
-    async (file: File) => {
+    // `caption` marks a photo's role, e.g. 'Markup' for a marked-up copy (PhotoMarkupDialog).
+    async (file: File, opts?: { caption?: string }) => {
       setUploading(true)
       setError(null)
       try {
@@ -132,6 +136,7 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
             file_size_bytes: prepared.size,
             width_px: width,
             height_px: height,
+            caption: opts?.caption ?? null,
             uploaded_by: user.id,
           })
           .select('id')
@@ -147,7 +152,14 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
           .createSignedUrl(path, 3600)
         setPhotos((prev) => [
           ...prev,
-          { id: (row as { id: string }).id, storage_path: path, signed_url: sig?.signedUrl ?? undefined },
+          {
+            id: (row as { id: string }).id,
+            storage_path: path,
+            signed_url: sig?.signedUrl ?? undefined,
+            caption: opts?.caption ?? null,
+            width_px: width,
+            height_px: height,
+          },
         ])
         tally.added(sectionId, fieldId)
       } catch (e) {

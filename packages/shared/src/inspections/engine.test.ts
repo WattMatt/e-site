@@ -907,3 +907,60 @@ describe('templateSchema — fail_values', () => {
     expect(templateSchema.safeParse(tpl({ type: 'rating' })).success).toBe(true);
   });
 });
+
+// ─── Assessed photo items (LV Line Shop, 2026-10-27) ─────────────────────────
+// A photo field with `assess` is judged Pass / Fail / N/A with a comment; Fail fails the
+// inspection; on a required item the result is required, the photo never is.
+describe('evaluateInspection — assessed photo items', () => {
+  const t: Template = {
+    template_id: 't', name: 'T', version: '1.0', applies_to_node_types: ['any'], deliverable_type: 'coc',
+    sections: [{ section_id: 'w', title: 'Wiring', fields: [
+      { field_id: 'glanding', label: 'Glanding', type: 'photo', required: true, min_count: 1, assess: true },
+      { field_id: 'board', label: 'Board', type: 'photo', required: true, min_count: 1 },
+    ] }],
+  };
+  const photos = { photos: [{ section_id: 'w', field_id: 'glanding' }, { section_id: 'w', field_id: 'board' }] };
+
+  it('a Fail on an assessed item fails the inspection, with its comment as the reason', () => {
+    const r = evaluateInspection(t, [{ section_id: 'w', field_id: 'glanding', value_bool: false, pass_state: 'fail', value_text: 'gland missing, left side' }], photos);
+    expect(r.overallResult).toBe('fail');
+    expect(r.failedFields).toEqual([{ sectionId: 'w', fieldId: 'glanding', reason: 'marked Fail: gland missing, left side' }]);
+  });
+
+  it('Pass and N/A pass', () => {
+    for (const pass_state of ['pass', 'na'] as const) {
+      const r = evaluateInspection(t, [{ section_id: 'w', field_id: 'glanding', pass_state, value_bool: pass_state === 'pass' ? true : null }], photos);
+      expect(r.overallResult).toBe('pass');
+      expect(r.blockingMissing).toEqual([]);
+    }
+  });
+
+  it('a required item without a result blocks submit, even with a photo; the photo itself never blocks', () => {
+    const r = evaluateInspection(t, [], photos);
+    expect(r.blockingMissing).toEqual([{ sectionId: 'w', fieldId: 'glanding', kind: 'result' }]);
+    const noPhotos = evaluateInspection(t, [{ section_id: 'w', field_id: 'glanding', pass_state: 'na', value_text: 'no access' }], { photos: [] });
+    expect(noPhotos.blockingMissing).toEqual([]);
+    expect(noPhotos.missingPhotos.map((m) => m.fieldId)).toEqual(['glanding', 'board']);
+    expect(noPhotos.missingPhotos[0].reason).toBe('no access');
+  });
+
+  it('text typed as a reason is not a result: only the marked Fail fails', () => {
+    const r = evaluateInspection(t, [{ section_id: 'w', field_id: 'glanding', value_text: 'fail' }], { photos: [] });
+    expect(r.overallResult).toBe('pass');
+    expect(r.blockingMissing).toEqual([{ sectionId: 'w', fieldId: 'glanding', kind: 'result' }]);
+  });
+
+  it('an unassessed photo is never judged', () => {
+    const r = evaluateInspection(t, [
+      { section_id: 'w', field_id: 'glanding', pass_state: 'pass', value_bool: true },
+      { section_id: 'w', field_id: 'board', pass_state: 'fail', value_bool: false },
+    ], photos);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('the schema allows assess only on photo fields', () => {
+    const tpl = (field: Record<string, unknown>) => ({ ...t, sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'f', label: 'F', ...field }] }] });
+    expect(templateSchema.safeParse(tpl({ type: 'photo', assess: true })).success).toBe(true);
+    expect(templateSchema.safeParse(tpl({ type: 'text', assess: true })).success).toBe(false);
+  });
+});

@@ -20,6 +20,7 @@ const fieldSchema: z.ZodType<Field> = z.lazy(() =>
     pass_when: z.string().optional(),
     options: z.array(z.string()).optional(),
     fail_values: z.array(z.string().min(1)).optional(),
+    assess: z.boolean().optional(),
     min_count: z.number().int().positive().optional(),
     max_count: z.number().int().positive().optional(),
     conditional_on: z.union([
@@ -53,6 +54,8 @@ const fieldSchema: z.ZodType<Field> = z.lazy(() =>
     return f.fail_values.every((v) => opts.has(v.toLowerCase()));
   }, {
     message: 'fail_values is only for dropdown / multi_select fields and every value must be one of the options',
+  }).refine((f) => !f.assess || f.type === 'photo', {
+    message: 'assess is only for photo fields',
   }),
 );
 

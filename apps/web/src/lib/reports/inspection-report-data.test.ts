@@ -826,3 +826,44 @@ describe('gatherInspectionReportData — readings are judged against their thres
     expect(data.sections[0].rows.find((r) => r.fieldId === 'num_r')!.value).toBe('3.5 Ohm  (threshold < 1.0 · fail)')
   })
 })
+
+// ─── Assessed photo items (LV Line Shop, 2026-10-27) ──────────────────────
+describe('gatherInspectionReportData — assessed photo items', () => {
+  it('prints the item as a result row with its comment and its photos, and a Fail fails', async () => {
+    setup({
+      serviceOver: {
+        'inspections.templates': {
+          data: {
+            ...TEMPLATE_ROW.data,
+            schema_json: {
+              sections: [{ section_id: 'w', title: 'Normal Wiring', fields: [
+                { field_id: 'glanding', label: 'Glanding', type: 'photo', required: true, assess: true },
+                { field_id: 'clean', label: 'Cleanliness', type: 'photo', required: true, assess: true },
+              ] }],
+            },
+          },
+          error: null,
+        },
+        'inspections.responses': {
+          data: [{ section_id: 'w', field_id: 'glanding', value_bool: false, pass_state: 'fail', value_text: 'gland missing, left side' }],
+          error: null,
+        },
+        'inspections.photos': {
+          data: [{ id: 'g1', section_id: 'w', field_id: 'glanding', storage_path: 'p/g.jpg', original_path: null, caption: 'Markup', gps_lat: null, gps_lng: null, taken_at: null, uploaded_by: null }],
+          error: null,
+        },
+      },
+    })
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const w = data.sections.find((s) => s.sectionId === 'w')!
+    const glanding = w.rows.find((r) => r.fieldId === 'glanding')!
+    expect(glanding).toMatchObject({ kind: 'result', pass: 'fail', failReason: 'gland missing, left side' })
+    expect(glanding.photos?.photos).toHaveLength(1)
+    expect(w.photoFields).toEqual([])
+    // No photo and no result yet: still listed, as an unmarked result.
+    expect(w.rows.find((r) => r.fieldId === 'clean')).toMatchObject({ kind: 'result', pass: null })
+    expect(data.summary.failed).toEqual([
+      expect.objectContaining({ label: 'Normal Wiring · Glanding', reason: 'marked Fail: gland missing, left side' }),
+    ])
+  })
+})
