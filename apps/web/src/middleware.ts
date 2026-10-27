@@ -89,7 +89,13 @@ const VERIFY_MFA_PATH = '/verify-mfa'
 // /api/diary/notify carries the same shape (mobile Bearer JWT, verified in the
 // handler against Supabase Auth, then an org-membership check) and was in no
 // list, so every mobile diary notification was 307'd to /login.
-const SELF_AUTH_PATHS = ['/api/notifications/dispatch', '/api/diary/notify']
+const SELF_AUTH_PATHS = [
+  '/api/notifications/dispatch',
+  '/api/diary/notify',
+  // MCP: Bearer token verified in the route; discovery metadata is public.
+  '/api/mcp',
+  '/.well-known/oauth-protected-resource',
+]
 
 // Webhook endpoints authenticated by a signature over the raw request body,
 // not by a session or a bearer token. They must NOT be redirected: a 307 to
