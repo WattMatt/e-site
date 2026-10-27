@@ -37,13 +37,16 @@
 --
 -- certification_blockers() is left as it is: it stays the last line of defence.
 --
+-- responses_update_verifier is narrowed here and was then dropped by 00253 (a verifier never edits
+-- answers). Its directive below holds in both states and fails only if an unnarrowed verifier
+-- policy comes back.
+--
 -- @verify:begin
 -- function: inspections.template_requires_separate_verifier(uuid)
 -- function: inspections.enforce_separate_verifier()
 -- function: inspections.user_can_write_responses(uuid)
 -- trigger: trg_inspections_verifier_separation ON inspections.inspections
--- policy: responses_update_verifier ON inspections.responses PERMISSIVE
--- sql: (SELECT coalesce(qual, '') LIKE '%template_requires_separate_verifier%' FROM pg_policies WHERE schemaname = 'inspections' AND tablename = 'responses' AND policyname = 'responses_update_verifier')
+-- sql: (SELECT coalesce(bool_and(coalesce(qual, '') LIKE '%template_requires_separate_verifier%'), true) FROM pg_policies WHERE schemaname = 'inspections' AND tablename = 'responses' AND policyname = 'responses_update_verifier')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%template_requires_separate_verifier%')
 -- sql: (SELECT pg_get_functiondef('inspections.enforce_separate_verifier()'::regprocedure) LIKE '%user_effective_project_role%')
 -- sql: (SELECT pg_get_functiondef('inspections.user_can_write_responses(uuid)'::regprocedure) LIKE '%pm.is_active%')
