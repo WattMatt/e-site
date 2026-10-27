@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { detectBlocks } from './detect-blocks'
 import { boxesOverlap, detectedTagFor, detectionSummary, reviewDetection, runDetection } from './detect-review'
 import { rectToPoints } from './geometry'
+import type { LineSegment } from './line-space'
 import type { MatchableNode } from './match-nodes'
 import { ALPHA, BRAVO, CHARLIE, DELTA_NO_TAG, blockItems, textAt } from './__fixtures__/db-block-layout'
 
@@ -21,7 +22,7 @@ const ITEMS = [
 describe('reviewDetection', () => {
   it('sorts proposals into matched · need you · without a tag', () => {
     const r = reviewDetection(detectBlocks(ITEMS), NODES, [])
-    expect(r.counts).toEqual({ detected: 4, matched: 2, needsYou: 1, noTag: 1 })
+    expect(r.counts).toEqual({ detected: 4, matched: 2, needsYou: 1, partOf: 0, noTag: 1 })
     expect(r.rows.map((x) => [x.block.tag, x.category, x.nodeId])).toEqual([
       ['DB-71', 'matched', 'n-71'],
       ['DB-72', 'matched', 'n-72'],
@@ -30,7 +31,7 @@ describe('reviewDetection', () => {
     ])
     expect(r.rows[2].reason).toBe('No board in this project has the tag DB-90/91.')
     expect(r.alreadyOnPlan).toBe(0)
-    expect(detectionSummary(r)).toBe('Detected 4 blocks — 2 matched · 1 needs you · 1 without a tag')
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 4 blocks: 2 matched · 1 needs you · 1 without a tag')
   })
 
   it('sorts a block whose NO: is a sentence into without a tag and keeps the text as the hint', () => {
@@ -86,7 +87,60 @@ describe('reviewDetection', () => {
 
   it('pluralises the summary', () => {
     const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: CHARLIE })), NODES, [])
-    expect(detectionSummary(r)).toBe('Detected 1 block — 0 matched · 1 needs you · 0 without a tag')
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 1 block: 0 matched · 1 needs you')
+  })
+
+  it('a meter or incomer inside a main board is part of it: own category, never needs you or matched', () => {
+    const nodes: MatchableNode[] = [{ id: 'mb', kind: 'rmu', code: 'MAIN BOARD 6.1', shop_number: null, name: 'MAIN BOARD 6.1' }]
+    const items = [
+      ...blockItems({ x: 100, y: 100, values: ['MB-6.1 LOCAL MAIN', 'MAIN BOARD 6.1', '', '', '', '', ''] }),
+      ...blockItems({ x: 400, y: 100, values: ['MB-6.1 BULK CHECK METER', 'MAIN BOARD 6.1', '', '', '', '', ''] }),
+      ...blockItems({ x: 100, y: 400, values: ['MB-6.1 INCOMMING COUNCIL', 'x', '', '', '', '', ''] }),
+    ]
+    const r = reviewDetection(detectBlocks(items), nodes, [])
+    expect(r.rows.map((x) => [x.category, x.nodeId])).toEqual([['matched', 'mb'], ['part_of', null], ['part_of', null]])
+    expect(r.rows[1].reason).toBe('Part of MB-6.1 — not a separate board.')
+    expect(r.counts).toEqual({ detected: 3, matched: 1, needsYou: 0, partOf: 2, noTag: 0 })
+    expect(detectionSummary(r)).toBe('Scanned this sheet — 3 blocks: 1 matched · 0 need you · 2 parts of main boards')
+  })
+
+  it('several boards matching only once zeros are ignored need a person, nothing preselected', () => {
+    const nodes: MatchableNode[] = [
+      { id: 'a', kind: 'tenant_db', code: 'DB-1', shop_number: null, name: 'One' },
+      { id: 'b', kind: 'tenant_db', code: 'DB-01', shop_number: null, name: 'Oh One' },
+    ]
+    const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: ['DB-001', 'ONE', '', '', '', '', ''] })), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'needs_you', candidateIds: ['a', 'b'], preselectId: null })
+    expect(r.rows[0].reason).toBe('DB-001 matches 2 boards once leading zeros are ignored; choose one.')
+  })
+
+  it('a leading-zero tag links its one board as matched', () => {
+    const nodes: MatchableNode[] = [{ id: 'a', kind: 'tenant_db', code: 'DB-1', shop_number: null, name: 'One' }]
+    const r = reviewDetection(detectBlocks(blockItems({ x: 100, y: 100, values: ['DB-01', 'ONE', '', '', '', '', ''] })), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'matched', nodeId: 'a' })
+  })
+
+  it('a tag followed by words that are not a known phrase needs a person, the tag\'s board preselected', () => {
+    const nodes: MatchableNode[] = [
+      { id: 'mb', kind: 'rmu', code: 'MAIN BOARD 6.1', shop_number: null, name: 'MAIN BOARD 6.1' },
+      { id: 'd5', kind: 'tenant_db', code: 'DB-05', shop_number: null, name: 'Five' },
+    ]
+    const items = [
+      ...blockItems({ x: 100, y: 100, values: ['MB-6.1 GEN', 'x', '', '', '', '', ''] }),
+      ...blockItems({ x: 400, y: 100, values: ['DB-05 METER ROOM', 'FIVE', '', '', '', '', ''] }),
+    ]
+    const r = reviewDetection(detectBlocks(items), nodes, [])
+    expect(r.rows[0]).toMatchObject({ category: 'needs_you', nodeId: null, candidateIds: ['mb'], preselectId: 'mb', reason: 'NO: reads "MB-6.1 GEN" — confirm the board.' })
+    expect(r.rows[1]).toMatchObject({ category: 'needs_you', nodeId: null, candidateIds: ['d5'], preselectId: 'd5', reason: 'NO: reads "DB-05 METER ROOM" — confirm the board.' })
+    expect(r.counts.matched).toBe(0)
+    // A board already on the plan is offered but not preselected.
+    const onPlan = reviewDetection(detectBlocks(items.slice(0, items.length / 2)), nodes, [{ id: 's', points: [5000, 5000, 5001, 5000, 5001, 5001, 5000, 5001], nodeId: 'mb' }])
+    expect(onPlan.rows[0]).toMatchObject({ category: 'needs_you', candidateIds: ['mb'], preselectId: null })
+  })
+
+  it('one part-of row reads singular', () => {
+    const items = blockItems({ x: 100, y: 100, values: ['MB-6.1 CHECK METER', 'x', '', '', '', '', ''] })
+    expect(detectionSummary(reviewDetection(detectBlocks(items), [], []))).toBe('Scanned this sheet — 1 block: 0 matched · 0 need you · 1 part of a main board')
   })
 })
 
@@ -107,6 +161,47 @@ describe('runDetection', () => {
   })
   it('blocks → review', () => {
     expect(runDetection(ITEMS, NODES, []).kind).toBe('review')
+  })
+})
+
+describe('runDetection — snapping to the drawn table', () => {
+  // ALPHA's table (invented): border 97..240 × 87..201, divider 146, row lines 5 px under each baseline.
+  const hl = (at: number, from: number, to: number): LineSegment => ({ axis: 'h', at, from, to })
+  const vl = (at: number, from: number, to: number): LineSegment => ({ axis: 'v', at, from, to })
+  const ALPHA_TABLE: LineSegment[] = [
+    hl(87, 97, 240), hl(201, 97, 240), vl(97, 87, 201), vl(240, 87, 201), vl(146, 87, 201),
+    ...[105, 121, 137, 153, 169, 185].map((y) => hl(y, 97, 240)),
+  ]
+
+  it('snaps the blocks that have a table and says how many', () => {
+    const out = runDetection(ITEMS, NODES, [], ITEMS.length, ALPHA_TABLE)
+    if (out.kind !== 'review') throw new Error(out.kind)
+    expect(out.review.rows.map((r) => [r.block.tag, r.block.snapped])).toEqual([
+      ['DB-71', true], ['DB-72', false], ['DB-90/91', false], [null, false],
+    ])
+    expect(out.review.rows[0]!.block.box).toEqual({ minX: 97, minY: 87, maxX: 240, maxY: 201 })
+    expect(out.review.rows[0]!.block.points).toEqual(rectToPoints(97, 87, 240, 201))
+    expect(out.review.snap).toEqual({ lineCount: ALPHA_TABLE.length, snapped: 1 })
+  })
+
+  it('a sheet with no line work keeps every text box and reports zero lines', () => {
+    const out = runDetection(ITEMS, NODES, [], ITEMS.length, [])
+    if (out.kind !== 'review') throw new Error(out.kind)
+    expect(out.review.rows.every((r) => !r.block.snapped)).toBe(true)
+    expect(out.review.snap).toEqual({ lineCount: 0, snapped: 0 })
+    const noLines = runDetection(ITEMS, NODES, [])
+    if (noLines.kind !== 'review') throw new Error(noLines.kind)
+    expect(noLines.review.snap).toEqual({ lineCount: 0, snapped: 0 })
+  })
+
+  it('leaves out a block already drawn, judged against the SNAPPED box', () => {
+    // Covers 52% of the snapped table (97..240) but only 44% of the text box (95..221).
+    const existing = [{ id: 's1', points: rectToPoints(165, 87, 300, 201), nodeId: null }]
+    const snapped = runDetection(ITEMS, NODES, existing, ITEMS.length, ALPHA_TABLE)
+    const textOnly = runDetection(ITEMS, NODES, existing, ITEMS.length, [])
+    if (snapped.kind !== 'review' || textOnly.kind !== 'review') throw new Error('expected reviews')
+    expect(snapped.review.alreadyOnPlan).toBe(1)
+    expect(textOnly.review.alreadyOnPlan).toBe(0)
   })
 })
 

@@ -47,6 +47,15 @@ export interface DetectedBlock {
   box: Box
   /** box as a 4-corner rect (TL, TR, BR, BL) for status_plan_shapes.points. */
   points: number[]
+  /**
+   * The block's text extents, unpadded: label column left, NO: top, the
+   * widest value's right edge, CT: baseline + 0.25h. Snapping starts here.
+   */
+  text: Box
+  /** Height of the block's NO: label; every snapping tolerance is a multiple of it. */
+  labelHeight: number
+  /** box sits on the table's drawn border (snap-blocks.ts); false = it follows the text. */
+  snapped: boolean
 }
 
 export interface RejectedBlock {
@@ -178,18 +187,17 @@ export function detectBlocks(items: readonly ImageTextItem[]): DetectResult {
     const pad = T.pad * h
     const left = Math.min(...rows.map((r) => r.item.x))
     const last = rows[rows.length - 1].item
-    const box: Box = {
-      minX: left - pad,
-      minY: no.item.top - pad,
-      maxX: right + pad,
-      maxY: last.baseline + 0.25 * h + pad,
-    }
+    const text: Box = { minX: left, minY: no.item.top, maxX: right, maxY: last.baseline + 0.25 * h }
+    const box: Box = { minX: text.minX - pad, minY: text.minY - pad, maxX: text.maxX + pad, maxY: text.maxY + pad }
     blocks.push({
       tag: fields.NO,
       name: fields.NAME,
       fields,
       box,
       points: rectToPoints(box.minX, box.minY, box.maxX, box.maxY),
+      text,
+      labelHeight: h,
+      snapped: false,
     })
   }
 

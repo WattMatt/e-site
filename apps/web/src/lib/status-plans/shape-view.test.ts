@@ -41,10 +41,10 @@ describe('tenant layout shapes', () => {
     expect(v.statusLabel).toBe('Complete')
   })
 
-  it('an open shop past its BO date is in progress AND overdue', () => {
+  it('an open shop past its BO date is overdue: its own red, counted as overdue', () => {
     const v = resolveShapeView(shape({ nodeId: 'n1' }), ctx({ shopLinks: { n1: { state: 'active', facts: OPEN } } }))
     expect(v.style).toEqual(tenantShapeStyle({ status: 'in_progress', overdue: true }))
-    expect(v.legendKey).toBe('in_progress')
+    expect(v.legendKey).toBe('overdue')
     expect(v.overdue).toBe(true)
     expect(v.statusLabel).toBe('In progress · overdue')
   })
@@ -99,7 +99,7 @@ describe('distribution schematic shapes', () => {
     ...o,
   })
 
-  it('a linked block takes its DB order hatch and the board code', () => {
+  it('a linked block takes its order colour and the board code', () => {
     const v = resolveShapeView(shape({ nodeId: 'm1' }), sctx({ dbOrders: { m1: 'ordered' } }))
     expect(v.style).toEqual(dbBlockStyle('ordered'))
     expect(v.legendKey).toBe('ordered')
@@ -107,7 +107,7 @@ describe('distribution schematic shapes', () => {
     expect(v.areaM2).toBeNull()
   })
 
-  it('a linked board without a DB order is "no order"', () => {
+  it('a linked board without an order is "no order"', () => {
     expect(resolveShapeView(shape({ nodeId: 'm1' }), sctx()).legendKey).toBe('no_order')
   })
 
@@ -119,7 +119,7 @@ describe('distribution schematic shapes', () => {
 })
 
 describe('legendSummary', () => {
-  it('counts every legend key, overdue on top of its base status, and sums area', () => {
+  it('counts every legend key once — a shape counts under the colour it is drawn in — and sums area', () => {
     const views = [
       resolveShapeView(shape({ id: 'a', nodeId: 'n1' }), ctx()),
       resolveShapeView(shape({ id: 'b', nodeId: 'n1' }), ctx({ shopLinks: { n1: { state: 'active', facts: OPEN } } })),
@@ -128,7 +128,8 @@ describe('legendSummary', () => {
     ]
     const s = legendSummary(views, 'tenant_layout')
     expect(Object.keys(s.counts).sort()).toEqual(TENANT_LEGEND.map((e) => e.key).sort())
-    expect(s.counts).toMatchObject({ complete: 1, in_progress: 1, overdue: 1, common: 1, unlinked: 1 })
+    expect(s.counts).toMatchObject({ complete: 1, in_progress: 0, overdue: 1, common: 1, unlinked: 1 })
+    expect(Object.values(s.counts).reduce((a, b) => a + b, 0)).toBe(views.length)
     // Measured GLA is the linked shops only: the common area (80 m²) is not GLA.
     expect(s.totalM2).toBeCloseTo(160, 9)
     expect(s.unmeasured).toBe(0)
@@ -160,11 +161,15 @@ describe('colour helpers', () => {
   it('fillRgba applies the style opacity; no fill is transparent', () => {
     expect(fillRgba({ ...tenantShapeStyle({ status: 'complete', overdue: false }), fill: COLOURS.complete, fillOpacity: 0.5 }))
       .toBe('rgba(46, 158, 79, 0.5)')
-    expect(fillRgba(dbBlockStyle('required'))).toBe('transparent')
+    expect(fillRgba(dbBlockStyle('required'))).toBe('rgba(214, 69, 69, 0.5)')
+    expect(fillRgba(dbBlockStyle('unlinked'))).toBe('transparent')
   })
-  it('swatchCss marks dashed outlines and hatches', () => {
+  it('swatchCss marks dashed outlines; status swatches are solid, never patterned', () => {
     expect(swatchCss(dbBlockStyle('unlinked')).border).toMatch(/dashed/)
-    expect(swatchCss(dbBlockStyle('ordered')).backgroundImage).toMatch(/repeating-linear-gradient/)
+    const ordered = swatchCss(dbBlockStyle('ordered'))
+    expect(ordered.backgroundImage).toBeUndefined()
+    expect(ordered.backgroundColor).toBe('rgba(224, 161, 0, 0.5)')
+    expect(ordered.border).toBe(`2px solid ${COLOURS.ordered}`)
   })
 })
 

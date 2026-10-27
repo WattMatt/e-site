@@ -11,7 +11,7 @@ import type { TenantPlanCard } from '@/lib/status-plans/plan-cards'
 
 const COPY: Record<StatusPlanPurpose, { title: string; blurb: string; linked: string }> = {
   tenant_layout: { title: 'Floor plan', blurb: 'Upload the floor plan, then mask and link shops.', linked: 'shops linked' },
-  distribution_schematic: { title: 'Line diagram', blurb: 'Upload the 300 schematic, then detect and hatch DB blocks.', linked: 'boards linked' },
+  distribution_schematic: { title: 'Line diagram', blurb: 'Upload the 300 schematic, then detect DB blocks and colour them by order status.', linked: 'boards linked' },
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`

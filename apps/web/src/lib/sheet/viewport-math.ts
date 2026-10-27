@@ -29,6 +29,25 @@ export function fitTransform(
   }
 }
 
+/** An axis-aligned box in image space (structurally the same as @esite/shared's status-plan Box). */
+export interface ViewBox { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * "Show on drawing": zoom so `box` fills `fill` of the view's limiting side, centred.
+ * Clamped to [MIN_SCALE, MAX_SCALE]; a box smaller than 1 px counts as 1 px. Null when
+ * the view is not laid out or the box is not finite (e.g. boundingBox of no points).
+ */
+export function fitToBox(viewport: { w: number; h: number }, box: ViewBox, fill = 0.6): Transform | null {
+  if (viewport.w < 50 || viewport.h < 50) return null
+  if (![box.minX, box.minY, box.maxX, box.maxY].every(Number.isFinite)) return null
+  const bw = Math.max(1, box.maxX - box.minX)
+  const bh = Math.max(1, box.maxY - box.minY)
+  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(viewport.w / bw, viewport.h / bh) * fill))
+  const cx = (box.minX + box.maxX) / 2
+  const cy = (box.minY + box.maxY) / 2
+  return { scale, offset: { x: viewport.w / 2 - cx * scale, y: viewport.h / 2 - cy * scale } }
+}
+
 /**
  * Multiply the scale by `factor`, keeping `anchor` (container-local CSS
  * pixels) stationary on screen. Clamped to [MIN_SCALE, MAX_SCALE]; at a clamp

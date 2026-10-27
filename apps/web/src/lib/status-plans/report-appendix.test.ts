@@ -50,4 +50,27 @@ describe('loadReportAppendix', () => {
     const r = await loadReportAppendix({ ...base, url: 'http://x/r?schematicPlans=1' })
     expect(r).toEqual({ ok: true, appendix: { load: { inputs: [], omitted: [{ title: 'Tenant plans', reason: 'the plans could not be loaded — generate the report again' }] }, generatedOn: '2026-10-09' } })
   })
+
+  it('?boardPlans=1 alone loads the floor plan coloured by board', async () => {
+    m.load.mockResolvedValue({ inputs: [{ planId: 'b' }], omitted: [], organisationId: 'org-1' })
+    const r = await loadReportAppendix({ ...base, url: 'http://x/r?boardPlans=1' })
+    expect(m.load).toHaveBeenCalledTimes(1)
+    expect(m.load.mock.calls[0]![1]).toEqual({ projectId: 'p1', today: '2026-10-09', purposes: ['tenant_layout'], colourBy: 'board' })
+    expect(r).toMatchObject({ ok: true, appendix: { load: { inputs: [{ planId: 'b' }] } } })
+  })
+  it('with the status plans too: status pages first, board pages after, omissions merged', async () => {
+    m.load
+      .mockResolvedValueOnce({ inputs: [{ planId: 's' }], omitted: [{ title: 'A', reason: 'x' }], organisationId: 'org-1' })
+      .mockResolvedValueOnce({ inputs: [{ planId: 'b' }], omitted: [{ title: 'B', reason: 'y' }], organisationId: 'org-1' })
+    const r = await loadReportAppendix({ ...base, url: 'http://x/r?tenantPlans=1&boardPlans=1' })
+    expect(m.load.mock.calls[0]![1]).toEqual({ projectId: 'p1', today: '2026-10-09', purposes: ['tenant_layout'] })
+    expect(m.load.mock.calls[1]![1]).toMatchObject({ colourBy: 'board' })
+    expect(r).toEqual({
+      ok: true,
+      appendix: {
+        load: { inputs: [{ planId: 's' }, { planId: 'b' }], omitted: [{ title: 'A', reason: 'x' }, { title: 'B', reason: 'y' }], organisationId: 'org-1' },
+        generatedOn: '2026-10-09',
+      },
+    })
+  })
 })

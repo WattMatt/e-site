@@ -18,6 +18,7 @@
  */
 
 import { compressImage } from '@/lib/image/compress'
+import { storageKeySegment } from '@esite/shared'
 import type { SiteFormSignatureBlock } from '@esite/shared'
 
 type UploadClient = {
@@ -72,14 +73,19 @@ export async function uploadFormPhoto(
     caption?: string | null
   },
 ): Promise<{ id: string } | { error: string }> {
-  const prepared = await compressImage(opts.file)
-  const ext = (prepared.name.split('.').pop() || 'jpg').toLowerCase()
+  // Always a JPEG; a photo that cannot be read is refused with a sentence (prepare.ts).
+  let prepared: File
+  try {
+    prepared = await compressImage(opts.file)
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+  const ext = 'jpg'
 
   // The field id can contain a repeating-group suffix like `circuits[0].photo`,
   // which is not safe in a storage key. Flatten it for the path only; the row
   // keeps the real field id so the PDF can still bind the photo to its field.
-  const safeField = opts.fieldId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  const path = `${opts.projectId}/${opts.formId}/${opts.sectionId}/${safeField}/${Date.now()}-${opts.sortOrder}.${ext}`
+  const path = `${opts.projectId}/${opts.formId}/${storageKeySegment(opts.sectionId)}/${storageKeySegment(opts.fieldId)}/${Date.now()}-${opts.sortOrder}.${ext}`
 
   const { error: upErr } = await supabase.storage
     .from(SITE_FORM_PHOTO_BUCKET)

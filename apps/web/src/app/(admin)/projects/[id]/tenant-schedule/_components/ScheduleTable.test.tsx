@@ -89,7 +89,7 @@ describe('ScheduleTable tenant editing', () => {
     expect(screen.getByText('Required')).toBeTruthy()
     // Mutating controls hidden
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Add scope item/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Scope items/i })).toBeNull()
     // Order-status advance buttons hidden (NodeOrderCell readOnly)
     expect(screen.queryByRole('button', { name: /Mark ordered/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Mark received/i })).toBeNull()
@@ -128,5 +128,38 @@ describe('ScheduleTable status plan link', () => {
   it('shows no link for a shop that is on no plan', () => {
     render(<ScheduleTable nodes={[tenant({})]} {...base} />)
     expect(screen.queryByRole('link', { name: /on plan/i })).toBeNull()
+  })
+})
+
+describe('ScheduleTable scope items (org-wide registry)', () => {
+  const types = [
+    { id: 'st-db', key: 'db', label: 'DB', sort_order: 0 },
+    { id: 'st-sf', key: 'shopfront', label: 'Shopfront', sort_order: 5 },
+  ]
+
+  it('opens the Scope items modal naming the org; Add/Remove only with the org role', async () => {
+    const user = userEvent.setup()
+    render(
+      <ScheduleTable
+        nodes={[tenant({})]}
+        {...base}
+        scopeItemTypes={types}
+        orgName="WM Consulting"
+        canManageScopeItems
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Scope items' }))
+    expect(screen.getByRole('dialog', { name: 'Scope items' })).toBeTruthy()
+    expect(screen.getByText(/every project in WM Consulting/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Remove Shopfront' })).toBeTruthy()
+  })
+
+  it('a project-promoted writer without the org role sees the list but no Add or Remove', async () => {
+    const user = userEvent.setup()
+    render(<ScheduleTable nodes={[tenant({})]} {...base} scopeItemTypes={types} />)
+    await user.click(screen.getByRole('button', { name: 'Scope items' }))
+    expect(screen.getByRole('list', { name: 'Current scope items' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull()
+    expect(screen.queryByText('Add a scope item for ALL tenants')).toBeNull()
   })
 })

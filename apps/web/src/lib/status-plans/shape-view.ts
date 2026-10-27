@@ -2,7 +2,7 @@
  * What a status-plan shape looks like, computed from live facts.
  *
  * Nothing here is stored (spec §2): the plan holds geometry + link + type, and
- * colour, hatch, label and area are derived at draw time, so a plan can never
+ * colour, label and area are derived at draw time, so a plan can never
  * lag the tenant schedule. The canvas, the legend and the side panel all read
  * resolveShapeView's output, so they cannot disagree with one another.
  */
@@ -48,6 +48,8 @@ export interface ShapeView {
   invalid: boolean
   /** node_id is set but the board is not live (soft-deleted, or not visible). */
   linkedNodeMissing: boolean
+  /** Board mode only: other main boards at the same distance ("Also fed from …"). */
+  feedAlso?: string[]
 }
 
 export interface ShapeViewContext {
@@ -131,7 +133,9 @@ export function resolveShapeView(s: CanvasShape, ctx: ShapeViewContext): ShapeVi
   return {
     id: s.id,
     style: tenantShapeStyle(result),
-    legendKey: result.status,
+    // Overdue is drawn in its own red, so it is counted under its own legend
+    // row, not under In progress as well.
+    legendKey: result.overdue ? 'overdue' : result.status,
     overdue: result.overdue,
     statusLabel,
     labelLines: [...nameLines, ...areaLine],
@@ -158,7 +162,6 @@ export function legendSummary(views: ReadonlyArray<ShapeView>, purpose: StatusPl
   for (const v of views) {
     if (v.invalid) continue
     counts[v.legendKey] = (counts[v.legendKey] ?? 0) + 1
-    if (v.overdue) counts.overdue = (counts.overdue ?? 0) + 1
   }
   if (purpose !== 'tenant_layout') return { counts, totalM2: 0, unmeasured: 0 }
   const { totalM2, unmeasured } = totalMeasuredM2(views.filter((v) => v.shopLinked).map((v) => v.areaM2))

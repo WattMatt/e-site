@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { storageKeySegment } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { usePhotoTally } from './photo-tally'
 import { prepareImageForUpload } from '@/lib/image/prepare'
@@ -110,8 +111,10 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
         } = await supabase.auth.getUser()
         if (!user) throw new Error('Not signed in')
 
-        const safeName = prepared.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-        const path = `${projectId}/${inspectionId}/${sectionId}/${fieldId}/${Date.now()}-${safeName}`
+        // Repeating-group field ids look like `sub_feeds[0].breaker_size` — `[` `]` are invalid in
+        // a storage key ("Invalid key", production 2026-10-27). Flatten every data-derived segment
+        // for the path only; the photos row keeps the real field_id.
+        const path = `${projectId}/${inspectionId}/${storageKeySegment(sectionId)}/${storageKeySegment(fieldId)}/${Date.now()}-${storageKeySegment(prepared.name)}`
         const { error: upErr } = await supabase.storage
           .from('inspection-photos')
           .upload(path, prepared, { contentType: prepared.type })

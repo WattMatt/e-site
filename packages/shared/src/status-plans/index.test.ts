@@ -34,4 +34,26 @@ describe('@esite/shared/status-plans public surface', () => {
     expect(sp.BLOCK_LABELS).toEqual(['NO', 'NAME', 'AREA', 'RATING', 'CABLE', 'SERIAL', 'CT'])
     expect(sp.DETECTED_TAG_MAX).toBe(64)
   })
+
+  it('exports the table-snapping surface', () => {
+    for (const name of ['segmentToImageSpace', 'buildLineIndex', 'findTableRect', 'snapBlock', 'snapBlocks']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.SNAP_TOLERANCES.span).toBe(0.8)
+  })
+
+  it('exports the main-board surface (follow-ups 2026-10-13)', () => {
+    for (const name of ['feedingMainBoard', 'feedsFor', 'compareBoardNames', 'boardColours', 'boardShapeStyle']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.FEED_MAX_HOPS).toBe(12)
+    expect(sp.MAIN_BOARD_PALETTE).toHaveLength(12)
+  })
+
+  it('exports the re-align surface (2026-10-14)', () => {
+    for (const name of ['planRealignment', 'realignSummary']) {
+      expect(typeof (sp as Record<string, unknown>)[name], name).toBe('function')
+    }
+    expect(sp.REALIGN_RULES.minOverlap).toBe(0.5)
+  })
 })

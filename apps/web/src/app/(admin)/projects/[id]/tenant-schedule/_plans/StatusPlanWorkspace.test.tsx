@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import type { StatusPlanPageProps, CanvasShape, SheetSummary } from '@/lib/status-plans/types'
 
 // No jest-dom in this repo (vitest.config.ts has no setupFiles): assert on textContent.
 const legendRow = (label: string) =>
   within(screen.getByRole('list', { name: 'Legend entries' })).getByText(label).closest('li')!.textContent
 const canvasText = () => screen.getByTestId('canvas').textContent ?? ''
+/** The colour key drawn over the canvas: one "label+count" string per row. */
+const keyRows = () =>
+  within(within(screen.getByTestId('canvas')).getByRole('list', { name: 'Colour key' })).getAllByRole('listitem').map((li) => li.textContent)
 
 const SHEET: SheetSummary = {
   id: 'sh1', label: 'Ground floor', sortOrder: 0, fileName: 'E-100.pdf', mime: 'application/pdf', pageIndex: 1, revision: 1,
@@ -15,13 +19,16 @@ const SHEET2: SheetSummary = { ...SHEET, id: 'sh2', label: 'Level 1', sortOrder:
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }), usePathname: () => '/' }))
 vi.mock('next/dynamic', () => ({
-  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null }) => (
+  default: () => (props: { shapes: CanvasShape[]; selectedId: string | null; pageIndex: number; onSelect: (id: string | null) => void; onCreate: (c: unknown) => void; onDeleteRequest: () => void; onCalibrated: (s: SheetSummary) => void; requestedTool: { tool: string } | null; focus: { box: { minX: number; minY: number; maxX: number; maxY: number }; nonce: number } | null; overlay?: ReactNode; proposals?: number[][] }) => (
     <div data-testid="canvas">
       shapes:{props.shapes.length} selected:{props.selectedId ?? 'none'} tool:{props.requestedTool?.tool ?? 'none'} page:{props.pageIndex}
+      {' '}proposals:{JSON.stringify(props.proposals ?? [])}
+      {' '}focus:{props.focus ? `${props.focus.box.minX},${props.focus.box.minY},${props.focus.box.maxX},${props.focus.box.maxY}#${props.focus.nonce}` : 'none'}
       <button onClick={() => props.onSelect('s1')}>stub-select-s1</button>
       <button onClick={() => props.onCreate({ shape: 'rect', points: [0, 0, 10, 0, 10, 10, 0, 10] })}>stub-create</button>
       <button onClick={() => props.onDeleteRequest()}>stub-delete-key</button>
       <button onClick={() => props.onCalibrated({ ...SHEET, pixelsPerMeter: 25, updatedAt: 'u2' })}>stub-calibrated</button>
+      {props.overlay}
     </div>
   ),
 }))
@@ -46,6 +53,8 @@ vi.mock('@/lib/status-plans/navigate', () => ({ navigateTo: vi.fn() }))
 const detection = vi.hoisted(() => ({ extractPageText: vi.fn(), acceptDetectedBlocksAction: vi.fn() }))
 vi.mock('@/lib/status-plans/extract-page-text', () => ({ extractPageText: detection.extractPageText }))
 vi.mock('@/actions/status-plan-detection.actions', () => ({ acceptDetectedBlocksAction: detection.acceptDetectedBlocksAction }))
+const realign = vi.hoisted(() => ({ realignShapesAction: vi.fn() }))
+vi.mock('@/actions/status-plan-realign.actions', () => realign)
 
 import { StatusPlanWorkspace } from './StatusPlanWorkspace'
 
@@ -64,6 +73,8 @@ function props(o: Partial<StatusPlanPageProps> = {}): StatusPlanPageProps {
     today: '2026-06-20',
     canEdit: true,
     initialShapeId: null,
+    feed: null,
+    initialColourBy: 'status',
     ...o,
   }
 }
@@ -144,13 +155,88 @@ describe('StatusPlanWorkspace', () => {
     expect(screen.queryByRole('button', { name: 'Set scale' })).toBeNull()
   })
 
-  it('a line diagram offers Detect blocks and no scale banner; a floor plan does not', () => {
-    const { unmount } = render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pixelsPerMeter: null, signedUrl: 'https://s/x', isPdf: true } })} />)
-    expect(screen.getByRole('button', { name: 'Detect blocks' })).toBeTruthy()
+  it('a line diagram with shapes offers Scan sheet for blocks in the side panel, no auto scan, no scale banner; a floor plan does not', () => {
+    const { unmount, container } = render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pixelsPerMeter: null, signedUrl: 'https://s/x', isPdf: true } })} />)
+    expect(screen.getByRole('button', { name: 'Scan sheet for blocks' })).toBeTruthy()
+    expect(container.querySelector('[data-slot="schematic-detection"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="schematic-scan-primary"]')).toBeNull()
+    expect(detection.extractPageText).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Set scale' })).toBeNull()
     unmount()
     render(<StatusPlanWorkspace {...props()} />)
-    expect(screen.queryByRole('button', { name: 'Detect blocks' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan sheet for blocks' })).toBeNull()
+  })
+
+  it('an empty line-diagram sheet scans itself on open and puts the review above the drawing', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, width: 2000, height: 2000 })
+    const { container } = render(<StatusPlanWorkspace {...schematic({ shapes: [] })} />)
+    expect(await screen.findByText('Scanned this sheet — 1 block: 1 matched · 0 need you')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Accept all 1 matched' })).toBeTruthy()
+    const primary = container.querySelector('[data-slot="schematic-scan-primary"]')!
+    expect(primary).not.toBeNull()
+    // Above the canvas in document order, and not repeated in the side panel.
+    expect(primary.compareDocumentPosition(screen.getByTestId('canvas')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('[data-slot="schematic-detection"]')).toBeNull()
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
+    // Accepting gives the sheet a shape; the review stays where it is, state intact.
+    detection.acceptDetectedBlocksAction.mockResolvedValue({
+      ok: true,
+      data: [{ id: 's9', sheetId: 'sh1', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept all 1 matched' }))
+    expect(await screen.findByText('Every detected block has been handled.')).not.toBeNull()
+    expect(container.querySelector('[data-slot="schematic-scan-primary"]')).not.toBeNull()
+    expect(canvasText()).toContain('shapes:1')
+    expect(detection.extractPageText).toHaveBeenCalledTimes(1)
+  })
+
+  it('an empty line-diagram sheet does not scan for a read-only viewer', async () => {
+    render(<StatusPlanWorkspace {...schematic({ shapes: [], canEdit: false })} />)
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(detection.extractPageText).not.toHaveBeenCalled()
+  })
+
+  it('Re-align blocks shows for an editor on a line diagram with a rectangle, and nowhere else', () => {
+    const pdf = { sheet: { ...SHEET, signedUrl: 'https://s/x', isPdf: true } }
+    const { unmount, container } = render(<StatusPlanWorkspace {...schematic(pdf)} />)
+    expect(within(container.querySelector('[data-slot="schematic-realign"]') as HTMLElement)
+      .getByRole('button', { name: 'Re-align blocks to the drawing' })).toBeTruthy()
+    unmount()
+    for (const p of [schematic({ ...pdf, canEdit: false }), schematic({ ...pdf, shapes: [] }), props()]) {
+      const r = render(<StatusPlanWorkspace {...p} />)
+      expect(screen.queryByRole('button', { name: 'Re-align blocks to the drawing' })).toBeNull()
+      r.unmount()
+    }
+  })
+
+  it('re-align: the canvas draws the proposed outline, and Apply folds the moved shape in', async () => {
+    const ITEMS = ['NO:', 'NAME:', 'AREA:', 'RATING:', 'CABLE:', 'SERIAL:', 'CT:'].flatMap((l, row) => [
+      { str: l, x: 500, baseline: 500 + row * 16, top: 490 + row * 16, width: l.length * 6, height: 10 },
+      { str: ['DB-ZZ01', 'LANTERN', '1', '2', '3', '4', '5'][row]!, x: 550, baseline: 500 + row * 16, top: 490 + row * 16, width: 30, height: 10 },
+    ])
+    const h = (at: number, from: number, to: number) => ({ axis: 'h' as const, at, from, to })
+    const v = (at: number, from: number, to: number) => ({ axis: 'v' as const, at, from, to })
+    const LINES = [h(487, 497, 600), h(601, 497, 600), v(497, 487, 601), v(546, 487, 601), v(600, 487, 601),
+      ...Array.from({ length: 6 }, (_, r) => h(505 + r * 16, 497, 600))]
+    detection.extractPageText.mockResolvedValue({ ok: true, items: ITEMS, rawItemCount: ITEMS.length, lines: LINES, width: 2000, height: 2000 })
+    const hand: CanvasShape = { ...SHAPE, points: [495, 485, 590, 485, 590, 605, 495, 605], nodeId: 'n1' }
+    const border = [497, 487, 600, 487, 600, 601, 497, 601]
+    realign.realignShapesAction.mockResolvedValue({ ok: true, data: [{ ...hand, points: border, updatedAt: 't2' }] })
+    render(<StatusPlanWorkspace {...schematic({ shapes: [hand], sheet: { ...SHEET, signedUrl: 'https://s/x', isPdf: true } })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-align blocks to the drawing' }))
+    await screen.findByText(/1 will snap to their table/)
+    expect(canvasText()).toContain(`proposals:${JSON.stringify([border])}`)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Re-aligned 1 block')
+    expect(canvasText()).toContain('proposals:[]')
+    expect(realign.realignShapesAction.mock.calls[0][0]).toEqual({ sheetId: 'sh1', moves: [{ shapeId: 's1', expectedUpdatedAt: 't1', points: border }] })
+    // Folded in: a second scan finds it already aligned.
+    fireEvent.click(screen.getByRole('button', { name: 'Re-align blocks to the drawing' }))
+    expect(await screen.findByText('0 will snap to their table (avg 0 px) · 1 already aligned · 0 left as they are')).not.toBeNull()
   })
 
   it('detection reads the sheet\'s own page and accepted blocks fold into the canvas', async () => {
@@ -164,8 +250,8 @@ describe('StatusPlanWorkspace', () => {
       data: [{ id: 's9', sheetId: 'sh1', shape: 'rect', points: [495, 485, 585, 485, 585, 601, 495, 601], nodeId: 'n1', areaType: null, detectedTag: 'DB-ZZ01', source: 'detected', updatedAt: 't9' }],
     })
     render(<StatusPlanWorkspace {...schematic({ sheet: { ...SHEET, pageIndex: 2, signedUrl: 'https://s/x', isPdf: true } })} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Detect blocks' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Accept 1 matched' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Scan sheet for blocks' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept all 1 matched' }))
     await waitFor(() => expect(canvasText()).toContain('shapes:2'))
     expect(detection.extractPageText).toHaveBeenCalledWith({ url: 'https://s/x' }, 2)
     expect(detection.acceptDetectedBlocksAction.mock.calls[0][0].sheetId).toBe('sh1')
@@ -185,5 +271,77 @@ describe('StatusPlanWorkspace', () => {
     render(<StatusPlanWorkspace {...props()} />)
     fireEvent.click(screen.getByText('stub-select-s1'))
     expect(spy.mock.calls.at(-1)?.[2]).toBe('/projects/p1/tenant-schedule/floor-plan?sheet=sh1&shape=s1')
+  })
+
+  const FEED_OK = {
+    state: 'ok' as const, revisionCode: 'Rev 2',
+    boards: [{ id: 'mb1', name: 'MB 1.1', colour: '#1F5FBF' }],
+    byNode: { n1: { boardId: 'mb1', also: [] } },
+  }
+
+  it('Colour by: Main board re-colours the legend and mirrors ?colour=board', () => {
+    const replace = vi.spyOn(window.history, 'replaceState')
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK })} />)
+    expect(legendRow('Complete')).toBe('Complete1')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by main board' }))
+    expect(legendRow('MB 1.1')!.endsWith('1')).toBe(true)
+    expect(screen.queryByText('Complete')).toBeNull()
+    expect(String(replace.mock.calls.at(-1)![2])).toContain('colour=board')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by status' }))
+    expect(legendRow('Complete')).toBe('Complete1')
+    expect(String(replace.mock.calls.at(-1)![2])).not.toContain('colour=')
+  })
+
+  it('opens in board mode from ?colour=board', () => {
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK, initialColourBy: 'board' })} />)
+    expect((screen.getByRole('button', { name: 'Colour by main board' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+    expect(legendRow('MB 1.1')).toBeTruthy()
+  })
+
+  it('an unreadable cable schedule says so in board mode and keeps the status colours', () => {
+    const feed = { state: 'unavailable' as const, reason: 'Main board view unavailable — the cable schedule could not be read.', omission: 'x' }
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed, initialColourBy: 'board' })} />)
+    expect(screen.getByText(/Main board view unavailable — the cable schedule could not be read\./)).toBeTruthy()
+    expect(legendRow('Complete')).toBe('Complete1')
+  })
+
+  it('the canvas carries a colour key: line diagram statuses with this sheet\'s counts', () => {
+    const blocks: CanvasShape[] = [
+      { ...SHAPE, id: 'b1', nodeId: 'm1' },
+      { ...SHAPE, id: 'b2', nodeId: 'm2' },
+      { ...SHAPE, id: 'b3', nodeId: null },
+      { ...SHAPE, id: 'b4', sheetId: 'sh2', nodeId: 'm1' },
+    ]
+    const nodes = [
+      { id: 'm1', code: 'MB-ZZ1', kind: 'main_board', shopNumber: null, shopName: null, scheduledM2: null, decommissioned: false },
+      { id: 'm2', code: 'MS-ZZ2', kind: 'mini_sub', shopNumber: null, shopName: null, scheduledM2: null, decommissioned: false },
+    ]
+    render(<StatusPlanWorkspace {...schematic({ sheets: [SHEET, SHEET2], shapes: blocks, nodes, dbOrders: { m1: 'received', m2: 'ordered' } })} />)
+    expect(keyRows()).toEqual([
+      'Received1', 'Ordered1', 'Required — not yet ordered0', 'Supplied by tenant0', 'No order line0', 'Not linked to a board1',
+    ])
+  })
+
+  it('the colour key follows Colour by: status rows, then the main boards', () => {
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'n1' }], feed: FEED_OK })} />)
+    expect(keyRows()[0]).toBe('Complete1')
+    fireEvent.click(screen.getByRole('button', { name: 'Colour by main board' }))
+    expect(keyRows()[0]).toBe('MB 1.11')
+    expect(keyRows()).not.toContain('Complete1')
+  })
+
+  it('a line diagram has no colour switch', () => {
+    render(<StatusPlanWorkspace {...schematic()} />)
+    expect(screen.queryByRole('button', { name: 'Colour by main board' })).toBeNull()
+  })
+
+  it('Show on a needs-attention row selects the shape and focuses its box; Show again re-triggers', () => {
+    // A link to a board that is not live: "needs attention".
+    render(<StatusPlanWorkspace {...props({ shapes: [{ ...SHAPE, nodeId: 'gone' }] })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('selected:s1')
+    expect(canvasText()).toContain('focus:100,100,300,260#1')
+    fireEvent.click(screen.getByRole('button', { name: 'Show Unassigned on the drawing' }))
+    expect(canvasText()).toContain('focus:100,100,300,260#2')
   })
 })

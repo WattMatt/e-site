@@ -846,16 +846,8 @@ async function isAnnotated(
     .maybeSingle()
   if (pse || pageScale) return true
 
-  // Zone polygons (00006). Stored as a percentage of the image, so they survive
-  // a pure re-raster — but not a layout change, which is what an adopt usually is.
-  const { data: zone, error: ze } = await supabase
-    .schema('tenants')
-    .from('floor_plan_zones')
-    .select('id')
-    .eq('floor_plan_id', floorPlanId)
-    .limit(1)
-    .maybeSingle()
-  if (ze || zone) return true
+  // Zone polygons (00006) were retired unused by 00251: never written by any UI,
+  // 0 rows in production. There is deliberately no lookup for them here.
 
   // A saved markup layer (00205). Its own `file_path` records which revision
   // it was drawn on and the viewer warns when they diverge, but a warning is

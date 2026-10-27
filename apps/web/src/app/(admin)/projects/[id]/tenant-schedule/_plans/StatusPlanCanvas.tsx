@@ -14,15 +14,16 @@
  * Shapes are selected on MOUSEDOWN (Konva's click is not synthesised
  * reliably) and cancelBubble so a stage press always means empty canvas.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Shape } from 'react-konva'
 import type Konva from 'konva'
-import { hatchSegments, pointsError, rectToPoints, visualCentre, type StatusPlanPurpose } from '@esite/shared/status-plans'
+import { hatchSegments, pointsError, rectToPoints, visualCentre, type Box, type StatusPlanPurpose } from '@esite/shared/status-plans'
 import { calibrateTenantPlanSheetAction } from '@/actions/tenant-plan-sheets.actions'
 import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
 import { Tooltip } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/markup-tooltip'
 import { useSheetImage, backingSize } from '@/lib/sheet/use-sheet-image'
 import { useSheetViewport } from '@/lib/sheet/use-sheet-viewport'
+import { FOCUS_COLOUR, FOCUS_FILL, FOCUS_PULSE_MS, FOCUS_TICK_MS, focusPending, pulseVisible } from '@/lib/status-plans/focus'
 import {
   canvasReducer,
   dragVertex,
@@ -49,6 +50,8 @@ export interface StatusPlanCanvasProps {
   busy: boolean
   /** The workspace asks for a tool (e.g. "Set scale" from the no-scale banner). */
   requestedTool: { tool: CanvasTool; nonce: number } | null
+  /** "Show": zoom so this box fills ~60 % of the view and blink it for 2 s. A new nonce re-triggers the same box. */
+  focus?: { box: Box; nonce: number } | null
   onSelect: (id: string | null) => void
   onCreate: (c: ShapeCommit) => Promise<{ error?: string }>
   onReshape: (shapeId: string, points: number[]) => Promise<{ error?: string }>
@@ -57,11 +60,17 @@ export interface StatusPlanCanvasProps {
   /** The sheet as stored after its scale was saved (new scale and updated_at). */
   onCalibrated: (sheet: SheetSummary) => void
   height?: string
+  /** Drawn over the top-left of the drawing (the colour key); HTML, outside the Konva stage. */
+  overlay?: ReactNode
+  /** Proposed outlines (re-align preview), drawn dashed over the shapes; never selectable. */
+  proposals?: number[][]
 }
 
 /** Screen pixels within which a press counts as "on" a corner. */
 const HIT_PX = 8
 const SELECT_COLOUR = '#2563EB'
+/** Re-align proposals: a colour no status or selection uses. */
+const PROPOSAL_COLOUR = '#DB2777'
 
 export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
   const { sheet, pageIndex, purpose, shapes, views, selectedId, canEdit, busy } = p
@@ -127,6 +136,37 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
     if (p.requestedTool) send({ type: 'tool', tool: p.requestedTool.tool })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.requestedTool?.nonce])
+
+  // ── Show on drawing ─────────────────────────────────────────────────────────
+  // Runs after the viewport hook's first-load auto-fit (declared earlier, so its effect
+  // runs first in the same commit): a Show that arrives with the image wins. Each nonce
+  // is applied once: a later page/sheet change (a new img) must not re-zoom onto a box
+  // from the previous page; a Show that arrived before the image applies when it lands.
+  const [pulse, setPulse] = useState<{ box: Box; started: number } | null>(null)
+  const [pulseNow, setPulseNow] = useState(0)
+  const appliedFocusNonce = useRef<number | null>(null)
+  useEffect(() => {
+    const f = p.focus
+    if (!f || !focusPending(appliedFocusNonce.current, f, !!img)) return
+    // Handled only after a fit succeeded: while the view is not laid out it stays pending
+    // and this effect re-runs when the viewport size changes.
+    if (!vp.fitToBox(f.box, FOCUS_FILL)) return
+    appliedFocusNonce.current = f.nonce
+    const t = Date.now()
+    setPulse({ box: f.box, started: t })
+    setPulseNow(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.focus?.nonce, img, viewport.w, viewport.h])
+  useEffect(() => {
+    if (!pulse) return
+    const id = setInterval(() => {
+      const t = Date.now()
+      if (t - pulse.started >= FOCUS_PULSE_MS) { setPulse(null); return }
+      setPulseNow(t)
+    }, FOCUS_TICK_MS)
+    return () => clearInterval(id)
+  }, [pulse])
+  const pulseShown = pulse !== null && pulseVisible(pulseNow - pulse.started)
 
   function imagePos(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     return e.target.getStage()?.getRelativePointerPosition() ?? null
@@ -408,8 +448,20 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
                   />
                 )
               })}
+              {p.proposals?.map((pts, i) => (
+                <Line key={`proposal:${i}`} points={pts} closed stroke={PROPOSAL_COLOUR} strokeWidth={2.5 / scale} dash={[8 / scale, 5 / scale]} />
+              ))}
               {selected && (
                 <Line points={selected.points} closed stroke={SELECT_COLOUR} strokeWidth={2 / scale} dash={[6 / scale, 4 / scale]} />
+              )}
+              {pulseShown && pulse && (
+                <Line
+                  points={rectToPoints(pulse.box.minX, pulse.box.minY, pulse.box.maxX, pulse.box.maxY)}
+                  closed
+                  stroke={FOCUS_COLOUR}
+                  strokeWidth={4 / scale}
+                  dash={[10 / scale, 6 / scale]}
+                />
               )}
               {/* Drafts */}
               {cs.draft.length > 0 && (
@@ -462,6 +514,7 @@ export function StatusPlanCanvas(p: StatusPlanCanvasProps) {
             )}
           </Stage>
         )}
+        {img && p.overlay}
       </div>
     </div>
   )

@@ -35,6 +35,7 @@ import {
   computeDerivedField,
   buildRepeatingGroupKey,
   listRepeatingGroupEntryIndices,
+  storageKeySegment,
   type Field,
   type Response,
 } from '@esite/shared'
@@ -382,7 +383,9 @@ function usePhotoCapture(inspectionId: string, sectionId: string, fieldId: strin
       // remote_path uses __placeholder__/<inspection_id>/... — the upload
       // worker resolves this to <project_id>/<inspection_id>/... at upload
       // time via lookupProjectId().
-      const remotePath = `__placeholder__/${inspectionId}/${sectionId}/${fieldId}/${Date.now()}.jpg`
+      // Repeating-group field ids (`circuits[0].photo`) are invalid in a
+      // storage key — flatten for the path; the photos row keeps field_id.
+      const remotePath = `__placeholder__/${inspectionId}/${storageKeySegment(sectionId)}/${storageKeySegment(fieldId)}/${Date.now()}.jpg`
       await enqueueAttachment({
         id,
         inspection_id: inspectionId,
@@ -692,7 +695,7 @@ function SignatureField({
     await FileSystem.writeAsStringAsync(localPath, base64, {
       encoding: FileSystem.EncodingType.Base64,
     })
-    const remotePath = `${inspectionId}/${field.field_id}/${filename}`
+    const remotePath = `${inspectionId}/${storageKeySegment(field.field_id)}/${filename}`
     const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob()
     await supabase.storage
       .from('inspection-signatures')
@@ -743,7 +746,7 @@ function FileField({
     })
     if (result.canceled) return
     const asset = result.assets[0]
-    const remotePath = `${inspectionId}/${field.field_id}/${asset.name}`
+    const remotePath = `${inspectionId}/${storageKeySegment(field.field_id)}/${Date.now()}-${storageKeySegment(asset.name)}`
     const blob = await (await fetch(asset.uri)).blob()
     const { error } = await supabase.storage
       .from('inspection-attachments')

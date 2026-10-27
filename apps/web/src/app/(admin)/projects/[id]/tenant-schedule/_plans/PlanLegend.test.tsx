@@ -28,9 +28,11 @@ describe('PlanLegend', () => {
     expect(onSelectShape).toHaveBeenCalledWith('s9')
   })
 
-  it('a schematic legend has the DB order entries and no area line', () => {
-    render(<PlanLegend purpose="distribution_schematic" summary={{ counts: { required: 4 }, totalM2: 0, unmeasured: 0 }} hasScale attention={[]} onSelectShape={vi.fn()} />)
-    expect(legendRow('Required')).toBe('Required4')
+  it('a schematic legend has the order entries and no area line', () => {
+    render(<PlanLegend purpose="distribution_schematic" summary={{ counts: { required: 4, received: 2 }, totalM2: 0, unmeasured: 0 }} hasScale attention={[]} onSelectShape={vi.fn()} />)
+    expect(legendRow('Required — not yet ordered')).toBe('Required — not yet ordered4')
+    expect(legendRow('Received')).toBe('Received2')
+    expect(legendRow('No order line')).toBe('No order line0')
     expect(screen.queryByText(/Total measured/)).toBeNull()
   })
   it('with several sheets, each row shows this sheet then all sheets, and the plan total area', () => {
@@ -44,5 +46,26 @@ describe('PlanLegend', () => {
   it('one sheet: no second column', () => {
     render(<PlanLegend purpose="tenant_layout" summary={summary} planSummary={summary} sheetCount={1} hasScale attention={[]} onSelectShape={vi.fn()} />)
     expect(legendRow('Complete')).toBe('Complete2')
+  })
+
+  it('board mode lists each main board with its count and measured area, then the rest', () => {
+    const style = { fill: '#1F5FBF', fillOpacity: 0.45, stroke: '#1F5FBF', strokeWidth: 3, dash: null, hatches: [], strikeLabel: false }
+    const rows = [
+      { key: 'board:mb1', label: 'MB 1.1', style, count: 2, m2: 120 },
+      { key: 'feed_unknown', label: 'Feed not in the cable schedule', style, count: 1, m2: null },
+    ]
+    render(<PlanLegend purpose="tenant_layout" summary={summary} hasScale attention={[]} onSelectShape={vi.fn()} board={{ rows, planRows: null, revisionCode: 'Rev 2' }} />)
+    expect(legendRow('MB 1.1')).toContain('120.0 m²')
+    expect(legendRow('MB 1.1')!.endsWith('2')).toBe(true)
+    expect(legendRow('Feed not in the cable schedule')).toBe('Feed not in the cable schedule1')
+    expect(screen.queryByText('Complete')).toBeNull()
+    expect(screen.getByText(/from cable schedule Rev 2/)).toBeTruthy()
+  })
+
+  it('needs-attention rows have Show, which zooms to the shape', () => {
+    const onShowShape = vi.fn()
+    render(<PlanLegend purpose="tenant_layout" summary={summary} hasScale attention={[{ shapeId: 's9', label: 'ZZ09', reason: 'Area differs' }]} onSelectShape={vi.fn()} onShowShape={onShowShape} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show ZZ09 on the drawing' }))
+    expect(onShowShape).toHaveBeenCalledWith('s9')
   })
 })

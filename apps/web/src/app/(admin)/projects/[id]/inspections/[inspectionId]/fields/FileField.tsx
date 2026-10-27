@@ -3,6 +3,7 @@
 import type { RendererProps } from '../FieldRenderer'
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
+import { storageKeySegment } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { usePhotoTally } from './photo-tally'
 
@@ -108,8 +109,9 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
       } = await supabase.auth.getUser()
       if (!user) throw new Error('Not signed in')
 
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-      const path = `${projectId}/${inspectionId}/${sectionId}/${field.field_id}/${Date.now()}-${safeName}`
+      // Field ids inside a repeating group carry `[n].` — invalid in a storage
+      // key. The row keeps the real field_id; only the path is flattened.
+      const path = `${projectId}/${inspectionId}/${storageKeySegment(sectionId)}/${storageKeySegment(field.field_id)}/${Date.now()}-${storageKeySegment(file.name)}`
       const { error: upErr } = await supabase.storage
         .from('inspection-attachments')
         .upload(path, file, { contentType: mime })

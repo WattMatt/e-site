@@ -7,7 +7,7 @@ import { TenantPlanUploader } from './TenantPlanUploader'
 
 const HINT: Record<TenantPlanEmptyProps['purpose'], string> = {
   tenant_layout: 'Upload the tenant floor plan, then mask each shop and link it to the tenant schedule.',
-  distribution_schematic: 'Upload the 300 line diagram, then detect the DB blocks and hatch them by order status.',
+  distribution_schematic: 'Upload the 300 line diagram, then detect the DB blocks and colour them by order status.',
 }
 
 export function TenantPlanEmpty({ projectId, purpose, canEdit }: TenantPlanEmptyProps) {

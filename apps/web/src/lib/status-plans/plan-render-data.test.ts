@@ -1,7 +1,7 @@
 // @vitest-environment node
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { COLOURS, areaShapeStyle, dbBlockStyle, tenantShapeStyle } from '@esite/shared/status-plans'
+import { COLOURS, FEED_UNKNOWN_STYLE, MAIN_BOARD_PALETTE, TENANT_LEGEND, areaShapeStyle, boardShapeStyle, dbBlockStyle, tenantShapeStyle } from '@esite/shared/status-plans'
 import { fakeSupabase } from '@/test/fake-supabase'
 
 const factsMock = vi.hoisted(() => vi.fn())
@@ -68,7 +68,7 @@ function storageFake(files: Record<string, Uint8Array>) {
   }
 }
 
-function world(over: { plans?: any[]; sheets?: any[]; shapes?: any[]; files?: Record<string, Uint8Array>; maxRows?: number } = {}) {
+function world(over: { plans?: any[]; sheets?: any[]; shapes?: any[]; files?: Record<string, Uint8Array>; maxRows?: number; tables?: Record<string, any[]> } = {}) {
   const sheets = over.sheets ?? [sheetRow('a1', 'a')]
   const pg = fakeSupabase({
     maxRows: over.maxRows,
@@ -84,6 +84,7 @@ function world(over: { plans?: any[]; sheets?: any[]; shapes?: any[]; files?: Re
       ],
       'structure.scope_item_types': [{ id: 't-db', key: 'db', organisation_id: ORG }],
       'structure.node_orders': [{ id: 'o1', project_id: PROJ, node_id: 'mb', scope_item_type_id: 't-db', status: 'ordered' }],
+      ...over.tables,
     },
   })
   const st = storageFake(over.files ?? Object.fromEntries(sheets.map((s: any) => [s.file_path, PDF])))
@@ -127,7 +128,7 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(s!.shapes[2]!.style).toEqual(areaShapeStyle('common'))
     // 200 × 100 px at 20 px/m = 10 m × 5 m = 50 m²
     expect(s!.shapes[0]!.labelLines).toEqual(['L01', 'Done Ltd', '50.0 m²'])
-    expect(s!.counts).toMatchObject({ complete: 1, in_progress: 1, overdue: 1, common: 1, unlinked: 1 })
+    expect(s!.counts).toMatchObject({ complete: 1, in_progress: 0, overdue: 1, common: 1, unlinked: 1 })
     expect(s!.measured).toEqual({ totalM2: 100, unmeasured: 0 })
     expect(s!.source).toEqual({ kind: 'pdf', bytes: PDF, pageIndex: 1, key: filePath('a', 'a1') })
     expect(s!.warnings).toEqual([])
@@ -135,7 +136,7 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(TENANT_PLAN_FILES).toBe('tenant-plan-files')
   })
 
-  it('hatches line diagram blocks from the DB order of any node, without tenant facts', async () => {
+  it('colours line diagram blocks from the order status of any node, without tenant facts', async () => {
     const { clients } = world({
       plans: [planRow('s', { purpose: 'distribution_schematic' })],
       sheets: [sheetRow('s1', 's')],
@@ -241,5 +242,47 @@ describe('loadStatusPlanRenderInputs', () => {
     expect(await load(clients, { projectId: 'other' })).toEqual({ inputs: [], omitted: [] })
     const empty = world({ sheets: [] })
     expect(await load(empty.clients)).toEqual({ inputs: [], omitted: [] })
+  })
+})
+
+describe('colourBy board (floor plan by main board)', () => {
+  const FEED_TABLES = {
+    'cable_schedule.revisions': [{ id: 'rev-2', project_id: PROJ, code: 'Rev 2', status: 'ISSUED', issued_at: '2026-09-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z' }],
+    'cable_schedule.supplies': [{ id: 'sup-1', revision_id: 'rev-2', from_node_id: 'mb', to_node_id: 'n-done' }],
+  }
+
+  it('colours linked shops by feeding board, grey when unreached, and names the pages', async () => {
+    const { clients } = world({
+      tables: FEED_TABLES,
+      shapes: [shapeRow('s1', 'a', 'a1', { node_id: 'n-done' }), shapeRow('s2', 'a', 'a1', { node_id: 'n-late' }), shapeRow('s3', 'a', 'a1', { area_type: 'common' })],
+    })
+    const { inputs, omitted } = await load(clients, { colourBy: 'board' })
+    expect(omitted).toEqual([])
+    const [s] = inputs
+    expect(s!.planName).toBe('Plan a by main board (cable schedule Rev 2)')
+    expect(s!.shapes[0]!.style).toEqual(boardShapeStyle(MAIN_BOARD_PALETTE[0]))
+    expect(s!.shapes[1]!.style).toEqual(FEED_UNKNOWN_STYLE)
+    expect(s!.shapes[2]!.style).toEqual(areaShapeStyle('common'))
+    expect(s!.legend.map((e) => e.key)).toEqual(['board:mb', 'feed_unknown', 'unlinked', 'common', 'plant_room', 'services', 'vacant'])
+    expect(s!.legend[0]!.label).toBe('MB-3.1 (50.0 m²)')
+    expect(s!.counts).toMatchObject({ 'board:mb': 1, feed_unknown: 1, common: 1 })
+  })
+
+  it('no cable schedule: the sheet falls back to status colours with the reason in its title', async () => {
+    const { clients, st } = world({ shapes: [shapeRow('s1', 'a', 'a1', { node_id: 'n-done' })] })
+    const { inputs, omitted } = await load(clients, { colourBy: 'board' })
+    expect(omitted).toEqual([])
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]!.planName).toBe('Plan a by main board (Main board view unavailable: no cable schedule is visible to you on this project — shown by status)')
+    expect(inputs[0]!.legend.map((e) => e.key)).not.toContain('board:mb')
+    expect(inputs[0]!.legend).toEqual(TENANT_LEGEND)
+    expect(st.downloads.length).toBeGreaterThan(0)
+  })
+
+  it('status mode reads no cable schedule at all', async () => {
+    const { clients, pg } = world({ tables: FEED_TABLES })
+    await load(clients)
+    expect(pg.calls.map((c: any) => c.table)).not.toContain('cable_schedule.revisions')
+    expect(pg.calls.map((c: any) => c.table)).not.toContain('cable_schedule.supplies')
   })
 })

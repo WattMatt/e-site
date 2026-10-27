@@ -41,4 +41,11 @@ describe('ExportSheetButton', () => {
     await userEvent.click(screen.getByRole('button', { name: /export sheet/i }))
     expect((await screen.findByRole('alert')).textContent).toContain('check your connection')
   })
+  it('board mode asks the route for ?colour=board', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 422, json: () => Promise.resolve({ error: 'x' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ExportSheetButton projectId="p" planId="s" sheetId="sh1" colour="board" />)
+    await userEvent.click(screen.getByRole('button', { name: /export sheet/i }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/p/status-plans/s/sheet?sheet=sh1&colour=board')
+  })
 })

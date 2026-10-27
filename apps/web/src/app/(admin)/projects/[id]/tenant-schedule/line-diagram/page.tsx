@@ -6,7 +6,6 @@ import { loadTenantPlanPage } from '@/lib/status-plans/load-plan-page'
 import { tenantScheduleHref } from '@/lib/status-plans/plan-urls'
 import { StatusPlanWorkspace } from '../_plans/StatusPlanWorkspace'
 import { TenantPlanEmpty } from '../_plans/TenantPlanEmpty'
-import { ExportSheetButton } from '../_plans/ExportSheetButton'
 
 export const dynamic = 'force-dynamic'
 /** Registering a large PDF (download + page count) runs as a server action from this page. */
@@ -19,8 +18,9 @@ interface Props {
 }
 
 /**
- * The line diagram (300 schematic): upload it, detect and hatch the DB blocks
- * (spec 2026-10-12 §2). Same reads and gates as the floor plan. "Export sheet"
+ * The line diagram (300 schematic): upload it, and an empty sheet scans itself
+ * for DB blocks on open for an editor (review above the drawing), then colour
+ * them (spec 2026-10-12 §2). Same reads and gates as the floor plan. "Export sheet" (in the workspace)
  * downloads the sheet on screen at its own size.
  */
 export default async function LineDiagramPage({ params, searchParams }: Props) {
@@ -34,18 +34,11 @@ export default async function LineDiagramPage({ params, searchParams }: Props) {
 
   return (
     <div style={{ padding: '16px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <Link href={tenantScheduleHref(projectId)} style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}>
-          ← Tenant schedule
-        </Link>
-        {data.kind === 'plan' && (
-          <span style={{ marginLeft: 'auto' }}>
-            <ExportSheetButton projectId={projectId} planId={data.props.plan.id} sheetId={data.props.sheet.id} />
-          </span>
-        )}
-      </div>
+      <Link href={tenantScheduleHref(projectId)} style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}>
+        ← Tenant schedule
+      </Link>
       <div style={{ marginTop: 8 }}>
-        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace {...data.props} />}
+        {data.kind === 'empty' ? <TenantPlanEmpty {...data.empty} /> : <StatusPlanWorkspace key={data.props.sheet.id} {...data.props} />}
       </div>
     </div>
   )

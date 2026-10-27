@@ -1,10 +1,23 @@
 'use client'
 
 /**
- * Detect blocks — the review panel for distribution-schematic status plans
- * (spec §5, slice 3). StatusPlanWorkspace renders it in ShapePanel's `extra`
- * slot; `onAccepted` / `onFocus` come from that client component, never from
- * page.tsx (server → client props must be JSON).
+ * Scan sheet for blocks — the review panel for distribution-schematic status
+ * plans (spec §5, slice 3). StatusPlanWorkspace renders it above the drawing
+ * when the sheet scans itself on open (`autoScan`: an empty sheet, an editor —
+ * see lib/status-plans/auto-scan.ts), otherwise in ShapePanel's `extra` slot
+ * for a by-hand re-run. `onAccepted` / `onFocus` come from that client
+ * component, never from page.tsx (server → client props must be JSON).
+ *
+ * The automatic scan runs once per sheet id (a ref, so re-renders and React's
+ * dev double-effects never repeat it), and never for a read-only viewer.
+ * A scan belongs to the sheet it started on: the workspace keys the panel by
+ * sheet id, and a result that arrives after the sheet changed is dropped.
+ * A meter or incomer inside a main board ("MB-1.1 BULK CHECK METER") is listed
+ * collapsed as part of that board: never in Accept all, addable unlinked.
+ *
+ * Each proposal's box is snapped onto its table's drawn border (the page's
+ * line work comes back with its text; @esite/shared snap-blocks.ts). A box
+ * with no border to snap to follows the text, and the panel says so.
  *
  * Nothing is written until a person clicks. Accepted shapes are handed back
  * through onAccepted and folded into the workspace's shapes state (no
@@ -12,7 +25,7 @@
  * box) is flagged and never offered for saving; the server action refuses it
  * too.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   detectedTagFor,
   detectionSummary,
@@ -43,6 +56,8 @@ export interface DetectBlocksPanelProps {
   canEdit: boolean
   onAccepted: (shapes: CanvasShape[]) => void
   onFocus?: (box: Box) => void
+  /** Scan as soon as this sheet opens (once per sheetId). */
+  autoScan?: boolean
 }
 
 const NO_ANSWER = 'The server did not answer. Nothing was added; try again.'
@@ -61,7 +76,7 @@ const sectionTitle = { fontSize: 12, fontWeight: 600, margin: '10px 0 4px' } as 
 const rowStyle = { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: '4px 0', borderTop: '1px solid var(--c-border)', fontSize: 12 } as const
 
 export function DetectBlocksPanel({
-  sheetId, pageIndex, pdfUrl, isPdf, nodes, existingShapes, canEdit, onAccepted, onFocus,
+  sheetId, pageIndex, pdfUrl, isPdf, nodes, existingShapes, canEdit, onAccepted, onFocus, autoScan = false,
 }: DetectBlocksPanelProps) {
   const [reading, setReading] = useState(false)
   const [outcome, setOutcome] = useState<DetectionOutcome | null>(null)
@@ -90,6 +105,7 @@ export function DetectBlocksPanel({
   const matched = rows.filter((r) => r.category === 'matched')
   const needsYou = rows.filter((r) => r.category === 'needs_you')
   const noTag = rows.filter((r) => r.category === 'no_tag')
+  const partOf = rows.filter((r) => r.category === 'part_of')
 
   /** Boards that cannot be picked again: on the plan, pending as matched, or picked in another row. */
   const reserved = useMemo(() => {
@@ -100,11 +116,36 @@ export function DetectBlocksPanel({
     return s
   }, [existingShapes, pending, choice])
 
+  // A scan belongs to its sheet: a newer run or a different sheet drops its result.
+  const currentSheet = useRef(sheetId)
+  const runRef = useRef(0)
+  useEffect(() => {
+    if (currentSheet.current === sheetId) return
+    currentSheet.current = sheetId
+    runRef.current++
+    setReading(false)
+    setOutcome(null)
+    setReadError(null)
+    setSaveError(null)
+    setDone(new Set())
+    setChoice({})
+    setFilter({})
+  }, [sheetId])
+
+  // The automatic scan: once per sheet id. detectRef points at this render's detect().
+  const detectRef = useRef<(() => Promise<void>) | null>(null)
+  const autoScannedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!autoScan || !canEdit || !isPdf || autoScannedFor.current === sheetId) return
+    autoScannedFor.current = sheetId
+    void detectRef.current?.()
+  }, [autoScan, canEdit, isPdf, sheetId])
+
   if (!canEdit) return null
 
   if (!isPdf) {
     return (
-      <section aria-label="Detect blocks" style={{ marginTop: 8 }}>
+      <section aria-label="Scan sheet for blocks" style={{ marginTop: 8 }}>
         <p style={muted}>Block detection reads the text of a PDF drawing. This drawing is an image — draw blocks by hand.</p>
       </section>
     )
@@ -112,6 +153,10 @@ export function DetectBlocksPanel({
 
   async function detect() {
     if (!pdfUrl) { setReadError('The drawing file could not be opened. Reload the page.'); return }
+    const run = ++runRef.current
+    const forSheet = sheetId
+    /** Still this run, on the sheet it started on. */
+    const live = () => runRef.current === run && currentSheet.current === forSheet
     setReading(true)
     setReadError(null)
     setSaveError(null)
@@ -123,15 +168,16 @@ export function DetectBlocksPanel({
       try {
         page = await extractPageText({ url: pdfUrl }, pageIndex)
       } catch {
-        setReadError('The drawing link has expired or could not be read — reload the page and try again.')
+        if (live()) setReadError('The drawing link has expired or could not be read — reload the page and try again.')
         return
       }
+      if (!live()) return
       if (!page.ok) { setReadError(page.error); return }
-      setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount))
+      setOutcome(runDetection(page.items, nodes, existingShapes, page.rawItemCount, page.lines ?? []))
     } catch {
-      setReadError('The drawing could not be read. Try again.')
+      if (live()) setReadError('The drawing could not be read. Try again.')
     } finally {
-      setReading(false)
+      if (live()) setReading(false)
     }
   }
 
@@ -154,6 +200,8 @@ export function DetectBlocksPanel({
       setBusy(false)
     }
   }
+
+  detectRef.current = detect
 
   function skip(row: ReviewRow) {
     setDone((prev) => new Set(prev).add(row.key))
@@ -205,10 +253,11 @@ export function DetectBlocksPanel({
   const review = outcome?.kind === 'review' ? outcome.review : null
 
   return (
-    <section aria-label="Detect blocks" style={{ marginTop: 8 }}>
+    <section aria-label="Scan sheet for blocks" style={{ marginTop: 8 }}>
       <button type="button" onClick={detect} disabled={reading || busy}>
-        {reading ? 'Reading the drawing…' : 'Detect blocks'}
+        {reading ? 'Scanning sheet…' : 'Scan sheet for blocks'}
       </button>
+      {reading && <p role="status" style={muted}>Scanning sheet…</p>}
 
       {readError && <p role="alert" style={{ ...muted, color: 'var(--c-amber)' }}>{readError}</p>}
 
@@ -228,7 +277,7 @@ export function DetectBlocksPanel({
 
       {review && (
         <div>
-          <p style={{ fontSize: 12, fontWeight: 600, margin: '6px 0 4px' }}>{detectionSummary(review)}</p>
+          <p style={{ fontSize: autoScan ? 14 : 12, fontWeight: 600, margin: '6px 0 4px' }}>{detectionSummary(review)}</p>
           {review.alreadyOnPlan > 0 && (
             <p style={muted}>
               {review.alreadyOnPlan === 1
@@ -236,6 +285,19 @@ export function DetectBlocksPanel({
                 : `${review.alreadyOnPlan} blocks already on this plan were left out.`}
             </p>
           )}
+          {review.snap.lineCount === 0 && (
+            <p style={muted}>Boxes follow the text — this drawing has no table lines to snap to.</p>
+          )}
+          {review.snap.lineCount > 0 && review.rows.some((r) => !r.block.snapped) && (() => {
+            const n = review.rows.filter((r) => !r.block.snapped).length
+            return (
+              <p style={muted}>
+                {n === 1
+                  ? '1 box follows the text — no table border was found round it.'
+                  : `${n} boxes follow the text — no table border was found round them.`}
+              </p>
+            )
+          })()}
           {review.rejected.length > 0 && (
             <details>
               <summary style={muted}>{review.rejected.length} NO: labels did not start a full table</summary>
@@ -248,7 +310,7 @@ export function DetectBlocksPanel({
             <div>
               <h4 style={sectionTitle}>Matched ({matched.length})</h4>
               <button type="button" disabled={busy} onClick={() => accept(matched.map((row) => ({ row, nodeId: row.nodeId })))}>
-                {`Accept ${matched.length} matched`}
+                {`Accept all ${matched.length} matched`}
               </button>
               {matched.map((row) => {
                 const node = nodes.find((n) => n.id === row.nodeId)
@@ -314,6 +376,26 @@ export function DetectBlocksPanel({
                 )
               })}
             </div>
+          )}
+
+          {partOf.length > 0 && (
+            <details>
+              <summary style={sectionTitle}>{`Parts of main boards (${partOf.length})`}</summary>
+              {partOf.map((row) => {
+                const label = rowLabel(row)
+                return (
+                  <div key={row.key} style={rowStyle}>
+                    <span>{label}</span>
+                    <span style={muted}>{row.reason}</span>
+                    <button type="button" disabled={busy} onClick={() => accept([{ row, nodeId: null }])} aria-label={`Add ${label} unlinked`}>
+                      Add unlinked
+                    </button>
+                    {focusButton(row)}
+                    {skipButton(row)}
+                  </div>
+                )
+              })}
+            </details>
           )}
 
           {unusable.length > 0 && (

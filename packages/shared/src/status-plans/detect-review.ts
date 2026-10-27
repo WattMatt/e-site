@@ -1,13 +1,18 @@
 /**
- * What the Detect blocks panel shows (spec §5): proposals sorted into
- * matched · need you · without a tag, with blocks already on the plan left out.
+ * What the sheet scan shows (spec §5): proposals sorted into
+ * matched · need you · part of a main board · without a tag, with blocks
+ * already on the plan left out. A part-of row (a main board's meter or
+ * incomer, "MB-1.1 BULK CHECK METER") is not a board: it never needs a person
+ * and is never in Accept all; it can still be added unlinked.
  */
 import { detectBlocks, type DetectedBlock, type DetectResult, type RejectedBlock } from './detect-blocks'
 import { boundingBox, type Box } from './geometry'
+import type { LineSegment } from './line-space'
 import { buildNodeIndex, matchBlock, type BlockMatch, type MatchableNode } from './match-nodes'
+import { buildLineIndex, snapBlocks } from './snap-blocks'
 import type { ImageTextItem } from './text-space'
 
-export type ReviewCategory = 'matched' | 'needs_you' | 'no_tag'
+export type ReviewCategory = 'matched' | 'needs_you' | 'part_of' | 'no_tag'
 
 export interface ExistingShapeRef {
   id: string
@@ -25,7 +30,7 @@ export interface ReviewRow {
   nodeId: string | null
   /** Boards to offer first in the picker. */
   candidateIds: string[]
-  /** A candidate the picker starts on (a dots-only match); null otherwise. */
+  /** A candidate the picker starts on (a dots-only or unconfirmed match); null otherwise. */
   preselectId: string | null
   /** Why a person is needed; null for matched rows. */
   reason: string | null
@@ -37,7 +42,9 @@ export interface DetectionReview {
   /** Blocks left out because a block-sized shape already covers them. */
   alreadyOnPlan: number
   rejected: RejectedBlock[]
-  counts: { detected: number; matched: number; needsYou: number; noTag: number }
+  counts: { detected: number; matched: number; needsYou: number; partOf: number; noTag: number }
+  /** Usable table lines on the page, and how many detected blocks were snapped onto one. */
+  snap: { lineCount: number; snapped: number }
 }
 
 export type DetectionOutcome =
@@ -75,6 +82,12 @@ function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: Read
   switch (match.state) {
     case 'no_tag':
       return { ...base, category: 'no_tag', nodeId: null, candidateIds: [], reason: block.tag ? `"${block.tag}" in NO: is not a board tag; choose the board.` : 'This block has no NO: value.' }
+    case 'unconfirmed': {
+      const one = match.candidateIds.length === 1 && !used.has(match.candidateIds[0]!) ? match.candidateIds[0]! : null
+      return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, preselectId: one, reason: `NO: reads "${match.text}" — confirm the board.` }
+    }
+    case 'part_of':
+      return { ...base, category: 'part_of', nodeId: null, candidateIds: [], reason: `Part of ${match.tag} — not a separate board.` }
     case 'matched':
       if (used.has(match.nodeId)) {
         return { ...base, category: 'needs_you', nodeId: null, candidateIds: [], reason: `${block.tag} matches a board that is already on this plan.` }
@@ -83,6 +96,9 @@ function rowFor(key: string, block: DetectedBlock, match: BlockMatch, used: Read
     case 'ambiguous':
       if (match.dotsOnly) {
         return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, preselectId: match.candidateIds.length === 1 ? match.candidateIds[0]! : null, reason: `${block.tag} matches ${match.candidateIds.length === 1 ? 'a board' : 'boards'} only if the dots are ignored; confirm the board.` }
+      }
+      if (match.zerosOnly) {
+        return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, reason: `${block.tag} matches ${match.candidateIds.length} boards once leading zeros are ignored; choose one.` }
       }
       return { ...base, category: 'needs_you', nodeId: null, candidateIds: match.candidateIds, reason: `${block.tag} matches ${match.candidateIds.length} boards; choose one.` }
     case 'unmatched':
@@ -125,13 +141,17 @@ export function reviewDetection(
     rows,
     alreadyOnPlan,
     rejected: result.rejected,
-    counts: { detected: rows.length, matched: count('matched'), needsYou: count('needs_you'), noTag: count('no_tag') },
+    snap: { lineCount: 0, snapped: 0 },
+    counts: { detected: rows.length, matched: count('matched'), needsYou: count('needs_you'), partOf: count('part_of'), noTag: count('no_tag') },
   }
 }
 
 export function detectionSummary(r: DetectionReview): string {
-  const { detected, matched, needsYou, noTag } = r.counts
-  return `Detected ${detected} ${detected === 1 ? 'block' : 'blocks'} — ${matched} matched · ${needsYou} ${needsYou === 1 ? 'needs' : 'need'} you · ${noTag} without a tag`
+  const { detected, matched, needsYou, partOf, noTag } = r.counts
+  const parts = [`${matched} matched`, `${needsYou} ${needsYou === 1 ? 'needs' : 'need'} you`]
+  if (partOf > 0) parts.push(partOf === 1 ? '1 part of a main board' : `${partOf} parts of main boards`)
+  if (noTag > 0) parts.push(`${noTag} without a tag`)
+  return `Scanned this sheet — ${detected} ${detected === 1 ? 'block' : 'blocks'}: ${parts.join(' · ')}`
 }
 
 export function runDetection(
@@ -139,11 +159,17 @@ export function runDetection(
   nodes: readonly MatchableNode[],
   existing: readonly ExistingShapeRef[],
   rawItemCount: number = items.length,
+  lines: readonly LineSegment[] = [],
 ): DetectionOutcome {
   if (items.length === 0) return rawItemCount > 0 ? { kind: 'not_upright' } : { kind: 'no_text' }
-  const result = detectBlocks(items)
-  if (result.blocks.length === 0) return { kind: 'no_blocks', labelCount: result.labelCount, rejected: result.rejected }
-  return { kind: 'review', review: reviewDetection(result, nodes, existing) }
+  const found = detectBlocks(items)
+  if (found.blocks.length === 0) return { kind: 'no_blocks', labelCount: found.labelCount, rejected: found.rejected }
+  // Snap BEFORE review, so "already on the plan" is judged against the table's border.
+  const index = buildLineIndex(lines)
+  const blocks = snapBlocks(found.blocks, index)
+  const review = reviewDetection({ ...found, blocks }, nodes, existing)
+  review.snap = { lineCount: index.count, snapped: blocks.filter((b) => b.snapped).length }
+  return { kind: 'review', review }
 }
 
 /** What status_plan_shapes.detected_tag stores for an accepted block. */
