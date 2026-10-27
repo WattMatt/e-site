@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
+// Internal Next path, pinned to Next 15.5; re-check on upgrade.
 import { isRedirectError } from 'next/dist/client/components/redirect-error'
 import { z, type ZodRawShape } from 'zod'
 import type { Database } from '@esite/db'
@@ -40,7 +41,6 @@ type ToolDef<I extends ZodRawShape> = {
   kind: ToolKind
   inputSchema: I
   projectIdOf?: (args: z.infer<z.ZodObject<I>>) => string | null
-  organisationIdOf?: (args: z.infer<z.ZodObject<I>>) => string | null
   handler: (args: z.infer<z.ZodObject<I>>, ctx: ToolContext) => Promise<unknown>
 }
 
@@ -51,7 +51,6 @@ export type RegisteredTool = {
   kind: ToolKind
   inputSchema: ZodRawShape
   projectIdOf?: (args: never) => string | null
-  organisationIdOf?: (args: never) => string | null
   handler: (args: never, ctx: ToolContext) => Promise<unknown>
 }
 
@@ -72,6 +71,7 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
   let result: ToolResult
 
   try {
+    // Read-before-write: concurrent calls can each pass this check and overshoot the limit slightly.
     const rate = await rateStatus(ctx.user.id)
     const writing = tool.kind === 'preview' || tool.kind === 'write'
     if (rate.calls >= MAX_CALLS_PER_MINUTE || (writing && rate.writes >= MAX_WRITES_PER_MINUTE)) {
@@ -91,14 +91,13 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
       result = refuse(SIGN_IN_SENTENCE)
     } else {
       outcome = 'error'
-      refusal = UNEXPECTED_SENTENCE
       console.error(`[mcp] ${tool.name} failed`, { err: err instanceof Error ? err.name : 'unknown' })
       result = refuse(UNEXPECTED_SENTENCE)
     }
   }
 
   const projectId = safeId(() => tool.projectIdOf?.(args as never))
-  const organisationId = safeId(() => tool.organisationIdOf?.(args as never))
+  const organisationId = await auditOrganisation(ctx, projectId)
   await recordToolCall({
     userId: ctx.user.id,
     clientId: ctx.claims.client_id ?? null,
@@ -112,19 +111,55 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
     resultIds,
     durationMs: Date.now() - started,
   })
-  await emitProductEvent({
-    actorId: ctx.user.id,
-    projectId,
-    event: 'mcp_tool_called',
-    properties: { tool: tool.name, kind: tool.kind, outcome },
-    organisationId,
-  })
+  // emit_product_event raises when project and organisation are both null.
+  if (projectId || organisationId) {
+    await emitProductEvent({
+      actorId: ctx.user.id,
+      projectId,
+      event: 'mcp_tool_called',
+      properties: { tool: tool.name, kind: tool.kind, outcome },
+      organisationId,
+    })
+  }
   return result
 }
 
-// An id selector runs on unvalidated input; a throw there must not lose the audit row.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// An id selector runs on unvalidated input; a throw there must not lose the audit row,
+// and anything that is not a uuid must never reach the audit RPC.
 function safeId(fn: () => string | null | undefined): string | null {
-  try { return fn() ?? null } catch { return null }
+  try {
+    const id = fn()
+    return typeof id === 'string' && UUID.test(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The organisation an audit row and product event are stamped with. Never read from
+ * arguments: with a project, it is that project's organisation as the caller's own
+ * client sees it (an invisible or missing project gives null); without one, the
+ * caller's organisation only when they belong to exactly one. A lookup failure is null.
+ */
+async function auditOrganisation(ctx: ToolContext, projectId: string | null): Promise<string | null> {
+  try {
+    if (projectId) {
+      type Lookup = { schema: (s: string) => { from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { maybeSingle: () => Promise<{ data: unknown; error: unknown }> } } } } }
+      const { data, error } = await (ctx.client as unknown as Lookup)
+        .schema('projects')
+        .from('projects')
+        .select('organisation_id')
+        .eq('id', projectId)
+        .maybeSingle()
+      if (error) return null
+      return safeId(() => (data as { organisation_id?: string } | null)?.organisation_id)
+    }
+    return ctx.memberships.length === 1 ? safeId(() => ctx.memberships[0].organisationId) : null
+  } catch {
+    return null
+  }
 }
 
 export function registerTools(server: McpServer, tools: RegisteredTool[], ctx: ToolContext): void {

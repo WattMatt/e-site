@@ -1,6 +1,7 @@
 import { vi, it, expect, beforeEach, afterEach } from 'vitest'
 const { getUser, from, hasVerifiedMfaFactor } = vi.hoisted(() => ({ getUser: vi.fn(), from: vi.fn(), hasVerifiedMfaFactor: vi.fn() }))
-vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({ auth: { getUser }, from }) }))
+const { createSupabaseClient } = vi.hoisted(() => ({ createSupabaseClient: vi.fn() }))
+vi.mock('@supabase/supabase-js', () => ({ createClient: (...a: unknown[]) => { createSupabaseClient(...a); return { auth: { getUser }, from } } }))
 vi.mock('@/lib/auth/has-verified-mfa-factor', () => ({ hasVerifiedMfaFactor }))
 import { authenticateMcpRequest, CONNECT_REFUSAL, AAL_REFUSAL } from './auth'
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url')
@@ -10,7 +11,7 @@ const rows = (r: { organisation_id: string; role: string }[]) => from.mockReturn
 beforeEach(() => {
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co')
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'anon')
-  getUser.mockReset(); from.mockReset(); hasVerifiedMfaFactor.mockResolvedValue(false)
+  getUser.mockReset(); from.mockReset(); createSupabaseClient.mockReset(); hasVerifiedMfaFactor.mockResolvedValue(false)
 })
 afterEach(() => vi.unstubAllEnvs())
 
@@ -36,4 +37,12 @@ it('admits a contractor and returns memberships and client_id', async () => {
   const r = await authenticateMcpRequest(req(`Bearer ${token({ sub: 'u1', aal: 'aal1', client_id: 'c9' })}`))
   expect(r).toMatchObject({ ok: true, memberships: [{ organisationId: 'o1', role: 'contractor' }, { organisationId: 'o2', role: 'client_viewer' }] })
   expect(r.ok && r.ctx.claims.client_id).toBe('c9')
+})
+it('builds the client with the caller\'s bearer, so dropping the header goes red', async () => {
+  getUser.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null }); rows([{ organisation_id: 'o1', role: 'contractor' }])
+  const t = token({ sub: 'u1', aal: 'aal1' })
+  await authenticateMcpRequest(req(`Bearer ${t}`))
+  expect(createSupabaseClient).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({
+    global: { headers: { Authorization: `Bearer ${t}` } },
+  }))
 })

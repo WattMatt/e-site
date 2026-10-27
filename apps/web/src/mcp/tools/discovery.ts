@@ -107,7 +107,7 @@ export const esiteProjectsList = defineTool({
 export const esiteProjectGet = defineTool({
   name: 'esite_project_get',
   title: 'Get a project',
-  description: 'Returns one project with its settings, contacts and members. The contract block (value, retention) is present only where your role may see cost.',
+  description: 'Returns one project with its settings, contacts and members. The contract block (value, currency, retention) is present only where your role may see cost.',
   kind: 'read',
   inputSchema: { projectId },
   projectIdOf: (a) => a.projectId,
@@ -146,10 +146,7 @@ export const esiteProjectGet = defineTool({
         ? {
             contractValue: (p.contract_value ?? null) as number | null,
             currency: (p.currency ?? null) as string | null,
-            contractType: (settings as { contractType?: string } | null)?.contractType ?? null,
             retentionPct: (settings as { retentionPct?: number } | null)?.retentionPct ?? null,
-            contractSignedDate: (settings as { contractSignedDate?: string | null } | null)?.contractSignedDate ?? null,
-            practicalCompletionDate: (settings as { practicalCompletionDate?: string | null } | null)?.practicalCompletionDate ?? null,
           }
         : null,
       contacts: contacts.contacts,

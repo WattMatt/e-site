@@ -90,12 +90,13 @@ it('esite_projects_list refuses a cursor it did not issue', async () => {
 it('esite_project_get omits contract for a contractor and refuses an invisible project', async () => {
   m.requireProjectAccess.mockResolvedValue({ ok: true })
   m.getById.mockResolvedValue({ ...row(1, { id: P1 }), project_members: [] })
-  m.getProjectSettingsCached.mockResolvedValue({ projectId: P1, retentionPct: 5, contractType: 'jbcc_pba', units: 'metric' })
+  m.getProjectSettingsCached.mockResolvedValue({ projectId: P1, retentionPct: 5, contractType: 'jbcc_pba', contractSignedDate: '2026-01-02', practicalCompletionDate: '2026-09-01', units: 'metric' })
   m.listProjectContacts.mockResolvedValue({ contacts: [{ id: 'c' }] })
   m.listProjectMembers.mockResolvedValue({ members: [{ user_id: 'u1', full_name: 'A', email: 'a@b.co', role: 'contractor', org_role: 'contractor', is_active: true }] })
   m.requireEffectiveRole.mockResolvedValue({ ok: false, error: 'no' })
   const lean = await run('esite_project_get', { projectId: P1 })
   expect(lean.contract).toBeNull()
+  expect(lean.settings).toMatchObject({ contractType: 'jbcc_pba', contractSignedDate: '2026-01-02', practicalCompletionDate: '2026-09-01' })
   expect(JSON.stringify(lean)).not.toContain('retentionPct')
   expect(lean.project.id).toBe(P1)
   expect(lean.contacts).toEqual([{ id: 'c' }])
@@ -104,6 +105,8 @@ it('esite_project_get omits contract for a contractor and refuses an invisible p
   m.requireEffectiveRole.mockResolvedValue({ ok: true, role: 'project_manager' })
   const full = await run('esite_project_get', { projectId: P1 })
   expect(full.contract).toMatchObject({ contractValue: 100, retentionPct: 5 })
+  expect(Object.keys(full.contract).sort()).toEqual(['contractValue', 'currency', 'retentionPct'])
+  expect(full.settings.contractType).toBe('jbcc_pba')
 
   m.requireProjectAccess.mockResolvedValue({ ok: false, status: 404, error: 'Project not found' })
   const err = await run('esite_project_get', { projectId: P2 }).catch(e => e)
