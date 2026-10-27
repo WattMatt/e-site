@@ -804,6 +804,8 @@ describe('gatherInspectionReportData — every drawn string is WinAnsi-safe', ()
       else if (v && typeof v === 'object') Object.entries(v).forEach(([kk, vv]) => walk(vv, kk))
     }
     walk(data)
+    // A WinAnsi range check: \x00 is the deliberate lower bound.
+    // eslint-disable-next-line no-control-regex
     expect(drawn.filter((t) => /[^\x00-\xFF€‚-„†-•…‰‹›ŒœŠšŸŽžƒˆ˜–—‘’“”™]/.test(t))).toEqual([])
     // images untouched
     const photo = data.sections[0].photoFields.flatMap((f) => f.photos)[0]
