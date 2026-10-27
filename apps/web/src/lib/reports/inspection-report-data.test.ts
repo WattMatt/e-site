@@ -865,5 +865,8 @@ describe('gatherInspectionReportData — assessed photo items', () => {
     expect(data.summary.failed).toEqual([
       expect.objectContaining({ label: 'Normal Wiring · Glanding', reason: 'marked Fail: gland missing, left side' }),
     ])
+    // The assessed Fail counts in the tally (found on the 2026-10-27 walk: the tiles read 0 / 0 / 0
+    // over "Fails the inspection (1)"); the unmarked item counts nowhere.
+    expect(data.summary.tally).toEqual({ pass: 0, fail: 1, na: 0 })
   })
 })
