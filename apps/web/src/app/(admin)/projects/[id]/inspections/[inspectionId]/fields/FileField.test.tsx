@@ -40,12 +40,12 @@ const { createClientMock, fromSpy, selectSpy, createSignedUrlMock, setPhotosRows
 })
 vi.mock('@/lib/supabase/client', () => ({ createClient: createClientMock }))
 
-function renderFileField() {
+function renderFileField(readOnly = false) {
   const props = {
     field: { field_id: 'f-file-1', label: 'Spec sheet (PDF)', type: 'file', required: false },
     inspectionId: 'insp-1',
     sectionId: 'sec-1',
-    readOnly: false,
+    readOnly,
     onChange: () => {},
   } as unknown as RendererProps
   return render(<FileField {...props} />)
@@ -58,6 +58,13 @@ beforeEach(() => {
 })
 
 describe('FileField', () => {
+  it('read-only with no file keeps its slot and says so (2026-11-02)', async () => {
+    renderFileField(true)
+    await waitFor(() => expect(fromSpy).toHaveBeenCalledWith('photos'))
+    expect(screen.getByText('No file yet')).toBeTruthy()
+    expect(screen.queryByText('+ Add file')).toBeNull()
+  })
+
   it('renders previously-uploaded files read from inspections.photos (filename from caption)', async () => {
     setPhotosRows([
       { id: 'ph-1', storage_path: 'proj/insp-1/sec-1/f-file-1/123-spec.pdf', caption: 'spec.pdf' },
