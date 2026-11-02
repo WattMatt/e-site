@@ -272,7 +272,12 @@ export default function CaptureForm({
 
   const section = template.sections.find((s) => s.section_id === activeSection)
 
-  const overallVariant: 'success' | 'danger' = evaluation.overallResult === 'pass' ? 'success' : 'danger'
+  // The engine's result is 'pass' whenever nothing has failed, so an empty form read PASS (owner
+  // report, 2026-11-02: "Overall: PASS" at 0/22). On screen it is INCOMPLETE until every required
+  // item is in; a Fail shows at once. The stored result is unchanged (it is computed at certify).
+  const overallLabel = evaluation.overallResult === 'fail' ? 'fail' : evaluation.blockingMissing.length > 0 ? 'incomplete' : 'pass'
+  const overallVariant: 'success' | 'danger' | 'warning' =
+    overallLabel === 'pass' ? 'success' : overallLabel === 'fail' ? 'danger' : 'warning'
   const fieldLabel = (sectionId: string, fieldId: string) => {
     const s = template.sections.find((x) => x.section_id === sectionId)
     const base = fieldId.split('[')[0]
@@ -456,7 +461,7 @@ export default function CaptureForm({
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
               <div>
-                Overall: <Badge variant={overallVariant}>{evaluation.overallResult}</Badge>
+                Overall: <Badge variant={overallVariant}>{overallLabel}</Badge>
               </div>
               <div style={{ color: 'var(--c-text-mid)' }}>
                 Answered: {evaluation.answeredFieldCount} / {evaluation.visibleFieldCount}

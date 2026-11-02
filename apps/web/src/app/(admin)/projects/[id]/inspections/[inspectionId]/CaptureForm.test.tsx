@@ -85,6 +85,37 @@ describe('CaptureForm', () => {
     expect(screen.getByText(/· Sign$/)).toBeTruthy()
   })
 
+  it('Overall reads INCOMPLETE while required items are missing, never PASS on an empty form (DB-10)', () => {
+    const t = {
+      ...template,
+      sections: [{ section_id: 's1', title: 'Board', fields: [
+        { field_id: 'a', label: 'A', type: 'pass_fail', required: true },
+        { field_id: 'b', label: 'B', type: 'pass_fail', required: true },
+      ] }],
+    } as unknown as Template
+    const { unmount } = render(<CaptureForm {...props} template={t} />)
+    expect(screen.getByText('incomplete')).toBeTruthy()
+    expect(screen.queryByText('pass')).toBeNull()
+    unmount()
+    render(<CaptureForm {...props} template={t} initialResponses={[
+      { section_id: 's1', field_id: 'a', value_bool: true, pass_state: 'pass' },
+      { section_id: 's1', field_id: 'b', value_bool: true, pass_state: 'pass' },
+    ]} />)
+    expect(screen.getByText('pass')).toBeTruthy()
+  })
+
+  it('a Fail on an assessed photo item shows FAIL straight away, even with items still missing', () => {
+    const t = {
+      ...template,
+      sections: [{ section_id: 's1', title: 'Board', fields: [
+        { field_id: 'a', label: 'Board (Open)', type: 'photo', required: true, assess: true },
+        { field_id: 'b', label: 'Board (Closed)', type: 'photo', required: true, assess: true },
+      ] }],
+    } as unknown as Template
+    render(<CaptureForm {...props} template={t} initialResponses={[{ section_id: 's1', field_id: 'a', value_bool: false, pass_state: 'fail' }]} />)
+    expect(screen.getByText('fail')).toBeTruthy()
+  })
+
   it('a captured signature counts, so the same form is complete', () => {
     const t = {
       ...template,
