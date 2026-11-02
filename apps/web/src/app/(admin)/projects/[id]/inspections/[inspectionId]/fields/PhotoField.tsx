@@ -133,6 +133,27 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly, r
               </div>
             ),
         )}
+        {/* Read-only (the verifier, or after submit) keeps the same shape as the form being filled in:
+            an empty slot says so instead of disappearing (owner report, 2026-11-02: the verifier's
+            page "doesn't even appear the same"). */}
+        {readOnly && photos.length === 0 && (
+          <div
+            data-testid="photo-empty-slot"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '100%',
+              height: 96,
+              border: '2px dashed var(--c-border)',
+              borderRadius: 6,
+              fontSize: 11,
+              color: 'var(--c-text-dim)',
+            }}
+          >
+            No photo yet
+          </div>
+        )}
         {!readOnly && (
           <label
             style={{
@@ -299,7 +320,16 @@ function PhotoAssessment({
         })}
       </div>
       {readOnly ? (
-        comment ? <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>{comment}</p> : null
+        <p
+          data-testid="assessment-comment"
+          style={{
+            fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--c-border)',
+            background: 'var(--c-panel)', margin: 0, minHeight: 34, whiteSpace: 'pre-wrap',
+            color: comment ? 'var(--c-text)' : 'var(--c-text-dim)', fontStyle: comment ? 'normal' : 'italic',
+          }}
+        >
+          {comment || 'No comment'}
+        </p>
       ) : (
         <textarea
           key={comment}
