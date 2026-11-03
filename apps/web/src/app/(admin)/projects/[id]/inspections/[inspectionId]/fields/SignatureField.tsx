@@ -24,6 +24,17 @@ export default function SignatureField({ field, sectionId, inspectionId, readOnl
           {existing.signed_at ? ` on ${new Date(existing.signed_at).toLocaleDateString('en-ZA')}` : ''}
         </p>
       )}
+      {readOnly && !existing && (
+        <p
+          data-testid="signature-empty"
+          style={{
+            margin: 0, alignSelf: 'flex-start', padding: '8px 12px', borderRadius: 6,
+            border: '1px dashed var(--c-border)', fontSize: 13, color: 'var(--c-text-dim)', fontStyle: 'italic',
+          }}
+        >
+          Not signed yet
+        </p>
+      )}
       {!readOnly && (
         <button
           type="button"

@@ -185,6 +185,17 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
             ),
         )}
       </ul>
+      {readOnly && files.length === 0 && (
+        <p
+          data-testid="file-empty"
+          style={{
+            margin: 0, maxWidth: 200, padding: '8px 12px', borderRadius: 6, border: '1px dashed var(--c-border)',
+            fontSize: 12, color: 'var(--c-text-dim)', fontStyle: 'italic',
+          }}
+        >
+          No file yet
+        </p>
+      )}
       {!readOnly && (
         <label
           style={{

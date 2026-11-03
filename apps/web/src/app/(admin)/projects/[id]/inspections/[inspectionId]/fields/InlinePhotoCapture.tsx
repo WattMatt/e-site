@@ -30,9 +30,6 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
     (p): p is FieldPhoto & { signed_url: string } => !!p.signed_url,
   )
 
-  // Read-only with nothing captured: render nothing rather than an empty strip.
-  if (readOnly && viewable.length === 0) return null
-
   return (
     <div
       style={{
@@ -116,6 +113,20 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
           )}
         </div>
       ))}
+
+      {/* Read-only keeps the strip's shape: an empty one says so instead of vanishing, so the
+          verifier's page matches the inspector's (owner report, 2026-11-02). */}
+      {readOnly && viewable.length === 0 && (
+        <span
+          data-testid="inline-photo-empty"
+          style={{
+            display: 'inline-flex', alignItems: 'center', padding: '4px 10px', borderRadius: 4,
+            border: '1px dashed var(--c-border)', fontSize: 11, color: 'var(--c-text-dim)', whiteSpace: 'nowrap',
+          }}
+        >
+          No photo
+        </span>
+      )}
 
       {!readOnly && (
         <label
