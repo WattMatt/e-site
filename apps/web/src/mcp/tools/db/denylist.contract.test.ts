@@ -31,16 +31,7 @@ const after = (a: [number, number], b: [number, number]) => a[0] > b[0] || (a[0]
 
 it('reads the migrations', () => expect(files.length).toBeGreaterThan(100))
 
-// Tables whose migration (the open-database migration, 00258) is not in the tree yet. The moment the table is
-// created, the exemption below fails and must be deleted, so it cannot outlive the migration.
-const PENDING = ['public.mcp_previews']
-
-it.each(PENDING)('%s is exempt only until its migration exists', table => {
-  const [schema, name] = table.split('.')
-  expect(last('create', schema, name), `${table} is now created: remove it from PENDING`).toBeNull()
-})
-
-it.each(WRITE_DENYLIST.filter(e => !e.table.endsWith('.*') && !PENDING.includes(e.table)))('$table exists and is not dropped later', ({ table }) => {
+it.each(WRITE_DENYLIST.filter(e => !e.table.endsWith('.*')))('$table exists and is not dropped later', ({ table }) => {
   const [schema, name] = table.split('.')
   const created = last('create', schema, name)
   expect(created, `${table} is never created`).not.toBeNull()
