@@ -10,18 +10,18 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 const write = (name: string, sql: string) => writeFileSync(join(dir, name), sql)
 
 describe('readMigrations', () => {
-  it('finds numeric columns matching the name pattern, follows add/drop/rename and drop table, and records project_id', () => {
+  it('finds numeric columns matching the name pattern, follows add/drop/rename and drop table, and records project_id and organisation_id', () => {
     write('00001_a.sql', `CREATE TABLE projects.a (id uuid, project_id uuid, rate numeric, name text, total_count integer);
       ALTER TABLE projects.a ADD COLUMN unit_price numeric(12,2); ALTER TABLE projects.a DROP COLUMN total_count;
       CREATE TABLE public.b (id uuid, amount integer); DROP TABLE public.b; CREATE TABLE auth.c (amount integer);
-      CREATE TABLE d (id uuid, value numeric); ALTER TABLE d RENAME COLUMN value TO reading_value;`)
+      CREATE TABLE d (id uuid, organisation_id uuid, value numeric); ALTER TABLE d RENAME COLUMN value TO reading_value;`)
     const { candidates, tables } = readMigrations(dir)
     expect(candidates).toEqual([
       { schema: 'projects', table: 'a', column: 'rate' }, { schema: 'projects', table: 'a', column: 'unit_price' },
       { schema: 'public', table: 'd', column: 'reading_value' },
     ])
-    expect(tables['projects.a']).toEqual({ hasProjectId: true })
-    expect(tables['public.d']).toEqual({ hasProjectId: false })
+    expect(tables['projects.a']).toEqual({ hasProjectId: true, hasOrganisationId: false })
+    expect(tables['public.d']).toEqual({ hasProjectId: false, hasOrganisationId: true })
     expect(tables['public.b']).toBeUndefined()
     expect(tables['auth.c']).toBeUndefined()
   })
@@ -54,7 +54,7 @@ describe('readMigrations', () => {
       { schema: 'projects', table: 'a2', column: 'line_total' },
       { schema: 'projects', table: 'a2', column: 'rate' },
     ])
-    expect(tables['projects.a2']).toEqual({ hasProjectId: true })
+    expect(tables['projects.a2']).toEqual({ hasProjectId: true, hasOrganisationId: false })
     expect(tables['projects.a']).toBeUndefined()
     expect(tables['projects.inner_t']).toBeUndefined()
     expect(tables['projects.ghost']).toBeUndefined()
@@ -83,7 +83,7 @@ describe('views', () => {
       CREATE VIEW public.other AS SELECT id, rate * 2 AS rate FROM public.obs;`)
     const { candidates, tables } = readMigrations(dir)
     expect(candidates).toEqual([{ schema: 'public', table: 'obs', column: 'rate' }, { schema: 'public', table: 'obs_active', column: 'rate' }])
-    expect(tables['public.obs_active']).toEqual({ hasProjectId: true })
+    expect(tables['public.obs_active']).toEqual({ hasProjectId: true, hasOrganisationId: false })
     expect(tables['public.other']).toBeUndefined()
   })
 })

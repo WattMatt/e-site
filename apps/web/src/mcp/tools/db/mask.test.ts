@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { fakeClient } from '../../test/fake-client'
 import { ToolRefusal, type ToolContext } from '../../define-tool'
 import { MASKED_COLUMN } from './sentences'
-import { hasCostRoleEverywhere, maskedColumnsOf, assertFilterableColumns, maskRows, maskRpcResult } from './mask'
+import { hasCostRoleEverywhere, maskedColumnsOf, assertFilterableColumns, maskRows, maskRpcResult, maskWrittenRows, ownerKeyOf } from './mask'
 
 const P1 = '11111111-1111-4111-8111-111111111111'
 const P2 = '22222222-2222-4222-8222-222222222222'
@@ -18,15 +18,64 @@ function ctxFor(role: string, memberships?: Array<{ organisationId: string; role
 // A contractor on WM projects who owns a company org of their own.
 const contractorWhoOwnsAnOrg = () => ctxFor('contractor', [{ organisationId: WM, role: 'contractor' }, { organisationId: OWN, role: 'owner' }])
 
+// An owner of their own org who is a contractor on one WM project: the org half passes, the project half does not.
+function ownerWhoIsAProjectContractor() {
+  const f = ctxFor('owner', [{ organisationId: OWN, role: 'owner' }])
+  f.respond({ data: [{ role: 'contractor' }] })
+  return f
+}
+
 describe('hasCostRoleEverywhere', () => {
-  it('is false with no membership and false when any membership is a site role', () => {
-    expect(hasCostRoleEverywhere(ctxFor('owner', []).ctx)).toBe(false)
-    expect(hasCostRoleEverywhere(contractorWhoOwnsAnOrg().ctx)).toBe(false)
-    expect(hasCostRoleEverywhere(ctxFor('owner', [{ organisationId: WM, role: 'owner' }, { organisationId: OWN, role: 'admin' }]).ctx)).toBe(true)
+  it('is false with no membership and false when any membership is a site role, without reading projects', async () => {
+    const none = ctxFor('owner', [])
+    expect(await hasCostRoleEverywhere(none.ctx)).toBe(false)
+    expect(none.calls).toEqual([])
+    const mixed = contractorWhoOwnsAnOrg()
+    expect(await hasCostRoleEverywhere(mixed.ctx)).toBe(false)
+    expect(mixed.calls).toEqual([])
+    expect(await hasCostRoleEverywhere(ctxFor('owner', [{ organisationId: WM, role: 'owner' }, { organisationId: OWN, role: 'admin' }]).ctx)).toBe(true)
   })
-  it('is true for owner, admin and project_manager and false for site roles', () => {
-    for (const r of ['owner', 'admin', 'project_manager']) expect(hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(true)
-    for (const r of ['contractor', 'inspector', 'supplier', 'client_viewer']) expect(hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(false)
+  it('is true for owner, admin and project_manager and false for site roles', async () => {
+    for (const r of ['owner', 'admin', 'project_manager']) expect(await hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(true)
+    for (const r of ['contractor', 'inspector', 'supplier', 'client_viewer']) expect(await hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(false)
+  })
+  it('reads the person\'s active project memberships through their own client', async () => {
+    const { ctx, calls, respond } = ctxFor('owner')
+    respond({ data: [{ role: 'project_manager' }, { role: 'admin' }] })
+    expect(await hasCostRoleEverywhere(ctx)).toBe(true)
+    expect(calls).toEqual([
+      { path: 'projects.project_members', method: 'select', args: ['role'] },
+      { path: 'projects.project_members', method: 'eq', args: ['user_id', 'u1'] },
+      { path: 'projects.project_members', method: 'eq', args: ['is_active', true] },
+    ])
+  })
+  it('an org owner who is a contractor on one project is not cost-everywhere; with no project rows they are', async () => {
+    expect(await hasCostRoleEverywhere(ownerWhoIsAProjectContractor().ctx)).toBe(false)
+    const clean = ctxFor('owner', [{ organisationId: OWN, role: 'owner' }])
+    clean.respond({ data: [] })
+    expect(await hasCostRoleEverywhere(clean.ctx)).toBe(true)
+  })
+  it('a project-rows query error is treated as not cost-everywhere', async () => {
+    const { ctx, respond } = ctxFor('owner')
+    respond({ data: null, error: { message: 'boom' } })
+    expect(await hasCostRoleEverywhere(ctx)).toBe(false)
+  })
+  it('reads the project rows once per context', async () => {
+    const { ctx, calls, respond } = ctxFor('owner')
+    respond({ data: [{ role: 'contractor' }] })
+    expect(await hasCostRoleEverywhere(ctx)).toBe(false)
+    expect(await hasCostRoleEverywhere(ctx)).toBe(false)
+    expect(calls.filter(c => c.method === 'select')).toHaveLength(1)
+  })
+})
+
+describe('ownerKeyOf', () => {
+  it('is the project key, else organisation_id when the table has one, else null', () => {
+    expect(ownerKeyOf('projects', 'projects')).toBe('id')
+    expect(ownerKeyOf('projects', 'tenders')).toBe('project_id')
+    expect(ownerKeyOf('billing', 'invoices')).toBe('organisation_id')
+    expect(ownerKeyOf('projects', 'boq_items')).toBeNull()
+    expect(ownerKeyOf('inspections', 'responses')).toBeNull()
   })
 })
 
@@ -164,6 +213,14 @@ describe('maskRows', () => {
     expect(out.maskedColumns).toEqual([])
   })
 
+  it('boq_items rates are null for an org owner who is a contractor on a project, and shown with no project rows', async () => {
+    const rows = [{ id: 'r1', rate: 3 }]
+    expect((await maskRows('projects', 'boq_items', rows, ownerWhoIsAProjectContractor().ctx)).rows[0].rate).toBeNull()
+    const clean = ctxFor('owner', [{ organisationId: OWN, role: 'owner' }])
+    clean.respond({ data: [] })
+    expect((await maskRows('projects', 'boq_items', rows, clean.ctx)).rows[0].rate).toBe(3)
+  })
+
   it('a role lookup error refuses rather than showing the figure', async () => {
     const { ctx, respond } = ctxFor('contractor')
     respond({ data: null, error: { message: 'boom' } })
@@ -172,39 +229,58 @@ describe('maskRows', () => {
 })
 
 describe('assertFilterableColumns', () => {
-  it('a filter on a masked column is refused for a contractor and allowed for an owner', () => {
+  it('a filter on a masked column is refused for a contractor and allowed for an owner', async () => {
     const contractor = ctxFor('contractor').ctx
-    expect(() => assertFilterableColumns('projects', 'projects', ['contract_value'], contractor)).toThrow(ToolRefusal)
-    expect(() => assertFilterableColumns('projects', 'projects', ['name', 'contract_value'], contractor)).toThrow(MASKED_COLUMN)
-    expect(() => assertFilterableColumns('projects', 'projects', ['contract_value'], ctxFor('owner').ctx)).not.toThrow()
+    await expect(assertFilterableColumns('projects', 'projects', ['contract_value'], contractor)).rejects.toThrow(ToolRefusal)
+    await expect(assertFilterableColumns('projects', 'projects', ['name', 'contract_value'], contractor)).rejects.toThrow(MASKED_COLUMN)
+    await expect(assertFilterableColumns('projects', 'projects', ['contract_value'], ctxFor('owner').ctx)).resolves.toBeUndefined()
   })
-  it('a contractor who owns a second org still cannot filter on a masked column', () => {
-    expect(() => assertFilterableColumns('projects', 'projects', ['contract_value'], contractorWhoOwnsAnOrg().ctx)).toThrow(MASKED_COLUMN)
+  it('a contractor who owns a second org still cannot filter on a masked column', async () => {
+    await expect(assertFilterableColumns('projects', 'projects', ['contract_value'], contractorWhoOwnsAnOrg().ctx)).rejects.toThrow(MASKED_COLUMN)
   })
-  it('an unmasked column is always allowed', () => {
-    expect(() => assertFilterableColumns('projects', 'projects', ['name', 'id'], ctxFor('contractor').ctx)).not.toThrow()
-    expect(() => assertFilterableColumns('inspections', 'responses', ['value_number'], ctxFor('contractor').ctx)).not.toThrow()
+  it('an org owner who is a contractor on one project cannot filter on a masked column', async () => {
+    await expect(assertFilterableColumns('projects', 'projects', ['contract_value'], ownerWhoIsAProjectContractor().ctx)).rejects.toThrow(MASKED_COLUMN)
+  })
+  it('an unmasked column is always allowed', async () => {
+    await expect(assertFilterableColumns('projects', 'projects', ['name', 'id'], ctxFor('contractor').ctx)).resolves.toBeUndefined()
+    await expect(assertFilterableColumns('inspections', 'responses', ['value_number'], ctxFor('contractor').ctx)).resolves.toBeUndefined()
   })
 })
 
 describe('maskRpcResult', () => {
-  it('nulls masked names recursively for a contractor only', () => {
+  it('nulls masked names recursively for a contractor only', async () => {
     const input = { total: [{ rate: 1, name: 'x', nested: { contract_value: 9, keep: 2 } }], rate: 3 }
-    const out = maskRpcResult(input, ctxFor('contractor').ctx)
+    const out = await maskRpcResult(input, ctxFor('contractor').ctx)
     expect(out.result).toEqual({ total: [{ rate: null, name: 'x', nested: { contract_value: null, keep: 2 } }], rate: null })
     expect(out.maskedColumns.sort()).toEqual(['contract_value', 'rate'])
     expect(input.total[0].rate).toBe(1)
-    const owner = maskRpcResult(input, ctxFor('owner').ctx)
+    const owner = await maskRpcResult(input, ctxFor('owner').ctx)
     expect(owner).toEqual({ result: input, maskedColumns: [] })
   })
-  it('still masks for a contractor who owns a second org', () => {
-    const out = maskRpcResult([{ rate: 1 }], contractorWhoOwnsAnOrg().ctx)
+  it('still masks for a contractor who owns a second org', async () => {
+    const out = await maskRpcResult([{ rate: 1 }], contractorWhoOwnsAnOrg().ctx)
     expect(out.result).toEqual([{ rate: null }])
     expect(out.maskedColumns).toEqual(['rate'])
   })
-  it('passes scalars and null through', () => {
+  it('masks for an org owner who is a contractor on one project', async () => {
+    expect(await maskRpcResult([{ rate: 1 }], ownerWhoIsAProjectContractor().ctx)).toEqual({ result: [{ rate: null }], maskedColumns: ['rate'] })
+  })
+  it('passes scalars and null through', async () => {
     const ctx = ctxFor('contractor').ctx
-    expect(maskRpcResult(5, ctx)).toEqual({ result: 5, maskedColumns: [] })
-    expect(maskRpcResult(null, ctx)).toEqual({ result: null, maskedColumns: [] })
+    expect(await maskRpcResult(5, ctx)).toEqual({ result: 5, maskedColumns: [] })
+    expect(await maskRpcResult(null, ctx)).toEqual({ result: null, maskedColumns: [] })
+  })
+})
+
+describe('maskWrittenRows', () => {
+  it('a role lookup error nulls every masked column instead of throwing; the same rows are shown when the lookup works', async () => {
+    const rows = [{ id: 't1', project_id: P1, stated_total: 100, title: 'x' }]
+    const failing = ctxFor('owner')
+    failing.respond({ data: null, error: { message: 'boom' } })
+    expect(await maskWrittenRows('projects', 'tenders', rows, failing.ctx))
+      .toEqual({ rows: [{ id: 't1', project_id: P1, stated_total: null, title: 'x' }], maskedColumns: ['stated_total'] })
+    const working = ctxFor('owner')
+    working.respond({ data: 'owner' })
+    expect(await maskWrittenRows('projects', 'tenders', rows, working.ctx)).toEqual({ rows, maskedColumns: [] })
   })
 })

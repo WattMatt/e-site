@@ -27,7 +27,8 @@ describe('esite_db_rpc', () => {
     expect(esiteDbRpc.description).toMatch(/POST/)
     expect(esiteDbRpc.description).toMatch(/readOnly: true only changes how the call is audited and rate-limited/)
     expect(esiteDbRpc.description).toMatch(/not a guarantee/)
-    expect(esiteDbRpc.description).toMatch(/cost mask/)
+    expect(esiteDbRpc.description).toMatch(/not masked per row/)
+    expect(esiteDbRpc.description).toMatch(/every project/)
   })
 
   it('defaults to schema public, readOnly false', () => {
@@ -48,13 +49,13 @@ describe('esite_db_rpc', () => {
     respond({ data: 3 })
     const out = await run({ fn: 'count_things' })
     expect(schemaSpy).toHaveBeenCalledWith('public')
-    expect(calls).toEqual([{ path: 'rpc:count_things', method: 'rpc', args: [{}] }])
+    expect(calls.filter(c => c.path.startsWith('rpc:'))).toEqual([{ path: 'rpc:count_things', method: 'rpc', args: [{}] }])
     expect(out).toEqual({ result: 3, maskedColumns: [], ids: [] })
 
     respond({ data: null })
     await run({ schema: 'tariffs', fn: 'lookup', args: { p_year: 2026 } })
     expect(schemaSpy).toHaveBeenLastCalledWith('tariffs')
-    expect(calls[1]).toEqual({ path: 'rpc:lookup', method: 'rpc', args: [{ p_year: 2026 }] })
+    expect(calls.filter(c => c.path.startsWith('rpc:'))[1]).toEqual({ path: 'rpc:lookup', method: 'rpc', args: [{ p_year: 2026 }] })
   })
 
   it('refuses an unexposed schema and a function name that is not a plain identifier, without calling', async () => {

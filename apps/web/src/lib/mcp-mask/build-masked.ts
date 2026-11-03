@@ -5,7 +5,9 @@ import { isAllowlisted, MASK_EXTRA } from './allowlist'
 
 /** Which column of a row names the project it belongs to: a project_id column, or `id` on projects.projects itself. */
 export type ProjectKey = 'project_id' | 'id' | null
-export type MaskedTable = { columns: string[]; projectKey: ProjectKey }
+/** The organisation column a row without a project is judged by, when the table has one. */
+export type OrgKey = 'organisation_id' | null
+export type MaskedTable = { columns: string[]; projectKey: ProjectKey; orgKey: OrgKey }
 
 // Tables whose project is not in a project_id column.
 const PROJECT_KEY_OVERRIDE: Record<string, ProjectKey> = { 'projects.projects': 'id' }
@@ -19,7 +21,11 @@ export function buildMasked(
   for (const c of extras) add(c)
   const masked: Record<string, MaskedTable> = {}
   for (const k of Object.keys(grouped).sort()) {
-    masked[k] = { columns: [...grouped[k]].sort(), projectKey: PROJECT_KEY_OVERRIDE[k] ?? (tables[k]?.hasProjectId ? 'project_id' : null) }
+    masked[k] = {
+      columns: [...grouped[k]].sort(),
+      projectKey: PROJECT_KEY_OVERRIDE[k] ?? (tables[k]?.hasProjectId ? 'project_id' : null),
+      orgKey: tables[k]?.hasOrganisationId ? 'organisation_id' : null,
+    }
   }
   const names = [...new Set(Object.values(masked).flatMap(t => t.columns))].sort()
   return { masked, names }

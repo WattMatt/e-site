@@ -12,11 +12,13 @@ export const esiteDbSql = defineTool({
   description:
     'Runs one read-only SELECT (or WITH … SELECT) as the signed-in person, so row-level security applies. At most 1000 rows come back; truncated says when there were more. '
     + 'The time cap is the database statement timeout (8 s). References to the net schema are refused. '
-    + 'Only people who hold owner, admin or project manager in every organisation they belong to may use it; everyone else uses esite_db_select.',
+    + 'Only people who hold owner, admin or project manager in every organisation they belong to AND on every project they are a member of may use it; '
+    + 'an organisation-level project manager who is a contractor on one project is refused. Everyone else uses esite_db_select. '
+    + 'Results are NOT cost-masked per row: the role rule above is what decides who may see cost figures here.',
   kind: 'read',
   inputSchema: { sql: z.string().min(1) },
   handler: async ({ sql }, ctx) => {
-    if (!hasCostRoleEverywhere(ctx)) throw new ToolRefusal(SQL_ROLE)
+    if (!(await hasCostRoleEverywhere(ctx))) throw new ToolRefusal(SQL_ROLE)
     const { data, error } = await ctx.client.rpc('mcp_run_select' as never, { p_sql: sql } as never)
     refuseOnDbError(error)
     const rows = (data ?? []) as unknown[]

@@ -5,7 +5,7 @@ import { assertIdent, assertIdents } from './identifiers'
 import { assertWritable } from './denylist'
 import { applyFilters, filterColumns, filterSchema, type Filter, type FilterableQuery } from './filters'
 import { refuseOnDbError, type DbError } from './db-error'
-import { assertFilterableColumns, maskRows } from './mask'
+import { assertFilterableColumns, maskRows, maskWrittenRows } from './mask'
 import { idsOf, projectIdFromFilters } from './project-id'
 import { createPreview, consumePreview, type PreviewArgs } from './previews'
 import { EMPTY_PATCH, NEED_FILTER, PREVIEW_MISMATCH, PREVIEW_TOO_WIDE } from './sentences'
@@ -93,7 +93,7 @@ function makeMutateTool(verb: 'update' | 'delete'): RegisteredTool {
         assertIdents(Object.keys(patch))
       }
       assertWritable(schema, table)
-      assertFilterableColumns(schema, table, filterColumns(filters), ctx)
+      await assertFilterableColumns(schema, table, filterColumns(filters), ctx)
 
       // What the preview digest covers: exactly these keys, nothing else.
       const args: PreviewArgs = patch ? { schema, table, filters, patch } : { schema, table, filters }
@@ -122,9 +122,12 @@ function makeMutateTool(verb: 'update' | 'delete'): RegisteredTool {
       const q = verb === 'update' ? table$().update(patch ?? {}) : table$().delete()
       const written = await applyFilters(q, filters).select('*')
       refuseOnDbError(written.error)
-      const masked = await maskRows(schema, table, (written.data ?? []) as Record<string, unknown>[], ctx)
-      const ids = idsOf(masked.rows)
-      return { [done]: masked.rows.length, ids, rows: masked.rows }
+      // Committed: ids come from the raw rows, and a failed role lookup nulls every cost column rather than
+      // throwing, so the ids always reach the audit.
+      const raw = (written.data ?? []) as Record<string, unknown>[]
+      const ids = idsOf(raw)
+      const masked = await maskWrittenRows(schema, table, raw, ctx)
+      return { [done]: raw.length, ids, rows: masked.rows }
     },
   })
 }

@@ -18,7 +18,7 @@ export const esiteDbRpc = defineTool({
     'Calls any exposed database function as the signed-in person (a POST, so the function may write), under row-level security. '
     + 'schema defaults to public; args is an object of parameter name to value. '
     + 'readOnly: true only changes how the call is audited and rate-limited; it is your statement of intent, not a guarantee, and the database does not stop a function from writing. '
-    + 'Results pass through the cost mask: any key named like a masked cost column is null for people who do not hold owner, admin or project manager in every organisation, and maskedColumns names them. '
+    + 'Results are not masked per row: any key named like a masked cost column is null unless the person holds owner, admin or project manager in every organisation AND on every project they are a member of, and maskedColumns names them. '
     + 'ids lists the id of each returned row, so a function that writes rows reaches the audit.',
   kind: 'write',
   kindOf: a => (a.readOnly ? 'read' : 'write'),
@@ -33,7 +33,7 @@ export const esiteDbRpc = defineTool({
     assertIdent(fn)
     const { data, error } = await (ctx.client as unknown as Loose).schema(schema).rpc(fn, args ?? {})
     refuseOnDbError(error)
-    const { result, maskedColumns } = maskRpcResult(data, ctx)
+    const { result, maskedColumns } = await maskRpcResult(data, ctx)
     const ids = Array.isArray(result) ? idsOf(result.filter(isRow)) : []
     return { result, maskedColumns, ids }
   },

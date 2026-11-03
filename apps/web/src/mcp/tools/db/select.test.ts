@@ -27,6 +27,7 @@ describe('esite_db_select', () => {
     expect(esiteDbSelect.description).toMatch(/&/)
     expect(esiteDbSelect.description).toMatch(/null/)
     expect(esiteDbSelect.description).toMatch(/maskedColumns/)
+    expect(esiteDbSelect.description).toMatch(/approximate/)
   })
 
   it('selects with filters, order and range, and returns paging', async () => {
@@ -34,7 +35,7 @@ describe('esite_db_select', () => {
     respond({ data: [r1, r2], count: 5 })
     const out = await run({ schema: 'inspections', table: 'responses', filters: [{ column: 'inspection_id', op: 'eq', value: I1 }], order: [{ column: 'field_id' }], limit: 2, offset: 0 })
     expect(calls.map(c => [c.path, c.method, c.args])).toEqual([
-      ['inspections.responses', 'select', ['*', { count: 'exact' }]],
+      ['inspections.responses', 'select', ['*', { count: 'estimated' }]],
       ['inspections.responses', 'eq', ['inspection_id', I1]],
       ['inspections.responses', 'order', ['field_id', { ascending: true }]],
       ['inspections.responses', 'range', [0, 1]],
@@ -82,9 +83,43 @@ describe('esite_db_select', () => {
     await expect(c.run({ schema: 'projects', table: 'projects', filters: [{ column: 'contract_value', op: 'gt', value: 1 }] })).rejects.toThrow(MASKED_COLUMN)
     expect(c.calls).toEqual([])
     const o = setup('owner')
+    o.respond({ data: [] }) // the owner's active project memberships: none
     o.respond({ data: [], count: 0 })
-    o.respond({ data: 'owner' })
-    await expect(o.run({ schema: 'projects', table: 'projects', order: [{ column: 'contract_value' }] })).resolves.toBeDefined()
+    await expect(o.run({ schema: 'projects', table: 'projects', order: [{ column: 'contract_value' }] })).resolves.toMatchObject({ rows: [], count: 0 })
+    expect(o.calls.map(c => c.path)).toEqual([
+      'projects.project_members', 'projects.project_members', 'projects.project_members',
+      'projects.projects', 'projects.projects', 'projects.projects',
+    ])
+  })
+
+  it('refuses an order on a masked column for an org owner who is a contractor on one project', async () => {
+    const o = setup('owner')
+    o.respond({ data: [{ role: 'contractor' }] })
+    await expect(o.run({ schema: 'projects', table: 'projects', order: [{ column: 'contract_value' }] })).rejects.toThrow(new ToolRefusal(MASKED_COLUMN))
+    expect(o.calls.filter(c => c.path === 'projects.projects')).toEqual([])
+  })
+
+  it('fetches organisation_id internally for an org-owned masked table, masks by it, and strips it', async () => {
+    const back = [{ id: 'i1', amount_kobo: 500, organisation_id: WM }]
+    const c = setup('contractor')
+    c.respond({ data: back, count: 1 })
+    const masked = await c.run({ schema: 'billing', table: 'invoices', columns: ['id', 'amount_kobo'] })
+    expect(c.calls[0]).toMatchObject({ path: 'billing.invoices', method: 'select', args: ['id,amount_kobo,organisation_id', { count: 'estimated' }] })
+    expect(masked.rows).toEqual([{ id: 'i1', amount_kobo: null }])
+    expect(masked.maskedColumns).toEqual(['amount_kobo'])
+    // the same row is intact for the owner of that organisation, with no project lookup
+    const o = setup('owner')
+    o.respond({ data: back, count: 1 })
+    const open = await o.run({ schema: 'billing', table: 'invoices', columns: ['id', 'amount_kobo'] })
+    expect(open.rows).toEqual([{ id: 'i1', amount_kobo: 500 }])
+    expect(o.calls.map(c => c.path)).toEqual(['billing.invoices', 'billing.invoices'])
+  })
+
+  it('does not add organisation_id to a masked table that has none (projects.boq_items)', async () => {
+    const o = setup('owner')
+    o.respond({ data: [{ id: 'b1', rate: 3 }], count: 1 })
+    await o.run({ schema: 'projects', table: 'boq_items', columns: ['id', 'rate'] })
+    expect(o.calls[0].args).toEqual(['id,rate', { count: 'estimated' }])
   })
 
   it('fetches the project key internally (project_id), masks per row, and strips it', async () => {
@@ -92,7 +127,7 @@ describe('esite_db_select', () => {
     respond({ data: [{ id: 'v1', net_change: 500, project_id: P1 }], count: 1 })
     respond({ data: 'contractor' })
     const out = await run({ schema: 'projects', table: 'variation_orders', columns: ['id', 'net_change'] })
-    expect(calls[0]).toMatchObject({ path: 'projects.variation_orders', method: 'select', args: ['id,net_change,project_id', { count: 'exact' }] })
+    expect(calls[0]).toMatchObject({ path: 'projects.variation_orders', method: 'select', args: ['id,net_change,project_id', { count: 'estimated' }] })
     expect(calls.find(c => c.path === 'rpc:user_effective_project_role')?.args).toEqual([{ p_project_id: P1, p_user_id: 'u1' }])
     expect(out.rows).toEqual([{ id: 'v1', net_change: null }])
     expect(out.rows[0]).not.toHaveProperty('project_id')
@@ -113,7 +148,7 @@ describe('esite_db_select', () => {
     respond({ data: [{ code: 'K1', contract_value: 9, id: P1 }], count: 1 })
     respond({ data: 'contractor' })
     const out = await run({ schema: 'projects', table: 'projects', columns: ['code', 'contract_value'] })
-    expect(calls[0].args).toEqual(['code,contract_value,id', { count: 'exact' }])
+    expect(calls[0].args).toEqual(['code,contract_value,id', { count: 'estimated' }])
     expect(out.rows).toEqual([{ code: 'K1', contract_value: null }])
     expect(out.rows[0]).not.toHaveProperty('id')
   })
@@ -123,7 +158,7 @@ describe('esite_db_select', () => {
     respond({ data: [{ id: P1, contract_value: 9 }], count: 1 })
     respond({ data: 'owner' })
     const out = await run({ schema: 'projects', table: 'projects', columns: ['id', 'contract_value'] })
-    expect(calls[0].args).toEqual(['id,contract_value', { count: 'exact' }])
+    expect(calls[0].args).toEqual(['id,contract_value', { count: 'estimated' }])
     expect(out.rows).toEqual([{ id: P1, contract_value: 9 }])
   })
 

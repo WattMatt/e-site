@@ -10,6 +10,7 @@ export const WRITE_DENYLIST: ReadonlyArray<{ table: string; reason: string }> = 
   { table: 'public.user_organisations', reason: WHO },
   { table: 'projects.project_members', reason: WHO },
   { table: 'public.profiles', reason: WHO },
+  { table: 'public.metric_accounts', reason: 'An auto-updatable security_invoker view over public.profiles (00194): a write through it lands in profiles. ' + WHO },
   { table: 'billing.*', reason: MONEY },
   { table: 'marketplace.paystack_subaccounts', reason: MONEY },
   { table: 'marketplace.orders', reason: MONEY },

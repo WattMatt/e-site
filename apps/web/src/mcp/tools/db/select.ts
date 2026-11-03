@@ -4,8 +4,7 @@ import { assertExposedSchema } from './exposed-schemas'
 import { assertIdent, assertIdents } from './identifiers'
 import { applyFilters, filterColumns, filterSchema, type FilterableQuery } from './filters'
 import { refuseOnDbError, type DbError } from './db-error'
-import { MASKED } from './masked-columns'
-import { assertFilterableColumns, maskRows } from './mask'
+import { assertFilterableColumns, maskRows, ownerKeyOf } from './mask'
 import { projectIdFromFilters } from './project-id'
 
 // The generic tools address arbitrary schema.table names, which the generated Database type cannot express.
@@ -14,7 +13,7 @@ interface SelectQuery extends FilterableQuery {
   range(from: number, to: number): this
   then: PromiseLike<{ data: unknown; error: DbError; count: number | null }>['then']
 }
-type Loose = { schema(s: string): { from(t: string): { select(columns: string, options: { count: 'exact' }): SelectQuery } } }
+type Loose = { schema(s: string): { from(t: string): { select(columns: string, options: { count: 'estimated' }): SelectQuery } } }
 
 export const esiteDbSelect = defineTool({
   name: 'esite_db_select',
@@ -24,7 +23,9 @@ export const esiteDbSelect = defineTool({
     + 'Filters take column, op and value; ops: eq, neq, gt, gte, lt, lte, like, ilike, in, is, cs, cd, ov, fts, not.eq, not.in, not.is. '
     + 'fts uses to_tsquery syntax, so a multi-word value must be joined with & (for example "cable & tray"). '
     + 'Results are paged: limit 1..1000 (default 100); when truncated is true, pass nextOffset as offset. '
-    + 'Cost figures come back null for roles that may not see them, and maskedColumns names the columns that were nulled.',
+    + 'count is exact up to 1000 rows and the planner\'s estimate above that, so treat a large count as approximate. '
+    + 'Cost figures come back null for roles that may not see them, judged per row by its project or organisation, and maskedColumns names the columns that were nulled. '
+    + 'Filtering or ordering on a cost column needs owner, admin or project manager in every organisation and on every project you belong to.',
   kind: 'read',
   inputSchema: {
     schema: z.string(),
@@ -41,14 +42,15 @@ export const esiteDbSelect = defineTool({
     assertIdent(table)
     assertIdents(columns ?? [])
     const orderColumns = assertIdents((order ?? []).map(o => o.column))
-    assertFilterableColumns(schema, table, [...filterColumns(filters ?? []), ...orderColumns], ctx)
+    await assertFilterableColumns(schema, table, [...filterColumns(filters ?? []), ...orderColumns], ctx)
 
-    // A masked row is judged by its owner; the key column is fetched even when the caller did not ask for it, then stripped.
-    const key = MASKED[`${schema}.${table}`]?.projectKey ?? null
+    // A masked row is judged by its owner (project, else organisation); the key column is fetched even when the
+    // caller did not ask for it, then stripped.
+    const key = ownerKeyOf(schema, table)
     const needKey = key !== null && columns !== undefined && !columns.includes(key)
     const list = columns ? [...columns, ...(needKey ? [key] : [])].join(',') : '*'
 
-    let q = (ctx.client as unknown as Loose).schema(schema).from(table).select(list, { count: 'exact' })
+    let q = (ctx.client as unknown as Loose).schema(schema).from(table).select(list, { count: 'estimated' })
     q = applyFilters(q, filters ?? [])
     for (const o of order ?? []) q = q.order(o.column, { ascending: o.ascending ?? true })
     q = q.range(offset, offset + limit - 1)

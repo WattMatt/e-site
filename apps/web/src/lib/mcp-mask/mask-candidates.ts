@@ -11,7 +11,7 @@ export const MASK_NAME = /^(.*_)?(rate|price|amount|value|total|cost|retention|g
 export const NUMERIC_TYPES = /^(numeric|decimal|integer|int|int2|int4|int8|bigint|smallint|real|float|float4|float8|double precision|money)\b/i
 
 export type Candidate = { schema: string; table: string; column: string }
-export type TableInfo = { hasProjectId: boolean }
+export type TableInfo = { hasProjectId: boolean; hasOrganisationId: boolean }
 
 const ID = '(?:"[^"]+"|[A-Za-z_][\\w$]*)'
 const QNAME = `${ID}(?:\\s*\\.\\s*${ID})?`
@@ -128,7 +128,7 @@ export function readMigrations(dir: string): { candidates: Candidate[]; tables: 
     const [schema, table] = k.split('.')
     if (!exposed.has(schema)) continue
     const cols = state.get(k)!
-    tables[k] = { hasProjectId: cols.has('project_id') }
+    tables[k] = { hasProjectId: cols.has('project_id'), hasOrganisationId: cols.has('organisation_id') }
     for (const column of [...cols.keys()].sort()) {
       if (MASK_NAME.test(column) && NUMERIC_TYPES.test(cols.get(column)!)) candidates.push({ schema, table, column })
     }

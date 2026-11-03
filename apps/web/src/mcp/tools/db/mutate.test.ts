@@ -112,6 +112,7 @@ describe.each([
     const mk = (role: string) => {
       const s = setup(tool, role)
       s.respond({ data: [{ id: 'b1', rate: 9 }], count: 1 })
+      if (role === 'owner') s.respond({ data: [] }) // the owner's active project memberships: none
       s.respond({ data: [] })
       s.respond({ data: { id: PREV, created_at: NOW.toISOString() } })
       return s
@@ -216,6 +217,25 @@ describe.each([
     }
     expect((await confirm('contractor')).rows).toEqual([{ id: 'a', rate: null }, { id: 'b', rate: null }])
     expect((await confirm('owner')).rows).toEqual([{ id: 'a', rate: 4 }, { id: 'b', rate: 5 }])
+  })
+
+  it('confirm: a failed role lookup after the write nulls the cost columns and keeps the ids', async () => {
+    const d = { schema: 'projects', table: 'tenders', filters, ...(verb === 'update' ? { patch: { title: 'x' } } : {}) }
+    const confirm = async (lookup: { data: unknown; error?: unknown }) => {
+      const s = setup(tool, 'owner')
+      s.respond({ data: storedRow(name, d) })
+      s.respond({ data: [{ id: PREV }] })
+      s.respond({ data: [{ id: 'a' }, { id: 'b' }], count: 2 })
+      s.respond({ data: [{ id: 'a', project_id: P1, stated_total: 4 }, { id: 'b', project_id: P1, stated_total: 5 }] })
+      s.respond(lookup)
+      return (await s.run({ ...d, previewId: PREV })) as WriteOut
+    }
+    const failed = await confirm({ data: null, error: { message: 'boom' } })
+    expect(failed.ids).toEqual(['a', 'b'])
+    expect(failed[verb === 'update' ? 'updated' : 'deleted']).toBe(2)
+    expect(failed.rows).toEqual([{ id: 'a', project_id: P1, stated_total: null }, { id: 'b', project_id: P1, stated_total: null }])
+    // control: the same rows are intact when the lookup answers with a cost role
+    expect((await confirm({ data: 'owner' })).rows).toEqual([{ id: 'a', project_id: P1, stated_total: 4 }, { id: 'b', project_id: P1, stated_total: 5 }])
   })
 
   it('confirm: integer ids come back in ids as strings', async () => {

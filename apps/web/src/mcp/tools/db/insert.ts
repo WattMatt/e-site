@@ -4,8 +4,7 @@ import { assertExposedSchema } from './exposed-schemas'
 import { assertIdent, assertIdents } from './identifiers'
 import { assertWritable } from './denylist'
 import { refuseOnDbError, type DbError } from './db-error'
-import { MASKED } from './masked-columns'
-import { maskRows } from './mask'
+import { maskWrittenRows, ownerKeyOf } from './mask'
 import { idsOf, projectIdFromRows } from './project-id'
 
 // The generic tools address arbitrary schema.table names, which the generated Database type cannot express.
@@ -39,17 +38,21 @@ export const esiteDbInsert = defineTool({
     assertIdents(returning ?? [])
     assertWritable(schema, table)
 
-    // A masked row is judged by its owner; when the caller narrowed the list, the key is fetched, then stripped.
-    const key = MASKED[`${schema}.${table}`]?.projectKey ?? null
+    // A masked row is judged by its owner (project, else organisation); when the caller narrowed the list, the key
+    // is fetched, then stripped.
+    const key = ownerKeyOf(schema, table)
     const needKey = key !== null && returning !== undefined && !returning.includes(key)
     const list = returning ? [...returning, ...(needKey ? [key] : [])].join(',') : '*'
 
     const { data, error } = await (ctx.client as unknown as Loose).schema(schema).from(table).insert(rows).select(list)
     refuseOnDbError(error)
 
-    const masked = await maskRows(schema, table, (data ?? []) as Record<string, unknown>[], ctx)
+    // The write is committed: ids come from the raw rows, and a failed role lookup nulls every cost column
+    // rather than throwing, so the ids always reach the audit.
+    const raw = (data ?? []) as Record<string, unknown>[]
+    const ids = idsOf(raw)
+    const masked = await maskWrittenRows(schema, table, raw, ctx)
     const out = needKey ? masked.rows.map(({ [key]: _k, ...rest }) => rest) : masked.rows
-    const ids = idsOf(out)
     return { inserted: rows.length, ids, rows: out }
   },
 })

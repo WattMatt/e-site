@@ -112,6 +112,30 @@ describe('esite_db_insert', () => {
     expect(open.out.rows).toEqual([{ id: 'v1', net_change: 500 }])
   })
 
+  it('a failed role lookup after the insert nulls the cost columns and keeps the ids', async () => {
+    const back = [{ id: 'v1', net_change: 500, project_id: P1 }]
+    const insert = (lookup: { data: unknown; error?: unknown }) => {
+      const s = setup('owner')
+      s.respond({ data: back })
+      s.respond(lookup)
+      return s.run({ schema: 'projects', table: 'variation_orders', rows: [{ net_change: 500, project_id: P1 }] })
+    }
+    expect(await insert({ data: null, error: { message: 'boom' } })).toEqual({ inserted: 1, ids: ['v1'], rows: [{ id: 'v1', net_change: null, project_id: P1 }] })
+    expect((await insert({ data: 'owner' })).rows).toEqual(back)
+  })
+
+  it('returning without organisation_id on an org-owned masked table fetches it, masks by it and strips it', async () => {
+    const back = [{ id: 'c1', supply_rate_per_m: 9, organisation_id: WM }]
+    const c = setup('contractor')
+    c.respond({ data: back })
+    const out = await c.run({ schema: 'cable_schedule', table: 'cost_lines', rows: [{ supply_rate_per_m: 9 }], returning: ['id', 'supply_rate_per_m'] })
+    expect(c.calls[1]).toMatchObject({ method: 'select', args: ['id,supply_rate_per_m,organisation_id'] })
+    expect(out.rows).toEqual([{ id: 'c1', supply_rate_per_m: null }])
+    const o = setup('owner')
+    o.respond({ data: back })
+    expect((await o.run({ schema: 'cable_schedule', table: 'cost_lines', rows: [{ supply_rate_per_m: 9 }], returning: ['id', 'supply_rate_per_m'] })).rows).toEqual([{ id: 'c1', supply_rate_per_m: 9 }])
+  })
+
   it('integer ids come back in ids as strings; null, missing and object ids are dropped', async () => {
     const { run, respond } = setup()
     respond({ data: [{ id: 7 }, { id: 8 }, { id: null }, { name: 'no id' }, { id: { a: 1 } }] })
