@@ -15,8 +15,8 @@
     "test": "turbo run test",
     "test:ci": "turbo run test:ci",
     "type-check": "turbo run type-check",
-    "db:gen-types": "cd apps/edge-functions && supabase gen types typescript --local > ../../packages/db/src/types.ts",
-    "db:migrate": "cd apps/edge-functions && supabase db push",
+    "db:gen-types": "cd apps/edge-functions && supabase gen types typescript > ../../packages/db/src/types.ts",
+    "db:migrate": "cd apps/edge-functions && supabase db push --remote",
     "db:reset": "cd apps/edge-functions && supabase db reset",
     "db:seed": "cd apps/edge-functions && supabase db seed",
     "demo:seed": "node --experimental-strip-types scripts/seed-demo.ts"

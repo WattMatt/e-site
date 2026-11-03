@@ -76,7 +76,7 @@ Do **not** use the existing support WhatsApp number. Moving a number that's on t
 2. **Add assets**: the E-Site app and the WhatsApp account, with full control.
 3. **Generate token**: choose the E-Site app, **Never** expire, and the permissions `whatsapp_business_messaging` and `whatsapp_business_management`.
 4. **Do not paste the token into chat.** Store it in the password manager.
-   - Then either set it yourself: `supabase secrets set WHATSAPP_TOKEN=… --project-ref cbskbnvvgcybmfikxgky`,
+   - Then either set it yourself: `supabase secrets set WHATSAPP_TOKEN=… --remote=cbskbnvvgcybmfikxgky`,
    - or put it in the macOS keychain as `esite-whatsapp-token` and **[Claude]** will set it from there without ever seeing the value.
 5. Also note these, which are not secret: the **Phone number ID** and **WhatsApp Business Account ID** (WhatsApp Manager → API setup), and the **App secret** (App → Settings → Basic). The app secret *is* secret, so handle it like the token.
 

@@ -264,7 +264,7 @@ vercel env add DROPBOX_TEAM_APP_SECRET preview feat/powersync --value "<secret>"
 
 # Supabase Edge
 cd apps/edge-functions
-supabase secrets set --project-ref cbskbnvvgcybmfikxgky \
+supabase secrets set --remote=cbskbnvvgcybmfikxgky \
   DROPBOX_TEAM_APP_KEY=<key> \
   DROPBOX_TEAM_APP_SECRET=<secret>
 
@@ -272,7 +272,7 @@ supabase secrets set --project-ref cbskbnvvgcybmfikxgky \
 vercel redeploy <latest-feat-powersync-deployment-url>
 
 # Redeploy edge fn
-supabase functions deploy cloud-sync-project --project-ref cbskbnvvgcybmfikxgky
+supabase functions deploy cloud-sync-project --remote=cbskbnvvgcybmfikxgky
 ```
 
 The provider-utils env-var lookup map gets a new entry:

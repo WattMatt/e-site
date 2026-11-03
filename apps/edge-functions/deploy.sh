@@ -117,8 +117,12 @@ for entry in "${FUNCTIONS[@]}"; do
   fi
 
   echo "→ deploying ${slug} ${flags:-(gateway verifies JWT)}"
+  # CLI 3.x: --remote=<ref> replaces --project-ref (deprecated, gone in v4), and
+  # a hosted change refuses to run without consent when there is no terminal —
+  # which is how this script is usually run. --yes is that consent; the flags
+  # that matter are the checked-in table above, not this line.
   # shellcheck disable=SC2086
-  supabase functions deploy "$slug" --project-ref "$PROJECT_REF" $flags
+  supabase functions deploy "$slug" --remote="$PROJECT_REF" --yes $flags
   deployed=$((deployed + 1))
 done
 
