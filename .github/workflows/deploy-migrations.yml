@@ -44,9 +44,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not `latest`: CLI 3.0.0 (published 2026-11-02) refuses the
+      # `[inbucket]` section in supabase/config.toml ("no longer supported, use
+      # [local_smtp]") and `db push` exits 1 before any SQL runs — run
+      # 41579779111 failed that way on the #298 merge. The 2.x CLI developers
+      # run locally rejects `[local_smtp]` as an invalid key, so the config
+      # cannot be renamed until everyone moves to 3.x. Lift this pin and rename
+      # the section together, as one change.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.122.1
 
       - name: Run migrations
         working-directory: apps/edge-functions
