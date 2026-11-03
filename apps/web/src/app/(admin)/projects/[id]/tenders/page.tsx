@@ -28,7 +28,8 @@ export default async function TendersPage({ params }: { params: Promise<{ id: st
       <div>
         <h1 className="page-title">Tenders</h1>
         <p style={{ color: 'var(--c-text-muted)', fontSize: 14, margin: '4px 0 0' }}>
-          Import a tender BOQ workbook, check it reconciles to the cent, then (in a later release) invite contractors to price it.
+          Import a tender BOQ workbook, check it reconciles to the cent, attach the tender documents (specifications,
+          drawings, P&amp;G, conditions), then issue it and invite contractors to price it on the portal.
           Only owners, admins and project managers can see this page.
         </p>
       </div>

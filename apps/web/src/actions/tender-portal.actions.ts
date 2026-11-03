@@ -376,6 +376,14 @@ export interface PortalTender {
   organisation_name?: string
   company_name?: string
   profile_completed_at?: string | null
+  // Particulars (00252), as issued.
+  reference?: string | null
+  description?: string | null
+  site_inspection?: string | null
+  queries_close_at?: string | null
+  validity_days?: number | null
+  contact_name?: string | null
+  contact_email?: string | null
 }
 
 export async function myTendersAction(): Promise<Result<PortalTender[]>> {

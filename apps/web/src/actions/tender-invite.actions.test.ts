@@ -126,6 +126,7 @@ describe('sendTenderInvitationsAction (switched on)', () => {
       q.select = () => q
       q.eq = () => q
       q.in = () => q
+      q.is = () => q
       q.maybeSingle = () => Promise.resolve({ data: { name: 'Name' } })
       q.update = (p: Record<string, unknown>) => {
         updates.push(p)

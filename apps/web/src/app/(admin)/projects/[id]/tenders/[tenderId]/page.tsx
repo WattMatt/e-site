@@ -7,6 +7,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { getTenderDetailAction } from '@/actions/tender.actions'
 import { listInvitationsAction } from '@/actions/tender-invite.actions'
+import { listTenderDocumentsAction } from '@/actions/tender-documents.actions'
 import { tenderInvitesEnabled } from '@/lib/tender/gate'
 import { IssuePanel } from '../_components/IssuePanel'
 import { InvitationsPanel } from '../_components/InvitationsPanel'
@@ -16,6 +17,9 @@ import { ImportPanel } from '../_components/ImportPanel'
 import { ReconciliationView } from '../_components/ReconciliationView'
 import { BoqGrid } from '../_components/BoqGrid'
 import { DeleteTenderButton } from '../_components/DeleteTenderButton'
+import { DetailsPanel } from '../_components/DetailsPanel'
+import { DocumentsPanel } from '../_components/DocumentsPanel'
+import { TenderControls } from '../_components/TenderControls'
 import { formatRand, tenderStatusVariant } from '../_components/format'
 import { AdjudicationActions } from '../_components/AdjudicationActions'
 
@@ -39,6 +43,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const invitations = 'data' in invRes ? invRes.data : []
   const manRes = await getTenderManagementAction(tenderId)
   const manage = 'data' in manRes ? manRes.data : null
+  const docRes = await listTenderDocumentsAction(tenderId)
+  const documents = 'data' in docRes ? docRes.data.documents : []
+  const participants = 'data' in docRes ? docRes.data.participants : 0
+  const packCount = documents.filter((d) => d.clarification_id == null).length
+  const hasParticulars = !!(tender.reference || tender.description || tender.validity_days || tender.contact_email)
   const sealed = tender.status === 'issued' && !!tender.closing_at && new Date(tender.closing_at) > new Date()
   const itemCount = items.filter((i) => i.kind === 'item').length
 
@@ -59,6 +68,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           )}
           {tender.stated_total != null && <span>Incl. VAT {formatRand(tender.stated_total)}</span>}
           {isDraft && <DeleteTenderButton tenderId={tender.id} projectId={id} />}
+          {(tender.status === 'issued' || tender.status === 'closed') && (
+            <TenderControls tenderId={tender.id} status={tender.status} closingAt={tender.closing_at} />
+          )}
           {tender.status === 'issued' && tender.closing_at && new Date(tender.closing_at) <= new Date() && (
             <AdjudicationActions tenderId={tender.id} status={tender.status} />
           )}
@@ -70,13 +82,40 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       {isDraft && <ImportPanel tenderId={tender.id} hasImport={!!tender.imported_at} />}
 
-      {isDraft && tender.imported_at && <IssuePanel tenderId={tender.id} closingAt={tender.closing_at} />}
+      <DetailsPanel
+        tenderId={tender.id}
+        isDraft={isDraft}
+        particulars={{
+          reference: tender.reference,
+          description: tender.description,
+          site_inspection: tender.site_inspection,
+          queries_close_at: tender.queries_close_at,
+          validity_days: tender.validity_days,
+          contact_name: tender.contact_name,
+          contact_email: tender.contact_email,
+        }}
+      />
+
+      <DocumentsPanel tenderId={tender.id} initial={documents} participants={participants} isDraft={isDraft} />
+
+      {isDraft && tender.imported_at && (
+        <IssuePanel tenderId={tender.id} closingAt={tender.closing_at} documentCount={packCount} hasParticulars={hasParticulars} />
+      )}
 
       {manage && <RequirementsPanel tenderId={tender.id} requirements={manage.requirements} editable={isDraft} />}
 
-      {manage && !isDraft && <SubmissionsPanel submissions={manage.submissions} publishedAddenda={manage.publishedAddenda} sealed={sealed} />}
+      {manage && !isDraft && (
+        <SubmissionsPanel
+          submissions={manage.submissions}
+          publishedAddenda={manage.publishedAddenda}
+          documentsVisible={manage.documentsVisible}
+          sealed={sealed}
+        />
+      )}
 
-      {manage && !isDraft && <ClarificationsPanel tenderId={tender.id} clarifications={manage.clarifications} canPublishAddendum={sealed} />}
+      {manage && !isDraft && (
+        <ClarificationsPanel tenderId={tender.id} clarifications={manage.clarifications} documents={documents} canPublishAddendum={sealed} />
+      )}
 
       {(isDraft || tender.status === 'issued') && (
         <InvitationsPanel

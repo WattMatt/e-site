@@ -16,6 +16,9 @@ import ExcelJS from 'exceljs'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import type { AnyClient } from '@/lib/tender/gate'
 import { checkCompliance, type ComplianceResult, type RateCellType } from '@/lib/tender/compliance'
+import type { TenderDocumentRow } from '@/lib/tender/documents'
+import { renderQuestionReceivedEmail, renderReceiptEmail, sendToMany } from '@/lib/tender/notify'
+import { siteUrl } from '@/lib/tender/access'
 import { CIDB_NOT_APPLICABLE } from '@/lib/tender/profile'
 import { compareUploadedBoq, type RoundTripResult, type StoredRow } from '@/lib/tender/excel-roundtrip'
 import { parseTenderWorkbook } from '@/lib/tender/parse-tender-workbook'
@@ -39,8 +42,21 @@ function refusal(error: { code?: string; message: string }): string {
 interface Ctx {
   supabase: AnyClient
   userId: string
-  tender: { id: string; status: string; closing_at: string | null; package: string; title: string }
+  userEmail: string | null
+  tender: {
+    id: string
+    status: string
+    closing_at: string | null
+    package: string
+    title: string
+    project_name?: string
+    reference?: string | null
+    validity_days?: number | null
+    contact_name?: string | null
+    contact_email?: string | null
+  }
   participantId: string
+  companyName: string
   profileComplete: boolean
   noCidbGrading: boolean
 }
@@ -56,12 +72,24 @@ async function participantCtx(tenderId: string): Promise<{ ok: true; ctx: Ctx } 
   if (!tender) return { ok: false, error: 'Tender not found' }
   const { data: part } = await sb
     .from('tender_participants')
-    .select('id, profile_completed_at, cidb_grade')
+    .select('id, company_name, profile_completed_at, cidb_grade')
     .eq('tender_id', tenderId)
     .eq('user_id', user.id)
     .maybeSingle()
   if (!part) return { ok: false, error: 'Tender not found' }
-  return { ok: true, ctx: { supabase, userId: user.id, tender, participantId: part.id, profileComplete: !!part.profile_completed_at, noCidbGrading: part.cidb_grade === CIDB_NOT_APPLICABLE } }
+  return {
+    ok: true,
+    ctx: {
+      supabase,
+      userId: user.id,
+      userEmail: user.email ?? null,
+      tender,
+      participantId: part.id,
+      companyName: part.company_name ?? '',
+      profileComplete: !!part.profile_completed_at,
+      noCidbGrading: part.cidb_grade === CIDB_NOT_APPLICABLE,
+    },
+  }
 }
 
 /** Every BOQ row the bidder may see, paged past PostgREST's max_rows. */
@@ -82,6 +110,8 @@ export interface PricingState {
   items: (StoredRow & { fixed_amount: number | null; heading_path: string[]; bill_code: string })[]
   lines: Record<string, { rate: number | null; not_priced: boolean; amount: number }>
   requirements: { id: string; kind: 'document' | 'declaration'; label: string; detail: string | null; mandatory: boolean; cidb_certificate: boolean }[]
+  /** The documents WM issued with the tender (the pack, plus published-addendum attachments). */
+  issuedDocuments: TenderDocumentRow[]
   /** The bidder answered CIDB grading "Not applicable": a CIDB-certificate requirement is waived. */
   noCidbGrading: boolean
   documents: { id: string; requirement_id: string; file_name: string; size_bytes: number; uploaded_at: string }[]
@@ -96,12 +126,14 @@ export async function getPricingAction(tenderId: string): Promise<Result<Pricing
   if (!g.ok) return { error: g.error }
   const { ctx } = g
   const sb = ctx.supabase.schema('projects')
-  const [itemsRead, { data: reqs }, { data: sub }, { data: clar }] = await Promise.all([
+  const [itemsRead, { data: reqs }, { data: sub }, { data: clar }, { data: issued }] = await Promise.all([
     portalItems(ctx.supabase, tenderId),
     sb.rpc('tender_portal_requirements', { p_tender_id: tenderId }),
     sb.from('tender_submissions').select('id, status, submitted_at, submission_count, declarations').eq('participant_id', ctx.participantId).maybeSingle(),
     // Published clarifications and the caller's own questions — never who else asked.
     sb.rpc('tender_portal_clarifications', { p_tender_id: tenderId }),
+    // The issue pack plus published-addendum attachments (never an unpublished draft's).
+    sb.rpc('tender_portal_documents', { p_tender_id: tenderId }),
   ])
   if ('error' in itemsRead) return { error: 'Could not read the BOQ. Try again.' }
   const items = itemsRead.data
@@ -146,6 +178,7 @@ export async function getPricingAction(tenderId: string): Promise<Result<Pricing
       items: typedItems,
       lines,
       requirements,
+      issuedDocuments: ((issued ?? []) as TenderDocumentRow[]),
       noCidbGrading: ctx.noCidbGrading,
       documents,
       declarations,
@@ -272,14 +305,54 @@ export async function deleteDocumentAction(tenderId: string, documentId: string)
   return { data: true }
 }
 
-export async function submitTenderAction(tenderId: string): Promise<Result<{ submittedAt: string; total: number }>> {
+/**
+ * Download one of the documents WM issued with the tender. The definer
+ * functions decide visibility (the pack, or a PUBLISHED addendum's attachment)
+ * and receipt the download per participant BEFORE the signed URL exists, so WM
+ * can prove what each tenderer received.
+ */
+export async function downloadTenderDocumentAction(tenderId: string, documentId: string): Promise<Result<{ url: string }>> {
+  if (!UUID_RE.test(documentId)) return { error: 'Unknown document' }
+  const g = await participantCtx(tenderId)
+  if (!g.ok) return { error: g.error }
+  const sb = g.ctx.supabase.schema('projects')
+  const { data: docs } = await sb.rpc('tender_portal_documents', { p_tender_id: tenderId })
+  const doc = ((docs ?? []) as { id: string; file_name: string }[]).find((d) => d.id === documentId)
+  if (!doc) return { error: 'That document is not available' }
+  const { error: logErr } = await sb.rpc('tender_log_document_download', { p_document_id: documentId })
+  if (logErr) return { error: refusal(logErr) }
+  // The path is read with the service key only after the gate and the receipt.
+  const svc = createServiceClient() as AnyClient
+  const { data: row } = await svc.schema('projects').from('tender_documents').select('file_path').eq('id', documentId).maybeSingle()
+  if (!row?.file_path) return { error: 'That document is not available' }
+  const { data: signed } = await svc.storage.from('tender-files').createSignedUrl(row.file_path, 600, { download: doc.file_name })
+  if (!signed?.signedUrl) return { error: 'Could not prepare the download. Try again.' }
+  return { data: { url: signed.signedUrl } }
+}
+
+export async function submitTenderAction(tenderId: string): Promise<Result<{ submittedAt: string; total: number; receiptEmailed: boolean }>> {
   const g = await participantCtx(tenderId)
   if (!g.ok) return { error: g.error }
   const { data, error } = await g.ctx.supabase.schema('projects').rpc('tender_submit', { p_tender_id: tenderId })
   if (error) return { error: refusal(error) }
   const row = (data as { submitted_at: string; total: number }[] | null)?.[0]
   if (!row) return { error: 'Submission refused' }
-  return { data: { submittedAt: row.submitted_at, total: Number(row.total) } }
+  // The receipt is the bidder's proof of submission. Best-effort: a mail outage
+  // must never look like a failed submission.
+  let receiptEmailed = false
+  if (g.ctx.userEmail) {
+    const t = g.ctx.tender
+    const { subject, html } = renderReceiptEmail({
+      projectName: t.project_name ?? '',
+      tender: { package: t.package, title: t.title, reference: t.reference ?? null, closing_at: t.closing_at },
+      companyName: g.ctx.companyName,
+      submittedAt: row.submitted_at,
+      total: Number(row.total),
+      validityDays: t.validity_days ?? null,
+    })
+    receiptEmailed = (await sendToMany([g.ctx.userEmail], subject, html)).sent === 1
+  }
+  return { data: { submittedAt: row.submitted_at, total: Number(row.total), receiptEmailed } }
 }
 
 export async function reopenSubmissionAction(tenderId: string): Promise<Result<true>> {
@@ -299,6 +372,33 @@ export async function askQuestionAction(tenderId: string, title: string, body: s
     tender_id: tenderId, kind: 'question', participant_id: g.ctx.participantId, title: title.trim(), body: body.trim(),
   })
   if (error) return { error: error.code === '42501' ? 'Questions close with the tender.' : error.message }
+  // Tell the engineer (the tender's contact, else whoever created the tender).
+  // Best-effort: the question is saved either way and shows on the panel.
+  const svc = createServiceClient() as AnyClient
+  const { data: t } = await svc
+    .schema('projects')
+    .from('tenders')
+    .select('project_id, package, title, reference, contact_email, created_by, projects!inner(name)')
+    .eq('id', tenderId)
+    .maybeSingle()
+  if (t) {
+    let to: string | null = (t.contact_email as string | null) ?? null
+    if (!to && t.created_by) {
+      const { data: creator } = await svc.auth.admin.getUserById(t.created_by as string)
+      to = creator?.user?.email ?? null
+    }
+    if (to) {
+      const { subject, html } = renderQuestionReceivedEmail({
+        projectName: (t.projects as { name?: string } | null)?.name ?? '',
+        tender: { package: t.package as string, title: t.title as string, reference: (t.reference as string | null) ?? null },
+        company: g.ctx.companyName || 'A tenderer',
+        questionTitle: title.trim(),
+        questionBody: body.trim().slice(0, 2000),
+        adminLink: `${siteUrl()}/projects/${t.project_id}/tenders/${tenderId}`,
+      })
+      await sendToMany([to], subject, html)
+    }
+  }
   return { data: true }
 }
 
