@@ -229,13 +229,24 @@ export interface InspectionAttachments {
 }
 
 /**
- * The verdict rule. An answer fails the INSPECTION only when it is
- *   • a rating of 'poor', or
- *   • one of its dropdown / multi_select field's `fail_values` (e.g. snag risk 'high').
- * Returns the reason, or null. Everything else evaluateField can call 'fail' (a pass_fail
- * ticked Fail, a reading outside pass_when) is a recorded observation, not a failure.
+ * The verdict rule. An answer fails the INSPECTION when it is
+ *   • a pass_fail check ticked Fail (owner, 2026-11-03), unless the field is a yes/no QUESTION,
+ *   • a rating of 'poor',
+ *   • one of its dropdown / multi_select field's `fail_values` (e.g. snag risk 'high'), or
+ *   • an assessed photo item marked Fail.
+ * Returns the reason, or null. A reading outside pass_when is a recorded observation, not a failure.
+ *
+ * A QUESTION is a pass_fail that switches other content on when answered Yes ("Generator
+ * present?", "Board has RCD/ELU protection"): No there means "not applicable", never a fault.
+ * See questionFieldIds().
  */
-export function verdictFailure(field: Field, value: Response): string | null {
+export function verdictFailure(field: Field, value: Response, opts?: { question?: boolean }): string | null {
+  if (field.type === 'pass_fail') {
+    if (opts?.question) return null;
+    if (value.pass_state === 'na' || value.value_bool !== false) return null;
+    const reason = value.fail_reason?.trim();
+    return reason ? `marked Fail: ${reason}` : 'marked Fail';
+  }
   if (field.type === 'photo') {
     if (!field.assess || assessedResult(value) !== 'fail') return null;
     const comment = value.value_text?.trim();
@@ -298,6 +309,25 @@ export function photoMissingReason(r: Response | undefined): string | null {
   return t ? t : null;
 }
 
+/**
+ * The pass_fail fields that are yes/no questions: something in the template (a field, a section
+ * or a subsection) is shown only when the field is answered Yes. On the production templates these
+ * are control_voltage_present, has_rcd, generator_present and solar_integration; a field that
+ * reveals a "reason on fail" when answered No stays a check.
+ */
+export function questionFieldIds(template: Template): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if (!node || typeof node !== 'object') return;
+    const c = (node as { conditional_on?: Record<string, unknown> }).conditional_on;
+    if (c && typeof c.field_id === 'string' && (c.equals === true || c.not_equals === false)) ids.add(c.field_id);
+    for (const v of Object.values(node)) if (v && typeof v === 'object') visit(v);
+  };
+  visit(template.sections);
+  return ids;
+}
+
 export function evaluateInspection(
   template: Template,
   responses: Response[],
@@ -327,9 +357,10 @@ export function evaluateInspection(
 
   // Judge one answered (or unanswered) value field. Verdict failures and observations are
   // separate lists; a field is one or the other, never both.
+  const questions = questionFieldIds(template);
   const judge = (sectionId: string, fieldId: string, field: Field, r: Response | undefined) => {
     if (!r) return;
-    const fail = verdictFailure(field, r);
+    const fail = verdictFailure(field, r, { question: questions.has(field.field_id) });
     if (fail) {
       failedFields.push({ sectionId, fieldId, reason: fail });
       return;

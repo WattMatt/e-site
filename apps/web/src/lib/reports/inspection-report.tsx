@@ -246,7 +246,7 @@ function Summary({ summary, accent }: SummaryProps) {
         </View>
       )}
 
-      {/* Recorded, not failing: a check marked Fail, a reading outside its limit. */}
+      {/* Recorded, not failing: a reading outside its limit, a yes/no question answered No. */}
       {observations.length > 0 && (
         <View>
           <Text style={ss.observationHeading}>Observations — recorded, do not fail the inspection ({observations.length})</Text>

@@ -104,7 +104,7 @@ export interface ReportSummary {
   tally: { pass: number; fail: number; na: number }   // across ALL pass_fail responses incl. group entries
   /** What fails the inspection (engine failedFields): a Poor rating, a fail_values answer. */
   failed: Array<{ label: string; reason: string; sansRef?: string | null }>
-  /** Recorded, not failing (engine flaggedFields): Fail ticks, readings outside their limit. */
+  /** Recorded, not failing (engine flaggedFields): readings outside their limit, yes/no questions answered No. */
   observations: Array<{ label: string; reason: string; sansRef?: string | null }>
   /** Required photos not taken, with the inspector's reason when given. Never failing. */
   missingPhotos: Array<{ label: string; reason: string | null }>
