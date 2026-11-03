@@ -2,21 +2,31 @@ import { describe, it, expect } from 'vitest'
 import { fakeClient } from '../../test/fake-client'
 import { ToolRefusal, type ToolContext } from '../../define-tool'
 import { MASKED_COLUMN } from './sentences'
-import { hasOrgCostRole, maskedColumnsOf, assertFilterableColumns, maskRows, maskRpcResult } from './mask'
+import { hasCostRoleEverywhere, maskedColumnsOf, assertFilterableColumns, maskRows, maskRpcResult } from './mask'
 
 const P1 = '11111111-1111-4111-8111-111111111111'
 const P2 = '22222222-2222-4222-8222-222222222222'
 
-function ctxFor(role: string) {
+const WM = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a'
+const OWN = '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b'
+
+function ctxFor(role: string, memberships?: Array<{ organisationId: string; role: string }>) {
   const f = fakeClient()
-  const ctx = { client: f.client, user: { id: 'u1' }, claims: {}, memberships: [{ organisationId: 'o1', role }] } as unknown as ToolContext
+  const ctx = { client: f.client, user: { id: 'u1' }, claims: {}, memberships: memberships ?? [{ organisationId: WM, role }] } as unknown as ToolContext
   return { ...f, ctx }
 }
+// A contractor on WM projects who owns a company org of their own.
+const contractorWhoOwnsAnOrg = () => ctxFor('contractor', [{ organisationId: WM, role: 'contractor' }, { organisationId: OWN, role: 'owner' }])
 
-describe('hasOrgCostRole', () => {
+describe('hasCostRoleEverywhere', () => {
+  it('is false with no membership and false when any membership is a site role', () => {
+    expect(hasCostRoleEverywhere(ctxFor('owner', []).ctx)).toBe(false)
+    expect(hasCostRoleEverywhere(contractorWhoOwnsAnOrg().ctx)).toBe(false)
+    expect(hasCostRoleEverywhere(ctxFor('owner', [{ organisationId: WM, role: 'owner' }, { organisationId: OWN, role: 'admin' }]).ctx)).toBe(true)
+  })
   it('is true for owner, admin and project_manager and false for site roles', () => {
-    for (const r of ['owner', 'admin', 'project_manager']) expect(hasOrgCostRole(ctxFor(r).ctx), r).toBe(true)
-    for (const r of ['contractor', 'inspector', 'supplier', 'client_viewer']) expect(hasOrgCostRole(ctxFor(r).ctx), r).toBe(false)
+    for (const r of ['owner', 'admin', 'project_manager']) expect(hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(true)
+    for (const r of ['contractor', 'inspector', 'supplier', 'client_viewer']) expect(hasCostRoleEverywhere(ctxFor(r).ctx), r).toBe(false)
   })
 })
 
@@ -28,13 +38,20 @@ describe('maskedColumnsOf', () => {
 })
 
 describe('maskRows', () => {
-  it('an org cost role sees every column unchanged', async () => {
-    const { ctx, calls } = ctxFor('owner')
-    const rows = [{ id: 'a', project_id: P1, contract_value: 100 }]
+  it('an owner sees every column unchanged, the project role still being asked for', async () => {
+    const { ctx, calls, respond } = ctxFor('owner')
+    respond({ data: 'owner' })
+    const rows = [{ id: P1, contract_value: 100 }]
     const out = await maskRows('projects', 'projects', rows, ctx)
-    expect(out.rows).toEqual([{ id: 'a', project_id: P1, contract_value: 100 }])
+    expect(out.rows).toEqual([{ id: P1, contract_value: 100 }])
     expect(out.maskedColumns).toEqual([])
-    expect(calls).toEqual([])
+    expect(calls.map(c => c.path)).toEqual(['rpc:user_effective_project_role'])
+  })
+
+  it('an owner of one org is masked on a project where their effective role is a site role', async () => {
+    const { ctx, respond } = ctxFor('owner')
+    respond({ data: 'client_viewer' })
+    expect((await maskRows('projects', 'projects', [{ id: P1, contract_value: 100 }], ctx)).rows[0].contract_value).toBeNull()
   })
 
   it('a contractor sees stated_total as null on projects.tenders, by per-row effective role', async () => {
@@ -51,7 +68,9 @@ describe('maskRows', () => {
     expect(out.maskedColumns).toEqual(['stated_total'])
     expect(rows[1].stated_total).toBe(200) // the input is not mutated
     // the same rows are un-nulled for an owner (control: the null is the mask, not missing data)
-    expect((await maskRows('projects', 'tenders', rows, ctxFor('owner').ctx)).rows.map(r => r.stated_total)).toEqual([100, 200, 300])
+    const owner = ctxFor('owner')
+    owner.respond({ data: 'owner' }); owner.respond({ data: 'owner' })
+    expect((await maskRows('projects', 'tenders', rows, owner.ctx)).rows.map(r => r.stated_total)).toEqual([100, 200, 300])
     const rpcCalls = calls.filter(c => c.path === 'rpc:user_effective_project_role')
     expect(rpcCalls).toHaveLength(2)
     expect(rpcCalls.map(c => c.args[0])).toEqual([{ p_project_id: P1, p_user_id: 'u1' }, { p_project_id: P2, p_user_id: 'u1' }])
@@ -75,6 +94,47 @@ describe('maskRows', () => {
     expect(calls).toEqual([])
     const lib = await maskRows('cable_schedule', 'rate_library', [{ id: 'g', project_id: null, supply_rate_per_m: 9 }], ctx)
     expect(lib.rows[0].supply_rate_per_m).toBeNull()
+  })
+
+  it('projects.projects is judged by the row id as the project', async () => {
+    const { ctx, calls, respond } = ctxFor('contractor')
+    respond({ data: 'project_manager' })
+    respond({ data: 'contractor' })
+    const out = await maskRows('projects', 'projects', [{ id: P1, contract_value: 100 }, { id: P2, contract_value: 200 }], ctx)
+    expect(out.rows.map(r => r.contract_value)).toEqual([100, null])
+    expect(calls.filter(c => c.path === 'rpc:user_effective_project_role').map(c => c.args[0])).toEqual([{ p_project_id: P1, p_user_id: 'u1' }, { p_project_id: P2, p_user_id: 'u1' }])
+  })
+
+  it('a contractor on WM who is owner of a second org still has WM rows masked by the row project', async () => {
+    const { ctx, respond } = contractorWhoOwnsAnOrg()
+    respond({ data: 'contractor' })
+    const rows = [{ id: 't1', project_id: P1, stated_total: 100 }]
+    const out = await maskRows('projects', 'tenders', rows, ctx)
+    expect(out.rows[0].stated_total).toBeNull()
+    expect(out.maskedColumns).toEqual(['stated_total'])
+    // control: a single-org owner is unchanged (the project role comes back 'owner')
+    const owner = ctxFor('owner')
+    owner.respond({ data: 'owner' })
+    expect(await maskRows('projects', 'tenders', rows, owner.ctx)).toEqual({ rows, maskedColumns: [] })
+  })
+
+  it('without a project, the row organisation_id decides', async () => {
+    const { ctx, calls } = contractorWhoOwnsAnOrg()
+    const rows = [
+      { id: 'i1', organisation_id: WM, amount_kobo: 100 },
+      { id: 'i2', organisation_id: OWN, amount_kobo: 200 },
+      { id: 'i3', organisation_id: '0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c', amount_kobo: 300 },
+    ]
+    const out = await maskRows('billing', 'invoices', rows, ctx)
+    expect(out.rows.map(r => r.amount_kobo)).toEqual([null, 200, null])
+    expect(calls).toEqual([])
+  })
+
+  it('without a project or organisation, a mixed-role person is masked and an everywhere-cost person is not', async () => {
+    const rows = [{ id: 'r1', rate: 3 }]
+    expect((await maskRows('projects', 'boq_items', rows, contractorWhoOwnsAnOrg().ctx)).rows[0].rate).toBeNull()
+    const both = ctxFor('owner', [{ organisationId: WM, role: 'owner' }, { organisationId: OWN, role: 'project_manager' }])
+    expect((await maskRows('projects', 'boq_items', rows, both.ctx)).rows[0].rate).toBe(3)
   })
 
   it('an unmasked table is returned unchanged with no role lookups', async () => {
@@ -105,6 +165,9 @@ describe('assertFilterableColumns', () => {
     expect(() => assertFilterableColumns('projects', 'projects', ['name', 'contract_value'], contractor)).toThrow(MASKED_COLUMN)
     expect(() => assertFilterableColumns('projects', 'projects', ['contract_value'], ctxFor('owner').ctx)).not.toThrow()
   })
+  it('a contractor who owns a second org still cannot filter on a masked column', () => {
+    expect(() => assertFilterableColumns('projects', 'projects', ['contract_value'], contractorWhoOwnsAnOrg().ctx)).toThrow(MASKED_COLUMN)
+  })
   it('an unmasked column is always allowed', () => {
     expect(() => assertFilterableColumns('projects', 'projects', ['name', 'id'], ctxFor('contractor').ctx)).not.toThrow()
     expect(() => assertFilterableColumns('inspections', 'responses', ['value_number'], ctxFor('contractor').ctx)).not.toThrow()
@@ -120,6 +183,11 @@ describe('maskRpcResult', () => {
     expect(input.total[0].rate).toBe(1)
     const owner = maskRpcResult(input, ctxFor('owner').ctx)
     expect(owner).toEqual({ result: input, maskedColumns: [] })
+  })
+  it('still masks for a contractor who owns a second org', () => {
+    const out = maskRpcResult([{ rate: 1 }], contractorWhoOwnsAnOrg().ctx)
+    expect(out.result).toEqual([{ rate: null }])
+    expect(out.maskedColumns).toEqual(['rate'])
   })
   it('passes scalars and null through', () => {
     const ctx = ctxFor('contractor').ctx

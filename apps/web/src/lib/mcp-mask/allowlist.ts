@@ -7,6 +7,11 @@ export type AllowEntry = { schema: string; table: string; column: string; reason
 export const MASK_ALLOWLIST: ReadonlyArray<AllowEntry> = [
   { schema: 'tariffs', table: '*', column: '*', reason: 'public reference data (published utility tariffs)' },
   { schema: '*', table: '*', column: 'vat_rate', reason: 'statutory rate' },
+  { schema: '*', table: '*', column: 'vat_pct', reason: 'statutory VAT percentage, not an amount' },
+  { schema: 'cable_schedule', table: 'discrimination_checks', column: 'margin_ms', reason: 'protection discrimination time margin in milliseconds' },
+  { schema: 'cable_schedule', table: 'fault_sources', column: 'current_limit_factor', reason: 'electrical fault-current limiting factor' },
+  { schema: 'projects', table: 'project_settings', column: 'default_rfi_due_days', reason: 'a number of days' },
+  { schema: 'solar', table: 'studies', column: 'export_limit_kw', reason: 'grid export limit in kW, a technical setting' },
   { schema: 'inspections', table: 'responses', column: 'value_number', reason: 'a measurement taken on site (insulation resistance, a meter serial)' },
   { schema: 'inspections', table: 'response_history', column: 'value_number', reason: 'history of a measurement taken on site' },
   { schema: 'field', table: 'form_responses', column: 'value_number', reason: 'a measurement entered on a site form' },
@@ -24,3 +29,10 @@ const hit = (pattern: string, name: string) => pattern === '*' || pattern === na
 export function isAllowlisted(c: { schema: string; table: string; column: string }, entries: ReadonlyArray<AllowEntry> = MASK_ALLOWLIST): boolean {
   return entries.some(e => hit(e.schema, c.schema) && hit(e.table, c.table) && hit(e.column, c.column))
 }
+
+// Money the name pattern cannot see. Each entry must name a real numeric column that MASK_NAME does not already match
+// (masked-columns.contract.test.ts fails a dead or redundant entry).
+export const MASK_EXTRA: ReadonlyArray<AllowEntry> = [
+  { schema: 'marketplace', table: 'paystack_subaccounts', column: 'percentage_charge', reason: 'the platform fee percentage charged to a supplier' },
+  { schema: 'solar', table: 'bill_checks', column: 'difference_pct', reason: 'derived from the masked billed and modelled totals; the ratio leaks them' },
+]

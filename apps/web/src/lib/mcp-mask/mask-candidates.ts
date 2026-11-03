@@ -4,8 +4,11 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXPOSED_SCHEMAS } from './exposed-schemas'
 
-export const MASK_NAME = /^(.*_)?(rate|price|amount|value|total|cost|retention)(_.*)?$/
-export const NUMERIC_TYPES = /^(numeric|decimal|integer|int|int4|int8|bigint|smallint|real|double precision|money)\b/i
+// Money words, matched as whole underscore-separated tokens. Wider than the spec's first list (rate … retention):
+// the review found money in gross_to_date, net_change, stated_vat, commission_kobo, credit_limit and the like.
+// A false positive (a net_area measurement) is cleared in allowlist.ts with a reason.
+export const MASK_NAME = /^(.*_)?(rate|price|amount|value|total|cost|retention|gross|net|due|subtotal|vat|kobo|commission|fee|budget|limit|contingency|payout|margin|markup)(_.*)?$/
+export const NUMERIC_TYPES = /^(numeric|decimal|integer|int|int2|int4|int8|bigint|smallint|real|float|float4|float8|double precision|money)\b/i
 
 export type Candidate = { schema: string; table: string; column: string }
 export type TableInfo = { hasProjectId: boolean }
@@ -84,7 +87,8 @@ function alterAction(state: Map<string, Cols>, at: string, action: string): stri
   return at
 }
 
-export function readMigrations(dir: string): { candidates: Candidate[]; tables: Record<string, TableInfo> } {
+// Replays every migration in name order and returns the resulting columns of each table: name -> declared type.
+function replay(dir: string): Map<string, Cols> {
   const state = new Map<string, Cols>()
   const files = readdirSync(dir).filter(f => f.endsWith('.sql')).sort()
   for (const f of files) {
@@ -111,7 +115,13 @@ export function readMigrations(dir: string): { candidates: Candidate[]; tables: 
     }
   }
 
-  const exposed = new Set<string>(EXPOSED_SCHEMAS)
+  return state
+}
+
+const exposed = new Set<string>(EXPOSED_SCHEMAS)
+
+export function readMigrations(dir: string): { candidates: Candidate[]; tables: Record<string, TableInfo> } {
+  const state = replay(dir)
   const candidates: Candidate[] = []
   const tables: Record<string, TableInfo> = {}
   for (const k of [...state.keys()].sort()) {
@@ -124,4 +134,20 @@ export function readMigrations(dir: string): { candidates: Candidate[]; tables: 
     }
   }
   return { candidates, tables }
+}
+
+/** Every numeric column of the exposed schemas, whatever its name: the survey behind the name pattern. */
+export function allNumericColumns(dir: string): Array<Candidate & { type: string }> {
+  const state = replay(dir)
+  const out: Array<Candidate & { type: string }> = []
+  for (const k of [...state.keys()].sort()) {
+    const [schema, table] = k.split('.')
+    if (!exposed.has(schema)) continue
+    const cols = state.get(k)!
+    for (const column of [...cols.keys()].sort()) {
+      const type = cols.get(column)!
+      if (NUMERIC_TYPES.test(type)) out.push({ schema, table, column, type: type.split(/\s+/).slice(0, 2).join(' ') })
+    }
+  }
+  return out
 }

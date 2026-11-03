@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readMigrations, MASK_NAME, NUMERIC_TYPES } from './mask-candidates'
+import { readMigrations, allNumericColumns, MASK_NAME, NUMERIC_TYPES } from './mask-candidates'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mask-')) })
@@ -90,11 +90,21 @@ describe('views', () => {
 
 describe('patterns', () => {
   it('MASK_NAME matches whole words between underscores only', () => {
-    for (const n of ['rate', 'unit_price', 'total_ex_vat', 'value_to_date', 'retention_pct', 'estimated_unit_cost']) expect(MASK_NAME.test(n), n).toBe(true)
-    for (const n of ['rated_by', 'valuer', 'totally', 'prices_id', 'name']) expect(MASK_NAME.test(n), n).toBe(false)
+    for (const n of ['rate', 'unit_price', 'total_ex_vat', 'value_to_date', 'retention_pct', 'estimated_unit_cost', 'gross_to_date', 'net_change', 'stated_vat', 'stated_subtotal', 'commission_kobo', 'credit_limit', 'contingency_pct', 'due_incl_vat', 'previous_net', 'payout_kobo', 'markup_pct', 'margin', 'fee_total', 'budget_amount']) expect(MASK_NAME.test(n), n).toBe(true)
+    for (const n of ['rated_by', 'valuer', 'totally', 'prices_id', 'name', 'network', 'nett', 'dueling', 'feet', 'limitless', 'vatican']) expect(MASK_NAME.test(n), n).toBe(false)
   })
   it('NUMERIC_TYPES matches numeric types and not text', () => {
-    for (const t of ['numeric(12,2)', 'integer', 'int4', 'bigint', 'double precision', 'money', 'DECIMAL(5,2)']) expect(NUMERIC_TYPES.test(t), t).toBe(true)
+    for (const t of ['numeric(12,2)', 'integer', 'int4', 'bigint', 'double precision', 'money', 'DECIMAL(5,2)', 'float4', 'float8', 'int2', 'float']) expect(NUMERIC_TYPES.test(t), t).toBe(true)
     for (const t of ['text', 'interval', 'uuid', 'point']) expect(NUMERIC_TYPES.test(t), t).toBe(false)
+  })
+})
+
+describe('allNumericColumns', () => {
+  it('lists every numeric column of the exposed schemas whatever its name', () => {
+    write('00001_a.sql', `CREATE TABLE projects.a (id uuid, sort_order int, rate numeric(10,2), name text, size_mm2 float8);
+      CREATE TABLE auth.c (amount integer);`)
+    expect(allNumericColumns(dir).map(c => `${c.schema}.${c.table}.${c.column}`)).toEqual([
+      'projects.a.rate', 'projects.a.size_mm2', 'projects.a.sort_order',
+    ])
   })
 })
