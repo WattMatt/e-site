@@ -11,9 +11,18 @@
 --
 --   public.mcp_run_select(sql) one read-only SELECT, run as the caller. SECURITY INVOKER, so the dynamic
 --                              statement runs as `authenticated` with the caller's claims and RLS applies
---                              exactly as for any PostgREST read. Three guards stop a write:
+--                              exactly as for any PostgREST read.
+--                              Who: owners, admins and project managers only, judged on EVERY active
+--                              user_organisations row (at least one, none of another role); otherwise
+--                              'SQL is for owners, admins and project managers; use esite_db_select.'
+--                              The tool refuses first with the same sentence; the function refuses again
+--                              so a site role calling the RPC directly over PostgREST gets nothing. The
+--                              rows are read as the invoker (a person reads their own memberships).
+--                              Three guards stop a write:
 --                                (1) the text check: one statement starting with select/with, no inner ';'
---                                    (one trailing ';' is dropped), none of the listed functions as a word.
+--                                    (one trailing ';' is dropped), none of the listed functions as a word
+--                                    (including the ones that run SQL from a string: *_to_xml, ts_stat,
+--                                    ts_rewrite), no reference to the net schema and no U& token.
 --                                    It runs on the comment-stripped text, and that text is what executes.
 --                                (2) the function switches the TRANSACTION to read-only itself
 --                                    (set_config('transaction_read_only','on',true), then checks it took).
@@ -30,16 +39,16 @@
 --                                    A data-modifying CTE is also refused because it cannot be nested in
 --                                    the wrapper (0A000).
 --                              The time cap is the `authenticated` role's statement_timeout (8 s on
---                              2026-11-03); the word list is not a time cap (U&"…" identifiers pass it).
+--                              2026-11-03); the word list is not a time cap.
 --                              Fetch cap 1001 rows: the tool returns 1000 and flags truncation. The user's
 --                              statement is wrapped as a subquery, so its own ORDER BY … LIMIT survives.
 --                              Reach: anything `authenticated` can read, including pg_catalog,
 --                              information_schema and storage (under RLS); vault, auth.users and cron.job
---                              are refused. ⚠ net._http_response and net.http_request_queue are granted
---                              to PUBLIC by supabase_admin (pg_net) and are readable; postgres cannot
---                              revoke that grant (it is not the grantor), so it is NOT closed here.
---                              Not granted to service_role: the tool calls it with the
---                              person's bearer, and the cost-role gate lives in the tool.
+--                              are refused. ⚠ net._http_response and net.http_request_queue are ALL to
+--                              PUBLIC, granted by supabase_admin (pg_net); postgres is not the grantor and
+--                              cannot revoke it. The net/U& text check above is a lock on the door, not
+--                              the fix: the owner must raise the grant with Supabase.
+--                              Not granted to service_role: the tool calls it with the person's bearer.
 --
 --   public.mcp_catalog(schema) the 14 exposed schemas (hard-coded, PostgREST db_schema order) with table
 --                              counts; or one schema's tables and views with their columns. Read from
@@ -67,7 +76,7 @@
 -- sql: (SELECT NOT has_column_privilege('authenticated', 'public.mcp_previews', 'created_at', 'UPDATE'))
 -- sql: (SELECT NOT prosecdef AND provolatile = 's' FROM pg_proc WHERE oid = 'public.mcp_run_select(text)'::regprocedure)
 -- sql: (SELECT jsonb_array_length(public.mcp_catalog()) = 14)
--- behaviour: mcp_run_select runs as the caller under RLS and refuses anything but one read-only SELECT; mcp_catalog lists the 14 exposed schemas; a person reads and writes only their own mcp_previews rows; anon and service_role cannot execute; proven by scripts/db/assert-mcp-open-database.sql
+-- behaviour: mcp_run_select refuses a caller unless every active membership is owner/admin/project_manager; it runs as the caller under RLS, refuses anything but one read-only SELECT and any net/U& reference, and makes the transaction read-only; mcp_catalog lists the 14 exposed schemas; a person reads and writes only their own mcp_previews rows; anon and service_role cannot execute; proven by scripts/db/assert-mcp-open-database.sql
 -- @verify:end
 
 -- ── 1. Previews ─────────────────────────────────────────────────────────────
@@ -115,9 +124,23 @@ BEGIN
 
     IF v_sql !~* '^(select|with)\M'
        OR position(';' in v_sql) > 0
-       OR v_sql ~* '\m(pg_sleep\w*|set_config|lo_import|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_terminate_backend|pg_cancel_backend|pg_advisory\w*|pg_try_advisory\w*|dblink\w*)\M'
+       OR v_sql ~* '\m(pg_sleep\w*|set_config|lo_import|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_terminate_backend|pg_cancel_backend|pg_advisory\w*|pg_try_advisory\w*|dblink\w*|(query|table|cursor|schema|database)_to_xml\w*|ts_stat|ts_rewrite)\M'
+       -- Any reference to the net schema (pg_net), quoted or not, and any U& token (a Unicode-escaped
+       -- identifier could spell net, or a listed name, around this check). A lock on the door, not the fix.
+       OR v_sql ~* '\mnet"?\s*\.'
+       OR v_sql ~* '\mu&'
     THEN
         RAISE EXCEPTION 'Only one read-only SELECT is allowed here.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- SQL is for owners, admins and project managers, judged on EVERY active membership: the caller needs at
+    -- least one, and none may be another role. Read as the invoker (a person reads their own memberships).
+    IF NOT coalesce((
+        SELECT bool_and(uo.role IN ('owner', 'admin', 'project_manager'))
+          FROM public.user_organisations uo
+         WHERE uo.user_id = auth.uid() AND uo.is_active
+    ), false) THEN
+        RAISE EXCEPTION 'SQL is for owners, admins and project managers; use esite_db_select.' USING ERRCODE = 'P0001';
     END IF;
 
     -- The transaction becomes read-only from here on, for the caller too. ON is always allowed mid-
