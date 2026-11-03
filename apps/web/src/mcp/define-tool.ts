@@ -33,12 +33,16 @@ export const UNEXPECTED_SENTENCE = 'Something went wrong on the server; the erro
 
 const MAX_CALLS_PER_MINUTE = 120
 const MAX_WRITES_PER_MINUTE = 20
+// The audit row keeps at most this many result ids; a bulk write can touch up to 500 rows.
+const MAX_RESULT_IDS = 200
 
 type ToolDef<I extends ZodRawShape> = {
   name: string
   title: string
   description: string
   kind: ToolKind
+  /** Decides the kind per call (e.g. preview vs write on one tool); a throw falls back to `kind`. */
+  kindOf?: (args: z.infer<z.ZodObject<I>>) => ToolKind
   inputSchema: I
   projectIdOf?: (args: z.infer<z.ZodObject<I>>) => string | null
   handler: (args: z.infer<z.ZodObject<I>>, ctx: ToolContext) => Promise<unknown>
@@ -49,6 +53,7 @@ export type RegisteredTool = {
   title: string
   description: string
   kind: ToolKind
+  kindOf?: (args: never) => ToolKind
   inputSchema: ZodRawShape
   projectIdOf?: (args: never) => string | null
   handler: (args: never, ctx: ToolContext) => Promise<unknown>
@@ -69,16 +74,20 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
   let refusal: string | null = null
   let resultIds: unknown | null = null
   let result: ToolResult
+  const kind = resolveKind(tool, args)
 
   try {
     // Read-before-write: concurrent calls can each pass this check and overshoot the limit slightly.
     const rate = await rateStatus(ctx.user.id)
-    const writing = tool.kind === 'preview' || tool.kind === 'write'
+    const writing = kind === 'preview' || kind === 'write'
     if (rate.calls >= MAX_CALLS_PER_MINUTE || (writing && rate.writes >= MAX_WRITES_PER_MINUTE)) {
       throw new ToolRefusal(RATE_LIMIT_SENTENCE)
     }
     const out = await tool.handler(args as never, ctx)
-    if (out && typeof out === 'object' && 'ids' in out) resultIds = (out as { ids: unknown }).ids
+    if (out && typeof out === 'object' && 'ids' in out) {
+      const ids = (out as { ids: unknown }).ids
+      resultIds = Array.isArray(ids) ? ids.slice(0, MAX_RESULT_IDS) : ids
+    }
     result = { content: [{ type: 'text', text: JSON.stringify(out) }], structuredContent: out as Record<string, unknown> }
   } catch (err) {
     if (err instanceof ToolRefusal) {
@@ -104,7 +113,7 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
     organisationId,
     projectId,
     tool: tool.name,
-    kind: tool.kind,
+    kind,
     argsDigest: argsDigest(args),
     outcome,
     refusal,
@@ -117,11 +126,20 @@ export async function runTool(tool: RegisteredTool, args: unknown, ctx: ToolCont
       actorId: ctx.user.id,
       projectId,
       event: 'mcp_tool_called',
-      properties: { tool: tool.name, kind: tool.kind, outcome },
+      properties: { tool: tool.name, kind, outcome },
       organisationId,
     })
   }
   return result
+}
+
+// kindOf runs on unvalidated input; a throw there must not lose the call or its audit row.
+function resolveKind(tool: RegisteredTool, args: unknown): ToolKind {
+  try {
+    return tool.kindOf?.(args as never) ?? tool.kind
+  } catch {
+    return tool.kind
+  }
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

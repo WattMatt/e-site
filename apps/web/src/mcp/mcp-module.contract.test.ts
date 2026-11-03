@@ -15,6 +15,7 @@ it('tool files import only loaders, actions, services and shared packages; no ra
   for (const f of files.filter(f => f.startsWith('tools/'))) {
     const src = read(f)
     for (const m of src.matchAll(/from '([^']+)'/g)) expect(m[1], `${f} imports ${m[1]}`).toMatch(ALLOWED_IMPORT)
-    expect(src, `${f} runs a raw query`).not.toMatch(/\.from\(['"]/)
+    // tools/db/** holds the generic database tools; raw queries are their whole job.
+    if (!f.startsWith('tools/db/')) expect(src, `${f} runs a raw query`).not.toMatch(/\.from\(['"]/)
   }
 })
