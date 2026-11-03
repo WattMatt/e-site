@@ -16,7 +16,7 @@ const { upsertMock, submitMock, calls } = vi.hoisted(() => {
   }
 })
 vi.mock('@/actions/inspections.actions', () => ({ upsertResponseAction: upsertMock, submitInspectionAction: submitMock }))
-vi.mock('@/actions/inspections-certify.actions', () => ({ certifyInspectionAction: vi.fn(), sendBackForReinspectionAction: vi.fn() }))
+vi.mock('@/actions/inspections-certify.actions', () => ({ certifyInspectionAction: vi.fn(), sendBackForReinspectionAction: vi.fn(), certifyInPlaceOfVerifierAction: vi.fn() }))
 // Inline photo capture on each field reads its photos through the browser client: none here.
 vi.mock('@/lib/supabase/client', () => {
   const q: Record<string, unknown> = {}
@@ -48,6 +48,17 @@ beforeEach(() => {
 })
 
 describe('CaptureForm', () => {
+  it('offers Certify as admin only to an org owner/admin who is not the verifier, once submitted (00258)', () => {
+    const { unmount } = render(<CaptureForm {...props} status="awaiting_verification" verifierId="u-v" canOverrideVerifier verifierName="Ernst" />)
+    expect(screen.getByRole('button', { name: 'Certify as admin' })).toBeTruthy()
+    unmount()
+    const r2 = render(<CaptureForm {...props} status="in_progress" verifierId="u-v" canOverrideVerifier />)
+    expect(screen.queryByRole('button', { name: 'Certify as admin' })).toBeNull()
+    r2.unmount()
+    render(<CaptureForm {...props} status="awaiting_verification" verifierId="u-v" />)
+    expect(screen.queryByRole('button', { name: 'Certify as admin' })).toBeNull()
+  })
+
   it('opening an inspection writes nothing: a default shown is not an answer given', async () => {
     render(<CaptureForm {...props} />)
     // The default counts on the page...

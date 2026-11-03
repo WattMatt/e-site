@@ -39,7 +39,7 @@ export default async function CapturePage({ params }: Props) {
     .schema('inspections')
     .from('inspections')
     .select(
-      'id, project_id, organisation_id, template_id, target_label, target_location, status, verifier_id, assigned_to_id, coc_number, scheduled_at, completed_at, certified_at, reinspection_notes, abandoned_reason',
+      'id, project_id, organisation_id, template_id, target_label, target_location, status, verifier_id, assigned_to_id, coc_number, scheduled_at, completed_at, certified_at, reinspection_notes, abandoned_reason, verification_override_by, verification_override_replaced, verification_override_reason',
     )
     .eq('id', inspectionId)
     .single()
@@ -86,7 +86,7 @@ export default async function CapturePage({ params }: Props) {
   // RLS cookie client can't read other users' profiles (00009). The inspection
   // read above is RLS-gated, so a returned row already proves project access.
   const service = createServiceClient() as AnyClient
-  const assigneeIds = [inspection.assigned_to_id, inspection.verifier_id].filter(
+  const assigneeIds = [inspection.assigned_to_id, inspection.verifier_id, inspection.verification_override_replaced].filter(
     (v): v is string => Boolean(v),
   )
   const { data: people } = assigneeIds.length
@@ -137,6 +137,24 @@ export default async function CapturePage({ params }: Props) {
   )
   const isOpen = !['certified', 'abandoned'].includes(inspection.status)
   const isVerifier = !!user && inspection.verifier_id === user.id
+  // An organisation owner/admin may certify in place of the assigned verifier (00258); the
+  // database decides, this only offers the button. The caller's own membership row is readable.
+  const { data: ownOrgRole } = user && inspection.status === 'awaiting_verification' && !isVerifier
+    ? await supabase
+        .from('user_organisations')
+        .select('role')
+        .eq('organisation_id', inspection.organisation_id)
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .maybeSingle()
+    : { data: null }
+  const canOverrideVerifier = ['owner', 'admin'].includes((ownOrgRole as { role?: string } | null)?.role ?? '')
+  const override = inspection.verification_override_by
+    ? {
+        replacedName: nameFrom(inspection.verification_override_replaced),
+        reason: inspection.verification_override_reason as string,
+      }
+    : null
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1280 }}>
@@ -229,6 +247,8 @@ export default async function CapturePage({ params }: Props) {
         cocNumber={inspection.coc_number ?? null}
         reinspectionNotes={inspection.reinspection_notes ?? null}
         abandonedReason={inspection.abandoned_reason ?? null}
+        override={override}
+        canOverride={canOverrideVerifier}
       />
 
       {!templateJson ? (
@@ -260,6 +280,8 @@ export default async function CapturePage({ params }: Props) {
           // The verifier of a separate-verifier inspection checks it; the database refuses their
           // answers and photos (00250), so the form does not offer them.
           readOnly={isVerifier && separateVerifier}
+          canOverrideVerifier={canOverrideVerifier}
+          verifierName={verifierName}
         />
       )}
 

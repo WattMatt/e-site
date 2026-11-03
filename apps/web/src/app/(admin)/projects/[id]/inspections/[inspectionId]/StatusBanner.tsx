@@ -17,6 +17,10 @@ export interface StatusBannerProps {
   cocNumber: string | null
   reinspectionNotes: string | null
   abandonedReason: string | null
+  /** The signed-in organisation owner/admin may certify in place of the verifier (00258). */
+  canOverride?: boolean
+  /** An organisation owner/admin took over from the assigned verifier (00258). */
+  override?: { replacedName: string | null; reason: string } | null
 }
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : null)
@@ -50,7 +54,9 @@ export function statusMessage(p: StatusBannerProps): { tone: 'info' | 'warn' | '
       }
       return {
         tone: 'info',
-        text: `Submitted${when ? ` ${when}` : ''}. Waiting on ${verifier} to verify: only they can certify it or send it back.${p.canReassign ? ' You can change the verifier above.' : ''}`,
+        text: p.canOverride
+          ? `Submitted${when ? ` ${when}` : ''}. Waiting on ${verifier} to verify. As an organisation owner or admin you can certify it yourself with Certify as admin, giving a reason.`
+          : `Submitted${when ? ` ${when}` : ''}. Waiting on ${verifier} to verify: only they can certify it or send it back.${p.canReassign ? ' You can change the verifier above.' : ''}`,
       }
     }
     case 're-inspect_required':
@@ -61,7 +67,9 @@ export function statusMessage(p: StatusBannerProps): { tone: 'info' | 'warn' | '
     case 'certified':
       return {
         tone: 'ok',
-        text: `Certified${fmt(p.certifiedAt) ? ` on ${fmt(p.certifiedAt)}` : ''} by ${verifier}${p.cocNumber ? ` (${p.cocNumber})` : ''}.`,
+        text: `Certified${fmt(p.certifiedAt) ? ` on ${fmt(p.certifiedAt)}` : ''} by ${verifier}${p.cocNumber ? ` (${p.cocNumber})` : ''}.${
+          p.override ? ` ${verifier} certified in place of ${p.override.replacedName ?? 'the assigned verifier'}: ${p.override.reason}` : ''
+        }`,
       }
     case 'abandoned':
       return { tone: 'info', text: `Abandoned${p.abandonedReason ? `: ${p.abandonedReason}` : ''}.` }
