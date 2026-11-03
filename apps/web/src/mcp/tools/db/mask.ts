@@ -47,8 +47,11 @@ export async function maskRows(
   }
   const everywhere = hasCostRoleEverywhere(ctx)
   const canSee = async (row: Record<string, unknown>): Promise<boolean> => {
-    const projectId = info.projectKey ? row[info.projectKey] : undefined
-    if (isUuid(projectId)) return lookup(projectId)
+    // A project-keyed table is judged by its project only: no key in the row (not selected, null) fails closed.
+    if (info.projectKey) {
+      const projectId = row[info.projectKey]
+      return isUuid(projectId) ? lookup(projectId) : false
+    }
     if (isUuid(row.organisation_id)) return ctx.memberships.some(m => m.organisationId === row.organisation_id && COST_ROLES.includes(m.role))
     return everywhere
   }

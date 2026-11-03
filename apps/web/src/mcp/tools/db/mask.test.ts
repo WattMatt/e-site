@@ -137,6 +137,19 @@ describe('maskRows', () => {
     expect((await maskRows('projects', 'boq_items', rows, both.ctx)).rows[0].rate).toBe(3)
   })
 
+  it('a project-keyed row without its key column is masked, whatever the caller holds elsewhere, and no lookup is made', async () => {
+    const rows = [{ id: 't1', organisation_id: WM, stated_total: 100 }]
+    for (const who of [contractorWhoOwnsAnOrg(), ctxFor('owner'), ctxFor('contractor')]) {
+      const out = await maskRows('projects', 'tenders', rows, who.ctx)
+      expect(out.rows[0].stated_total).toBeNull()
+      expect(who.calls).toEqual([])
+    }
+    // projects.projects is keyed on id: contract_value selected without id is masked too
+    const owner = ctxFor('owner')
+    expect((await maskRows('projects', 'projects', [{ contract_value: 5 }], owner.ctx)).rows[0].contract_value).toBeNull()
+    expect(owner.calls).toEqual([])
+  })
+
   it('an unmasked table is returned unchanged with no role lookups', async () => {
     const { ctx, calls } = ctxFor('contractor')
     const rows = [{ id: 'a', project_id: P1, value_number: 7 }]
