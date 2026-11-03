@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
+import { hasVerifiedMfaFactor } from './lib/auth/has-verified-mfa-factor'
 
 // Compliance pages reached from an email inbox or from the public privacy
 // notice, by a recipient who is very often NOT signed in — and who, when they
@@ -88,7 +89,13 @@ const VERIFY_MFA_PATH = '/verify-mfa'
 // /api/diary/notify carries the same shape (mobile Bearer JWT, verified in the
 // handler against Supabase Auth, then an org-membership check) and was in no
 // list, so every mobile diary notification was 307'd to /login.
-const SELF_AUTH_PATHS = ['/api/notifications/dispatch', '/api/diary/notify']
+const SELF_AUTH_PATHS = [
+  '/api/notifications/dispatch',
+  '/api/diary/notify',
+  // MCP: Bearer token verified in the route; discovery metadata is public.
+  '/api/mcp',
+  '/.well-known/oauth-protected-resource',
+]
 
 // Webhook endpoints authenticated by a signature over the raw request body,
 // not by a session or a bearer token. They must NOT be redirected: a 307 to
@@ -156,24 +163,16 @@ async function isTenderParticipant(userId: string, email: string | null | undefi
   return (invited ?? 0) > 0
 }
 
-async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${userId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-          apikey:        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        },
-        cache: 'no-store',
-      },
-    )
-    if (!res.ok) return false
-    const body = await res.json() as { factors?: { status: string }[] }
-    return (body.factors ?? []).some((f) => f.status === 'verified')
-  } catch {
-    return false
-  }
+/**
+ * Point a cloned request URL at a gate page (login, verify-mfa) and carry the
+ * original destination in `next` — path AND query, so a deep link such as
+ * /oauth/consent?authorization_id=X survives the round trip. The clone keeps
+ * the original query string, so it is cleared first: the gate URL carries
+ * `next` and nothing else.
+ */
+function setNext(url: URL, pathname: string, search: string) {
+  url.search = ''
+  url.searchParams.set('next', pathname + search)
 }
 
 export async function middleware(request: NextRequest) {
@@ -206,7 +205,7 @@ export async function middleware(request: NextRequest) {
   if (!user && !isPublicPath && !isVerifyEmail && !isVerifyMfa) {
     const url = request.nextUrl.clone()
     url.pathname = isTenderPortalPath(pathname) ? '/tender/login' : '/login'
-    url.searchParams.set('next', pathname)
+    setNext(url, pathname, request.nextUrl.search)
     return NextResponse.redirect(url)
   }
 
@@ -254,7 +253,7 @@ export async function middleware(request: NextRequest) {
     if (await hasVerifiedMfaFactor(user.id)) {
       const url = request.nextUrl.clone()
       url.pathname = VERIFY_MFA_PATH
-      url.searchParams.set('next', pathname)
+      setNext(url, pathname, request.nextUrl.search)
       return NextResponse.redirect(url)
     }
   }

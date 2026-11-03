@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatDate, formatZAR, COST_VIEW_ROLES, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
+import { projectService, formatDate, formatZAR, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
+import { loadRoleMaps, costVisibilityFrom } from '@/lib/projects/cost-visibility'
 import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
 
@@ -26,44 +27,13 @@ export default async function ProjectsPage() {
     ? await projectService.listAccessible(supabase as any)
     : []
 
-  // Per-row cost visibility: a user can see cost if they are owner/admin/PM in
-  // THAT project's org, OR if they hold a COST_VIEW_ROLES project-member role.
-  // For cross-org sub-org users, only the project_members path will fire.
-  const projectRoleByProject = new Map<string, string>()
-  const orgRoleByOrgId       = new Map<string, string>()
-  if (user) {
-    // All active org memberships for this user (one row for single-org users,
-    // multiple for cross-org). Builds orgRoleByOrgId used in per-row check.
-    const { data: orgRows } = await supabase
-      .from('user_organisations')
-      .select('organisation_id, role')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-    for (const r of (orgRows ?? []) as Array<{ organisation_id: string; role: string }>) {
-      orgRoleByOrgId.set(r.organisation_id, r.role)
-    }
-
-    // Project-member roles for this user across all projects.
-    // Used for sub-org users who may be promoted to a cost-view role on a specific project.
-    const { data: pmRows } = await (supabase as any)
-      .schema('projects')
-      .from('project_members')
-      .select('project_id, role')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-    for (const r of (pmRows ?? []) as Array<{ project_id: string; role: string }>) {
-      projectRoleByProject.set(r.project_id, r.role)
-    }
-  }
-
-  const canSeeCostFor = (p: { id: string; organisation_id: string }): boolean => {
-    // Check project's own org first (WM users with owner/admin/PM role).
-    const orgRole = orgRoleByOrgId.get(p.organisation_id)
-    if (orgRole != null && (COST_VIEW_ROLES as readonly string[]).includes(orgRole)) return true
-    // Fall through to per-project role (sub-org users promoted to PM on the project).
-    const pmRole = projectRoleByProject.get(p.id)
-    return pmRole != null && (COST_VIEW_ROLES as readonly string[]).includes(pmRole)
-  }
+  // Per-row cost visibility (owner/admin/PM in the project's org, or a COST_VIEW_ROLES
+  // project-member role). The rule lives in lib/projects/cost-visibility.ts, shared with
+  // the MCP tools. The org-role map is kept because canCreateProject reads it below.
+  const { orgRoleByOrgId, projectRoleByProject } = user
+    ? await loadRoleMaps(supabase, user.id)
+    : { orgRoleByOrgId: new Map<string, string>(), projectRoleByProject: new Map<string, string>() }
+  const canSeeCostFor = costVisibilityFrom({ orgRoleByOrgId, projectRoleByProject })
 
   // Per-project inspections certified count (replaces compliance-health %)
   const projectIds = projects.map((p: any) => p.id)

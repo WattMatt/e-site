@@ -45,6 +45,7 @@ export const RESOLVERS: Resolver[] = [
 const direct = (table: string): Gated => ({ table, project: { column: 'project_id' } })
 const child = (table: string, resolver: string, column: string): Gated => ({ table, project: { resolver, column } })
 
+// public.mcp_tool_calls declares its own site_scope policy inside migration 00257 and is intentionally not listed here.
 export const GATED: Gated[] = [
   // ── direct project_id ──
   ...[

@@ -976,6 +976,23 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > **Changed 2026-10-12 (`00249`).** A plan no longer anchors to a drawing: `floor_plan_id`, `page_index` and `source_file_path` are dropped, `organisation_id` is bound from the project, and `(project_id, purpose)` is unique. A sheet is one page of one file in the private `tenant-plan-files` bucket (60 MB, PDF / PNG / JPEG); its file must live under its own plan's folder (`{org}/{project}/{plan}/…`, enforced by trigger, so the service-side renderers can never be pointed at another project's object). Replacing the file is an UPDATE of `file_path`; the trigger sets `revision + 1`, `replaced_at` and `replaced_from_path` (client values discarded) and keeps the masks and the scale; re-anchoring clears `replaced_at` only. A shape's sheet must belong to its plan and is fixed; `(status_plan_id, node_id)` stays unique, so a board appears once per plan across sheets. `tenants.tenant_plan_file_project(name)` (definer, `anon` revoked) returns the project only when the path's org / project / plan segments name a real plan. Read = every project member, **client_viewer included**; write = `ORG_WRITE_ROLES` through PERMISSIVE membership + **RESTRICTIVE per-verb** gates; the generated `site_scope` policy on all three tables and `site_scope_objects` now covering `tenant-plan-files`. Proven by `scripts/db/assert-status-plans-roles.sql` (91 impersonation assertions, red first, seven mutations). Cloud sync's `isAnnotated()` no longer reads status plans (nothing there references a drawing).
 
+## MCP tools (`apps/web/src/mcp/*`)
+
+Slice 1 is read-only. Every tool runs as the signed-in person (the OAuth bearer's `sub`), re-reads their role on every call, and sits on RLS; no tool uses the service key.
+
+| Tool | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `esite_whoami` | R | R | R | R | R | R | — |
+| `esite_projects_list` | R | R | R | R | R | R | — |
+| `esite_project_get` | R | R | R | R | R | R | — |
+| `esite_project_history` | R | R | R | R | R | R | — |
+
+> **Connect rule.** Claude access is for E-Site team members; ask your project owner. A person can complete the consent page (`/oauth/consent`) and use a token only with at least one active `user_organisations` row whose role is not `client_viewer`; anyone else is refused with that sentence. Site scope applies as everywhere: a person sees only the projects they would see in the app.
+>
+> **`esite_project_get`:** the contract block is returned only to roles with `COST_VIEW_ROLES` on that project (decided per project by `requireEffectiveRole`); every other connected role gets the project without it.
+>
+> **Kill switch.** The env var `MCP_ENABLED`: when it is not `'true'`, `/api/mcp` and `/.well-known/oauth-protected-resource` answer 404. Both paths bypass the session middleware (bearer token / public metadata); `/oauth/consent` is a normal signed-in page outside `(admin)`. Runbook: `docs/mcp/enable-oauth.md`.
+
 ## Public / unauthenticated
 
 | Route | Access |
