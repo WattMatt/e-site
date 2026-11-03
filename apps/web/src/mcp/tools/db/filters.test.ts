@@ -53,6 +53,17 @@ it('refuses a column that is not a plain identifier, before looking at the opera
   expect(() => applyFilters(q, [{ column: 'a->b', op: 'regex', value: 1 }])).toThrow('Column names must be plain identifiers.')
 })
 
+it('quotes not.in string elements that contain reserved characters', () => {
+  const { q, calls } = setup()
+  applyFilters(q, [{ column: 'c', op: 'not.in', value: ['A,B', 'plain', 3, 'x (y)', 'say "hi"', 'a\\b c'] }])
+  expect(calls.at(-1)).toMatchObject({ method: 'not', args: ['c', 'in', '("A,B",plain,3,"x (y)","say \\"hi\\"","a\\\\b c")'] })
+})
+
+it('refuses a non-identifier column in filterColumns', () => {
+  expect(() => filterColumns([{ column: 'a->b', op: 'eq', value: 1 }])).toThrow('Column names must be plain identifiers.')
+  expect(() => filterColumns([{ column: 'Cost', op: 'eq', value: 1 }])).toThrow('Column names must be plain identifiers.')
+})
+
 it('lists the filter columns', () => {
   expect(filterColumns([{ column: 'a', op: 'eq', value: 1 }, { column: 'b', op: 'gt', value: 2 }])).toEqual(['a', 'b'])
 })

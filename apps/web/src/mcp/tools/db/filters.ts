@@ -29,6 +29,13 @@ export interface FilterableQuery {
 
 const bad = () => new ToolRefusal(UNKNOWN_OP)
 const asArray = (v: unknown): readonly unknown[] => { if (!Array.isArray(v)) throw bad(); return v }
+// Same rule as supabase-js `in` (it quotes values with , ( )), widened to the other characters that
+// break a PostgREST list; embedded " and backslash are escaped so a quoted value cannot end early.
+const needsQuote = /[,()"':\s]/
+const listItem = (v: unknown): string => {
+  const t = String(v)
+  return typeof v === 'string' && needsQuote.test(t) ? `"${t.replace(/[\\"]/g, '\\$&')}"` : t
+}
 const asIs = (v: unknown): null | boolean => { if (v !== null && typeof v !== 'boolean') throw bad(); return v }
 
 export function applyFilters<Q extends FilterableQuery>(query: Q, filters: Filter[]): Q {
@@ -51,7 +58,7 @@ export function applyFilters<Q extends FilterableQuery>(query: Q, filters: Filte
       case 'ov': q = q.overlaps(c, value); break
       case 'fts': q = q.textSearch(c, String(value)); break
       case 'not.eq': q = q.not(c, 'eq', value); break
-      case 'not.in': q = q.not(c, 'in', `(${asArray(value).join(',')})`); break
+      case 'not.in': q = q.not(c, 'in', `(${asArray(value).map(listItem).join(',')})`); break
       case 'not.is': q = q.not(c, 'is', value); break
       default: throw bad()
     }
@@ -60,5 +67,5 @@ export function applyFilters<Q extends FilterableQuery>(query: Q, filters: Filte
 }
 
 export function filterColumns(filters: Filter[]): string[] {
-  return filters.map(f => f.column)
+  return filters.map(f => assertIdent(f.column))
 }
