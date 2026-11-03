@@ -32,6 +32,10 @@ const ALLOWED = new Set<string>([
   // status + current_period_end through the grantor's own session (RLS:
   // owner/admin of the org). It never inserts, updates or deletes.
   'apps/web/src/lib/solar/access-panel.ts',
+  // NAME ONLY: the generated cost-mask list (scripts/mcp/generate-masked-columns.ts) names
+  // billing.org_addon_subscriptions as a string key so its money columns are nulled for
+  // non-cost roles. It never queries, inserts, updates or deletes.
+  'apps/web/src/mcp/tools/db/masked-columns.ts',
 ])
 
 /** Drop block and line comments so prose about the table is not a hit. */

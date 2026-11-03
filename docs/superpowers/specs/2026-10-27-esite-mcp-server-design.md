@@ -5,6 +5,8 @@
 **Supersedes in part:** `2026-10-21-tenant-schedule-from-dropbox-design.md`. Its write contract (row shape, diff, preview → commit, `tenant_schedule_reads` with provenance, canonical shop-number matching, decommission guard, opening-date proposal un-ticked) carries over unchanged as the tool contract in §5.1. Its in-app extraction, the embedded Anthropic call and the "Read from Dropbox" button are dropped: the session does the reading.  
 **Status:** approved by the owner 2026-10-27 (with the connect rule in §9.12). Builder-checked; nothing built. Evidence was read from `origin/main` at `a3746e8a` through a detached worktree; the canonical `esite/` checkout is on an old branch and was not used.
 
+> **Note (2026-11-03):** §5 and §10 are superseded by `2026-11-03-esite-mcp-open-database-design.md`: slice 1 now ships an open database (read any exposed table, write through previews, the cost mask, `esite_db_rpc`) rather than reads plus the import and preview paths only. The rest of this document stands, including the connect rule in §9.12.
+
 ---
 
 ## 1. What exists today (evidence)
