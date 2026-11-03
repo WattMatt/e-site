@@ -6,7 +6,7 @@ import { assertWritable } from './denylist'
 import { applyFilters, filterColumns, filterSchema, type Filter, type FilterableQuery } from './filters'
 import { refuseOnDbError, type DbError } from './db-error'
 import { assertFilterableColumns, maskRows } from './mask'
-import { projectIdFromFilters } from './project-id'
+import { idsOf, projectIdFromFilters } from './project-id'
 import { createPreview, consumePreview, type PreviewArgs } from './previews'
 import { EMPTY_PATCH, NEED_FILTER, PREVIEW_MISMATCH, PREVIEW_TOO_WIDE } from './sentences'
 
@@ -123,7 +123,7 @@ function makeMutateTool(verb: 'update' | 'delete'): RegisteredTool {
       const written = await applyFilters(q, filters).select('*')
       refuseOnDbError(written.error)
       const masked = await maskRows(schema, table, (written.data ?? []) as Record<string, unknown>[], ctx)
-      const ids = masked.rows.map(r => r.id).filter((v): v is string => typeof v === 'string')
+      const ids = idsOf(masked.rows)
       return { [done]: masked.rows.length, ids, rows: masked.rows }
     },
   })

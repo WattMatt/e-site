@@ -6,7 +6,7 @@ import { assertWritable } from './denylist'
 import { refuseOnDbError, type DbError } from './db-error'
 import { MASKED } from './masked-columns'
 import { maskRows } from './mask'
-import { projectIdFromRows } from './project-id'
+import { idsOf, projectIdFromRows } from './project-id'
 
 // The generic tools address arbitrary schema.table names, which the generated Database type cannot express.
 interface InsertQuery {
@@ -29,7 +29,7 @@ export const esiteDbInsert = defineTool({
     schema: z.string(),
     table: z.string(),
     rows: z.array(z.record(z.unknown())).min(1).max(500),
-    returning: z.array(z.string()).optional(),
+    returning: z.array(z.string()).min(1).optional(),
   },
   projectIdOf: a => projectIdFromRows(a.rows),
   handler: async ({ schema, table, rows, returning }, ctx) => {
@@ -49,7 +49,7 @@ export const esiteDbInsert = defineTool({
 
     const masked = await maskRows(schema, table, (data ?? []) as Record<string, unknown>[], ctx)
     const out = needKey ? masked.rows.map(({ [key]: _k, ...rest }) => rest) : masked.rows
-    const ids = out.map(r => r.id).filter((v): v is string => typeof v === 'string')
+    const ids = idsOf(out)
     return { inserted: rows.length, ids, rows: out }
   },
 })

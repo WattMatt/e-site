@@ -96,13 +96,31 @@ describe('esite_db_insert', () => {
     expect(open.rows).toEqual(back)
   })
 
-  it('returning without the project key still masks per project, and the key is not leaked', async () => {
-    const { run, calls, respond } = setup('contractor')
-    respond({ data: [{ id: 'v1', net_change: 500, project_id: P1 }] })
-    respond({ data: 'contractor' })
-    const out = await run({ schema: 'projects', table: 'variation_orders', rows: [{ net_change: 500, project_id: P1 }], returning: ['id', 'net_change'] })
-    expect(calls[1]).toMatchObject({ method: 'select', args: ['id,net_change,project_id'] })
-    expect(out.rows).toEqual([{ id: 'v1', net_change: null }])
+  it('returning without the project key masks per project, strips the key, and the same row is intact for a cost role', async () => {
+    const back = [{ id: 'v1', net_change: 500, project_id: P1 }]
+    const insert = (projectRole: string) => {
+      const s = setup('contractor')
+      s.respond({ data: back })
+      s.respond({ data: projectRole })
+      return s.run({ schema: 'projects', table: 'variation_orders', rows: [{ net_change: 500, project_id: P1 }], returning: ['id', 'net_change'] }).then(out => ({ out, calls: s.calls }))
+    }
+    const masked = await insert('contractor')
+    expect(masked.calls[1]).toMatchObject({ method: 'select', args: ['id,net_change,project_id'] })
+    expect(masked.out.rows).toEqual([{ id: 'v1', net_change: null }])
+    const open = await insert('project_manager')
+    expect(open.calls.find(c => c.path === 'rpc:user_effective_project_role')?.args).toEqual([{ p_project_id: P1, p_user_id: 'u1' }])
+    expect(open.out.rows).toEqual([{ id: 'v1', net_change: 500 }])
+  })
+
+  it('integer ids come back in ids as strings; null, missing and object ids are dropped', async () => {
+    const { run, respond } = setup()
+    respond({ data: [{ id: 7 }, { id: 8 }, { id: null }, { name: 'no id' }, { id: { a: 1 } }] })
+    expect((await run({ schema: 'inspections', table: 'notes', rows: [{ a: 1 }] })).ids).toEqual(['7', '8'])
+  })
+
+  it('returning: [] fails input parsing (it would build select(\'\'))', () => {
+    const { parse } = setup()
+    expect(() => parse({ schema: 'inspections', table: 'notes', rows: [{ a: 1 }], returning: [] })).toThrow()
   })
 
   it('surfaces a database error as a refusal', async () => {

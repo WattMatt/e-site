@@ -16,3 +16,8 @@ export function projectIdFromRows(rows: Record<string, unknown>[]): string | nul
   if (!isUuid(first)) return null
   return rows.every(r => r.project_id === first) ? first : null
 }
+
+/** The ids of written rows for the `ids` output and the audit: strings and numbers (as strings); null, undefined and objects are dropped. */
+export function idsOf(rows: Record<string, unknown>[]): string[] {
+  return rows.map(r => r.id).filter((v): v is string | number => typeof v === 'string' || typeof v === 'number').map(String)
+}

@@ -204,15 +204,28 @@ describe.each([
     expect(out.rows).toHaveLength(2)
   })
 
-  it('confirm: the returned rows are masked for a contractor', async () => {
-    const { run, respond } = setup(tool, 'contractor')
+  it('confirm: the returned rows are masked for a contractor and the same rows are intact for an owner', async () => {
     const d = { schema: 'projects', table: 'boq_items', filters, ...(verb === 'update' ? { patch: { description: 'x' } } : {}) }
-    respond({ data: storedRow(name, d) })
+    const confirm = async (role: string) => {
+      const s = setup(tool, role)
+      s.respond({ data: storedRow(name, d) })
+      s.respond({ data: [{ id: PREV }] })
+      s.respond({ data: [{ id: 'a' }, { id: 'b' }], count: 2 })
+      s.respond({ data: [{ id: 'a', rate: 4 }, { id: 'b', rate: 5 }] })
+      return (await s.run({ ...d, previewId: PREV })) as WriteOut
+    }
+    expect((await confirm('contractor')).rows).toEqual([{ id: 'a', rate: null }, { id: 'b', rate: null }])
+    expect((await confirm('owner')).rows).toEqual([{ id: 'a', rate: 4 }, { id: 'b', rate: 5 }])
+  })
+
+  it('confirm: integer ids come back in ids as strings', async () => {
+    const { run, respond } = setup(tool)
+    respond({ data: storedRow(name, digestArgs, { matched_ids: ['1', '2'] }) })
     respond({ data: [{ id: PREV }] })
-    respond({ data: [{ id: 'a' }, { id: 'b' }], count: 2 })
-    respond({ data: [{ id: 'a', rate: 4 }, { id: 'b', rate: 5 }] })
-    const out = (await run({ ...d, previewId: PREV })) as WriteOut
-    expect(out.rows).toEqual([{ id: 'a', rate: null }, { id: 'b', rate: null }])
+    respond({ data: [{ id: 2 }, { id: 1 }], count: 2 })
+    respond({ data: [{ id: 1, status: 'x' }, { id: 2, status: 'x' }, { id: null }, { status: 'no id' }, { id: { a: 1 } }] })
+    const out = (await run({ ...withPatch, previewId: PREV })) as WriteOut
+    expect(out.ids).toEqual(['1', '2'])
   })
 
   it('confirm on a table without id (42703) compares counts only', async () => {
