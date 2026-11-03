@@ -6,15 +6,17 @@
 --                                   scripts/db/assert-mcp-open-database.sql                                  (green)
 --
 -- What is proved, by impersonation, not by reading pg_policy:
---   * mcp_run_select is for owners/admins/PMs only, judged on EVERY active org membership: rbac-test
---     (contractor), a user with no membership, and a user who is admin in WM but contractor elsewhere are all
---     refused with the SQL-role sentence;
+--   * mcp_run_select is for owners/admins/PMs only, judged on EVERY active org membership AND every active
+--     project membership: rbac-test (contractor), a user with no membership, a user who is admin in WM but
+--     contractor elsewhere, and a user who is admin in WM with a contractor project_members row are all refused
+--     with the SQL-role sentence (the last one reads its own project row, so the refusal is the gate, not RLS);
 --   * it runs as the caller: a throwaway WM org admin gets exactly the structure.nodes count RLS gives them
 --     directly (562 of 563: one node sits in a throwaway foreign org), and 0 for that foreign project;
 --   * it switches the transaction to read-only itself, so a VOLATILE function called from inside the SELECT
 --     cannot write (25006);
---   * the text check refuses a second statement, a non-SELECT, the word list, any reference to the net schema
---     and any U& token with the exact sentence; one trailing ';' is tolerated;
+--   * the text check refuses a second statement, a non-SELECT, the word list (pg_notify included: NOTIFY is
+--     allowed in a read-only transaction), any reference to the net schema and any U& token with the exact
+--     sentence; one trailing ';' is tolerated;
 --   * a data-modifying CTE and SELECT … FOR UPDATE are refused by the database; the SQLSTATEs are recorded;
 --   * reach beyond the 14 schemas: net (three spellings), vault, auth.users, cron.job, storage.objects;
 --   * the 1001-row fetch cap holds, and a statement with its own LIMIT still runs;
@@ -23,6 +25,11 @@
 --     DOES hold grants in (storage) is [];
 --   * mcp_previews: a person reads and writes only their own rows; a forged user_id is refused 42501; only
 --     consumed_at is updatable; TRUNCATE is refused; anon cannot select.
+--   * no secret is readable through pg_catalog by a signed-in person (these can go red on their own, whatever
+--     the migration: they guard against someone storing a key in the database later): no app.settings.* GUC,
+--     no JWT or sb_secret_ key in a trigger's arguments or a function body, no http/dblink/postgres_fdw.
+--   * REPORT (always ok): the number of active project_members rows whose organisation_id differs from the
+--     project's organisation_id (the 00177/00238 cross-org shape), read before any fixture is inserted.
 --
 -- ORDER MATTERS: mcp_run_select switches the transaction to read-only (writes to the temp tables stay legal,
 -- writes to real tables do not). Every write fixture and every mcp_previews write is in the FIRST DO block;
@@ -62,6 +69,7 @@ DECLARE
   v_other       UUID := gen_random_uuid();   -- signed in, no memberships at all
   v_admin       UUID := gen_random_uuid();   -- active admin in WM only
   v_mixed       UUID := gen_random_uuid();   -- admin in WM AND contractor in the throwaway org
+  v_pmix        UUID := gen_random_uuid();   -- admin in WM AND a contractor project_members row (throwaway project)
   v_org         UUID;
   v_zz_org      UUID := gen_random_uuid();   -- throwaway foreign org
   v_zz_proj     UUID := gen_random_uuid();   -- throwaway project in it, with one node
@@ -75,6 +83,13 @@ DECLARE
   v_msg         TEXT;
   v_case        RECORD;
 BEGIN
+  -- ── REPORT, before any fixture exists: cross-org project memberships (00177 / 00238 note) ──
+  SELECT count(*) INTO v_n
+    FROM projects.project_members pm
+    JOIN projects.projects p ON p.id = pm.project_id
+   WHERE pm.is_active AND pm.organisation_id <> p.organisation_id;
+  INSERT INTO _r VALUES ('report_cross_org_project_members', true, v_n::text || ' active rows');
+
   -- ── Fixtures ────────────────────────────────────────────────────────────
   SELECT pm.project_id, pm.organisation_id INTO v_proj_on, v_org
     FROM projects.project_members pm
@@ -91,7 +106,8 @@ BEGIN
          u.email, '', now(), now(), now(), '{}'::jsonb, '{}'::jsonb
     FROM (VALUES (v_other, 'probe-mcp-open-db-other@example.invalid'),
                  (v_admin, 'probe-mcp-open-db-admin@example.invalid'),
-                 (v_mixed, 'probe-mcp-open-db-mixed@example.invalid')) AS u(id, email);
+                 (v_mixed, 'probe-mcp-open-db-mixed@example.invalid'),
+                 (v_pmix,  'probe-mcp-open-db-pmix@example.invalid')) AS u(id, email);
 
   -- The throwaway foreign org, with one project and one node the WM admin must not see.
   INSERT INTO public.organisations (id, name, slug) VALUES (v_zz_org, 'ZZ MCP probe org', 'zz-mcp-probe-' || left(v_zz_org::text, 8));
@@ -102,7 +118,11 @@ BEGIN
   INSERT INTO public.user_organisations (user_id, organisation_id, role, is_active) VALUES
     (v_admin, v_org,    'admin',      TRUE),
     (v_mixed, v_org,    'admin',      TRUE),
-    (v_mixed, v_zz_org, 'contractor', TRUE);
+    (v_mixed, v_zz_org, 'contractor', TRUE),
+    (v_pmix,  v_org,    'admin',      TRUE);
+  -- A contractor seat on the throwaway project, held through the WM membership (clause (a) admits it).
+  INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active)
+  VALUES (v_zz_proj, v_pmix, v_org, 'contractor', TRUE);
 
   SELECT count(*) INTO v_total FROM structure.nodes;
   SELECT count(*) INTO v_n FROM structure.nodes WHERE project_id = v_zz_proj;
@@ -237,6 +257,42 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
     INSERT INTO _r VALUES ('catalog_unexposed_schema_is_empty', false, v_state || ' ' || v_msg);
+  END;
+  -- ── Secrets reachable through pg_catalog by any signed-in person (read as rbac-test) ──
+  SELECT count(*) INTO v_n FROM pg_settings WHERE name LIKE 'app.settings.%';
+  INSERT INTO _r VALUES ('secrets_no_app_settings_guc', v_n = 0,
+    v_n::text || coalesce(' ' || (SELECT string_agg(name, ',') FROM pg_settings WHERE name LIKE 'app.settings.%'), ''));
+  SELECT count(*) INTO v_n FROM pg_trigger WHERE encode(tgargs, 'escape') ~ '(eyJ|sb_secret_)';
+  INSERT INTO _r VALUES ('secrets_no_key_in_trigger_args', v_n = 0,
+    v_n::text || coalesce(' ' || (SELECT string_agg(tgrelid::regclass::text || ':' || tgname, ',')
+                                     FROM pg_trigger WHERE encode(tgargs, 'escape') ~ '(eyJ|sb_secret_)'), ''));
+  -- A key, not a mention: a JWT body or an sb_secret_ followed by key characters (a comment's 'sb_secret_…' is not).
+  SELECT count(*) INTO v_n
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+     AND p.prosrc ~ '(eyJ[A-Za-z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{10,})';
+  INSERT INTO _r VALUES ('secrets_no_key_in_function_body', v_n = 0,
+    v_n::text || coalesce(' ' || (SELECT string_agg(n.nspname || '.' || p.proname, ',' ORDER BY 1)
+                                     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                                    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                                      AND p.prosrc ~ '(eyJ[A-Za-z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{10,})'), ''));
+  SELECT count(*) INTO v_n FROM pg_extension WHERE extname IN ('http', 'dblink', 'postgres_fdw');
+  INSERT INTO _r VALUES ('secrets_no_outbound_sql_extensions', v_n = 0,
+    v_n::text || coalesce(' ' || (SELECT string_agg(extname, ',') FROM pg_extension WHERE extname IN ('http', 'dblink', 'postgres_fdw')), ''));
+  RESET ROLE;
+
+  -- ═══ ADMIN IN WM WITH A CONTRACTOR PROJECT SEAT → refused (every project membership counts) ═══
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', v_pmix::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('control_pmix_reads_own_project_row',
+    (SELECT count(*) FROM projects.project_members WHERE user_id = auth.uid() AND is_active AND role = 'contractor') = 1, NULL);
+  BEGIN
+    v_res := public.mcp_run_select('select 1 as x');
+    INSERT INTO _r VALUES ('sql_gate_refuses_admin_with_contractor_project_seat', false, 'returned ' || coalesce(v_res::text, 'NULL'));
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+    INSERT INTO _r VALUES ('sql_gate_refuses_admin_with_contractor_project_seat', v_state = 'P0001' AND v_msg = c_sql_role, v_state || ' ' || v_msg);
   END;
   RESET ROLE;
 
@@ -442,6 +498,7 @@ BEGIN
       ('refuse_advisory_lock',      'select pg_advisory_lock(1)'),
       ('refuse_read_file',          'select pg_read_file(''/etc/hostname'')'),
       ('refuse_terminate_backend',  'select pg_terminate_backend(1)'),
+      ('refuse_pg_notify',          'select pg_notify(''pgrst'',''reload schema'')'),
       ('refuse_query_to_xml',       'select query_to_xml(''select count(*) from ne'' || ''t._http_response'', true, false, '''')'),
       ('reach_net_http_response',   'select count(*) as n from net._http_response'),
       ('reach_net_quoted_queue',    'select count(*) as n from "net"."http_request_queue"'),
@@ -526,11 +583,14 @@ SELECT t."check" || coalesce('  [' || r.note || ']', '') AS "check", coalesce(r.
     ('control_foreign_project_has_a_node',               'CONTROL: the throwaway foreign project has 1 structure.nodes row (postgres)'),
     ('control_rls_filters_nodes_for_admin',              'CONTROL: RLS gives the WM admin some but not all structure.nodes'),
     ('control_admin_has_no_access_to_foreign_project',   'CONTROL: the WM admin has no access to the foreign project'),
+    ('report_cross_org_project_members',                 'REPORT: active project_members rows whose organisation_id differs from the project''s (always ok; the count is the note)'),
     ('control_mixed_user_reads_both_memberships',        'CONTROL: the mixed user reads both own memberships (invoker self-read works)'),
+    ('control_pmix_reads_own_project_row',               'CONTROL: the WM admin with a contractor project seat reads that project_members row (RLS lets the gate see it)'),
     ('control_transaction_read_write_before_first_call', 'CONTROL: the transaction is read-write before the first successful mcp_run_select'),
     ('sql_gate_refuses_contractor',                      'G1. rbac-test (contractor) is refused: P0001 + the SQL-role sentence'),
     ('sql_gate_refuses_user_without_membership',         'G2. a user with no membership is refused: P0001 + the SQL-role sentence'),
     ('sql_gate_refuses_admin_who_is_contractor_elsewhere','G3. admin in WM + contractor elsewhere is refused (every membership counts)'),
+    ('sql_gate_refuses_admin_with_contractor_project_seat','G4. admin in WM + an active contractor project_members row is refused (every project membership counts)'),
     ('run_select_count_matches_direct',                  '1. admin: run_select count(*) on structure.nodes = the admin''s direct count'),
     ('transaction_read_only_during_call',                '1a. the statement runs in a read-only transaction (current_setting inside the call = on)'),
     ('transaction_read_only_after_call',                 '1a′. called outside a subtransaction, the transaction stays read-only after the call'),
@@ -554,6 +614,7 @@ SELECT t."check" || coalesce('  [' || r.note || ']', '') AS "check", coalesce(r.
     ('refuse_advisory_lock',                             '8b. pg_advisory_lock refused: P0001 + the sentence'),
     ('refuse_read_file',                                 '8c. pg_read_file refused: P0001 + the sentence'),
     ('refuse_terminate_backend',                         '8d. pg_terminate_backend refused: P0001 + the sentence'),
+    ('refuse_pg_notify',                                 '8f. pg_notify (NOTIFY works in a read-only transaction) refused: P0001 + the sentence'),
     ('refuse_query_to_xml',                              '8e. query_to_xml (runs SQL from a string, spells net around the regex) refused'),
     ('hfp_anon_no_execute',                              '9. has_function_privilege anon EXECUTE mcp_run_select = false'),
     ('hfp_authenticated_execute',                        '9. has_function_privilege authenticated EXECUTE mcp_run_select = true'),
@@ -584,7 +645,11 @@ SELECT t."check" || coalesce('  [' || r.note || ']', '') AS "check", coalesce(r.
     ('reach_vault_decrypted_secrets',                    'R1. admin: vault.decrypted_secrets refused 42501'),
     ('reach_auth_users',                                 'R2. admin: auth.users refused 42501'),
     ('reach_cron_job',                                   'R3. admin: cron.job refused 42501 or 0 rows'),
-    ('reach_storage_objects_same_as_direct',             'R6. admin: run_select count on storage.objects = the admin''s direct count (RLS)')
+    ('reach_storage_objects_same_as_direct',             'R6. admin: run_select count on storage.objects = the admin''s direct count (RLS)'),
+    ('secrets_no_app_settings_guc',                      'S1. no app.settings.* GUC is visible in pg_settings'),
+    ('secrets_no_key_in_trigger_args',                   'S2. no trigger argument carries a JWT (eyJ) or an sb_secret_ key'),
+    ('secrets_no_key_in_function_body',                  'S3. no function body outside pg_catalog/information_schema carries a JWT or an sb_secret_ key'),
+    ('secrets_no_outbound_sql_extensions',               'S4. none of the http, dblink, postgres_fdw extensions is installed')
   ) AS v(k, "check")) t
   LEFT JOIN _r r ON r.k = t.k
  ORDER BY t.ord;

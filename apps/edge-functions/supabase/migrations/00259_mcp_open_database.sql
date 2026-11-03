@@ -13,16 +13,24 @@
 --                              statement runs as `authenticated` with the caller's claims and RLS applies
 --                              exactly as for any PostgREST read.
 --                              Who: owners, admins and project managers only, judged on EVERY active
---                              user_organisations row (at least one, none of another role); otherwise
+--                              user_organisations row (at least one, none of another role) AND on EVERY
+--                              active projects.project_members row (none is fine): a person who owns their
+--                              own company but is a contractor on one WM project (a project_members row
+--                              admitted by user_has_project_access clause (a), 00238) is refused. Otherwise
 --                              'SQL is for owners, admins and project managers; use esite_db_select.'
 --                              The tool refuses first with the same sentence; the function refuses again
 --                              so a site role calling the RPC directly over PostgREST gets nothing. The
---                              rows are read as the invoker (a person reads their own memberships).
+--                              rows are read as the invoker (a person reads their own memberships; a
+--                              project_members row they cannot read gives them no access to that project
+--                              either, since site_scope on it is user_has_project_access). The results are
+--                              NOT cost-masked per row: this role rule is the cost decision for SQL.
 --                              Three guards stop a write:
 --                                (1) the text check: one statement starting with select/with, no inner ';'
 --                                    (one trailing ';' is dropped), none of the listed functions as a word
 --                                    (including the ones that run SQL from a string: *_to_xml, ts_stat,
---                                    ts_rewrite), no reference to the net schema and no U& token.
+--                                    ts_rewrite; and pg_notify, because NOTIFY is allowed in a read-only
+--                                    transaction and a loop of pg_notify('pgrst','reload schema') would
+--                                    thrash PostgREST), no reference to the net schema and no U& token.
 --                                    It runs on the comment-stripped text, and that text is what executes.
 --                                (2) the function switches the TRANSACTION to read-only itself
 --                                    (set_config('transaction_read_only','on',true), then checks it took).
@@ -76,7 +84,8 @@
 -- sql: (SELECT NOT has_column_privilege('authenticated', 'public.mcp_previews', 'created_at', 'UPDATE'))
 -- sql: (SELECT NOT prosecdef AND provolatile = 's' FROM pg_proc WHERE oid = 'public.mcp_run_select(text)'::regprocedure)
 -- sql: (SELECT jsonb_array_length(public.mcp_catalog()) = 14)
--- behaviour: mcp_run_select refuses a caller unless every active membership is owner/admin/project_manager; it runs as the caller under RLS, refuses anything but one read-only SELECT and any net/U& reference, and makes the transaction read-only; mcp_catalog lists the 14 exposed schemas; a person reads and writes only their own mcp_previews rows; anon and service_role cannot execute; proven by scripts/db/assert-mcp-open-database.sql
+-- sql: (SELECT position('pg_notify' in prosrc) > 0 AND position('projects.project_members' in prosrc) > 0 FROM pg_proc WHERE oid = 'public.mcp_run_select(text)'::regprocedure)
+-- behaviour: mcp_run_select refuses a caller unless every active org membership and every active project membership is owner/admin/project_manager; it runs as the caller under RLS, refuses anything but one read-only SELECT and any net/U& reference, and makes the transaction read-only; mcp_catalog lists the 14 exposed schemas; a person reads and writes only their own mcp_previews rows; anon and service_role cannot execute; proven by scripts/db/assert-mcp-open-database.sql
 -- @verify:end
 
 -- ── 1. Previews ─────────────────────────────────────────────────────────────
@@ -124,7 +133,7 @@ BEGIN
 
     IF v_sql !~* '^(select|with)\M'
        OR position(';' in v_sql) > 0
-       OR v_sql ~* '\m(pg_sleep\w*|set_config|lo_import|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_terminate_backend|pg_cancel_backend|pg_advisory\w*|pg_try_advisory\w*|dblink\w*|(query|table|cursor|schema|database)_to_xml\w*|ts_stat|ts_rewrite)\M'
+       OR v_sql ~* '\m(pg_sleep\w*|set_config|lo_import|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_terminate_backend|pg_cancel_backend|pg_advisory\w*|pg_try_advisory\w*|dblink\w*|(query|table|cursor|schema|database)_to_xml\w*|ts_stat|ts_rewrite|pg_notify)\M'
        -- Any reference to the net schema (pg_net), quoted or not, and any U& token (a Unicode-escaped
        -- identifier could spell net, or a listed name, around this check). A lock on the door, not the fix.
        OR v_sql ~* '\mnet"?\s*\.'
@@ -133,13 +142,19 @@ BEGIN
         RAISE EXCEPTION 'Only one read-only SELECT is allowed here.' USING ERRCODE = 'P0001';
     END IF;
 
-    -- SQL is for owners, admins and project managers, judged on EVERY active membership: the caller needs at
-    -- least one, and none may be another role. Read as the invoker (a person reads their own memberships).
+    -- SQL is for owners, admins and project managers, judged on EVERY active org membership (the caller needs
+    -- at least one, and none may be another role) AND on EVERY active project membership (none is fine). Read
+    -- as the invoker (a person reads their own memberships).
     IF NOT coalesce((
         SELECT bool_and(uo.role IN ('owner', 'admin', 'project_manager'))
           FROM public.user_organisations uo
          WHERE uo.user_id = auth.uid() AND uo.is_active
-    ), false) THEN
+    ), false)
+    OR NOT coalesce((
+        SELECT bool_and(pm.role IN ('owner', 'admin', 'project_manager'))
+          FROM projects.project_members pm
+         WHERE pm.user_id = auth.uid() AND pm.is_active
+    ), true) THEN
         RAISE EXCEPTION 'SQL is for owners, admins and project managers; use esite_db_select.' USING ERRCODE = 'P0001';
     END IF;
 
