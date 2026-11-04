@@ -12,6 +12,7 @@ import type {
   ReportPhotoField,
 } from './inspection-report-data'
 import { Cover, pageStyles as s } from './components'
+import { toWinAnsiSafe } from './winansi-text'
 import {
   RunningHeader,
   Section,
@@ -381,6 +382,110 @@ function GroupBlock({ group, accent }: { group: ReportGroup; accent: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// WinAnsi boundary
+//
+// react-pdf's standard Helvetica encodes WinAnsi only and does NOT throw on
+// anything else: it draws the low byte of the code point, so `Ω` printed as
+// `©`, `≤` as the letter `d`, and `✓` vanished. On a certificate that is a
+// wrong legal record, not a cosmetic glitch. Every string the document draws
+// passes through toWinAnsiSafe here, once, before rendering: line breaks are
+// kept (multi-line answers and comments), nulls stay null, and image data URIs
+// and hrefs are left alone because they are never drawn as text.
+// ---------------------------------------------------------------------------
+
+const t = toWinAnsiSafe
+const tn = <T extends string | null | undefined>(v: T): T => (v == null ? v : (toWinAnsiSafe(v) as T))
+
+function sanitiseRow(row: ReportFieldRow): ReportFieldRow {
+  return {
+    ...row,
+    label: t(row.label),
+    failReason: tn(row.failReason),
+    sansRef: tn(row.sansRef),
+    value: tn(row.value),
+    photos: row.photos ? sanitisePhotoField(row.photos) : row.photos,
+  }
+}
+
+function sanitisePhotoField(field: ReportPhotoField): ReportPhotoField {
+  return {
+    ...field,
+    label: t(field.label),
+    photos: field.photos.map((p) => ({ ...p, caption: t(p.caption) })),
+  }
+}
+
+/** Every drawn string of the payload, made WinAnsi-safe. Exported for tests. */
+export function sanitiseInspectionReportData(data: InspectionReportData): InspectionReportData {
+  const sm = data.summary
+  const finding = (f: { label: string; reason: string; sansRef?: string | null }) => ({
+    ...f,
+    label: t(f.label),
+    reason: t(f.reason),
+    sansRef: tn(f.sansRef),
+  })
+  return {
+    ...data,
+    summary: {
+      ...sm,
+      documentNumber: t(sm.documentNumber),
+      projectName: t(sm.projectName),
+      projectCode: tn(sm.projectCode),
+      targetLabel: t(sm.targetLabel),
+      templateName: t(sm.templateName),
+      templateVersion: tn(sm.templateVersion),
+      inspectors: t(sm.inspectors),
+      verifier: tn(sm.verifier),
+      overallResult: tn(sm.overallResult),
+      sansReference: tn(sm.sansReference),
+      failed: sm.failed.map(finding),
+      observations: sm.observations.map(finding),
+      missingPhotos: sm.missingPhotos.map((m) => ({ label: t(m.label), reason: tn(m.reason) })),
+    },
+    sections: data.sections.map((section) => ({
+      ...section,
+      title: t(section.title),
+      rows: section.rows.map(sanitiseRow),
+      groups: section.groups.map((g) => ({
+        ...g,
+        label: t(g.label),
+        entries: g.entries.map((e) => ({ ...e, rows: e.rows.map(sanitiseRow) })),
+      })),
+      photoFields: section.photoFields.map(sanitisePhotoField),
+    })),
+    annexures: data.annexures.map((a) => ({ ...a, name: t(a.name), meta: tn(a.meta) })),
+    signatures: data.signatures.map((sig) => ({
+      ...sig,
+      role: t(sig.role),
+      name: t(sig.name),
+      title: tn(sig.title),
+      registrationNumber: tn(sig.registrationNumber),
+      signedAt: tn(sig.signedAt),
+    })),
+    audit: data.audit.map((a) => ({
+      ...a,
+      sectionId: tn(a.sectionId),
+      fieldId: tn(a.fieldId),
+      fieldLabel: tn(a.fieldLabel),
+      by: t(a.by),
+    })),
+  }
+}
+
+/** The cover and running header draw the branding strings too. Exported for tests. */
+export function sanitiseBranding(branding: ResolvedBranding): ResolvedBranding {
+  return {
+    ...branding,
+    issuer: { ...branding.issuer, wordmark: tn(branding.issuer.wordmark) },
+    parties: branding.parties.map((p) => ({ ...p, label: t(p.label) })),
+    title: t(branding.title),
+    kicker: t(branding.kicker),
+    projectLine: t(branding.projectLine),
+    footerStamp: t(branding.footerStamp),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // InspectionReportDocument
 // ---------------------------------------------------------------------------
 
@@ -389,7 +494,9 @@ export interface InspectionReportDocumentProps {
   branding: ResolvedBranding
 }
 
-export function InspectionReportDocument({ data, branding }: InspectionReportDocumentProps) {
+export function InspectionReportDocument(props: InspectionReportDocumentProps) {
+  const data = sanitiseInspectionReportData(props.data)
+  const branding = sanitiseBranding(props.branding)
   const { accent, issuer, title } = branding
 
   const auditRows = data.audit.map((a) => [
