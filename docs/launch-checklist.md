@@ -122,7 +122,7 @@ Set these in Vercel (item 4) and as Supabase Edge Function secrets:
 
 For Edge Functions:
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_xxxx RESEND_FROM="E-Site <noreply@e-site.live>" --project-ref <staging-ref>
+npx supabase secrets set RESEND_API_KEY=re_xxxx RESEND_FROM="E-Site <noreply@e-site.live>" --remote=<staging-ref>
 ```
 
 ### Verification

@@ -76,7 +76,7 @@ Probes:
 ## 4. Edge secrets
 
 ```bash
-supabase secrets set --project-ref cbskbnvvgcybmfikxgky \
+supabase secrets set --remote=cbskbnvvgcybmfikxgky \
   WHATSAPP_TOKEN=pending WHATSAPP_PHONE_NUMBER_ID=pending \
   WHATSAPP_APP_SECRET=pending WHATSAPP_VERIFY_TOKEN="$(openssl rand -hex 24)" \
   APP_URL=https://www.e-site.live

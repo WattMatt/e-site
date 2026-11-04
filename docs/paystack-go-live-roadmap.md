@@ -369,8 +369,8 @@ Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
 > 4b. **Rotate the Supabase Edge secret as well — this runbook used to rotate only Vercel.**
 >    Deployed edge functions read `PAYSTACK_SECRET_KEY` from Supabase's own secret store, which Vercel knows nothing about: `marketplace-payment` and `eft-invoice`. (`paystack-webhook` used to be a third — it is now a 410 stub and reads no secret, but the secret itself is still worth rotating in that store.) Rotate Vercel alone and you ship a split brain — Vercel on `sk_live_`, the edge functions still on `sk_test_` — in which every edge-side charge, split and signature verification silently transacts against the wrong Paystack account.
 >    ```bash
->    npx supabase secrets set PAYSTACK_SECRET_KEY="$SK_LIVE" --project-ref cbskbnvvgcybmfikxgky
->    npx supabase secrets list --project-ref cbskbnvvgcybmfikxgky   # confirm the digest for that name changed
+>    npx supabase secrets set PAYSTACK_SECRET_KEY="$SK_LIVE" --remote=cbskbnvvgcybmfikxgky
+>    npx supabase secrets list --remote=cbskbnvvgcybmfikxgky   # confirm the digest for that name changed
 >    ```
 >    A secret change needs no function redeploy — the next invocation reads the new value. (Edge functions do **not** auto-deploy on merge; that is a separate CLI step, and not part of this rotation.)
 >    There is **no separate webhook secret to rotate**: Paystack signs with the secret key itself. A `PAYSTACK_WEBHOOK_SECRET` exists in that store and is read by **zero** code in this repo — see the quick-reference table at the foot of this doc. Leave it alone here; deleting a production secret is its own reviewed change.

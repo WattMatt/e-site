@@ -91,20 +91,20 @@ SELECT count(*) FROM supabase_migrations.schema_migrations;
 **Edge Function deploy** (all functions — use the bulk deploy in section 3):
 ```bash
 # Required secrets (run once per environment)
-supabase secrets set RESEND_API_KEY=re_... --project-ref <ref>
-supabase secrets set RESEND_FROM="E-Site <noreply@e-site.live>" --project-ref <ref>
-supabase secrets set SITE_URL="https://www.e-site.live" --project-ref <ref>
+supabase secrets set RESEND_API_KEY=re_... --remote=<ref>
+supabase secrets set RESEND_FROM="E-Site <noreply@e-site.live>" --remote=<ref>
+supabase secrets set SITE_URL="https://www.e-site.live" --remote=<ref>
 
 # All internal functions (including lifecycle email + payment recovery + health scoring)
 for fn in onboarding-email-d0 onboarding-email-d1 onboarding-email-d3 \
           onboarding-email-d7 onboarding-email-d14 reengagement-check \
           conversion-prompt payment-recovery-check calculate-health-scores \
           compliance-complete eft-invoice send-notification send-email; do
-  supabase functions deploy $fn --project-ref <ref>
+  supabase functions deploy $fn --remote=<ref>
 done
 
 # Re-deploy the enhanced paystack-webhook (now handles charge.failed + recovery reset).
-supabase functions deploy paystack-webhook --project-ref <ref>
+supabase functions deploy paystack-webhook --remote=<ref>
 ```
 
 **After migration 00031**, schedule the payment-recovery cron (see the commented-out pg_cron block at the bottom of `00031_payment_recovery.sql`). Skip until the Edge Function is deployed.

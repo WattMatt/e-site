@@ -19,7 +19,7 @@ major_version = 17
 enabled = true
 port = 54323
 
-[inbucket]
+[local_smtp]
 enabled = true
 port = 54324
 
@@ -36,7 +36,8 @@ refresh_token_reuse_interval = 10
 enable_signup = true
 
 [auth.email]
-enable_signup = true
+# CLI 3.x name for enable_signup (which 3.x warns about and v4 removes).
+enabled = true
 double_confirm_changes = true
 enable_confirmations = false
 

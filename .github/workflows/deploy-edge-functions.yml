@@ -44,12 +44,19 @@ jobs:
     name: Deploy Supabase Edge Functions
     runs-on: ubuntu-latest
     environment: production
+    # CLI 3.x refuses a hosted change it cannot ask about. SUPABASE_YES exported
+    # in the shell is the documented CI consent (same as `--yes`); it lives here
+    # so every `functions deploy` line below stays byte-identical to deploy.sh,
+    # which edge-function-jwt.contract.test.ts compares them against.
+    env:
+      SUPABASE_YES: '1'
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not `latest`: a major CLI release (3.0.0) once broke the migrations deploy before any SQL ran.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.0.0
 
       - name: Link project
         working-directory: apps/edge-functions
