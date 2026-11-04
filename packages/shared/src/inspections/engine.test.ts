@@ -3,6 +3,7 @@ import {
   evaluateField,
   isFieldVisible,
   evaluateInspection,
+  questionFieldIds,
   computeDerivedField,
   parseRepeatingGroupKey,
   buildRepeatingGroupKey,
@@ -186,26 +187,58 @@ describe('evaluateInspection', () => {
     expect(r.failedFields).toHaveLength(0);
   });
 
-  it('a pass_fail ticked Fail is recorded, not failing — even when required', () => {
+  it('a pass_fail check ticked Fail fails the inspection (owner, 2026-11-03), with its reason', () => {
     const responses: Response[] = [
-      { section_id: 's', field_id: 'a', value_bool: false, fail_reason: 'broken' },
+      { section_id: 's', field_id: 'a', value_bool: false, pass_state: 'fail', fail_reason: 'broken' },
       { section_id: 's', field_id: 'b', value_number: 230 },
     ];
     const r = evaluateInspection(template, responses);
+    expect(r.overallResult).toBe('fail');
+    expect(r.failedFields).toEqual([{ sectionId: 's', fieldId: 'a', reason: 'marked Fail: broken' }]);
+    expect(r.flaggedFields.map((f) => f.fieldId)).not.toContain('a');
+  });
+
+  it('an optional check ticked Fail fails it too; without a reason it still fails', () => {
+    const r = evaluateInspection(template, [
+      { section_id: 's', field_id: 'a', value_bool: true },
+      { section_id: 's', field_id: 'b', value_number: 230 },
+      { section_id: 's', field_id: 'c', value_bool: false },
+    ]);
+    expect(r.overallResult).toBe('fail');
+    expect(r.failedFields).toEqual([{ sectionId: 's', fieldId: 'c', reason: 'marked Fail' }]);
+  });
+
+  it('N/A and Pass never fail', () => {
+    const r = evaluateInspection(template, [
+      { section_id: 's', field_id: 'a', value_bool: null, pass_state: 'na' },
+      { section_id: 's', field_id: 'b', value_number: 230 },
+      { section_id: 's', field_id: 'c', value_bool: true, pass_state: 'pass' },
+    ]);
     expect(r.overallResult).toBe('pass');
-    expect(r.failedFields).toHaveLength(0);
-    expect(r.flaggedFields).toContainEqual({ sectionId: 's', fieldId: 'a', reason: 'broken' });
   });
 
   it('a reading outside pass_when is flagged, not failing', () => {
     const responses: Response[] = [
       { section_id: 's', field_id: 'a', value_bool: true },
       { section_id: 's', field_id: 'b', value_number: 200 },
-      { section_id: 's', field_id: 'c', value_bool: false, fail_reason: 'cosmetic' },
     ];
     const r = evaluateInspection(template, responses);
     expect(r.overallResult).toBe('pass');
-    expect(r.flaggedFields.map((f) => f.fieldId).sort()).toEqual(['b', 'c']);
+    expect(r.flaggedFields.map((f) => f.fieldId)).toEqual(['b']);
+  });
+
+  it('a check that reveals a "reason on fail" when answered No is still a check: No fails', () => {
+    const t3: Template = {
+      ...template,
+      sections: [{
+        section_id: 's', title: 'S', fields: [
+          { field_id: 'earthing', label: 'Earthing and bonding', type: 'pass_fail', required: true },
+          { field_id: 'earthing_reason', label: 'Reason on fail', type: 'text', conditional_on: { field_id: 'earthing', equals: false } },
+        ],
+      }],
+    };
+    const r = evaluateInspection(t3, [{ section_id: 's', field_id: 'earthing', value_bool: false, pass_state: 'fail' }]);
+    expect(r.overallResult).toBe('fail');
   });
 
   it('missing required answers block (blockingMissing) but are not a verdict', () => {
@@ -236,7 +269,22 @@ describe('evaluateInspection', () => {
     expect(r.visibleFieldCount).toBe(1);                 // only has_x visible
     expect(r.flaggedFields).toHaveLength(1);             // has_x answered no: recorded
     expect(r.flaggedFields[0].fieldId).toBe('has_x');
-    expect(r.overallResult).toBe('pass');                // a Fail tick never fails the inspection
+    expect(r.overallResult).toBe('pass');                // a QUESTION answered No is not a fault
+  });
+
+  it('questionFieldIds: pass_fail fields that switch content on when answered Yes', () => {
+    const t4 = {
+      ...template,
+      sections: [
+        { section_id: 's1', title: 'S1', fields: [
+          { field_id: 'generator_present', label: 'Generator present?', type: 'pass_fail' },
+          { field_id: 'labelling', label: 'Labelling', type: 'pass_fail' },
+          { field_id: 'labelling_reason', label: 'Reason', type: 'text', conditional_on: { field_id: 'labelling', equals: false } },
+        ] },
+        { section_id: 's2', title: 'Generator', conditional_on: { field_id: 'generator_present', equals: true }, fields: [] },
+      ],
+    } as unknown as Template;
+    expect([...questionFieldIds(t4)]).toEqual(['generator_present']);
   });
 
   it('reveals conditional required field when trigger flips on', () => {
@@ -823,10 +871,11 @@ describe('evaluateInspection — verdict rule', () => {
     expect(r.overallResult).toBe('pass');
   });
 
-  it('a Fail tick is recorded only', () => {
+  it('a Fail tick fails the inspection (owner, 2026-11-03; was "recorded only")', () => {
     const r = evaluateInspection(t, [base[0], { ...base[1], value_bool: false }], photo);
-    expect(r.overallResult).toBe('pass');
-    expect(r.flaggedFields.map((f) => f.fieldId)).toEqual(['labelled']);
+    expect(r.overallResult).toBe('fail');
+    expect(r.failedFields.map((f) => f.fieldId)).toEqual(['labelled']);
+    expect(r.flaggedFields.map((f) => f.fieldId)).not.toContain('labelled');
   });
 
   it.each([['high', 'fail'], ['critical', 'fail'], ['medium', 'pass'], ['low', 'pass']])(
