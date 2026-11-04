@@ -17,7 +17,7 @@
  */
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PURPOSE_LABEL, SCHEMATIC_LEGEND, TENANT_LEGEND, boundingBox, type AreaType, type Box } from '@esite/shared/status-plans'
+import { PURPOSE_LABEL, SCHEMATIC_LEGEND, TENANT_LEGEND, boundingBox, type AreaType, type Box, type ShopReviewNode } from '@esite/shared/status-plans'
 import {
   createStatusPlanShapeAction,
   deleteStatusPlanShapeAction,
@@ -28,7 +28,8 @@ import { boardLegendRows, boardView } from '@/lib/status-plans/board-view'
 import { legendSummary, needsAttention, resolveShapeView, type ShapeView } from '@/lib/status-plans/shape-view'
 import { buildNodeOptions } from '@/lib/status-plans/node-options'
 import { tenantPlanHref } from '@/lib/status-plans/plan-urls'
-import type { CanvasTool, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
+import type { CanvasTool, PendingLink, ShapeCommit } from '@/lib/status-plans/canvas-reducer'
+import type { SheetBacking } from '@/lib/sheet/use-sheet-image'
 import type { ActionResult, CanvasShape, ColourBy, PlanNode, PlanSheet, SheetSummary, StatusPlanPageProps } from '@/lib/status-plans/types'
 import { ShapePanel } from './ShapePanel'
 import { PlanLegend } from './PlanLegend'
@@ -36,7 +37,8 @@ import { CanvasLegend, canvasLegendEntries } from './CanvasLegend'
 import { ExportSheetButton } from './ExportSheetButton'
 import { DetectBlocksPanel, type DetectNode } from './DetectBlocksPanel'
 import { RealignBlocksPanel } from './RealignBlocksPanel'
-import { shouldAutoScan } from '@/lib/status-plans/auto-scan'
+import { ShopsPanel } from './ShopsPanel'
+import { countLinkedShapes, shouldAutoScan } from '@/lib/status-plans/auto-scan'
 import { SheetStrip } from './SheetStrip'
 import { SheetControls } from './SheetControls'
 
@@ -47,6 +49,11 @@ import { SheetControls } from './SheetControls'
  */
 function toDetectNode(n: PlanNode): DetectNode {
   return { id: n.id, kind: n.kind, code: n.code && n.code !== '—' ? n.code : null, shop_number: n.shopNumber, name: n.shopName }
+}
+
+/** A plan node as the floor plan's label review reads it: the matcher's fields plus the schedule's area. */
+function toShopNode(n: PlanNode): ShopReviewNode {
+  return { ...toDetectNode(n), scheduledM2: n.scheduledM2, decommissioned: n.decommissioned }
 }
 
 const StatusPlanCanvas = dynamic(() => import('./StatusPlanCanvas').then((m) => m.StatusPlanCanvas), {
@@ -132,6 +139,12 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   ), [boardLegend, purpose, sheetSummary])
   const selected = sheetShapes.find((s) => s.id === selectedId) ?? null
   const detectNodes = useMemo(() => props.nodes.map(toDetectNode), [props.nodes])
+  const shopNodes = useMemo(() => props.nodes.map(toShopNode), [props.nodes])
+  const sheetShapesById = useMemo(() => new Map(sheetShapes.map((s) => [s.id, s])), [sheetShapes])
+  const reviewShapes = useMemo(
+    () => sheetShapes.map((s) => ({ id: s.id, points: s.points, nodeId: s.nodeId, areaType: s.areaType })),
+    [sheetShapes],
+  )
   const options = useMemo(() => buildNodeOptions(props.nodes, shapes, selectedId, purpose), [props.nodes, shapes, selectedId, purpose])
 
   // ── Writes ───────────────────────────────────────────────────────────────
@@ -155,11 +168,26 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
   }
   const replaceShape = (s: CanvasShape) => setShapes((prev) => prev.map((x) => (x.id === s.id ? s : x)))
 
-  const onCreate = (c: ShapeCommit) =>
-    run(() => createStatusPlanShapeAction({ sheetId: sheet.id, shape: c.shape, points: c.points }), (s) => {
+  const onCreate = (c: ShapeCommit) => {
+    // Redraw on a moved row: the tenant already owns a shape on this plan, so the
+    // drawn outline replaces that shape's points (its link and detected tag stay).
+    const replaceId = c.link?.replaceShapeId
+    if (replaceId) {
+      const s = shapesRef.current.find((x) => x.id === replaceId)
+      if (!s) return Promise.resolve({ error: 'That shape is gone — reload to see the plan.' })
+      return run(() => updateStatusPlanShapeAction({ shapeId: s.id, expectedUpdatedAt: s.updatedAt, points: c.points }), (u) => {
+        replaceShape(u)
+        setSelectedId(u.id)
+      })
+    }
+    return run(() => createStatusPlanShapeAction({
+      sheetId: sheet.id, shape: c.shape, points: c.points,
+      nodeId: c.link?.nodeId ?? null, detectedTag: c.link?.detectedTag ?? null,
+    }), (s) => {
       setShapes((prev) => [...prev, s])
       setSelectedId(s.id)
     })
+  }
 
   const onReshape = (shapeId: string, points: number[]) => {
     const s = shapesRef.current.find((x) => x.id === shapeId)
@@ -206,20 +234,23 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
     void run(() => reanchorTenantPlanSheetAction({ sheetId: sheet.id, expectedUpdatedAt: sheet.updatedAt }), applySheet)
   }
 
-  // Line diagrams: read the sheet's text and propose one rectangle per DB block.
-  // existingShapes is the LIVE state of this sheet, so a re-run leaves accepted blocks out.
-  // An empty sheet opened by an editor scans itself, with the review above the
-  // drawing. Decided once per sheet OPEN (not per render): accepting blocks
-  // must not move the panel and remount it mid-review.
+  // Read the sheet's text: DB blocks on a line diagram, SHOP labels on a floor plan.
+  // A sheet that needs it scans itself on open (auto-scan.ts), with the review above
+  // the drawing. Decided once per sheet OPEN (not per render): accepting blocks or
+  // linking shops must not move the panel and remount it mid-review. A replaced file
+  // (same sheet id, new replacedAt) is a new open, so the floor plan re-scans once;
+  // a line diagram's decision stays keyed on the sheet alone, as it always was.
+  const scanKey = purpose === 'tenant_layout' ? `${sheet.id}:${sheet.replacedAt ?? ''}` : sheet.id
   const decideScan = () => ({
-    sheetId: sheet.id,
+    key: scanKey,
     primary: shouldAutoScan({
       purpose, canEdit, isPdf: sheet.isPdf, hasFileUrl: !!sheet.signedUrl, shapeCount: sheetShapes.length,
+      linkedShapeCount: countLinkedShapes(sheetShapes), replaced: sheet.replacedAt !== null,
     }),
   })
   const [scanOpen, setScanOpen] = useState(decideScan)
-  if (scanOpen.sheetId !== sheet.id) setScanOpen(decideScan())
-  const scanPrimary = scanOpen.sheetId === sheet.id && scanOpen.primary
+  if (scanOpen.key !== scanKey) setScanOpen(decideScan())
+  const scanPrimary = scanOpen.key === scanKey && scanOpen.primary
 
   const detectionPanel = purpose === 'distribution_schematic' ? (
       <DetectBlocksPanel
@@ -237,6 +268,43 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       />
   ) : null
   const schematicSlot = detectionPanel && !scanPrimary ? <div data-slot="schematic-detection">{detectionPanel}</div> : null
+
+  // Floor plans: read the SHOP labels, link the shapes that hold them, prompt for the rest.
+  // The canvas hands up its page bitmap (for Suggest outline) and takes "Draw" as an arm request.
+  const [backing, setBacking] = useState<SheetBacking | null>(null)
+  const armSeq = useRef(0)
+  const [arm, setArm] = useState<{ link: PendingLink; nonce: number } | null>(null)
+  const armDraw = useCallback((link: PendingLink) => {
+    armSeq.current += 1
+    setArm({ link, nonce: armSeq.current })
+  }, [])
+  const [shopPreview, setShopPreview] = useState<number[] | null>(null)
+  const shopsPanel = purpose === 'tenant_layout' ? (
+    <ShopsPanel
+      key={scanKey}
+      sheetId={sheet.id}
+      pageIndex={sheet.pageIndex}
+      pdfUrl={sheet.signedUrl}
+      isPdf={sheet.isPdf}
+      nodes={shopNodes}
+      shapes={reviewShapes}
+      shapesById={sheetShapesById}
+      pixelsPerMeter={pixelsPerMeter}
+      replaced={sheet.replacedAt !== null}
+      backing={backing}
+      canEdit={canEdit}
+      autoScan={scanPrimary}
+      onLinked={(updated) => {
+        const byId = new Map(updated.map((u) => [u.id, u]))
+        setShapes((prev) => prev.map((x) => byId.get(x.id) ?? x))
+      }}
+      onCreated={(added) => setShapes((prev) => [...prev, added])}
+      onFocus={showBox}
+      onArmDraw={armDraw}
+      onPreview={setShopPreview}
+    />
+  ) : null
+  const shopsSlot = shopsPanel && !scanPrimary ? <div data-slot="shops-panel" className="data-panel" style={{ padding: 12 }}>{shopsPanel}</div> : null
 
   // Line diagrams with rectangles: move them onto their tables' drawn borders (links kept).
   // The proposed outlines are drawn dashed on the canvas while the preview is open.
@@ -260,6 +328,9 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
       />
     </div>
   ) : null
+  // The Shops panel is NOT in ShapePanel's `extra` slot: ShapePanel renders that slot at a
+  // different child position with and without a selection, which would remount the panel
+  // (scan, Undo batch and suggestions lost) on every select and deselect.
   const sideSlot = schematicSlot || realignPanel ? <>{schematicSlot}{realignPanel}</> : null
 
   return (
@@ -323,6 +394,11 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           {detectionPanel}
         </div>
       )}
+      {shopsPanel && scanPrimary && (
+        <div data-slot="shops-scan-primary" className="data-panel" style={{ padding: '8px 12px' }}>
+          {shopsPanel}
+        </div>
+      )}
 
       <div className="stack-below-lg" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 12, alignItems: 'start' }}>
         <StatusPlanCanvas
@@ -342,7 +418,9 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
           onDeleteRequest={requestDelete}
           onCalibrated={applySheet}
           overlay={<CanvasLegend entries={keyEntries} />}
-          proposals={realignPanel ? realignOutlines : []}
+          proposals={realignPanel ? realignOutlines : shopPreview ? [shopPreview] : []}
+          arm={arm}
+          onBacking={setBacking}
         />
         <aside style={{ display: 'grid', gap: 12 }}>
           <ShapePanel
@@ -362,6 +440,7 @@ export function StatusPlanWorkspace(props: StatusPlanPageProps) {
             onDelete={requestDelete}
             extra={sideSlot}
           />
+          {shopsSlot}
           <PlanLegend
             purpose={purpose}
             onShowShape={showShape}
