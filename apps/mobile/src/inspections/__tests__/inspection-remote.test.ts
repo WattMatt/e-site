@@ -118,6 +118,26 @@ describe('reads', () => {
     expect(log[1].calls).toContainEqual(['eq', ['id', 't9']])
   })
 
+  it('reads the verifier and the template deliverable type, which decide the separate-verifier lock (00250)', async () => {
+    const { client, log } = fakeClient([
+      { data: { id: 'i1', template_id: 't9', target_label: 'DB-1', status: 'in_progress', project_id: 'p1', verifier_id: 'v1' }, error: null, status: 200 },
+      { data: { id: 't9', name: 'LV CoC', deliverable_type: 'coc', schema_json: { sections: [] } }, error: null, status: 200 },
+      { data: [], error: null, status: 200 },
+      { data: [], error: null, status: 200 },
+    ])
+
+    const bundle = await createInspectionRemote(client).loadCaptureBundle('i1')
+
+    const selected = (i: number) =>
+      String(log[i].calls.find(([m]) => m === 'select')?.[1][0] ?? '')
+        .split(',')
+        .map((c) => c.trim())
+    expect(selected(0)).toContain('verifier_id')
+    expect(selected(1)).toContain('deliverable_type')
+    expect(bundle?.inspection.verifier_id).toBe('v1')
+    expect(bundle?.template?.deliverable_type).toBe('coc')
+  })
+
   it('returns null for an inspection the user cannot see', async () => {
     const { client } = fakeClient([{ data: null, error: null, status: 200 }])
     expect(await createInspectionRemote(client).loadCaptureBundle('nope')).toBeNull()
