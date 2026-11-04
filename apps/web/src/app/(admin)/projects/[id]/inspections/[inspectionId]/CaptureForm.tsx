@@ -29,6 +29,9 @@ interface Props {
   currentUserId: string | null
   mode: Mode
   readOnly?: boolean
+  /** An organisation owner/admin who is not the verifier may certify in its place (00260). */
+  canOverrideVerifier?: boolean
+  verifierName?: string | null
 }
 
 export default function CaptureForm({
@@ -44,6 +47,8 @@ export default function CaptureForm({
   currentUserId,
   mode,
   readOnly: readOnlyProp,
+  canOverrideVerifier = false,
+  verifierName = null,
 }: Props) {
   const [responses, setResponses] = useState<InspectionResponse[]>(initialResponses)
   // Loaded on the server, then kept current by every photo/file/signature field through
@@ -71,7 +76,7 @@ export default function CaptureForm({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string>(template.sections[0]?.section_id ?? '')
   const [savingFields, setSavingFields] = useState<Set<string>>(new Set())
-  const [showCertify, setShowCertify] = useState(false)
+  const [showCertify, setShowCertify] = useState<false | 'verifier' | 'override'>(false)
   const [submitting, setSubmitting] = useState(false)
   // Two-step inline confirm, not window.confirm: Safari can suppress native dialogs,
   // which made Submit do nothing (seen on production, 2026-10-06).
@@ -549,8 +554,13 @@ export default function CaptureForm({
         )}
 
         {isVerifier && (
-          <Button onClick={() => setShowCertify(true)} style={{ width: '100%' }}>
+          <Button onClick={() => setShowCertify('verifier')} style={{ width: '100%' }}>
             Certify / Send back
+          </Button>
+        )}
+        {!isPreview && !isVerifier && canOverrideVerifier && status === 'awaiting_verification' && (
+          <Button variant="ghost" onClick={() => setShowCertify('override')} style={{ width: '100%' }}>
+            Certify as admin
           </Button>
         )}
       </aside>
@@ -560,6 +570,7 @@ export default function CaptureForm({
           inspectionId={inspectionId}
           projectId={projectId}
           deliverableType={template.deliverable_type}
+          override={showCertify === 'override' ? { verifierName } : undefined}
           onClose={() => setShowCertify(false)}
         />
       )}

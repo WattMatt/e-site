@@ -17,6 +17,16 @@ const base: StatusBannerProps = {
 }
 
 describe('statusMessage', () => {
+  it('tells an org owner/admin they can certify in place of the verifier (00260)', () => {
+    expect(statusMessage({ ...base, canOverride: true }).text).toMatch(/Waiting on Ernst to verify\. .*Certify as admin, giving a reason/)
+  })
+
+  it('a certificate issued by an override says whom it replaced and why', () => {
+    const m = statusMessage({ ...base, status: 'certified', verifierName: 'Arno', certifiedAt: '2026-11-03T08:00:00Z', cocNumber: 'INS-MML-2026-0001',
+                               override: { replacedName: 'Ernst', reason: 'On leave' } })
+    expect(m.text).toBe('Certified on 03 Nov 2026 by Arno (INS-MML-2026-0001). Arno certified in place of Ernst: On leave')
+  })
+
   it('names who an awaiting inspection is waiting on', () => {
     expect(statusMessage(base).text).toBe('Submitted 12 Oct 2026. Waiting on Ernst to verify: only they can certify it or send it back.')
   })

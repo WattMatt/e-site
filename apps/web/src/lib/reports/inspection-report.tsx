@@ -12,6 +12,7 @@ import type {
   ReportPhotoField,
 } from './inspection-report-data'
 import { Cover, pageStyles as s } from './components'
+import { winAnsiSafe } from '@/lib/pdf/winansi'
 import {
   RunningHeader,
   Section,
@@ -170,6 +171,7 @@ function Summary({ summary, accent }: SummaryProps) {
     templateVersion,
     inspectors,
     verifier,
+    verifierOverride,
     startedAt,
     certifiedAt,
     overallResult,
@@ -193,6 +195,15 @@ function Summary({ summary, accent }: SummaryProps) {
     },
     { label: 'Inspector(s)', value: inspectors },
     { label: 'Verifier', value: verifier ?? '—' },
+    // Certified by an organisation owner/admin in place of the assigned verifier (00260). The
+    // reason is typed text, so it is made WinAnsi-safe: the standard font draws a wrong glyph
+    // for anything else, silently.
+    ...(verifierOverride
+      ? [{
+          label: 'Certified in place of',
+          value: winAnsiSafe(`${verifierOverride.replaced ?? 'the assigned verifier'}: ${verifierOverride.reason}`),
+        }]
+      : []),
     { label: 'Started', value: formatWhen(startedAt) },
     { label: 'Certified', value: formatWhen(certifiedAt) },
     { label: 'SANS reference', value: sansReference ?? '—' },

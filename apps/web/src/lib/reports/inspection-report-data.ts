@@ -97,6 +97,8 @@ export interface ReportSummary {
   templateVersion: string | null
   inspectors: string               // joined names
   verifier: string | null
+  /** The verifier certified in place of the assigned one (00260): whom they replaced, and why. */
+  verifierOverride: { replaced: string | null; reason: string } | null
   startedAt: string | null
   certifiedAt: string | null
   overallResult: string | null     // 'pass' | 'fail' (legacy rows may hold 'conditional_pass') | null
@@ -371,7 +373,7 @@ function buildCaption(photo: any, capturedByLookup: Map<string, string>): string
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 const INSPECTION_COLUMNS =
-  'id, project_id, organisation_id, template_id, target_label, status, overall_result, coc_number, started_at, certified_at, assigned_to_id, verifier_id'
+  'id, project_id, organisation_id, template_id, target_label, status, overall_result, coc_number, started_at, certified_at, assigned_to_id, verifier_id, verification_override_by, verification_override_replaced, verification_override_reason'
 
 /**
  * `asUserId` is for callers with no browser session (the WhatsApp form service, E4): the row is
@@ -461,6 +463,7 @@ export async function gatherInspectionReportData(
   const nameIds = new Set<string>()
   if (inspection.assigned_to_id) nameIds.add(inspection.assigned_to_id)
   if (inspection.verifier_id) nameIds.add(inspection.verifier_id)
+  if (inspection.verification_override_replaced) nameIds.add(inspection.verification_override_replaced)
   for (const h of historyList) if (h.responded_by) nameIds.add(h.responded_by)
   for (const ph of photoList) if (ph.uploaded_by) nameIds.add(ph.uploaded_by)
 
@@ -792,6 +795,12 @@ export async function gatherInspectionReportData(
     templateVersion: (template?.version as string | null) ?? null,
     inspectors: inspectors || '—',
     verifier: inspection.verifier_id ? resolveName(inspection.verifier_id) : null,
+    verifierOverride: inspection.verification_override_by
+      ? {
+          replaced: inspection.verification_override_replaced ? resolveName(inspection.verification_override_replaced) : null,
+          reason: (inspection.verification_override_reason as string | null) ?? '',
+        }
+      : null,
     startedAt: (inspection.started_at as string | null) ?? null,
     certifiedAt: (inspection.certified_at as string | null) ?? null,
     overallResult: (inspection.overall_result as string | null) ?? null,

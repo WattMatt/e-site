@@ -22,7 +22,7 @@ vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificati
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/reports/file-inspection-report', () => ({ generateAndFileInspectionReport: fileReportMock }))
 
-import { certifyInspectionAction, sendBackForReinspectionAction } from './inspections-certify.actions'
+import { certifyInPlaceOfVerifierAction, certifyInspectionAction, sendBackForReinspectionAction } from './inspections-certify.actions'
 
 const TEMPLATE = {
   sections: [
@@ -277,5 +277,82 @@ describe('certify tells the people who manage the project', () => {
       ['user_organisations', 'organisation_id', 'o-1'],
       ['user_organisations', 'is_active', true],
     ]))
+  })
+})
+
+// 00260: an organisation owner/admin certifies in place of the assigned verifier. Who may, when, and
+// the record are the database's (scripts/db/assert-inspection-verifier-override.sql); the action
+// owns the pre-checks, the single RPC, and telling the replaced verifier.
+describe('certifyInPlaceOfVerifierAction', () => {
+  const PASSING = [{ section_id: 's1', field_id: 'q1', value_bool: true }]
+  function asAdmin(made: ReturnType<typeof makeClient>, rpcResult: { data: unknown; error: unknown }) {
+    ;(made.client as any).auth = { getUser: () => Promise.resolve({ data: { user: { id: 'adm-1' } } }) }
+    made.rpc.mockImplementation(() => Promise.resolve(rpcResult) as any)
+    createClientMock.mockResolvedValue(made.client)
+    return made
+  }
+
+  it('takes over and certifies in one database call, with the trimmed reason, and never asks the verifier-only rule', async () => {
+    const made = asAdmin(makeClient({ responses: PASSING }), { data: 'INS-MML-2026-0001', error: null })
+
+    const r = await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: '  Ernst on leave  ' })
+
+    expect(r).toEqual({ ok: true, value: { number: 'INS-MML-2026-0001', reportIssued: true } })
+    expect(made.rpc).toHaveBeenCalledTimes(1)
+    expect(made.rpc).toHaveBeenCalledWith('certify_in_place_of_verifier', {
+      _inspection_id: 'i-1',
+      _reason: 'Ernst on leave',
+      _coc_number: null,
+    })
+    expect(made.update).not.toHaveBeenCalled()
+    // The server verdict is still written first: the guard certifies only against it.
+    expect(made.svc.upserts).toEqual([['verdicts', expect.objectContaining({ inspection_id: 'i-1', overall_result: 'pass' })]])
+  })
+
+  it('tells the replaced verifier, and says it was an override', async () => {
+    asAdmin(makeClient({ responses: PASSING }), { data: 'INS-MML-2026-0001', error: null })
+
+    await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: 'Ernst on leave' })
+
+    expect(dispatchNotificationMock).toHaveBeenCalledWith(expect.objectContaining({
+      userIds: expect.arrayContaining(['v-1']),
+      body: expect.stringMatching(/in place of the assigned verifier: Ernst on leave/),
+    }))
+  })
+
+  it('refuses a blank reason before reading or writing anything', async () => {
+    const made = asAdmin(makeClient({ responses: PASSING }), { data: 'x', error: null })
+
+    expect(await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: '   ' }))
+      .toEqual({ ok: false, error: expect.stringMatching(/reason/) })
+    expect(made.rpc).not.toHaveBeenCalled()
+    expect(made.svc.upserts).toEqual([])
+  })
+
+  it('never certifies a FAIL: refused before the database call', async () => {
+    const made = asAdmin(makeClient({ responses: [...PASSING, { section_id: 's1', field_id: 'cond', value_text: 'poor' }] }), { data: 'x', error: null })
+
+    expect(await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: 'r' }))
+      .toEqual({ ok: false, error: expect.stringMatching(/Send it back/) })
+    expect(made.rpc).not.toHaveBeenCalled()
+  })
+
+  it("surfaces the database's refusal (e.g. a project manager who is not an org owner/admin)", async () => {
+    asAdmin(makeClient({ responses: PASSING }), {
+      data: null,
+      error: { message: 'Only an organisation owner or admin can certify in place of the assigned verifier.' },
+    })
+
+    expect(await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: 'r' }))
+      .toEqual({ ok: false, error: 'Only an organisation owner or admin can certify in place of the assigned verifier.' })
+    expect(fileReportMock).not.toHaveBeenCalled()
+  })
+
+  it('a CoC still needs its number', async () => {
+    const made = asAdmin(makeClient({ responses: PASSING, deliverable: 'coc' }), { data: 'x', error: null })
+
+    expect(await certifyInPlaceOfVerifierAction({ inspectionId: 'i-1', projectId: 'p-1', reason: 'r' }))
+      .toEqual({ ok: false, error: expect.stringMatching(/COC number is required/) })
+    expect(made.rpc).not.toHaveBeenCalled()
   })
 })
