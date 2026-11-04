@@ -280,7 +280,7 @@ describe('certify tells the people who manage the project', () => {
   })
 })
 
-// 00258: an organisation owner/admin certifies in place of the assigned verifier. Who may, when, and
+// 00260: an organisation owner/admin certifies in place of the assigned verifier. Who may, when, and
 // the record are the database's (scripts/db/assert-inspection-verifier-override.sql); the action
 // owns the pre-checks, the single RPC, and telling the replaced verifier.
 describe('certifyInPlaceOfVerifierAction', () => {

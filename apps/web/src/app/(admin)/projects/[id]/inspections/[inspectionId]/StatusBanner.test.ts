@@ -17,7 +17,7 @@ const base: StatusBannerProps = {
 }
 
 describe('statusMessage', () => {
-  it('tells an org owner/admin they can certify in place of the verifier (00258)', () => {
+  it('tells an org owner/admin they can certify in place of the verifier (00260)', () => {
     expect(statusMessage({ ...base, canOverride: true }).text).toMatch(/Waiting on Ernst to verify\. .*Certify as admin, giving a reason/)
   })
 

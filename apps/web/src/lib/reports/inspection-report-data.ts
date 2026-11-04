@@ -97,7 +97,7 @@ export interface ReportSummary {
   templateVersion: string | null
   inspectors: string               // joined names
   verifier: string | null
-  /** The verifier certified in place of the assigned one (00258): whom they replaced, and why. */
+  /** The verifier certified in place of the assigned one (00260): whom they replaced, and why. */
   verifierOverride: { replaced: string | null; reason: string } | null
   startedAt: string | null
   certifiedAt: string | null

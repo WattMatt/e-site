@@ -1,4 +1,4 @@
--- 00258_inspection_certify_in_place_of_verifier.sql
+-- 00260_inspection_certify_in_place_of_verifier.sql
 --
 -- An organisation owner or admin can certify an inspection in place of its assigned verifier.
 -- Owner report, 2026-11-03: three main-board inspections on (657) MAMAILA PHASE 2 could not be
@@ -125,7 +125,7 @@ BEGIN
   IF NEW.status = OLD.status
      AND v_changed && ARRAY['verification_override_by','verification_override_replaced',
                             'verification_override_reason','verification_override_at'] THEN
-    -- An org owner/admin takes over verification in place of the assigned verifier (00258).
+    -- An org owner/admin takes over verification in place of the assigned verifier (00260).
     IF OLD.status <> 'awaiting_verification' THEN
       RAISE EXCEPTION 'You can certify in place of the verifier only once the inspection has been submitted.' USING ERRCODE = '42501';
     END IF;
@@ -153,7 +153,7 @@ BEGIN
       RAISE EXCEPTION 'Only a project manager or above can change an inspection''s assignment or details.' USING ERRCODE = '42501';
     END IF;
     v_allowed := ARRAY['assigned_to_id','verifier_id','target_label','target_location','scheduled_at'];
-    -- A new verifier by ordinary reassignment ends any earlier override (00258).
+    -- A new verifier by ordinary reassignment ends any earlier override (00260).
     IF NEW.verifier_id IS DISTINCT FROM OLD.verifier_id THEN
       NEW.verification_override_by := NULL;
       NEW.verification_override_replaced := NULL;

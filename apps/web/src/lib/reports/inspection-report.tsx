@@ -195,7 +195,7 @@ function Summary({ summary, accent }: SummaryProps) {
     },
     { label: 'Inspector(s)', value: inspectors },
     { label: 'Verifier', value: verifier ?? '—' },
-    // Certified by an organisation owner/admin in place of the assigned verifier (00258). The
+    // Certified by an organisation owner/admin in place of the assigned verifier (00260). The
     // reason is typed text, so it is made WinAnsi-safe: the standard font draws a wrong glyph
     // for anything else, silently.
     ...(verifierOverride

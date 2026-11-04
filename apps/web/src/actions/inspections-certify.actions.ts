@@ -131,7 +131,7 @@ export interface CertifyOutcome {
 
 /**
  * `override` is set when an organisation owner/admin certifies in place of the assigned verifier
- * (00258). The database decides who may (inspections_transition_guard) and records it on the row;
+ * (00260). The database decides who may (inspections_transition_guard) and records it on the row;
  * the take-over and the certify run as one transaction in certify_in_place_of_verifier(), so a
  * refused certify leaves the original verifier in place.
  */
@@ -395,7 +395,7 @@ export async function certifyInspectionAction(
   }
 }
 
-/** An organisation owner/admin certifies in place of the assigned verifier (00258). */
+/** An organisation owner/admin certifies in place of the assigned verifier (00260). */
 export async function certifyInPlaceOfVerifierAction(
   input: CertifyInPlaceInput,
 ): Promise<VerifierActionResult<CertifyOutcome>> {

@@ -29,7 +29,7 @@ interface Props {
   currentUserId: string | null
   mode: Mode
   readOnly?: boolean
-  /** An organisation owner/admin who is not the verifier may certify in its place (00258). */
+  /** An organisation owner/admin who is not the verifier may certify in its place (00260). */
   canOverrideVerifier?: boolean
   verifierName?: string | null
 }

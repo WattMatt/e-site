@@ -17,9 +17,9 @@ export interface StatusBannerProps {
   cocNumber: string | null
   reinspectionNotes: string | null
   abandonedReason: string | null
-  /** The signed-in organisation owner/admin may certify in place of the verifier (00258). */
+  /** The signed-in organisation owner/admin may certify in place of the verifier (00260). */
   canOverride?: boolean
-  /** An organisation owner/admin took over from the assigned verifier (00258). */
+  /** An organisation owner/admin took over from the assigned verifier (00260). */
   override?: { replacedName: string | null; reason: string } | null
 }
 

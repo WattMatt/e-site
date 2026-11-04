@@ -1,10 +1,10 @@
 -- scripts/db/assert-inspection-verifier-override.sql
--- An organisation owner or admin certifies in place of the assigned verifier. Migration 00258.
+-- An organisation owner or admin certifies in place of the assigned verifier. Migration 00260.
 -- Before it, only the assigned verifier could certify (00235); an owner had to reassign the
 -- verifier to themselves first, and nothing recorded that it was an override.
 -- Run (red without the migration, green with it):
 --   M=apps/edge-functions/supabase/migrations
---   printf 'SELECT 1;\n' > /tmp/base.sql;  cp $M/00258_*.sql /tmp/fix.sql
+--   printf 'SELECT 1;\n' > /tmp/base.sql;  cp $M/00260_*.sql /tmp/fix.sql
 --   scripts/db/dry-run-migration.sh /tmp/base.sql scripts/db/assert-inspection-verifier-override.sql
 --   scripts/db/dry-run-migration.sh /tmp/fix.sql  scripts/db/assert-inspection-verifier-override.sql
 

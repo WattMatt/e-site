@@ -21,7 +21,7 @@ export default function CertifyModal({
   inspectionId: string
   projectId: string
   deliverableType: string
-  /** Set when an organisation owner/admin certifies in place of the assigned verifier (00258). */
+  /** Set when an organisation owner/admin certifies in place of the assigned verifier (00260). */
   override?: { verifierName: string | null }
   onClose: () => void
 }) {

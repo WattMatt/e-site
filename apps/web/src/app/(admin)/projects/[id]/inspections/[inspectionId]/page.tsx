@@ -137,7 +137,7 @@ export default async function CapturePage({ params }: Props) {
   )
   const isOpen = !['certified', 'abandoned'].includes(inspection.status)
   const isVerifier = !!user && inspection.verifier_id === user.id
-  // An organisation owner/admin may certify in place of the assigned verifier (00258); the
+  // An organisation owner/admin may certify in place of the assigned verifier (00260); the
   // database decides, this only offers the button. The caller's own membership row is readable.
   const { data: ownOrgRole } = user && inspection.status === 'awaiting_verification' && !isVerifier
     ? await supabase

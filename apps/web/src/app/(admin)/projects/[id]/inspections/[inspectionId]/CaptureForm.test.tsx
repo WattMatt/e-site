@@ -48,7 +48,7 @@ beforeEach(() => {
 })
 
 describe('CaptureForm', () => {
-  it('offers Certify as admin only to an org owner/admin who is not the verifier, once submitted (00258)', () => {
+  it('offers Certify as admin only to an org owner/admin who is not the verifier, once submitted (00260)', () => {
     const { unmount } = render(<CaptureForm {...props} status="awaiting_verification" verifierId="u-v" canOverrideVerifier verifierName="Ernst" />)
     expect(screen.getByRole('button', { name: 'Certify as admin' })).toBeTruthy()
     unmount()
