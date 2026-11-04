@@ -1,0 +1,12 @@
+// Refusal sentences for the open-database tools. The model reads these verbatim; change none without the spec.
+export const NEED_FILTER = 'Update and delete need at least one filter.'
+export const DENYLISTED = 'This table is managed in the app, not through Claude.'
+export const UNKNOWN_OP = 'Unknown filter operator.'
+export const BAD_IDENT = 'Column names must be plain identifiers.'
+export const MASKED_COLUMN = 'That column is not available to your role.'
+export const SQL_ONLY_SELECT = 'Only one read-only SELECT is allowed here.'
+export const PREVIEW_MISMATCH = 'That preview has expired or does not match; run the preview again.'
+export const PREVIEW_TOO_WIDE = 'That would touch more than 1000 rows; narrow the filter.'
+export const SQL_ROLE = 'SQL is for owners, admins and project managers; use esite_db_select.'
+export const UNKNOWN_SCHEMA = 'That schema is not exposed; call esite_db_schemas for the list.'
+export const EMPTY_PATCH = 'The patch is empty.'

@@ -86,3 +86,28 @@ it('never passes a non-uuid project id to the audit row or the lookup', async ()
   expect(lookup).not.toHaveBeenCalled()
   expect(recordToolCall).toHaveBeenCalledWith(expect.objectContaining({ projectId: null, organisationId: null }))
 })
+
+it('kindOf decides the kind per call: preview without previewId, write with one', async () => {
+  const t = defineTool({ name: 'esite_t', title: 't', description: 'd', kind: 'write', inputSchema: { previewId: z.string().optional() },
+    kindOf: a => (a.previewId ? 'write' : 'preview'), handler: async () => ({}) })
+  await runTool(t, {}, ctx)
+  expect(recordToolCall).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'preview' }))
+  await runTool(t, { previewId: 'p' }, ctx)
+  expect(recordToolCall).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'write' }))
+})
+it('a kindOf that throws falls back to the declared kind', async () => {
+  const t = defineTool({ name: 'esite_t', title: 't', description: 'd', kind: 'read', inputSchema: {}, kindOf: () => { throw new Error('x') }, handler: async () => ({}) })
+  await runTool(t, {}, ctx)
+  expect(recordToolCall).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'read', outcome: 'ok' }))
+})
+it('the write limit applies when kindOf resolves to write', async () => {
+  rateStatus.mockResolvedValue({ calls: 5, writes: 20 })
+  const t = defineTool({ name: 'esite_t', title: 't', description: 'd', kind: 'read', inputSchema: {}, kindOf: () => 'write', handler: async () => ({}) })
+  expect((await runTool(t, {}, ctx)).isError).toBe(true)
+})
+it('caps result ids at 200 in the audit row', async () => {
+  const ids = Array.from({ length: 250 }, (_, i) => `id${i}`)
+  const t = defineTool({ name: 'esite_t', title: 't', description: 'd', kind: 'write', inputSchema: {}, handler: async () => ({ ids }) })
+  await runTool(t, {}, ctx)
+  expect((recordToolCall.mock.lastCall![0] as { resultIds: string[] }).resultIds).toHaveLength(200)
+})
