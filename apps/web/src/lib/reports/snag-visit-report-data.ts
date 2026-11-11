@@ -18,6 +18,7 @@ import {
   CLOSED_STATUSES,
   type BucketSnag,
 } from '@esite/shared'
+import { photoToReportDataUri } from './report-image'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -125,7 +126,8 @@ async function photoToDataUri(
   service: ReturnType<typeof createServiceClient>,
   filePath: string,
 ): Promise<string | null> {
-  return fileToDataUri(service, SNAG_PHOTO_BUCKET, filePath)
+  // Downscaled JPEG, EXIF rotation applied (report-image.ts) — never raw camera bytes.
+  return photoToReportDataUri(service, SNAG_PHOTO_BUCKET, filePath)
 }
 
 // ---------------------------------------------------------------------------

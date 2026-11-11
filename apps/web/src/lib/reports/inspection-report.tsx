@@ -352,12 +352,9 @@ function photoFieldBlocks(fields: ReportPhotoField[]): ReportPhotoField[] {
 
 function EntryWithPhotos({ row, accent }: { row: ReportFieldRow; accent: string }) {
   if (!row.photos) return <ResultRow row={row} />
-  return (
-    <View wrap={row.photos.photos.length > spacing.photoGridCols}>
-      <ResultRow row={row} />
-      <PhotoGrid field={row.photos} accent={accent} />
-    </View>
-  )
+  // The entry rides inside the first photo row's unbreakable block; later rows
+  // are page-level units (no breakable wrapper — photo-grid.tsx rule 2).
+  return <PhotoGrid field={row.photos} accent={accent} lead={<ResultRow row={row} />} />
 }
 
 // ---------------------------------------------------------------------------

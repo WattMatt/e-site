@@ -11,8 +11,9 @@
  *                 description), then one card per entry:
  *                   header row: entry number + title
  *                   description (when present)
- *                   photo grid: 2-column, each cell tagged "Photo N"
- *                     (markups tagged "Photo N · Drawing markup — {plan}")
+ *                   photo grid: shared ReportPhotoGrid, 2-up, whole photos
+ *                     (contain), each tagged "Photo N" (markups tagged
+ *                     "Photo N · Drawing markup — {plan}")
  *                   comments block: author · date · body; per-photo comments
  *                     reference "Photo N"
  *                 Fixed running footer with page X / Y.
@@ -40,7 +41,8 @@ import {
   type QcSeverity,
 } from '@esite/shared'
 import { Cover, Watermark, pageStyles } from './components'
-import { passPillColors } from './theme'
+import { passPillColors, spacing } from './theme'
+import { ReportPhotoGrid, PHOTO_GRID_2UP, MAX_LEAD_CHARS, type GridPhoto } from './photo-grid'
 import type {
   QcReportData,
   QcReportEntryData,
@@ -55,12 +57,6 @@ import type {
 
 const s = StyleSheet.create({
   // ── Page body (inside Page, after Cover) ──────────────────────────────────
-  body: {
-    paddingHorizontal: 36,
-    paddingTop: 28,
-    paddingBottom: 48, // leave room for the running footer
-    flex: 1,
-  },
 
   emptyNote: {
     fontSize: 8,
@@ -70,9 +66,10 @@ const s = StyleSheet.create({
   },
 
   // ── Entry card ────────────────────────────────────────────────────────────
+  // Rule closing an entry (the entry itself is a fragment of page-level units).
   card: {
+    marginTop: 2,
     marginBottom: 10,
-    paddingBottom: 8,
     borderBottomWidth: 0.5,
     borderBottomColor: '#EEEEEE',
   },
@@ -119,18 +116,6 @@ const s = StyleSheet.create({
     fontSize: 6.5,
     fontFamily: 'Helvetica-Bold',
     letterSpacing: 0.5,
-  },
-
-  // ── Image-unavailable placeholder cell (Defect S4) ────────────────────────
-  photoPlaceholder: {
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoPlaceholderText: {
-    fontSize: 6.5,
-    color: '#9CA3AF',
-    fontFamily: 'Helvetica',
   },
 
   // ── Conformance summary block (after the report-info header) ───────────────
@@ -206,6 +191,8 @@ const s = StyleSheet.create({
     marginRight: 5,
   },
 
+  lead: { marginBottom: 4 },
+
   // Description
   description: {
     fontSize: 8,
@@ -214,37 +201,6 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // ── Photo grid ────────────────────────────────────────────────────────────
-  photoSection: {
-    marginTop: 4,
-  },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  photoCell: {
-    width: '48%',
-  },
-  photoImage: {
-    width: '100%',
-    height: 100,
-    objectFit: 'cover',
-    borderRadius: 2,
-  },
-  photoTag: {
-    fontSize: 6.5,
-    fontFamily: 'Helvetica-Bold',
-    color: '#888888',
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  photoCaption: {
-    fontSize: 6.5,
-    color: '#888888',
-    marginTop: 1,
-    textAlign: 'center',
-  },
   photoOmittedNote: {
     fontSize: 6.5,
     color: '#BBBBBB',
@@ -301,8 +257,8 @@ const s = StyleSheet.create({
   footer: {
     position: 'absolute',
     bottom: 20,
-    left: 36,
-    right: 36,
+    left: spacing.pagePaddingH,
+    right: spacing.pagePaddingH,
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderTopWidth: 0.5,
@@ -443,53 +399,16 @@ function photoTagText(p: QcReportPhotoData): string {
   return `Photo ${p.index}`
 }
 
-function PhotoGrid({
-  photos,
-  omittedCount,
-  unavailableCount,
-}: {
-  photos: QcReportPhotoData[]
-  omittedCount: number
-  unavailableCount: number
-}) {
-  if (photos.length === 0 && omittedCount === 0) return null
+function photoNote(entry: QcReportEntryData): string | null {
   // Fold the >cap omitted count and the within-cap download-failure count
   // (Defect S4) into one note. Failures still render as placeholder cells, so
   // this line is informational.
-  const noteParts: string[] = []
-  if (omittedCount > 0) noteParts.push(`+${omittedCount} omitted`)
-  if (unavailableCount > 0) {
-    noteParts.push(`${unavailableCount} image${unavailableCount === 1 ? '' : 's'} unavailable`)
+  const parts: string[] = []
+  if (entry.omittedCount > 0) parts.push(`+${entry.omittedCount} omitted`)
+  if (entry.unavailableCount > 0) {
+    parts.push(`${entry.unavailableCount} image${entry.unavailableCount === 1 ? '' : 's'} unavailable`)
   }
-  return (
-    <View style={s.photoSection}>
-      <View style={s.photoGrid}>
-        {photos.map(p => (
-          // Each CELL is unbreakable (image + tag + caption stay together) but
-          // the grid itself wraps across pages — the interior.tsx PhotoGrid
-          // behaviour. Wrapping the whole grid (let alone the whole entry) in
-          // wrap={false} silently clips photos past the page bottom.
-          <View key={p.id} style={s.photoCell} wrap={false}>
-            {p.dataUri ? (
-              <Image src={p.dataUri} style={s.photoImage} />
-            ) : (
-              // Defect S4: a failed within-cap download keeps its slot as an
-              // "image unavailable" placeholder so the "Photo N" tag — and any
-              // per-photo comment referencing it — stays valid.
-              <View style={[s.photoImage, s.photoPlaceholder]}>
-                <Text style={s.photoPlaceholderText}>Image unavailable</Text>
-              </View>
-            )}
-            <Text style={s.photoTag}>{photoTagText(p)}</Text>
-            {p.caption && <Text style={s.photoCaption}>{p.caption}</Text>}
-          </View>
-        ))}
-      </View>
-      {noteParts.length > 0 && (
-        <Text style={s.photoOmittedNote}>{noteParts.join(' · ')}</Text>
-      )}
-    </View>
-  )
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function CommentLine({ comment }: { comment: QcReportCommentData }) {
@@ -508,42 +427,52 @@ function CommentLine({ comment }: { comment: QcReportCommentData }) {
 }
 
 /**
- * One entry. The card itself MUST be breakable: an entry carries up to 24
- * photos (~1,300pt of grid) against ~766pt of usable A4 body, so a
- * wrap={false} card cannot fit any page and react-pdf silently clips
- * everything past the page bottom (photos AND the comments block). Only the
- * small header+description block is unbreakable, with minPresenceAhead
- * reserving room for at least one photo row so a title is never orphaned at
- * a page bottom; the photo grid and comments flow across pages (per-cell /
- * per-line wrap={false} keeps each unit intact) — interior.tsx PhotoGrid
- * behaviour.
+ * One entry. The card is breakable; its units are not (photo-grid.tsx rules):
+ * the heading + a short description ride inside the first unbreakable photo
+ * row, so a title never ends a page with its photos overleaf, and every later
+ * row moves whole to the next page instead of being drawn past the footer. A
+ * long description is ordinary breakable text ahead of the grid, because an
+ * unbreakable block taller than the space left on a page is clipped.
  */
 function EntryCard({ entry }: { entry: QcReportEntryData }) {
+  const header = (
+    <View style={s.cardHeader}>
+      <Text style={s.entryNumber}>{entry.number}</Text>
+      <Text style={s.entryTitle}>{entry.title}</Text>
+      <ConformanceBadge conformance={entry.conformance} />
+      {entry.conformance === 'fail' && entry.severity && (
+        <SeverityChip severity={entry.severity} />
+      )}
+    </View>
+  )
+  const description = entry.description ? (
+    <Text style={s.description}>{entry.description}</Text>
+  ) : null
+  const leadFits = (entry.description?.length ?? 0) <= MAX_LEAD_CHARS
+  const photos: GridPhoto[] = entry.photos.map((p) => ({
+    key: p.id,
+    dataUri: p.dataUri,
+    tag: photoTagText(p),
+    caption: p.caption,
+  }))
+  const note = photoNote(entry)
+
+  // A fragment, not a card <View>: every unit sits directly in the page flow
+  // (photo-grid.tsx rule 2). The card's bottom rule is its own last unit.
   return (
-    <View style={s.card}>
-      <View wrap={false} minPresenceAhead={120}>
-        {/* Header: number + title + conformance badge (+ severity chip on fails) */}
-        <View style={s.cardHeader}>
-          <Text style={s.entryNumber}>{entry.number}</Text>
-          <Text style={s.entryTitle}>{entry.title}</Text>
-          <ConformanceBadge conformance={entry.conformance} />
-          {entry.conformance === 'fail' && entry.severity && (
-            <SeverityChip severity={entry.severity} />
-          )}
-        </View>
-
-        {/* Description */}
-        {entry.description && (
-          <Text style={s.description}>{entry.description}</Text>
-        )}
-      </View>
-
-      {/* Photos */}
-      <PhotoGrid
-        photos={entry.photos}
-        omittedCount={entry.omittedCount}
-        unavailableCount={entry.unavailableCount}
+    <>
+      {!leadFits && (
+        <>
+          <View wrap={false} minPresenceAhead={60}>{header}</View>
+          {description}
+        </>
+      )}
+      <ReportPhotoGrid
+        photos={photos}
+        layout={PHOTO_GRID_2UP}
+        lead={leadFits ? <View style={s.lead}>{header}{description}</View> : undefined}
       />
+      {note && <Text style={s.photoOmittedNote}>{note}</Text>}
 
       {/* Comments */}
       {entry.comments.length > 0 && (
@@ -554,7 +483,8 @@ function EntryCard({ entry }: { entry: QcReportEntryData }) {
           ))}
         </>
       )}
-    </View>
+      <View style={s.card} />
+    </>
   )
 }
 
@@ -592,7 +522,8 @@ export function QcReportDocument({ data }: { data: QcReportData }) {
 
       {/* ── Body pages ── */}
       <Page size="A4" style={pageStyles.page}>
-        <View style={s.body}>
+        {/* No wrapping body <View>: entries are page-level units (photo-grid.tsx). */}
+        <>
           <ReportInfoBlock report={data.report} />
           <ConformanceSummary tally={data.tally} />
           <DefectPunchList entries={data.entries} location={data.report.location} />
@@ -603,7 +534,7 @@ export function QcReportDocument({ data }: { data: QcReportData }) {
               <EntryCard key={entry.id} entry={entry} />
             ))
           )}
-        </View>
+        </>
         <RunningFooter reportLabel={reportLabel} />
         {isDraft && <Watermark text="DRAFT" />}
       </Page>

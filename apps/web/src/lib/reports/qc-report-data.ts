@@ -16,6 +16,7 @@ import { compareQcPhotos, type QcConformance, type QcSeverity } from '@esite/sha
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { resolveBranding, type ResolvedBranding } from './branding'
+import { photoToReportDataUri } from './report-image'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -274,7 +275,7 @@ export async function gatherQcReportData(
       // tracked separately from the >cap omittedCount.
       const photos: QcReportPhotoData[] = await Promise.all(
         rendered.map(async (p: any): Promise<QcReportPhotoData> => {
-          const dataUri = await fileToDataUri(service, QC_PHOTO_BUCKET, p.file_path)
+          const dataUri = await photoToReportDataUri(service, QC_PHOTO_BUCKET, p.file_path)
           return {
             id: p.id,
             index: photoIndexById.get(p.id)!,

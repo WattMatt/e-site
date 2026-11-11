@@ -288,18 +288,11 @@ describe('Section', () => {
     expect(findAccentRule(el)).toBe(true)
   })
 
-  it('has wrap=true for page breaking', () => {
-    const el = Section({ title: 'T', accent: ACCENT, children: null })
-    // wrap prop may equal the boolean true — check root or we just verify renders
-    expect(el).toBeTruthy()
-    // The spec says "marked wrap" — verify the prop is present on root or a descendant
-    function hasWrap(node: unknown): boolean {
-      if (!node || typeof node !== 'object') return false
-      const p2 = getProps(node)
-      if (p2.wrap === true) return true
-      return getChildren(node).some(hasWrap)
-    }
-    expect(hasWrap(el)).toBe(true)
+  it('is a fragment, not a breakable wrapper, so its units sit in the page flow', () => {
+    // react-pdf fixes the height of a breakable parent it splits across a page and squeezes what
+    // is inside it (docs/reports/pdf-layout-rules.md, rule 3).
+    const el = Section({ title: 'T', accent: ACCENT, children: null }) as React.ReactElement
+    expect(el.type).toBe(React.Fragment)
   })
 
   it('renders its children', () => {
@@ -625,7 +618,7 @@ describe('PhotoGrid', () => {
     }
     const el = PhotoGrid({ field, accent: ACCENT })
     const texts = collectText(el)
-    expect(texts.some((t) => t === '[image unavailable]')).toBe(true)
+    expect(texts.some((t) => t === 'Image unavailable')).toBe(true)
   })
 
   it('renders an omitted count note when omittedCount > 0', () => {
@@ -680,13 +673,12 @@ describe('PhotoGrid', () => {
     expect(hasAnySrc(el)).toBe(false)
     // No placeholder text — only rendered when a photo has dataUri === null
     const texts = collectText(el)
-    expect(texts.every((t) => t !== '[image unavailable]')).toBe(true)
+    expect(texts.every((t) => t !== 'Image unavailable')).toBe(true)
     // The label should still render
     expect(texts.some((t) => t === 'Cable tray photos')).toBe(true)
   })
 
-  it('derives photo cell width from spacing.photoGridCols', () => {
-    const expectedWidth = `${100 / spacing.photoGridCols}%`
+  it('lays photos out spacing.photoGridCols across, whole (contain) in equal frames', () => {
     const field: ReportPhotoField = {
       sectionId: 's1',
       fieldId: 'f1',
@@ -694,19 +686,13 @@ describe('PhotoGrid', () => {
       photos: [{ dataUri: DATA_URI, caption: 'Photo 1' }],
       omittedCount: 0,
     }
-    const el = PhotoGrid({ field, accent: ACCENT })
-    // Each row of photos is its own unbreakable block, so search the tree for the first node
-    // that sets a width (the photo cell) rather than assuming its position.
-    const findWidth = (node: unknown): unknown => {
-      const w = resolveStyleProp(getProps(node).style, 'width')
-      if (w !== undefined) return w
-      for (const c of getChildren(node)) {
-        const found = findWidth(c)
-        if (found !== undefined) return found
-      }
-      return undefined
-    }
-    expect(findWidth(el)).toBe(expectedWidth)
+    const nodes = walkAll(PhotoGrid({ field, accent: ACCENT }))
+    const images = nodes.filter((n) => getProps(n).src === DATA_URI)
+    expect(images).toHaveLength(1)
+    expect(resolveStyleProp(getProps(images[0]).style, 'objectFit')).toBe('contain')
+    // One photo + spacer cells: a short row keeps the full column count, so cells stay equal width.
+    const row = nodes.find((n) => resolveStyleProp(getProps(n).style, 'flexDirection') === 'row')
+    expect(getChildren(row)).toHaveLength(spacing.photoGridCols)
   })
 })
 
@@ -861,7 +847,7 @@ describe('PhotoGrid — page breaks', () => {
   it('puts each row of photos in an unbreakable block with the label in the first', () => {
     const photo = { dataUri: DATA_URI, caption: '' }
     const field: ReportPhotoField = { sectionId: 's1', fieldId: 'f1', label: 'Board', photos: Array(4).fill(photo), omittedCount: 0 }
-    const blocks = getChildren(PhotoGrid({ field, accent: ACCENT })).filter((c) => getProps(c).wrap === false)
+    const blocks = walkAll(PhotoGrid({ field, accent: ACCENT })).filter((c) => getProps(c).wrap === false)
     expect(blocks).toHaveLength(2) // 3 + 1 photos
     expect(collectText(blocks[0])).toContain('Board')
     expect(collectText(blocks[1])).not.toContain('Board')
