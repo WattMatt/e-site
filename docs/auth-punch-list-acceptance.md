@@ -14,7 +14,7 @@ This is the single review surface for verifying the punch list landed correctly.
 
 Before walking the per-item tests below:
 
-- [ ] **Apply migrations to staging:** `cd esite/apps/edge-functions && supabase db push --db-url $STAGING_DB_URL` — runs `00038_auth_events.sql` + `00039_auth_events_magic_link.sql`. Without these, audit-event writes silently console.error.
+- [ ] **Apply migrations to staging:** `cd esite/apps/edge-functions && supabase db push --remote="$STAGING_DB_URL"` — runs `00038_auth_events.sql` + `00039_auth_events_magic_link.sql`. Without these, audit-event writes silently console.error.
 - [ ] **Verify migrations applied:** check `auth_events` table exists in Supabase Studio + the CHECK constraint includes `magic_link_requested`.
 - [ ] **Pin a fresh demo user:** sign up `qa-test-<n>@example.com` so per-item tests can run against an isolated account without polluting the demo seed.
 

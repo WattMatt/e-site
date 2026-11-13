@@ -44,16 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pinned, not `latest`: CLI 3.0.0 (published 2026-11-02) refuses the
-      # `[inbucket]` section in supabase/config.toml ("no longer supported, use
-      # [local_smtp]") and `db push` exits 1 before any SQL runs — run
-      # 41579779111 failed that way on the #298 merge. The 2.x CLI developers
-      # run locally rejects `[local_smtp]` as an invalid key, so the config
-      # cannot be renamed until everyone moves to 3.x. Lift this pin and rename
-      # the section together, as one change.
+      # Pinned, not `latest`: a major CLI release (3.0.0) once broke this deploy before any SQL ran.
       - uses: supabase/setup-cli@v1
         with:
-          version: 2.122.1
+          version: 3.0.0
 
       - name: Run migrations
         working-directory: apps/edge-functions
@@ -63,7 +57,10 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           supabase link --project-ref $SUPABASE_PROJECT_REF
-          supabase db push
+          # CLI 3.x: a bare `db push` targets the LOCAL stack, and a hosted
+          # change refuses to run unattended. --remote = the linked project;
+          # --yes = the CI consent the 3.x CLI needs where there is no terminal.
+          supabase db push --yes --remote
 
       - uses: pnpm/action-setup@v4
         with:
