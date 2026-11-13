@@ -29,7 +29,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
-import { AREA_TYPES, SHAPE_KINDS, pointsError } from '@esite/shared/status-plans'
+import { AREA_TYPES, DETECTED_TAG_MAX, SHAPE_KINDS, SHAPE_SOURCES, pointsError } from '@esite/shared/status-plans'
 import { statusPlanWriteError } from '@/lib/status-plans/write-errors'
 import { SHAPE_COLUMNS, roundPoints, shapePatchRow, toCanvasShape } from '@/lib/status-plans/canvas-shape'
 import type { ActionResult, CanvasShape } from '@/lib/status-plans/types'
@@ -93,13 +93,17 @@ const createShapeSchema = z
     points: z.array(z.number()),
     nodeId: uuid.nullable().optional(),
     areaType: z.enum(AREA_TYPES).nullable().optional(),
+    /** Where the outline came from: a detected label's outline is 'detected'. */
+    source: z.enum(SHAPE_SOURCES).optional(),
+    /** The label text a detected outline was read from (status_plan_shapes_tag_length). */
+    detectedTag: z.string().trim().max(DETECTED_TAG_MAX).nullable().optional(),
   })
   .refine((v) => !(v.nodeId && v.areaType), { message: 'A shape is either a shop or an area, not both.' })
 
 export async function createStatusPlanShapeAction(input: z.input<typeof createShapeSchema>): Promise<ActionResult<CanvasShape>> {
   const parsed = createShapeSchema.safeParse(input)
   if (!parsed.success) return invalid(parsed.error)
-  const { sheetId, shape, nodeId, areaType } = parsed.data
+  const { sheetId, shape, nodeId, areaType, source, detectedTag } = parsed.data
   const points = roundPoints(parsed.data.points)
   const bad = pointsError(shape, points)
   if (bad) return fail(bad)
@@ -115,7 +119,7 @@ export async function createStatusPlanShapeAction(input: z.input<typeof createSh
   if (areaType && plan.purpose !== 'tenant_layout') return fail(AREA_FLOOR_ONLY)
 
   const { data, error } = await supabase.schema('tenants').from('status_plan_shapes')
-    .insert({ status_plan_id: plan.id, sheet_id: sheetId, shape, points, node_id: nodeId ?? null, area_type: areaType ?? null, source: 'manual' })
+    .insert({ status_plan_id: plan.id, sheet_id: sheetId, shape, points, node_id: nodeId ?? null, area_type: areaType ?? null, source: source ?? 'manual', detected_tag: detectedTag || null })
     .select(SHAPE_COLUMNS).maybeSingle()
   if (error) return fail(statusPlanWriteError(error, 'shape'))
   if (!data) return fail(NOT_ALLOWED)
