@@ -34,8 +34,15 @@ export interface InspectionListRow {
 }
 
 export interface CaptureBundle {
-  inspection: { id: string; template_id: string; target_label: string | null; status: string; project_id: string }
-  template: { id: string; name: string; schema_json: unknown } | null
+  inspection: {
+    id: string
+    template_id: string
+    target_label: string | null
+    status: string
+    project_id: string
+    verifier_id: string | null
+  }
+  template: { id: string; name: string; deliverable_type: string | null; schema_json: unknown } | null
   responses: Array<Record<string, unknown> & { section_id: string; field_id: string }>
   photos: Array<{ section_id: string; field_id: string }>
 }
@@ -106,13 +113,13 @@ export function createInspectionRemote(client: SchemaClient): InspectionRemote {
 
     async loadCaptureBundle(inspectionId) {
       const ir: Raw = await t('inspections')
-        .select('id, template_id, target_label, status, project_id')
+        .select('id, template_id, target_label, status, project_id, verifier_id')
         .eq('id', inspectionId)
         .maybeSingle()
       const inspection = orThrow<CaptureBundle['inspection'] | null>(ir)
       if (!inspection) return null
 
-      const tr: Raw = await t('templates').select('id, name, schema_json').eq('id', inspection.template_id).maybeSingle()
+      const tr: Raw = await t('templates').select('id, name, deliverable_type, schema_json').eq('id', inspection.template_id).maybeSingle()
       const rr: Raw = await t('responses')
         .select('section_id, field_id, value_bool, value_number, value_text, value_array, value_json, pass_state, fail_reason')
         .eq('inspection_id', inspectionId)

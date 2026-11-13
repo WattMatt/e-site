@@ -50,6 +50,7 @@ import {
   kickOutbox,
   onOutboxChange,
 } from '../../../src/inspections/outbox-worker'
+import { captureAccess } from '../../../src/inspections/capture-access'
 import { powerSyncExecutor } from '../../../src/lib/powersync/executor'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../../src/theme'
 
@@ -58,11 +59,8 @@ type LoadedInspection = {
   template_id: string
   target_label: string | null
   status: string
+  verifier_id: string | null
 }
-
-// Statuses in which a contributor may still answer (mirrors
-// inspections.user_can_write_responses).
-const ANSWERABLE_STATUSES = ['assigned', 'in_progress', 're-inspect_required']
 
 export default function MobileCaptureScreen() {
   const { inspectionId } = useLocalSearchParams<{ inspectionId: string }>()
@@ -71,6 +69,7 @@ export default function MobileCaptureScreen() {
 
   const [inspection, setInspection] = useState<LoadedInspection | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
+  const [deliverableType, setDeliverableType] = useState<string | null>(null)
   const [responses, setResponses] = useState<Response[]>([])
   const responsesRef = useRef<Response[]>([])
   // Photo slots (section_id+field_id) used for min_count enforcement: the
@@ -124,6 +123,7 @@ export default function MobileCaptureScreen() {
         if (cancelled) return
         setInspection(bundle.inspection)
         setTemplate(schemaJson)
+        setDeliverableType(bundle.template?.deliverable_type ?? null)
         applyResponses(mergeOutboxIntoResponses(bundle.responses as unknown as Response[], queued))
         setOutbox(queued)
         setPhotos([...bundle.photos, ...localPhotos])
@@ -144,8 +144,35 @@ export default function MobileCaptureScreen() {
     [template, responses, photos],
   )
 
+  // Who may fill this in. The verifier of a separate-verifier template checks the
+  // work and must not fill it in: the database refuses their answers (00250), so
+  // the form is read-only for them and Submit is not offered.
+  const access = useMemo(
+    () =>
+      inspection
+        ? captureAccess({
+            status: inspection.status,
+            verifierId: inspection.verifier_id,
+            userId,
+            deliverableType,
+            requiresSeparateVerifierFlag: (template as { requires_separate_verifier?: unknown } | null)
+              ?.requires_separate_verifier,
+          })
+        : null,
+    [inspection, userId, deliverableType, template],
+  )
+  const readOnly = access?.readOnly ?? true
+
+  // Photo slots already taken for a field (server + this device's queue), so a
+  // read-only form can say whether a photo exists rather than offering a camera.
+  const photoCountFor = useCallback(
+    (sectionId: string, fieldId: string) =>
+      photos.filter((p) => p.section_id === sectionId && p.field_id === fieldId).length,
+    [photos],
+  )
+
   const updateResponse = async (sectionId: string, fieldId: string, patch: FieldChangePatch) => {
-    if (!inspectionId) return
+    if (!inspectionId || readOnly) return
     const prev = responsesRef.current
     const idx = prev.findIndex((r) => r.section_id === sectionId && r.field_id === fieldId)
     const current: Response = idx === -1 ? { section_id: sectionId, field_id: fieldId } : prev[idx]
@@ -178,7 +205,7 @@ export default function MobileCaptureScreen() {
   }
 
   const onSubmit = async () => {
-    if (!template || !ev || !inspectionId) return
+    if (!template || !ev || !inspectionId || !access?.canSubmit) return
     // A missing photo never blocks an inspection: blockingMissing leaves photo fields out.
     if (ev.blockingMissing.length > 0) {
       Alert.alert(
@@ -267,7 +294,8 @@ export default function MobileCaptureScreen() {
     )
   }
 
-  const answerable = ANSWERABLE_STATUSES.includes(inspection.status)
+  const notice = access?.notice ?? null
+  const canSubmit = access?.canSubmit ?? false
   const refused = outbox.filter((i) => i.status === 'rejected')
   const waiting = outbox.filter((i) => i.status !== 'rejected')
   const submitQueued = waiting.some((i) => i.kind === 'submit')
@@ -286,11 +314,12 @@ export default function MobileCaptureScreen() {
       </View>
 
       {/* Upload state — what has not reached the server, and why */}
-      {!answerable && (
-        <View style={[styles.notice, styles.noticeInfo]} testID="capture-not-answerable">
-          <Text style={styles.noticeText}>
-            This inspection is {inspection.status.replace(/_/g, ' ')}; answers can no longer be changed.
-          </Text>
+      {notice && (
+        <View
+          style={[styles.notice, styles.noticeInfo]}
+          testID={access?.separateVerifierLock ? 'capture-separate-verifier' : 'capture-not-answerable'}
+        >
+          <Text style={styles.noticeText}>{notice}</Text>
         </View>
       )}
       {refused.length > 0 && (
@@ -348,6 +377,8 @@ export default function MobileCaptureScreen() {
                 inspectionId={inspectionId!}
                 sectionId={section.section_id}
                 onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                readOnly={readOnly}
+                photoCountFor={(fieldId) => photoCountFor(section.section_id, fieldId)}
               />
             </View>
           )
@@ -374,6 +405,8 @@ export default function MobileCaptureScreen() {
                       inspectionId={inspectionId!}
                       sectionId={section.section_id}
                       onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                      readOnly={readOnly}
+                      photoCountFor={(fieldId) => photoCountFor(section.section_id, fieldId)}
                     />
                   </View>
                 )
@@ -391,7 +424,7 @@ export default function MobileCaptureScreen() {
             {ev?.overallResult ? ` · ${ev.overallResult}` : ''}
           </Text>
         </View>
-        {answerable && (
+        {canSubmit && (
           <TouchableOpacity
             onPress={onSubmit}
             disabled={submitting || submitQueued}
