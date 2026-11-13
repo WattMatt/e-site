@@ -1,6 +1,7 @@
 // No 'use client' — these components are rendered server-side to PDF only.
 import React from 'react'
 import { View, Text, Image, Link, StyleSheet } from '@react-pdf/renderer'
+import { ReportPhotoGrid, PHOTO_GRID_3UP } from './photo-grid'
 import { spacing, passPillColors } from './theme'
 
 // ---------------------------------------------------------------------------
@@ -196,42 +197,6 @@ const s = StyleSheet.create({
     color: '#374151',
     marginBottom: spacing.smallGap,
   },
-  photoGridRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    // NOTE: no `gap` here — gutter is cell-padding (Fix 1).
-    // Yoga/react-pdf treats `width` as border-box, so padding sits INSIDE
-    // the 33.33% cell width. Three cells then sum to exactly 100% and hold
-    // exactly spacing.photoGridCols columns without wrapping to 2-up.
-  },
-  photoCell: {
-    width: `${100 / spacing.photoGridCols}%`,
-    // Gutter lives here (inside the border-box width) rather than on the
-    // container, so three cells sum to exactly 100% and the grid stays 3-up.
-    paddingRight: spacing.photoCellGap,
-    paddingBottom: spacing.photoCellGap,
-  },
-  photoCellImage: {
-    width: '100%',
-    objectFit: 'contain',
-  },
-  photoCellPlaceholder: {
-    backgroundColor: '#F3F4F6',
-    padding: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoCellPlaceholderText: {
-    fontSize: spacing.photoCaptionFontSize,
-    color: '#9CA3AF',
-    fontFamily: 'Helvetica',
-  },
-  photoCaptionText: {
-    fontSize: spacing.photoCaptionFontSize,
-    color: '#6B7280',
-    fontFamily: 'Helvetica',
-    marginTop: 2,
-  },
   photoOmittedNote: {
     fontSize: spacing.photoCaptionFontSize,
     color: '#9CA3AF',
@@ -406,11 +371,16 @@ export function Section({ title, accent, children, lead }: SectionProps) {
       <Text style={s.sectionHeading} minPresenceAhead={40}>{title}</Text>
     </>
   )
+  // A fragment, not a wrapping <View>: the section's units sit directly in the
+  // page flow. react-pdf fixes the height of a breakable parent it splits across
+  // a page and re-lays it out, squeezing what is inside (photo-grid.tsx rule 2).
+  // The section gap is its own trailing unit.
   return (
-    <View style={s.section} wrap>
+    <>
       {lead ? <View wrap={false}>{heading}{lead}</View> : heading}
       {children}
-    </View>
+      <View style={s.section} />
+    </>
   )
 }
 
@@ -544,39 +514,29 @@ export function Table({ columns, rows, repeatHeader, unbreakableRows, align, den
 interface PhotoGridProps {
   field: ReportPhotoField
   accent: string
+  /** Kept on the same page as the first row (e.g. the entry the photos belong to). */
+  lead?: React.ReactNode
 }
 
-export function PhotoGrid({ field, accent }: PhotoGridProps) {
-  // One unbreakable block per row of photos, the label inside the first: a label never ends a
-  // page with its photos overleaf, and a photo is never shrunk into the space left above the
-  // footer (react-pdf did both when the grid could break anywhere).
-  const rows: (typeof field.photos)[] = []
-  for (let i = 0; i < field.photos.length; i += spacing.photoGridCols) rows.push(field.photos.slice(i, i + spacing.photoGridCols))
-  const cell = (photo: (typeof field.photos)[number], i: number) => (
-    <View key={i} style={s.photoCell}>
-      {photo.dataUri ? (
-        <Image src={photo.dataUri} style={s.photoCellImage} />
-      ) : (
-        <View style={s.photoCellPlaceholder}>
-          <Text style={s.photoCellPlaceholderText}>[image unavailable]</Text>
-        </View>
-      )}
-      <Text style={s.photoCaptionText}>{photo.caption}</Text>
-    </View>
-  )
+export function PhotoGrid({ field, accent, lead }: PhotoGridProps) {
+  // The shared grid (photo-grid.tsx): one unbreakable block per row, the label inside the first,
+  // photos shown whole in equal frames. A label never ends a page with its photos overleaf, and a
+  // row is never drawn past the footer.
+  const label = field.label ? <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text> : null
+  const head = lead || label ? <View>{lead}{label}</View> : undefined
+  // A fragment: rows sit directly in the page flow (photo-grid.tsx rule 2).
   return (
-    <View style={s.photoGrid}>
-      {rows.length === 0 && field.label && <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text>}
-      {rows.map((row, r) => (
-        <View key={r} wrap={false}>
-          {r === 0 && field.label && <Text style={[s.photoGridLabel, { color: accent }]}>{field.label}</Text>}
-          <View style={s.photoGridRow}>{row.map((photo, i) => cell(photo, r * spacing.photoGridCols + i))}</View>
-        </View>
-      ))}
+    <>
+      <ReportPhotoGrid
+        photos={field.photos.map((photo, i) => ({ key: String(i), dataUri: photo.dataUri, caption: photo.caption }))}
+        layout={PHOTO_GRID_3UP}
+        lead={head}
+      />
       {field.omittedCount > 0 && (
         <Text style={s.photoOmittedNote}>{`+${field.omittedCount} omitted`}</Text>
       )}
-    </View>
+      <View style={s.photoGrid} />
+    </>
   )
 }
 

@@ -17,7 +17,9 @@
  *                   description (when present)
  *                   photos: inline beneath the card
  *                     open/new: all evidence photos in a 2-column grid
- *                     closed:   "Before" photos then "After ✓" photos, labelled
+ *                     closed:   "Before" photos then "After" photos, labelled
+ *                   photo grid: shared ReportPhotoGrid (photo-grid.tsx) — whole
+ *                     photos, rows unbreakable, the card itself breakable
  *
  * Node-only: renderToBuffer is not available in the browser build.  Any test
  * file that imports renderSnagVisitReport must carry // @vitest-environment node.
@@ -30,12 +32,13 @@ import {
   Page,
   View,
   Text,
-  Image,
   StyleSheet,
   renderToBuffer,
   type DocumentProps,
 } from '@react-pdf/renderer'
 import { Cover, pageStyles } from './components'
+import { spacing } from './theme'
+import { ReportPhotoGrid, PHOTO_GRID_2UP, MAX_LEAD_CHARS, type GridPhoto } from './photo-grid'
 import type { SnagVisitReportData, ReportSnag, SnagPhotoData } from './snag-visit-report-data'
 
 // ---------------------------------------------------------------------------
@@ -44,12 +47,6 @@ import type { SnagVisitReportData, ReportSnag, SnagPhotoData } from './snag-visi
 
 const s = StyleSheet.create({
   // ── Page body (inside Page, after Cover) ──────────────────────────────────
-  body: {
-    paddingHorizontal: 36,
-    paddingTop: 28,
-    paddingBottom: 48, // leave room for the running footer
-    flex: 1,
-  },
 
   // ── Section group header ──────────────────────────────────────────────────
   groupHeader: {
@@ -76,9 +73,10 @@ const s = StyleSheet.create({
   },
 
   // ── Snag card ─────────────────────────────────────────────────────────────
+  // Rule closing a snag (the snag itself is a fragment of page-level units).
   card: {
+    marginTop: 2,
     marginBottom: 10,
-    paddingBottom: 8,
     borderBottomWidth: 0.5,
     borderBottomColor: '#EEEEEE',
   },
@@ -153,9 +151,6 @@ const s = StyleSheet.create({
   },
 
   // ── Photo grid ────────────────────────────────────────────────────────────
-  photoSection: {
-    marginTop: 4,
-  },
   photoLabel: {
     fontSize: 6.5,
     color: '#888888',
@@ -165,26 +160,7 @@ const s = StyleSheet.create({
     marginBottom: 3,
     marginTop: 6,
   },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  photoCell: {
-    width: '48%',
-  },
-  photoImage: {
-    width: '100%',
-    height: 100,
-    objectFit: 'cover',
-    borderRadius: 2,
-  },
-  photoCaption: {
-    fontSize: 6.5,
-    color: '#888888',
-    marginTop: 2,
-    textAlign: 'center',
-  },
+
 
   // ── Visit-info header block (top of first body page) ─────────────────────
   visitInfo: {
@@ -218,8 +194,8 @@ const s = StyleSheet.create({
   footer: {
     position: 'absolute',
     bottom: 20,
-    left: 36,
-    right: 36,
+    left: spacing.pagePaddingH,
+    right: spacing.pagePaddingH,
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderTopWidth: 0.5,
@@ -316,32 +292,23 @@ function VisitInfoBlock({
   )
 }
 
-function PhotoGrid({ photos, label }: { photos: SnagPhotoData[]; label?: string }) {
-  if (photos.length === 0) return null
-  return (
-    <View style={s.photoSection}>
-      {label && <Text style={s.photoLabel}>{label}</Text>}
-      <View style={s.photoGrid}>
-        {photos.map(p => (
-          <View key={p.id} style={s.photoCell}>
-            <Image src={p.dataUri} style={s.photoImage} />
-            {p.caption && <Text style={s.photoCaption}>{p.caption}</Text>}
-          </View>
-        ))}
-      </View>
-    </View>
-  )
-}
+const toGrid = (photos: SnagPhotoData[]): GridPhoto[] =>
+  photos.map((p) => ({ key: p.id, dataUri: p.dataUri, caption: p.caption }))
 
+/**
+ * One snag. The card is breakable and its rows are not (photo-grid.tsx): the
+ * whole card used to be wrap={false}, so a snag with more photos than a page
+ * holds was clipped at the page bottom. The heading rides inside the first
+ * photo row; "Before" / "After" labels ride inside their grid's first row.
+ */
 function SnagCard({ snag, isClosed }: { snag: ReportSnag; isClosed: boolean }) {
   const metaParts: string[] = []
   if (snag.location) metaParts.push(snag.location)
   if (snag.category) metaParts.push(snag.category)
   if (snag.raisedOnVisitLabel) metaParts.push(`raised ${snag.raisedOnVisitLabel}`)
 
-  return (
-    <View style={s.card} wrap={false}>
-      {/* Header: number + title + badges */}
+  const heading = (
+    <View>
       <View style={s.cardHeader}>
         <View style={s.cardTitleBlock}>
           <Text style={s.snagNumber}>{snag.number}</Text>
@@ -358,27 +325,49 @@ function SnagCard({ snag, isClosed }: { snag: ReportSnag; isClosed: boolean }) {
           </Text>
         </View>
       </View>
-
-      {/* Meta */}
-      {metaParts.length > 0 && (
-        <Text style={s.meta}>{metaParts.join(' · ')}</Text>
-      )}
-
-      {/* Description */}
-      {snag.description && (
-        <Text style={s.description}>{snag.description}</Text>
-      )}
-
-      {/* Photos */}
-      {isClosed ? (
-        <>
-          <PhotoGrid photos={snag.beforePhotos} label="Before" />
-          <PhotoGrid photos={snag.afterPhotos} label="After ✓" />
-        </>
-      ) : (
-        <PhotoGrid photos={snag.photos} />
-      )}
+      {metaParts.length > 0 && <Text style={s.meta}>{metaParts.join(' · ')}</Text>}
     </View>
+  )
+  const description = snag.description ? <Text style={s.description}>{snag.description}</Text> : null
+  const leadFits = (snag.description?.length ?? 0) <= MAX_LEAD_CHARS
+  const head = leadFits ? <View>{heading}{description}</View> : null
+
+  const grids: { label: string | null; photos: SnagPhotoData[] }[] = isClosed
+    ? [
+        { label: 'Before', photos: snag.beforePhotos },
+        // Words only: a "✓" is not WinAnsi and react-pdf draws a different glyph.
+        { label: 'After', photos: snag.afterPhotos },
+      ].filter((g) => g.photos.length > 0)
+    : snag.photos.length > 0
+      ? [{ label: null, photos: snag.photos }]
+      : []
+
+  // A fragment, not a card <View>: rows must sit directly in the page flow
+  // (photo-grid.tsx rule 2). The card's bottom rule is its own last unit.
+  return (
+    <>
+      {!leadFits && (
+        <>
+          <View wrap={false} minPresenceAhead={60}>{heading}</View>
+          {description}
+        </>
+      )}
+      {grids.length === 0 && head && <View wrap={false}>{head}</View>}
+      {grids.map((g, i) => (
+        <ReportPhotoGrid
+          key={g.label ?? 'photos'}
+          photos={toGrid(g.photos)}
+          layout={PHOTO_GRID_2UP}
+          lead={
+            <View>
+              {i === 0 ? head : null}
+              {g.label && <Text style={s.photoLabel}>{g.label}</Text>}
+            </View>
+          }
+        />
+      ))}
+      <View style={s.card} />
+    </>
   )
 }
 
@@ -394,8 +383,8 @@ function SectionGroup({
   isFirst?: boolean
 }) {
   return (
-    <View>
-      <Text style={[s.groupHeader, isFirst ? s.firstGroupHeader : {}]}>{label}</Text>
+    <>
+      <Text style={[s.groupHeader, isFirst ? s.firstGroupHeader : {}]} minPresenceAhead={60}>{label}</Text>
       {snags.length === 0 ? (
         <Text style={s.emptyGroup}>None</Text>
       ) : (
@@ -403,7 +392,7 @@ function SectionGroup({
           <SnagCard key={snag.id} snag={snag} isClosed={isClosed} />
         ))
       )}
-    </View>
+    </>
   )
 }
 
@@ -438,7 +427,8 @@ export function SnagVisitReportDocument({ data }: { data: SnagVisitReportData })
 
       {/* ── Body pages ── */}
       <Page size="A4" style={pageStyles.page}>
-        <View style={s.body}>
+        {/* No wrapping body <View>: snags are page-level units (photo-grid.tsx). */}
+        <>
           <VisitInfoBlock
             conductedByName={visit.conductedByName}
             visitDate={visit.visitDate}
@@ -461,7 +451,7 @@ export function SnagVisitReportDocument({ data }: { data: SnagVisitReportData })
             snags={data.closedThisVisit}
             isClosed
           />
-        </View>
+        </>
         <RunningFooter visitLabel={visitLabel} />
       </Page>
     </Document>

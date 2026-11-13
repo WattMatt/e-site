@@ -30,6 +30,7 @@ import {
   parseRepeatingGroupKey,
   listRepeatingGroupEntryIndices,
 } from '@esite/shared'
+import { photoToReportDataUri } from './report-image'
 
 // ---------------------------------------------------------------------------
 // Public, serialisable payload shape
@@ -281,8 +282,9 @@ async function fileToDataUri(
 const logoToDataUri = (service: AnyService, path: string) =>
   fileToDataUri(service, LOGO_BUCKET, path)
 
+// Photos are downscaled JPEGs (report-image.ts); logos and signatures keep their PNG bytes.
 const photoToDataUri = (service: AnyService, path: string) =>
-  fileToDataUri(service, PHOTO_BUCKET, path)
+  photoToReportDataUri(service as any, PHOTO_BUCKET, path)
 
 const signatureToDataUri = (service: AnyService, path: string) =>
   fileToDataUri(service, SIGNATURE_BUCKET, path)

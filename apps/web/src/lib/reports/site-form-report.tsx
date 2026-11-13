@@ -46,6 +46,7 @@ import type {
 } from './site-form-report-data'
 import { MAX_TABLE_COLUMNS } from './site-form-report-data'
 import { toWinAnsiSafe, toWinAnsiSafeOptional } from './winansi-text'
+import { ReportPhotoGrid, PHOTO_GRID_3UP } from './photo-grid'
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -323,24 +324,6 @@ const s = StyleSheet.create({
     fontFamily: 'Helvetica-Bold',
     color: '#444444',
     marginBottom: 3,
-  },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  photoCell: { width: '31.8%' },
-  photoImage: {
-    width: '100%',
-    height: 95,
-    objectFit: 'cover',
-    borderRadius: 2,
-  },
-  photoCaption: {
-    fontSize: 5.5,
-    color: '#777777',
-    marginTop: 2,
-    lineHeight: 1.2,
   },
   omitted: {
     fontSize: 6.5,
@@ -738,17 +721,20 @@ function PhotoFieldBlock({ field }: { field: SiteFormPhotoField }) {
   if (field.photos.length === 0 && field.omittedCount === 0 && unavailable === 0) {
     return null
   }
+  // A fragment: the rows sit directly in the page flow (photo-grid.tsx rule 2).
   return (
-    <View style={s.photoBlock}>
-      <Text style={s.photoLabel}>{toWinAnsiSafe(field.label)}</Text>
-      <View style={s.photoGrid}>
-        {field.photos.map((p) => (
-          <View key={p.id} style={s.photoCell} wrap={false}>
-            <Image src={p.dataUri} style={s.photoImage} />
-            {p.caption ? <Text style={s.photoCaption}>{toWinAnsiSafe(p.caption)}</Text> : null}
-          </View>
-        ))}
-      </View>
+    <>
+      {/* Shared grid (photo-grid.tsx): whole photos, unbreakable rows, the
+          field label inside the first row so it never ends a page alone. */}
+      <ReportPhotoGrid
+        photos={field.photos.map((p) => ({
+          key: p.id,
+          dataUri: p.dataUri,
+          caption: p.caption ? toWinAnsiSafe(p.caption) : null,
+        }))}
+        layout={PHOTO_GRID_3UP}
+        lead={<Text style={s.photoLabel}>{toWinAnsiSafe(field.label)}</Text>}
+      />
       {unavailable > 0 && (
         <Text style={s.unavailable}>
           {unavailable} image{unavailable === 1 ? '' : 's'} unavailable —
@@ -760,7 +746,8 @@ function PhotoFieldBlock({ field }: { field: SiteFormPhotoField }) {
           + {field.omittedCount} further photo{field.omittedCount === 1 ? '' : 's'} not rendered.
         </Text>
       )}
-    </View>
+      <View style={s.photoBlock} />
+    </>
   )
 }
 
