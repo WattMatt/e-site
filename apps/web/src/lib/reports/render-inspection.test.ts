@@ -4,6 +4,7 @@
 // to that stub, so we must opt into the Node environment for this file.
 
 import { describe, it, expect } from 'vitest'
+import zlib from 'node:zlib'
 import { renderInspectionReport } from './render-inspection'
 import { resolveBranding } from './branding'
 import type { BrandingInput } from './branding'
@@ -49,6 +50,7 @@ const fixtureData: InspectionReportData = {
     templateVersion: '2',
     inspectors: 'Jane Smith, John Doe',
     verifier: 'Alice Van Der Berg',
+    verifierOverride: null,
     startedAt: '2026-05-01T08:00:00.000Z',
     certifiedAt: '2026-05-15T14:30:00.000Z',
     overallResult: 'pass',
@@ -290,5 +292,32 @@ describe('renderInspectionReport', () => {
     })
     const buf = await renderInspectionReport(fixtureData, wordmarkBranding)
     expect(buf.slice(0, 5).toString('ascii')).toBe('%PDF-')
+  })
+
+  it('prints who was replaced and why when an admin certified in place of the verifier', async () => {
+    const data: InspectionReportData = {
+      ...fixtureData,
+      summary: {
+        ...fixtureData.summary,
+        verifierOverride: { replaced: 'Ernst Verifier', reason: 'Verifier on leave; Zs measured 0,2 Ω' },
+      },
+    }
+    const pdf = await renderInspectionReport(data, fixtureResolved)
+    // Inflate every content stream and decode its hex text runs (react-pdf writes text as hex).
+    let text = ''
+    for (const m of pdf.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)endstream/g)) {
+      let decoded: string
+      try {
+        decoded = zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1')
+      } catch {
+        continue
+      }
+      for (const h of decoded.matchAll(/<([0-9a-fA-F]+)>/g)) text += Buffer.from(h[1], 'hex').toString('latin1')
+    }
+    const flat = text.replace(/\s+/g, '')
+    expect(flat).toContain('Certifiedinplaceof')
+    expect(flat).toContain('ErnstVerifier:Verifieronleave')
+    // The standard font would print U+03A9 as '©'; the line is sanitised to "Ohm" first.
+    expect(flat).toContain('Zsmeasured0,2Ohm')
   })
 })

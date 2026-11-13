@@ -117,6 +117,11 @@ export interface CertifyInspectionInput {
   cocNumber?: string
 }
 
+export interface CertifyInPlaceInput extends CertifyInspectionInput {
+  /** Why the organisation owner/admin certifies instead of the assigned verifier. Required. */
+  reason: string
+}
+
 /** What a certify produced: the issued number, and whether its report was generated and filed. */
 export interface CertifyOutcome {
   number: string
@@ -124,12 +129,22 @@ export interface CertifyOutcome {
   reportIssued: boolean
 }
 
-async function certifyInspection(input: CertifyInspectionInput): Promise<CertifyOutcome> {
+/**
+ * `override` is set when an organisation owner/admin certifies in place of the assigned verifier
+ * (00260). The database decides who may (inspections_transition_guard) and records it on the row;
+ * the take-over and the certify run as one transaction in certify_in_place_of_verifier(), so a
+ * refused certify leaves the original verifier in place.
+ */
+async function certifyInspection(
+  input: CertifyInspectionInput,
+  override?: { reason: string },
+): Promise<CertifyOutcome> {
   const supabase = (await createClient()) as AnyClient
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) throw new Error('Unauthenticated')
+  if (override && !override.reason.trim()) throw new Error('Give a reason for certifying in place of the verifier.')
 
   const { data: insp } = await supabase
     .schema('inspections')
@@ -165,12 +180,18 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
   // Who may certify, separate verifier, signature qualifications and the CoC number are one
   // database rule (00235), which the transition guard also enforces. Asked first so the verifier
   // sees the sentence rather than a constraint error.
+  // On an override the caller is not the verifier yet, so the function's first rule would refuse
+  // them: the database checks it all inside certify_in_place_of_verifier() instead.
   const cocNumber = deliverable === 'coc' ? input.cocNumber?.trim() ?? '' : null
-  const { data: blocker, error: blockErr } = await supabase
-    .schema('inspections')
-    .rpc('certification_blockers', { _inspection_id: input.inspectionId, _coc_number: cocNumber })
-  if (blockErr) throw blockErr
-  if (blocker) throw new Error(blocker as string)
+  if (override) {
+    if (deliverable === 'coc' && !cocNumber) throw new Error('COC number is required (enter the number from your ECB pad).')
+  } else {
+    const { data: blocker, error: blockErr } = await supabase
+      .schema('inspections')
+      .rpc('certification_blockers', { _inspection_id: input.inspectionId, _coc_number: cocNumber })
+    if (blockErr) throw blockErr
+    if (blocker) throw new Error(blocker as string)
+  }
 
   // The database certifies only against a verdict the server wrote after the inspection was
   // submitted (00253): the transition guard copies overall_result from inspections.verdicts and
@@ -186,17 +207,30 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
   if (verdictErr) throw verdictErr
 
   // certified_at and the INS/FAT number are stamped by the guard; anything sent for them is ignored.
-  const { data: certified, error: updErr } = await supabase
-    .schema('inspections')
-    .from('inspections')
-    .update({ status: 'certified', overall_result: overallResult, coc_number: cocNumber })
-    .eq('id', input.inspectionId)
-    .eq('status', 'awaiting_verification')
-    .select('coc_number')
-    .maybeSingle()
-  if (updErr) throw updErr
-  if (!certified) throw new Error('Nothing was certified: the inspection may have moved on. Reload and try again.')
-  const issuedNumber = (certified as { coc_number: string }).coc_number
+  let issuedNumber: string
+  if (override) {
+    const { data: number, error: rpcErr } = await supabase
+      .schema('inspections')
+      .rpc('certify_in_place_of_verifier', {
+        _inspection_id: input.inspectionId,
+        _reason: override.reason.trim(),
+        _coc_number: cocNumber,
+      })
+    if (rpcErr) throw rpcErr
+    issuedNumber = number as string
+  } else {
+    const { data: certified, error: updErr } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .update({ status: 'certified', overall_result: overallResult, coc_number: cocNumber })
+      .eq('id', input.inspectionId)
+      .eq('status', 'awaiting_verification')
+      .select('coc_number')
+      .maybeSingle()
+    if (updErr) throw updErr
+    if (!certified) throw new Error('Nothing was certified: the inspection may have moved on. Reload and try again.')
+    issuedNumber = (certified as { coc_number: string }).coc_number
+  }
 
   // Best-effort branded report → projects.reports + handover auto-file (Node
   // renderer; no glyph bug). The cert is a committed DB fact — a render/file
@@ -240,12 +274,16 @@ async function certifyInspection(input: CertifyInspectionInput): Promise<Certify
   try {
     const contributors = await getInspectionContributors(supabase, input.inspectionId)
     const pms = await getProjectManagerIds(input.projectId)
-    const recipients = [...new Set([...contributors, ...pms].filter((id) => id !== user.id))]
+    // The verifier who was replaced is told too: the inspection was waiting on them.
+    const replaced = override ? (insp as { verifier_id?: string | null }).verifier_id ?? null : null
+    const recipients = [...new Set([...contributors, ...pms, ...(replaced ? [replaced] : [])].filter((id) => id !== user.id))]
     if (recipients.length > 0) {
       await dispatchNotification({
         userIds: recipients,
         title: 'Inspection certified',
-        body: `COC ${issuedNumber} has been issued`,
+        body: override
+          ? `COC ${issuedNumber} has been issued, certified in place of the assigned verifier: ${override.reason.trim().slice(0, 160)}`
+          : `COC ${issuedNumber} has been issued`,
         route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
         type: 'inspection_certified',
         entityType: 'inspection',
@@ -352,6 +390,17 @@ export async function certifyInspectionAction(
 ): Promise<VerifierActionResult<CertifyOutcome>> {
   try {
     return { ok: true, value: await certifyInspection(input) }
+  } catch (e) {
+    return refusal(e)
+  }
+}
+
+/** An organisation owner/admin certifies in place of the assigned verifier (00260). */
+export async function certifyInPlaceOfVerifierAction(
+  input: CertifyInPlaceInput,
+): Promise<VerifierActionResult<CertifyOutcome>> {
+  try {
+    return { ok: true, value: await certifyInspection(input, { reason: input.reason }) }
   } catch (e) {
     return refusal(e)
   }

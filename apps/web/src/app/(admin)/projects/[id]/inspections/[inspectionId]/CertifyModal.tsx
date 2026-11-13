@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import {
+  certifyInPlaceOfVerifierAction,
   certifyInspectionAction,
   sendBackForReinspectionAction,
 } from '@/actions/inspections-certify.actions'
@@ -14,17 +15,21 @@ export default function CertifyModal({
   inspectionId,
   projectId,
   deliverableType,
+  override,
   onClose,
 }: {
   inspectionId: string
   projectId: string
   deliverableType: string
+  /** Set when an organisation owner/admin certifies in place of the assigned verifier (00260). */
+  override?: { verifierName: string | null }
   onClose: () => void
 }) {
   const router = useRouter()
   const [mode, setMode] = useState<Mode>('certify')
   const [cocNumber, setCocNumber] = useState('')
   const [notes, setNotes] = useState('')
+  const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -35,8 +40,10 @@ export default function CertifyModal({
     try {
       // The actions return their refusal as data: a thrown message is replaced
       // by a generic sentence in production builds.
-      const result =
-        mode === 'certify'
+      const coc = deliverableType === 'coc' ? cocNumber : undefined
+      const result = override
+        ? await certifyInPlaceOfVerifierAction({ inspectionId, projectId, cocNumber: coc, reason })
+        : mode === 'certify'
           ? await certifyInspectionAction({
               inspectionId,
               projectId,
@@ -109,9 +116,16 @@ export default function CertifyModal({
         }}
       >
         <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--c-text)', margin: 0 }}>
-          Verifier action
+          {override ? 'Certify in place of the verifier' : 'Verifier action'}
         </h2>
-        <div style={{ display: 'flex', gap: 8 }}>
+        {override && (
+          <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>
+            You become the verifier of this inspection and certify it now, instead of{' '}
+            {override.verifierName ?? 'the assigned verifier'}. The certificate and the inspection record
+            show that you did, and why. It can still be certified only with a pass result.
+          </p>
+        )}
+        {!override && <div style={{ display: 'flex', gap: 8 }}>
           {tabButton(
             'certify',
             'Certify',
@@ -124,7 +138,7 @@ export default function CertifyModal({
             'var(--c-amber-dim, rgba(225,150,30,0.12))',
             'var(--c-amber)',
           )}
-        </div>
+        </div>}
 
         {mode === 'certify' && deliverableType === 'coc' && (
           <input
@@ -148,6 +162,26 @@ export default function CertifyModal({
             {deliverableType === 'inspection_only' ? 'An INS' : 'A FAT'} number will be
             auto-allocated for this inspection.
           </p>
+        )}
+        {override && (
+          <textarea
+            rows={3}
+            aria-label="Reason"
+            style={{
+              width: '100%',
+              border: '1px solid var(--c-border)',
+              borderRadius: 6,
+              padding: 8,
+              fontSize: 13,
+              background: 'var(--c-panel)',
+              color: 'var(--c-text)',
+              fontFamily: 'inherit',
+              resize: 'vertical',
+            }}
+            placeholder="Why you are certifying instead of the verifier (required) *"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
         )}
         {mode === 'send_back' && (
           <textarea
@@ -193,7 +227,7 @@ export default function CertifyModal({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={onConfirm} disabled={busy}>
+          <Button onClick={onConfirm} disabled={busy || (!!override && !reason.trim())}>
             {busy ? 'Working…' : mode === 'certify' ? 'Certify' : 'Send back'}
           </Button>
         </div>
