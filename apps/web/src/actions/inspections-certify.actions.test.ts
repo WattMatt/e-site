@@ -159,8 +159,8 @@ describe('certifyInspectionAction', () => {
     expect(svc.upserts).toEqual([])
   })
 
-  it('a Fail tick is recorded, not failing: the result is pass, and the issued number is returned', async () => {
-    const { client, update } = makeClient({
+  it('a ticked Fail fails the inspection (owner, 2026-11-03): certify is refused and nothing is written', async () => {
+    const { client, update, rpc } = makeClient({
       responses: [
         { section_id: 's1', field_id: 'q1', value_bool: true },
         { section_id: 's1', field_id: 'q2', value_bool: false },
@@ -168,9 +168,9 @@ describe('certifyInspectionAction', () => {
     })
     createClientMock.mockResolvedValue(client)
 
-    const issued = await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1', cocNumber: 'ignored' })
-    expect(update).toHaveBeenCalledWith({ status: 'certified', overall_result: 'pass', coc_number: null })
-    expect(issued).toEqual({ ok: true, value: { number: 'INS-KW-2026-0001', reportIssued: true } })
+    expect(await certifyInspectionAction({ inspectionId: 'i-1', projectId: 'p-1' })).toEqual({ ok: false, error: expect.stringMatching(/Send it back/) })
+    expect(rpc).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
   })
 
   it('sends the typed number, trimmed, for a CoC', async () => {
