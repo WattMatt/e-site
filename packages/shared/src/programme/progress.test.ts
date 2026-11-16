@@ -373,8 +373,28 @@ describe('ruling 10: a link into a completed successor never limits its predeces
       const r = completeSucc(mode)
       expect(r.showLate('A')).toEqual({ start: '2026-03-09', finish: '2026-03-13' })
       expect(r.tf('A')).toBe(0)
+      expect(r.ff('A')).toBe(0)
       expect(r.warnings().filter(w => w.code === 'negative_float')).toEqual([])
       expect(r.outOfSequence().map(i => [i.code, i.activityIds])).toEqual([['out_of_sequence', ['B']]])
+    })
+  }
+})
+
+describe('ruling 10 in free float: a completed successor is not measured against', () => {
+  // A (2, not started) FS → B (complete 03-03..03-06); C (10, independent) sets project finish Fri 03-20;
+  // data date Mon 03-09. A runs 03-09..03-10; with B skipped it has no live successor, so FF is to project finish.
+  for (const mode of ['retained_logic', 'progress_override'] as const) {
+    it(`regression (Task 8 re-review probe), ${mode}: A has TF 8 and FF 8`, () => {
+      const r = run(p(
+        [act('A', { originalDuration: 2 }),
+          act('B', { originalDuration: 4, actualStart: '2026-03-03', actualFinish: '2026-03-06' }),
+          act('C', { originalDuration: 10 })],
+        [dep('AB', 'A', 'B')], {}, { progress: mode },
+      ))
+      expect(r.showEarly('A')).toEqual({ start: '2026-03-09', finish: '2026-03-10' })
+      expect(r.showEarly('C')).toEqual({ start: '2026-03-09', finish: '2026-03-20' })
+      expect(r.tf('A')).toBe(8)
+      expect(r.ff('A')).toBe(8)
     })
   }
 })

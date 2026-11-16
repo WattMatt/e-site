@@ -57,7 +57,10 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
     }
     const cal = calOf(a)
     const e = early.get(a.id)!
+    // Ruling 10: a completed successor is not measured against (as in the backward pass); with every
+    // successor skipped, free float runs to projectFinish like an activity with no successors.
     const succs = liveLinks(n.succsOf.get(a.id), byId)
+      .filter(l => !(progressActive && progressState(byId.get(l.succId)!) === 'complete'))
     let ff = Infinity
     for (const link of succs) {
       const succ = byId.get(link.succId)!
