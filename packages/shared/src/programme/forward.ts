@@ -1,6 +1,7 @@
 import { displayFinish, displayStart, startOf, type EngineCalendar } from './calendar'
 import type { NormalisedProgramme } from './normalise'
-import type { ActivityInput, CalendarDate, DependencyInput, Instant, ProgrammeInput } from './types'
+import { ISSUE_SEVERITY } from './types'
+import type { ActivityInput, CalendarDate, DependencyInput, Instant, ProgrammeInput, ScheduleIssue } from './types'
 
 export type MomentKind = 'start' | 'finish'
 /** `kind` is set for milestones only: how their single moment (es = ef) is displayed (ruling 3). */
@@ -11,6 +12,72 @@ export function displayMilestone(cal: EngineCalendar, t: Instant, kind: MomentKi
 }
 
 const isMilestone = (a: ActivityInput) => a.type === 'start_milestone' || a.type === 'finish_milestone'
+
+/** Progress state of an activity (Task 6). A milestone with any actual date is complete. */
+export type ProgressState = 'complete' | 'in_progress' | 'not_started'
+export function progressState(a: ActivityInput): ProgressState {
+  if (a.actualFinish !== null) return 'complete'
+  if (a.actualStart !== null) return isMilestone(a) ? 'complete' : 'in_progress'
+  return 'not_started'
+}
+
+/** Whether progress is in play, and the raw data-date instant (not yet snapped to a calendar).
+ *  Progress fields are ignored only when there is no data date AND no actual date. With actuals but
+ *  no data date, the data date is taken as the project start. */
+export function progressContext(input: ProgrammeInput): { active: boolean; dataDate: Instant } {
+  const hasActuals = input.activities.some(a => a.actualStart !== null || a.actualFinish !== null)
+  if (input.dataDate !== null) return { active: true, dataDate: startOf(input.dataDate) }
+  return { active: hasActuals, dataDate: startOf(input.projectStart) }
+}
+
+/** The duration the schedule places for a not-started task: `remainingDuration ?? originalDuration`
+ *  when progress is in play, otherwise `originalDuration`. Milestones are 0. (Percent lags keep using
+ *  the original duration.) In-progress tasks use `remainingFrom` instead. */
+export function plannedDuration(a: ActivityInput, progressActive: boolean): number {
+  if (isMilestone(a)) return 0
+  return progressActive ? (a.remainingDuration ?? a.originalDuration) : a.originalDuration
+}
+
+/** Remaining duration of an in-progress task: `remainingDuration ?? max(0, original − work done to dd)`. */
+export function remainingFrom(a: ActivityInput, cal: EngineCalendar, es: Instant, dd: Instant): number {
+  return a.remainingDuration ?? Math.max(0, a.originalDuration - Math.max(0, cal.workBetween(es, dd)))
+}
+
+/** The moment of a completed milestone: a start_milestone at the start of its actual day (kind 'start'),
+ *  a finish_milestone at the end of its actual (finish) day (kind 'finish'). */
+export function completedMilestone(a: ActivityInput): Times {
+  if (a.type === 'start_milestone') {
+    const m = startOf((a.actualStart ?? a.actualFinish)!)
+    return { es: m, ef: m, kind: 'start' }
+  }
+  const m = startOf((a.actualFinish ?? a.actualStart)!) + 1
+  return { es: m, ef: m, kind: 'finish' }
+}
+
+/** `out_of_sequence`: an activity with an actual start whose FS predecessor has no actual finish, or whose
+ *  SS predecessor has no actual start. One warning per such activity, naming the offending links.
+ *  Links touching a level_of_effort are skipped (ruling 1). Actual dates are read from the leaves, so `_input` is unused. */
+export function detectOutOfSequence(n: NormalisedProgramme, _input: ProgrammeInput): ScheduleIssue[] {
+  const byId = new Map(n.leaves.map(a => [a.id, a]))
+  const issues: ScheduleIssue[] = []
+  for (const a of n.leaves) {
+    if (a.actualStart === null || a.type === 'level_of_effort') continue
+    const bad = (n.predsOf.get(a.id) ?? []).filter(l => {
+      const pred = byId.get(l.predId)!
+      if (pred.type === 'level_of_effort') return false
+      if (l.type === 'FS') return pred.actualFinish === null
+      if (l.type === 'SS') return pred.actualStart === null && pred.actualFinish === null
+      return false
+    })
+    if (bad.length === 0) continue
+    issues.push({
+      code: 'out_of_sequence', severity: ISSUE_SEVERITY.out_of_sequence, activityIds: [a.id],
+      dependencyIds: bad.map(l => l.id),
+      message: `Out of sequence: ${a.id} started before ${bad.map(l => `${l.predId} (${l.type})`).join(', ')} allowed it.`,
+    })
+  }
+  return issues
+}
 
 /** `x` moved by the link's lag, on the lag calendar (or elapsed, or % of the pred's duration). */
 function applyLag(link: DependencyInput, x: Instant, mode: 'start' | 'finish', predCal: EngineCalendar,
@@ -29,15 +96,21 @@ export function linkDemand(link: DependencyInput, pred: Times, predCal: EngineCa
   return { on, at: applyLag(link, x, on, predCal, succCal, projectCal, predDuration) }
 }
 
-/** Early dates for every leaf, in topological order. No progress (Task 6).
+/** Early dates for every leaf, in topological order, honouring progress against the data date (Task 6):
+ *  - complete (actualFinish, or a milestone with any actual): placed on its actuals; logic and constraints ignored;
+ *  - in progress (actualStart only): es = actual start; the remaining duration resumes at the data date
+ *    (`progress_override`) or at the later of the data date and every link demand (`retained_logic`);
+ *  - not started: es ≥ the data date, as one more logic demand (MSO/MFO, which ignore logic, ignore it too).
  *  `held` activities keep the given times and only drive their successors (used for ALAP, ruling 4d). */
 export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   cals: Map<string, EngineCalendar>, held?: Map<string, Times>): Map<string, Times> {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
+  /** Duration for percent lags: always the original duration. */
   const durOf = (a: ActivityInput) => (isMilestone(a) ? 0 : a.originalDuration)
   const projectStart = startOf(input.projectStart)
+  const progress = progressContext(input)
   const times = new Map<string, Times>()
 
   for (const a of n.leaves) {
@@ -47,7 +120,7 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
       continue
     }
     const cal = calOf(a)
-    const dur = durOf(a)
+    const dur = plannedDuration(a, progress.active)
     const c = a.constraint
     // Ruling 1: a level_of_effort pred never drives.
     const preds = (n.predsOf.get(a.id) ?? []).filter(l => byId.get(l.predId)!.type !== 'level_of_effort')
@@ -58,6 +131,38 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     }
     if (a.type === 'module_summary') {
       times.set(a.id, { es: startOf(a.fixed!.start), ef: startOf(a.fixed!.finish) + 1 })
+      continue
+    }
+
+    const state = progress.active ? progressState(a) : 'not_started'
+    // The data date as a working start on this activity's calendar (dd = snapStart(startOf(dataDate))).
+    const dd = progress.active ? cal.snapStart(progress.dataDate) : projectStart
+
+    if (state === 'complete') {
+      if (isMilestone(a)) {
+        times.set(a.id, completedMilestone(a))
+        continue
+      }
+      const ef = startOf(a.actualFinish!) + 1
+      const es = a.actualStart !== null ? startOf(a.actualStart) : cal.snapStart(cal.addWork(ef, -a.originalDuration, 'start'))
+      times.set(a.id, { es, ef })
+      continue
+    }
+    if (state === 'in_progress') {
+      // Only tasks get here: a milestone with an actual date is complete. Constraints are not applied.
+      const es = startOf(a.actualStart!)
+      const remaining = remainingFrom(a, cal, es, dd)
+      let resume = Math.max(es, dd)
+      if (input.options.progress === 'retained_logic') {
+        for (const link of preds) {
+          const pred = byId.get(link.predId)!
+          const d = linkDemand(link, times.get(pred.id)!, calOf(pred), cal, projectCal, durOf(pred))
+          resume = Math.max(resume, d.on === 'start' ? d.at : cal.addWork(d.at, -remaining, 'start'))
+        }
+      }
+      resume = cal.snapStart(resume)
+      // addWork(resume, 0, 'finish') would land before resume, so a task with nothing left ends at resume.
+      times.set(a.id, { es, ef: remaining === 0 ? resume : cal.addWork(resume, remaining, 'finish') })
       continue
     }
 
@@ -79,6 +184,7 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
         dateDemand(c.type, c.date!) // logic ignored
       } else {
         startType(projectStart)
+        if (progress.active) startType(dd)
         for (const link of preds) {
           const pred = byId.get(link.predId)!
           const pt = times.get(pred.id)!
@@ -113,7 +219,7 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
       continue
     }
 
-    let startDemand = projectStart
+    let startDemand = Math.max(projectStart, dd)
     for (const link of preds) {
       const pred = byId.get(link.predId)!
       const d = linkDemand(link, times.get(pred.id)!, calOf(pred), cal, projectCal, durOf(pred))

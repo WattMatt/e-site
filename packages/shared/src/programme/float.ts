@@ -1,6 +1,6 @@
 import { liveLinks, linkLimit, durationOf, type LateTimes } from './backward'
 import { startOf, type EngineCalendar } from './calendar'
-import type { Times } from './forward'
+import { progressContext, progressState, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import { ISSUE_SEVERITY } from './types'
 import type { ActivityInput, Instant, ProgrammeInput, ScheduleIssue, ScheduleOptions } from './types'
@@ -16,28 +16,42 @@ export function totalFloat(cal: EngineCalendar, e: Times, l: LateTimes, on: Sche
   return Math.min(start, finish)
 }
 
-/** Total float of every leaf with `options.floatOn`. Compute it from the PRE-ALAP early dates (ruling 5b). */
+/** Which float an activity reports (Task 6): a complete activity has none (null → 0); an in-progress one
+ *  has started, so only its finish can float, whatever `floatOn` says; otherwise `options.floatOn`. */
+function floatBasis(a: ActivityInput, input: ProgrammeInput, progressActive: boolean): ScheduleOptions['floatOn'] | null {
+  const state = progressActive ? progressState(a) : 'not_started'
+  if (state === 'complete') return null
+  if (state === 'in_progress') return 'finish'
+  return input.options.floatOn
+}
+
+/** Total float of every leaf with `options.floatOn` (progress: see floatBasis). Compute it from the
+ *  PRE-ALAP early dates (ruling 5b). */
 export function totalFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
   early: Map<string, Times>, late: Map<string, LateTimes>): Map<string, number> {
+  const progressActive = progressContext(input).active
   const out = new Map<string, number>()
   for (const a of n.leaves) {
     const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
-    out.set(a.id, totalFloat(cal, early.get(a.id)!, late.get(a.id)!, input.options.floatOn))
+    const on = floatBasis(a, input, progressActive)
+    out.set(a.id, on === null ? 0 : totalFloat(cal, early.get(a.id)!, late.get(a.id)!, on))
   }
   return out
 }
 
 /** Free float of every leaf: the smallest slack before any successor's early date moves (or before
  *  projectFinish, with none), capped at total float (ruling 4c): min(FF, max(TF, 0)), never below 0.
- *  LOE and ALAP activities get 0. Compute it from the PRE-ALAP early dates (ruling 5b). One pass, O(links). */
+ *  LOE, ALAP and complete activities get 0. Compute it from the PRE-ALAP early dates (ruling 5b). One pass, O(links). */
 export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
   early: Map<string, Times>, late: Map<string, LateTimes>, projectFinish: Instant): Map<string, number> {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const calOf = (x: ActivityInput) => cals.get(x.calendarId ?? input.defaultCalendarId)!
   const projectCal = cals.get(input.defaultCalendarId)!
+  const progressActive = progressContext(input).active
   const out = new Map<string, number>()
   for (const a of n.leaves) {
-    if (a.type === 'level_of_effort' || a.constraint?.type === 'alap') {
+    const on = floatBasis(a, input, progressActive)
+    if (a.type === 'level_of_effort' || a.constraint?.type === 'alap' || on === null) {
       out.set(a.id, 0)
       continue
     }
@@ -52,7 +66,7 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
       ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
     }
     if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish)
-    const tf = totalFloat(cal, e, late.get(a.id)!, input.options.floatOn)
+    const tf = totalFloat(cal, e, late.get(a.id)!, on)
     out.set(a.id, Math.max(0, Math.min(ff, tf)))
   }
   return out

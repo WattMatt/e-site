@@ -10,7 +10,7 @@
  * step 4 keeps the pre-ALAP dates if they are needed afterwards.
  */
 import { startOf, type EngineCalendar } from './calendar'
-import { forwardPass, type MomentKind, type Times } from './forward'
+import { forwardPass, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './types'
 
@@ -45,13 +45,17 @@ export function linkLimit(link: DependencyInput, succ: { s: Instant; f: Instant 
   return { on, at }
 }
 
-/** Late dates for every leaf, in reverse topological order. No progress (Task 6). */
+/** Late dates for every leaf, in reverse topological order. Progress (Task 6): a complete activity's late
+ *  dates are its actuals (like MSO/MFO); an in-progress task keeps ls = es (it has started) and gets lf from
+ *  the usual limits on its remaining duration (es → ef in the forward pass); a not-started task uses
+ *  `remainingDuration ?? originalDuration` when progress is in play. */
 export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   cals: Map<string, EngineCalendar>, early: Map<string, Times>): { late: Map<string, LateTimes>; projectFinish: Instant } {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
   const projectStart = startOf(input.projectStart)
+  const progress = progressContext(input)
 
   let projectFinish = -Infinity
   for (const t of early.values()) projectFinish = Math.max(projectFinish, t.ef)
@@ -73,13 +77,17 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
       late.set(a.id, { ls: projectStart, lf: projectStart }) // placeholder; Task 7 replaces it
       continue
     }
-    if (isFixed(a)) {
+    const state = progress.active ? progressState(a) : 'not_started'
+    if (isFixed(a) || state === 'complete') {
       late.set(a.id, e.kind ? { ls: e.es, lf: e.ef, kind: e.kind } : { ls: e.es, lf: e.ef })
       continue
     }
 
     const cal = calOf(a)
-    const dur = durationOf(a)
+    const dur = durationOf(a) // for percent lags
+    // Duration used to place the late dates: the remaining duration for an in-progress task.
+    const span = state === 'in_progress' ? remainingFrom(a, cal, e.es, cal.snapStart(progress.dataDate))
+      : plannedDuration(a, progress.active)
     const c = a.constraint
     const succs = liveLinks(n.succsOf.get(a.id), byId)
 
@@ -120,14 +128,19 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
 
     // Task: the latest finish is the min of the finish limits and each start limit + duration.
     let lfPos = Infinity
-    for (const l of limits) lfPos = Math.min(lfPos, l.on === 'finish' ? l.pos : l.pos + dur)
-    if (dur === 0) {
+    for (const l of limits) lfPos = Math.min(lfPos, l.on === 'finish' ? l.pos : l.pos + span)
+    if (state === 'in_progress') {
+      // Started: the late start is fixed at the actual start; only the finish floats.
+      late.set(a.id, { ls: e.es, lf: span === 0 ? cal.fromWorkPos(lfPos, 'start') : cal.fromWorkPos(lfPos, 'finish') })
+      continue
+    }
+    if (span === 0) {
       // fromWorkPos(…, 'finish') would land on the previous boundary; keep the forward pass's shape (ls = lf).
       const t = cal.fromWorkPos(lfPos, 'start')
       late.set(a.id, { ls: t, lf: t })
       continue
     }
-    late.set(a.id, { ls: cal.fromWorkPos(lfPos - dur, 'start'), lf: cal.fromWorkPos(lfPos, 'finish') })
+    late.set(a.id, { ls: cal.fromWorkPos(lfPos - span, 'start'), lf: cal.fromWorkPos(lfPos, 'finish') })
   }
   return { late, projectFinish }
 }
@@ -139,6 +152,8 @@ export function applyAlap(n: NormalisedProgramme, input: ProgrammeInput, cals: M
   const held = new Map<string, Times>()
   for (const a of n.leaves) {
     if (a.constraint?.type !== 'alap' || a.type === 'level_of_effort' || a.type === 'module_summary') continue
+    // A started or finished activity stays where its progress puts it.
+    if (a.actualStart !== null || a.actualFinish !== null) continue
     // Ruling 5(a): the later of early and late by working position, so an ALAP activity with negative
     // float never moves before what its predecessors allow. On a tie the late time is kept.
     const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
