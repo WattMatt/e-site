@@ -359,3 +359,22 @@ describe('ruling 9: a start-side link into an in-progress successor', () => {
     expect(r.tf('A')).toBe(3)
   })
 })
+
+describe('ruling 10: a link into a completed successor never limits its predecessor', () => {
+  // A (5, not started) FS → B (complete 03-03..03-06); data date Mon 03-09. B finished out of sequence.
+  const completeSucc = (progress: ScheduleOptions['progress']) => run(p(
+    [act('A', { originalDuration: 5 }),
+      act('B', { originalDuration: 4, actualStart: '2026-03-03', actualFinish: '2026-03-06' })],
+    [dep('AB', 'A', 'B')], {}, { progress },
+  ))
+
+  for (const mode of ['retained_logic', 'progress_override'] as const) {
+    it(`regression (Task 8 review probe), ${mode}: A has TF 0, no negative_float; out_of_sequence stays`, () => {
+      const r = completeSucc(mode)
+      expect(r.showLate('A')).toEqual({ start: '2026-03-09', finish: '2026-03-13' })
+      expect(r.tf('A')).toBe(0)
+      expect(r.warnings().filter(w => w.code === 'negative_float')).toEqual([])
+      expect(r.outOfSequence().map(i => [i.code, i.activityIds])).toEqual([['out_of_sequence', ['B']]])
+    })
+  }
+})

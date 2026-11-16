@@ -120,6 +120,8 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     for (const link of succs) {
       const succ = byId.get(link.succId)!
       const sl = late.get(succ.id)!
+      // Ruling 10: a completed successor never limits its predecessor (any link type, any progress mode).
+      if (progress.active && progressState(succ) === 'complete') continue
       let s = sl.ls
       // Ruling 9: a start-side link (FS/SS) into an in-progress successor never limits by its actual start.
       // retained_logic: by its late resume point (lf − remaining, on its calendar); progress_override: not at all.
