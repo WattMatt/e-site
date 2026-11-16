@@ -398,3 +398,39 @@ describe('ruling 10 in free float: a completed successor is not measured against
     })
   }
 })
+
+describe('ruling 11: free float on a start-side link into an in-progress successor', () => {
+  // A (2) FS → B (in progress since 03-03, remaining 2); C (10, independent) sets project finish Fri 03-20;
+  // data date Mon 03-09. A runs 03-09..03-10.
+  const net = (mode: ScheduleOptions['progress'], withP: boolean) => run(p(
+    [act('A', { originalDuration: 2 }),
+      act('B', { originalDuration: 5, actualStart: '2026-03-03', remainingDuration: 2 }),
+      act('C', { originalDuration: 10 }),
+      ...(withP ? [act('P', { originalDuration: 4 })] : [])],
+    [dep('AB', 'A', 'B'), ...(withP ? [dep('PB', 'P', 'B')] : [])], {}, { progress: mode },
+  ))
+
+  it('progress override: the link is skipped, so A\'s FF runs to project finish — TF 8, FF 8', () => {
+    const r = net('progress_override', false)
+    expect(r.tf('A')).toBe(8)
+    expect(r.ff('A')).toBe(8)
+  })
+
+  it('retained logic: B resumes Wed 03-11, straight after A, so A has FF 0 (TF 6)', () => {
+    // B late finish = project finish 03-20, late resume Thu 03-19, so A lf = 03-18: TF 6.
+    const r = net('retained_logic', false)
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-03', finish: '2026-03-12' })
+    expect(r.tf('A')).toBe(6)
+    expect(r.ff('A')).toBe(0)
+  })
+
+  it('retained logic: P (4) pushes B\'s resume to Fri 03-13, so A has FF 2 (Wed, Thu), TF 6', () => {
+    const r = net('retained_logic', true)
+    expect(r.showEarly('P')).toEqual({ start: '2026-03-09', finish: '2026-03-12' })
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-03', finish: '2026-03-16' })
+    expect(r.tf('A')).toBe(6)
+    expect(r.ff('A')).toBe(2)
+    expect(r.tf('P')).toBe(4)
+    expect(r.ff('P')).toBe(0)
+  })
+})

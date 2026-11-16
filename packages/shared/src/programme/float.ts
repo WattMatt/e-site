@@ -1,6 +1,6 @@
 import { liveLinks, linkLimit, durationOf, type LateTimes } from './backward'
 import { startOf, type EngineCalendar } from './calendar'
-import { progressContext, progressState, type Times } from './forward'
+import { progressContext, progressState, remainingFrom, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import { ISSUE_SEVERITY } from './types'
 import type { ActivityInput, Instant, ProgrammeInput, ScheduleIssue, ScheduleOptions } from './types'
@@ -47,7 +47,9 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const calOf = (x: ActivityInput) => cals.get(x.calendarId ?? input.defaultCalendarId)!
   const projectCal = cals.get(input.defaultCalendarId)!
-  const progressActive = progressContext(input).active
+  const progress = progressContext(input)
+  const progressActive = progress.active
+  const override = input.options.progress === 'progress_override'
   const out = new Map<string, number>()
   for (const a of n.leaves) {
     const on = floatBasis(a, input, progressActive)
@@ -59,13 +61,25 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
     const e = early.get(a.id)!
     // Ruling 10: a completed successor is not measured against (as in the backward pass); with every
     // successor skipped, free float runs to projectFinish like an activity with no successors.
+    const startSide = (l: { type: string }) => l.type === 'FS' || l.type === 'SS'
+    const inProgress = (id: string) => progressActive && progressState(byId.get(id)!) === 'in_progress'
+    // Ruling 11: under progress_override a start-side link into an in-progress successor is skipped too.
     const succs = liveLinks(n.succsOf.get(a.id), byId)
       .filter(l => !(progressActive && progressState(byId.get(l.succId)!) === 'complete'))
+      .filter(l => !(override && startSide(l) && inProgress(l.succId)))
     let ff = Infinity
     for (const link of succs) {
       const succ = byId.get(link.succId)!
       const se = early.get(succ.id)!
-      const { on, at } = linkLimit(link, { s: se.es, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a, cal))
+      let s = se.es
+      // Ruling 11 (retained_logic): measured to the successor's early resume point, ef − remaining on its
+      // calendar, never to its actual start.
+      if (startSide(link) && inProgress(succ.id)) {
+        const succCal = calOf(succ)
+        const remaining = remainingFrom(succ, succCal, se.es, succCal.snapStart(progress.dataDate))
+        s = succCal.addWork(se.ef, -remaining, 'start')
+      }
+      const { on, at } = linkLimit(link, { s, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a, cal))
       ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
     }
     if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish)
