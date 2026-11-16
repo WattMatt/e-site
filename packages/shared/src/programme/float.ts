@@ -43,7 +43,7 @@ export function totalFloats(n: NormalisedProgramme, input: ProgrammeInput, cals:
  *  projectFinish, with none), capped at total float (ruling 4c): min(FF, max(TF, 0)), never below 0.
  *  LOE, ALAP and complete activities get 0. Compute it from the PRE-ALAP early dates (ruling 5b). One pass, O(links). */
 export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
-  early: Map<string, Times>, late: Map<string, LateTimes>, projectFinish: Instant): Map<string, number> {
+  early: Map<string, Times>, late: Map<string, LateTimes>, projectFinish: Instant | null): Map<string, number> {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const calOf = (x: ActivityInput) => cals.get(x.calendarId ?? input.defaultCalendarId)!
   const projectCal = cals.get(input.defaultCalendarId)!
@@ -82,7 +82,8 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
       const { on, at } = linkLimit(link, { s, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a, cal))
       ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
     }
-    if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish)
+    // projectFinish is non-null whenever a non-LOE leaf exists (ruling 14), as here.
+    if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish!)
     const tf = totalFloat(cal, e, late.get(a.id)!, on)
     out.set(a.id, Math.max(0, Math.min(ff, tf)))
   }

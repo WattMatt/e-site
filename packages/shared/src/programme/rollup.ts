@@ -1,8 +1,8 @@
-import { linkLimit, type LateTimes } from './backward'
-import { startOf, type EngineCalendar } from './calendar'
+import { linkLimit } from './backward'
+import { displayStart, startOf, type EngineCalendar } from './calendar'
 import { lagDuration, linkDemand, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
-import type { ActivityInput, Instant, ProgrammeInput } from './types'
+import type { ActivityInput, CalendarDate, ProgrammeInput } from './types'
 
 /**
  * Span of every level_of_effort from its neighbours' FINAL (post-ALAP) early times (ruling 1: it never
@@ -47,34 +47,38 @@ export function levelOfEffortTimes(n: NormalisedProgramme, input: ProgrammeInput
   return out
 }
 
-export interface RolledUp { es: Instant; ef: Instant; ls: Instant; lf: Instant; tf: number }
+/** Displayed dates of a leaf or a summary (ruling 13). */
+export interface ShownDates { es: CalendarDate; ef: CalendarDate; ls: CalendarDate; lf: CalendarDate }
+export interface RolledUp extends ShownDates { tf: number }
 
-/** Summary roll-up, children before parents: es = min of the children's es, ef = max of their ef, late
- *  dates the same way (FF is 0). TF = min over the non-LOE descendants (ruling 7(5)). A summary with no
- *  non-LOE descendant has TF 0 and sits at the project start (snapped on the default calendar); its parent still rolls up its descendants' dates. */
-export function rollUpSummaries(n: NormalisedProgramme, input: ProgrammeInput, defaultCal: EngineCalendar, early: Map<string, Times>,
-  late: Map<string, LateTimes>, tf: Map<string, number>): Map<string, RolledUp> {
+/** Summary roll-up, children before parents (ruling 13): a summary shows the earliest displayed start and the
+ *  latest displayed finish of its non-LOE descendants, early and late alike, taken from `shown` (each leaf's
+ *  displayed dates on its own calendar); never from instants on the default calendar. FF is 0. TF = min over
+ *  the non-LOE descendants (ruling 7(5)). A summary with no non-LOE descendant has TF 0 and sits at the
+ *  project start (snapped on the default calendar). */
+export function rollUpSummaries(n: NormalisedProgramme, input: ProgrammeInput, defaultCal: EngineCalendar,
+  shown: Map<string, ShownDates>, tf: Map<string, number>): Map<string, RolledUp> {
   const isLoe = new Set(n.leaves.filter(a => a.type === 'level_of_effort').map(a => a.id))
-  // Raw roll-up over every descendant; tf = Infinity while no non-LOE descendant has been seen.
-  const raw = new Map<string, RolledUp>()
+  // Over non-LOE descendants only; null while none has been seen. ISO dates compare as strings.
+  const raw = new Map<string, RolledUp | null>()
   const out = new Map<string, RolledUp>()
   for (const s of n.summaries) {
-    const r: RolledUp = { es: Infinity, ef: -Infinity, ls: Infinity, lf: -Infinity, tf: Infinity }
+    let r: RolledUp | null = null
     for (const id of n.childrenOf.get(s.id) ?? []) {
-      const c = raw.get(id) ?? (() => {
-        const e = early.get(id)!
-        const l = late.get(id)!
-        return { es: e.es, ef: e.ef, ls: l.ls, lf: l.lf, tf: isLoe.has(id) ? Infinity : tf.get(id)! }
-      })()
-      r.es = Math.min(r.es, c.es)
-      r.ef = Math.max(r.ef, c.ef)
-      r.ls = Math.min(r.ls, c.ls)
-      r.lf = Math.max(r.lf, c.lf)
-      r.tf = Math.min(r.tf, c.tf)
+      const c = raw.has(id) ? raw.get(id)! : isLoe.has(id) ? null : { ...shown.get(id)!, tf: tf.get(id)! }
+      if (c === null) continue
+      if (r === null) r = { ...c }
+      else {
+        if (c.es < r.es) r.es = c.es
+        if (c.ef > r.ef) r.ef = c.ef
+        if (c.ls < r.ls) r.ls = c.ls
+        if (c.lf > r.lf) r.lf = c.lf
+        r.tf = Math.min(r.tf, c.tf)
+      }
     }
     raw.set(s.id, r)
-    if (r.tf === Infinity) {
-      const p = defaultCal.snapStart(startOf(input.projectStart))
+    if (r === null) {
+      const p = displayStart(defaultCal.snapStart(startOf(input.projectStart)))
       out.set(s.id, { es: p, ef: p, ls: p, lf: p, tf: 0 })
     } else {
       out.set(s.id, r)

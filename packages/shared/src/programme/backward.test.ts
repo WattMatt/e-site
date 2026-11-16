@@ -337,15 +337,16 @@ describe('level of effort (ruling 1)', () => {
   })
 })
 
-describe('projectFinish (ruling 7(1))', () => {
-  it('is the greatest working position; among equal positions the smallest instant', () => {
+describe('projectFinish (ruling 12)', () => {
+  it('is the greatest canonical finish: a Monday-00:00 start milestone beats Friday\'s end, with no float lost', () => {
     // A(5) ends at the Saturday 00:00 boundary; FS start_milestone S sits at Monday 00:00 (same working position).
     const r = run(prog(
       [act('A', { originalDuration: 5 }), act('S', { type: 'start_milestone', originalDuration: 0 }), act('F', { type: 'finish_milestone', originalDuration: 0 })],
       [dep('AS', 'A', 'S'), dep('AF', 'A', 'F')],
     ))
     expect(r.early.get('S')!.ef).toBe(startOf('2026-03-09'))
-    expect(r.projectFinish).toBe(startOf('2026-03-07'))
+    // Was startOf('2026-03-07') under ruling 7(1). Ruling 12(b): numerically greatest = S at Mon 03-09 00:00.
+    expect(r.projectFinish).toBe(startOf('2026-03-09'))
     expect(r.showLate('F')).toEqual({ start: '2026-03-06', finish: '2026-03-06' })
     expect(r.showLate('S')).toEqual({ start: '2026-03-09', finish: '2026-03-09' })
     expect(r.tf('F')).toBe(0)

@@ -4,7 +4,7 @@ import { criticalIds, drivingLinks, drivingPredsOf, traceDrivingPath } from './c
 import { freeFloats, scheduleWarnings, totalFloats } from './float'
 import { detectOutOfSequence, displayMilestone, forwardPass, type MomentKind, type Times } from './forward'
 import { normaliseProgramme } from './normalise'
-import { levelOfEffortTimes, rollUpSummaries } from './rollup'
+import { levelOfEffortTimes, rollUpSummaries, type ShownDates } from './rollup'
 import { ISSUE_SEVERITY } from './types'
 import type { ActivityInput, CalendarDate, DependencyInput, Instant, ProgrammeInput, ScheduledActivity, ScheduleIssue, ScheduleResult } from './types'
 
@@ -22,7 +22,8 @@ const round3 = (x: number) => {
 /**
  * Schedules a programme. Order of work: validate → normalise (any error stops here: `ok:false`, nothing
  * scheduled) → calendars → forward → backward → floats (from the pre-ALAP early dates, ruling 5b) → ALAP →
- * warnings → level-of-effort spans → summary roll-up → driving links and critical → coverage warning → display.
+ * warnings → level-of-effort spans → driving links and critical → coverage warning → leaf display → summary
+ * roll-up of the displayed dates (ruling 13). projectFinish is the backward pass's displayed date (ruling 12).
  * Issues: every validation/normalise issue, `out_of_sequence`, `negative_float`, `deadline_missed`, and one
  * `calendar_out_of_range` per calendar. `ok` is false iff an issue is an error.
  */
@@ -44,7 +45,7 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
   const defaultCal = cals.get(input.defaultCalendarId)!
 
   const early = forwardPass(n, input, cals)
-  const { late, projectFinish } = backwardPass(n, input, cals, early)
+  const { late, projectFinish, projectFinishDate } = backwardPass(n, input, cals, early)
   const tf = totalFloats(n, input, cals, early, late)
   const ff = freeFloats(n, input, cals, early, late, projectFinish)
   applyAlap(n, input, cals, early, late)
@@ -58,8 +59,6 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
     tf.set(id, 0)
     ff.set(id, 0)
   }
-  const summaries = rollUpSummaries(n, input, defaultCal, early, late, tf)
-
   const driving = drivingLinks(n, input, cals, early)
   const critical = criticalIds(n, input, cals, early, tf, driving, projectFinish)
 
@@ -70,18 +69,9 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
     // A zero-length task (f = s) shows its start day twice rather than a finish before its start.
     return [displayStart(s), f > s + EPS ? displayFinish(cal, f) : displayStart(s)]
   }
-  const activities = new Map<string, ScheduledActivity>()
-  for (const a of input.activities) {
-    if (a.type === 'summary') {
-      const r = summaries.get(a.id)!
-      const [es, ef] = display(defaultCal, r.es, r.ef, undefined)
-      const [ls, lf] = display(defaultCal, r.ls, r.lf, undefined)
-      activities.set(a.id, {
-        id: a.id, earlyStart: es, earlyFinish: ef, lateStart: ls, lateFinish: lf,
-        totalFloat: round3(r.tf), freeFloat: 0, isCritical: false,
-      })
-      continue
-    }
+  // Leaves first, each on its own calendar; summaries then roll up those displayed dates (ruling 13).
+  const shown = new Map<string, ShownDates>()
+  for (const a of n.leaves) {
     const cal = calOf(a)
     const e = early.get(a.id)!
     const l = late.get(a.id)!
@@ -89,8 +79,23 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
     const defaultKind: MomentKind = a.type === 'start_milestone' ? 'start' : 'finish'
     const [es, ef] = display(cal, e.es, e.ef, milestone ? (e.kind ?? defaultKind) : undefined)
     const [ls, lf] = display(cal, l.ls, l.lf, milestone ? (l.kind ?? defaultKind) : undefined)
+    shown.set(a.id, { es, ef, ls, lf })
+  }
+  const summaries = rollUpSummaries(n, input, defaultCal, shown, tf)
+
+  const activities = new Map<string, ScheduledActivity>()
+  for (const a of input.activities) {
+    if (a.type === 'summary') {
+      const r = summaries.get(a.id)!
+      activities.set(a.id, {
+        id: a.id, earlyStart: r.es, earlyFinish: r.ef, lateStart: r.ls, lateFinish: r.lf,
+        totalFloat: round3(r.tf), freeFloat: 0, isCritical: false,
+      })
+      continue
+    }
+    const d = shown.get(a.id)!
     activities.set(a.id, {
-      id: a.id, earlyStart: es, earlyFinish: ef, lateStart: ls, lateFinish: lf,
+      id: a.id, earlyStart: d.es, earlyFinish: d.ef, lateStart: d.ls, lateFinish: d.lf,
       totalFloat: round3(tf.get(a.id)!), freeFloat: round3(ff.get(a.id)!), isCritical: critical.has(a.id),
     })
   }
@@ -99,7 +104,7 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
     ok: !issues.some(i => i.severity === 'error'),
     activities,
     drivingLinkIds: new Set(driving.map(l => l.id)),
-    projectFinish: Number.isFinite(projectFinish) ? displayFinish(defaultCal, projectFinish) : null,
+    projectFinish: projectFinishDate,
     issues,
   }
   const predsOf = drivingPredsOf(driving)

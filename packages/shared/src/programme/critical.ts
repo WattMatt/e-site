@@ -74,12 +74,13 @@ function eligible(a: ActivityInput, progressActive: boolean): boolean {
  * Critical leaves.
  *  - `total_float`: TF ≤ threshold (TF from the pre-ALAP early dates, unrounded).
  *  - `longest_path`: walk the driving links backwards from every non-LOE activity whose final early finish
- *    is at the project finish's working position on the default calendar (within 1e-9, ruling 7(1): a start
- *    moment at Monday 00:00 ties with Friday's end); every activity reached is critical.
+ *    has the project finish's working position on the activity's OWN calendar (within 1e-9, ruling 12(e):
+ *    no working time of its own lies between them); every activity reached is critical. Skipped when
+ *    projectFinish is null (no leaf other than level-of-effort, ruling 14).
  * Completed activities, level_of_effort and summaries are never critical.
  */
 export function criticalIds(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
-  early: Map<string, Times>, tf: Map<string, number>, driving: DependencyInput[], projectFinish: Instant): Set<string> {
+  early: Map<string, Times>, tf: Map<string, number>, driving: DependencyInput[], projectFinish: Instant | null): Set<string> {
   const progressActive = progressContext(input).active
   const out = new Set<string>()
   const opt = input.options.critical
@@ -89,14 +90,14 @@ export function criticalIds(n: NormalisedProgramme, input: ProgrammeInput, cals:
     }
     return out
   }
+  if (projectFinish === null) return out
   const predsOf = drivingPredsOf(driving)
-  const projectCal = cals.get(input.defaultCalendarId)!
-  const pfPos = projectCal.workPos(projectFinish)
   const reached = new Set<string>()
   const stack: string[] = []
   for (const a of n.leaves) {
     if (a.type === 'level_of_effort') continue
-    if (Math.abs(projectCal.workPos(early.get(a.id)!.ef) - pfPos) <= EPS) {
+    const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
+    if (Math.abs(cal.workPos(early.get(a.id)!.ef) - cal.workPos(projectFinish)) <= EPS) {
       reached.add(a.id)
       stack.push(a.id)
     }

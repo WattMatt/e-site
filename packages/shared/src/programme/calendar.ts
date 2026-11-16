@@ -73,17 +73,24 @@ export function buildEngineCalendar(spec: EngineCalendarSpec): EngineCalendar {
     while (dayLo < lo) extendDown()
     while (dayHi + 1 - lo >= cum.length) extendUp()
   }
+  // Ruling 14: a non-finite instant would extend the table forever; refuse it.
+  const finite = (x: number, what: string): void => {
+    if (!Number.isFinite(x)) throw new Error(`Calendar ${spec.id}: ${what} of a non-finite value (${x})`)
+  }
   const cumAt = (day: number): number => {
+    finite(day, 'cumAt')
     ensureDays(day, day)
     return cum[day - lo]
   }
 
   function workPos(t: Instant): number {
+    finite(t, 'workPos')
     const d = Math.floor(t)
     return cumAt(d) + (isWorkingDay(d) ? t - d : 0)
   }
 
   function fromWorkPos(pos: number, mode: 'start' | 'finish'): Instant {
+    finite(pos, 'fromWorkPos')
     pos = Math.round(pos * 1e9) / 1e9
     const w = Math.floor(pos + EPS)
     const frac = pos - w

@@ -154,3 +154,10 @@ Backward:
 - **B:** `LS` = actual start (03-03). `LF ≤` project finish 10, shows 03-13. TF (finish) `= 10 − 7 = 3`.
 - **A:** progress override means the link A → B no longer constrains B's remaining work, so it does not
   constrain A either. `LF ≤` project finish 10. `LF = 10`, `LS = 5`. Shows 03-09 .. 03-13. `TF = 0`.
+
+**An asymmetry, on purpose.** Under progress override, no link into an in-progress task drives its forward
+pass: the remaining work resumes at the data date whatever the links say. Backwards it is not symmetric.
+Only the start-side links (FS, SS) into an in-progress successor are dropped (ruling 9). Its finish-side
+links (FF, SF) still limit the predecessor's late dates as normal, and they still count in its free float
+(ruling 11). So an FF or SF link into a started task can give its predecessor less float than the forward
+pass alone would suggest. The comment at the ruling 9 step in `backward.ts` points here.

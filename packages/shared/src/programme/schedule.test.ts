@@ -193,13 +193,16 @@ describe('scheduleProgramme', () => {
     expect(critical(r)).toEqual(['P', 'Q'])
   })
 
-  it('milestones after FS links are driven by them; a Monday-00:00 start milestone does not move the finish (ruling 7(1))', () => {
+  it('milestones after FS links are driven by them; a Monday-00:00 start milestone sets the displayed finish (ruling 12)', () => {
     const p = prog(
       [act('A', { originalDuration: 5 }), act('S', { type: 'start_milestone', originalDuration: 0 }), act('F', { type: 'finish_milestone', originalDuration: 0 })],
       [dep('AS', 'A', 'S'), dep('AF', 'A', 'F')],
     )
     const r = scheduleProgramme(p)
-    expect(r.projectFinish).toBe('2026-03-06')
+    // Ruling 12(b): S's moment (Mon 03-09 00:00) is the greatest canonical finish and shows as 03-09
+    // (was 03-06 under ruling 7(1)). Its working position on C equals A's and F's end of Friday, so the
+    // late dates below are unchanged.
+    expect(r.projectFinish).toBe('2026-03-09')
     expect(r.activities.get('F')).toMatchObject({
       earlyStart: '2026-03-06', earlyFinish: '2026-03-06', lateStart: '2026-03-06', lateFinish: '2026-03-06', totalFloat: 0, isCritical: true,
     })
@@ -302,11 +305,61 @@ describe('scheduleProgramme', () => {
     expect(r.activities.size).toBe(0)
   })
 
+  it('ruling 14: an empty or summaries-only programme returns at once under both critical kinds', () => {
+    const kinds: ScheduleOptions['critical'][] = [{ kind: 'total_float', threshold: 0 }, { kind: 'longest_path' }]
+    for (const c of kinds) {
+      for (const p of [prog([]), prog([act('S', { type: 'summary' }), act('T', { type: 'summary', parentId: 'S' })])]) {
+        const t0 = performance.now()
+        const r = scheduleProgramme(withCritical(p, c))
+        expect(performance.now() - t0).toBeLessThan(1000)
+        expect(r.ok).toBe(true)
+        expect(r.projectFinish).toBeNull()
+      }
+    }
+  })
+
   it('rounds floats to 3 dp in the output', () => {
     // C is 1/3 day: TF is a repeating decimal internally.
     const r = scheduleProgramme(network({ C: { originalDuration: 1 / 3 } }))
     const tf = r.activities.get('C')!.totalFloat
     expect(tf).toBe(Math.round(tf * 1000) / 1000)
     expect(tf).toBeCloseTo(2.667, 3)
+  })
+})
+
+/** Mon–Sat calendar beside the default Mon–Fri `C`. */
+const SIX = { id: 'SIX', workWeekdays: [1, 2, 3, 4, 5, 6], hoursPerDay: 8, nonWorkDates: [], workDates: [], coverage: { from: '2026-01-01', to: '2027-12-31' } }
+const withSix = (p: ProgrammeInput): ProgrammeInput => ({ ...p, calendars: [...p.calendars, SIX] })
+
+describe('mixed calendars (ruling 12, 13)', () => {
+  // A 6 days on Mon–Sat: Mon 03-02 .. Sat 03-07 (ef = Sun 03-08 00:00). B 5 days on Mon–Fri C: 03-02 .. 03-06
+  // (ef = Sat 03-07 00:00). projectFinish = Sun 03-08 00:00 (A's canonical finish), shown on A's calendar: 03-07.
+  // B's lf cap: workPos_C(Sun 00:00) = 5 → lf = Sat 00:00 → shows 03-06, TF 0. A: lf = Sun 00:00, TF 0.
+  const probe = () => withSix(prog([act('A', { originalDuration: 6, calendarId: 'SIX' }), act('B', { originalDuration: 5 })]))
+
+  it('ruling 12: the project finish is the latest canonical finish; no false negative float', () => {
+    const r = scheduleProgramme(probe())
+    expect(r.projectFinish).toBe('2026-03-07')
+    expect(r.activities.get('A')).toMatchObject({
+      earlyStart: '2026-03-02', earlyFinish: '2026-03-07', lateStart: '2026-03-02', lateFinish: '2026-03-07', totalFloat: 0, freeFloat: 0,
+    })
+    expect(r.activities.get('B')).toMatchObject({
+      earlyStart: '2026-03-02', earlyFinish: '2026-03-06', lateStart: '2026-03-02', lateFinish: '2026-03-06', totalFloat: 0, freeFloat: 0,
+    })
+    expect(r.issues.map(i => i.code)).not.toContain('negative_float')
+  })
+
+  it('ruling 12(e): under longest_path both finishes are seeds', () => {
+    const r = scheduleProgramme(withCritical(probe(), { kind: 'longest_path' }))
+    expect(critical(r)).toEqual(['A', 'B'])
+  })
+
+  it('ruling 13: a summary shows its children\'s displayed dates, not instants on the default calendar', () => {
+    const p = withSix(prog([act('S', { type: 'summary' }), act('A', { parentId: 'S', originalDuration: 6, calendarId: 'SIX' })]))
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('A')).toMatchObject({ earlyFinish: '2026-03-07', lateFinish: '2026-03-07' })
+    expect(r.activities.get('S')).toMatchObject({
+      earlyStart: '2026-03-02', earlyFinish: '2026-03-07', lateStart: '2026-03-02', lateFinish: '2026-03-07', totalFloat: 0,
+    })
   })
 })

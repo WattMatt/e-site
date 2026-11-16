@@ -75,4 +75,11 @@ describe('engine calendar', () => {
       expect(C.workBetween(d, C.addWork(d, n, 'start'))).toBe(n)
     }
   })
+  it('ruling 14: workPos refuses non-finite input instead of extending forever', () => {
+    const cal = buildEngineCalendar(spec())
+    expect(() => cal.workPos(Infinity)).toThrow(/non-finite/)
+    expect(() => cal.workPos(-Infinity)).toThrow(/non-finite/)
+    expect(() => cal.workPos(Number.NaN)).toThrow(/non-finite/)
+    expect(() => cal.workBetween(startOf('2026-03-02'), Infinity)).toThrow(/non-finite/)
+  })
 })

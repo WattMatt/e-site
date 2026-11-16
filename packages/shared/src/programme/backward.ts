@@ -1,7 +1,8 @@
 /**
  * Backward pass, late dates and ALAP. Call order (Task 7):
  *   1. early = forwardPass(n, input, cals)
- *   2. { late, projectFinish } = backwardPass(n, input, cals, early)
+ *   2. { late, projectFinish, projectFinishDate } = backwardPass(n, input, cals, early) — projectFinish is
+ *      null when there is no leaf other than level-of-effort (ruling 14)
  *   3. tf = totalFloats(n, input, cals, early, late); ff = freeFloats(n, input, cals, early, late, projectFinish)
  *      — floats come from the PRE-ALAP early dates (ruling 5b)
  *   4. applyAlap(n, input, cals, early, late) — replaces entries in `early` (post-ALAP display dates)
@@ -9,10 +10,12 @@
  * applyAlap replaces map entries and never mutates the Times objects, so `new Map(early)` taken before
  * step 4 keeps the pre-ALAP dates if they are needed afterwards.
  */
-import { startOf, type EngineCalendar } from './calendar'
-import { forwardPass, lagDuration, mandatoryTimes, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
+import { displayFinish, startOf, type EngineCalendar } from './calendar'
+import { displayMilestone, forwardPass, lagDuration, mandatoryTimes, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
-import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './types'
+import type { ActivityInput, CalendarDate, DependencyInput, Instant, ProgrammeInput } from './types'
+
+const EPS = 1e-9
 
 /** `kind` is set for milestones only: how their single late moment (ls = lf) is displayed (ruling 3). */
 export interface LateTimes { ls: Instant; lf: Instant; kind?: MomentKind }
@@ -51,31 +54,34 @@ export function linkLimit(link: DependencyInput, succ: { s: Instant; f: Instant 
  *  the usual limits on its remaining duration (es → ef in the forward pass); a not-started task uses
  *  `remainingDuration ?? originalDuration` when progress is in play. */
 export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
-  cals: Map<string, EngineCalendar>, early: Map<string, Times>): { late: Map<string, LateTimes>; projectFinish: Instant } {
+  cals: Map<string, EngineCalendar>, early: Map<string, Times>):
+  { late: Map<string, LateTimes>; projectFinish: Instant | null; projectFinishDate: CalendarDate | null } {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
   const projectStart = startOf(input.projectStart)
   const progress = progressContext(input)
 
-  // Ruling 7(1): the greatest working position on the default calendar; among equal positions the
-  // smallest instant (the end-of-day boundary), so a start moment at Monday 00:00 never pushes it past Friday's end.
-  let projectFinish = -Infinity
-  let pfPos = -Infinity
-  for (const t of early.values()) {
-    const pos = projectCal.workPos(t.ef)
-    if (pos > pfPos + 1e-9 || (Math.abs(pos - pfPos) <= 1e-9 && t.ef < projectFinish)) {
-      projectFinish = t.ef
-      pfPos = Math.max(pfPos, pos)
-    }
-  }
-  // Ruling 4(a): a limit from projectFinish takes the early kind of what set it ('finish' for tasks; ties → 'finish').
-  let pfKind: MomentKind | null = null
+  // Ruling 12(a, b): each finish is canonicalised on the activity's OWN calendar (a task: the end of its last
+  // working day; a milestone: its moment), and projectFinish is the numerically greatest of them. Its
+  // displayed date is the displayed finish of the activity that set it; on an equal instant, the latest one.
+  // Level-of-effort placeholders never set it. With no other leaf it is null (ruling 14).
+  let projectFinish: Instant | null = null
+  let projectFinishDate: CalendarDate | null = null
   for (const a of n.leaves) {
+    if (a.type === 'level_of_effort') continue
     const t = early.get(a.id)!
-    if (a.type === 'level_of_effort' || t.ef !== projectFinish) continue
-    if (t.kind === 'start' && pfKind === null) pfKind = 'start'
-    else if (t.kind !== 'start') pfKind = 'finish'
+    const cal = calOf(a)
+    const milestone = isMilestone(a)
+    const f = milestone ? t.ef : cal.fromWorkPos(cal.workPos(t.ef), 'finish')
+    const shown = milestone ? displayMilestone(cal, f, t.kind ?? (a.type === 'start_milestone' ? 'start' : 'finish'))
+      : displayFinish(cal, f)
+    if (projectFinish === null || f > projectFinish + EPS) {
+      projectFinish = f
+      projectFinishDate = shown
+    } else if (Math.abs(f - projectFinish) <= EPS && shown > projectFinishDate!) {
+      projectFinishDate = shown
+    }
   }
 
   const late = new Map<string, LateTimes>()
@@ -131,11 +137,16 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
         const remaining = remainingFrom(succ, succCal, early.get(succ.id)!.es, succCal.snapStart(progress.dataDate))
         s = succCal.addWork(sl.lf, -remaining, 'start')
       }
+      // Asymmetry, on purpose (goldens/README.md): under progress_override an FF/SF link into an in-progress
+      // successor does not drive that successor in the forward pass, but it still limits this predecessor
+      // here (ruling 9) and its free float (ruling 11). Only start-side links are skipped above.
       const { on, at } = linkLimit(link, { s, f: sl.lf }, cal, calOf(succ), projectCal, dur)
       limits.push({ pos: cal.workPos(at), on, kind: on })
     }
-    // Ruling 4(b): every activity's late finish is capped at projectFinish, successors or not.
-    limits.push({ pos: cal.workPos(projectFinish), on: 'finish', kind: pfKind ?? 'finish' })
+    // Ruling 4(b) / 12(c): every activity's late finish is capped at projectFinish, successors or not.
+    // Ruling 12(d): a milestone limited by projectFinish keeps its OWN early kind. (Non-null here: this
+    // activity is a non-LOE leaf, so it took part in choosing projectFinish.)
+    limits.push({ pos: cal.workPos(projectFinish!), on: 'finish', kind: e.kind ?? 'finish' })
     // Ruling 6(1): a started task ignores SNLT (start-side); FNLT and a deadline still bind its finish.
     if (c?.type === 'snlt' && state !== 'in_progress') limits.push({ pos: cal.workPos(startOf(c.date!)), on: 'start', kind: 'start' })
     if (c?.type === 'fnlt') limits.push({ pos: cal.workPos(startOf(c.date!) + 1), on: 'finish', kind: 'finish' })
@@ -177,7 +188,7 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     }
     late.set(a.id, { ls: cal.fromWorkPos(lfPos - span, 'start'), lf: cal.fromWorkPos(lfPos, 'finish') })
   }
-  return { late, projectFinish }
+  return { late, projectFinish, projectFinishDate }
 }
 
 /** ALAP activities sit on their late dates (or their early dates, if later: ruling 5a); then the forward pass is re-run for everything else with them
