@@ -1,3 +1,14 @@
+/**
+ * Backward pass, late dates and ALAP. Call order (Task 7):
+ *   1. early = forwardPass(n, input, cals)
+ *   2. { late, projectFinish } = backwardPass(n, input, cals, early)
+ *   3. tf = totalFloats(n, input, cals, early, late); ff = freeFloats(n, input, cals, early, late, projectFinish)
+ *      — floats come from the PRE-ALAP early dates (ruling 5b)
+ *   4. applyAlap(n, input, cals, early, late) — replaces entries in `early` (post-ALAP display dates)
+ *   5. issues = scheduleWarnings(n, input, cals, early, tf)
+ * applyAlap replaces map entries and never mutates the Times objects, so `new Map(early)` taken before
+ * step 4 keeps the pre-ALAP dates if they are needed afterwards.
+ */
 import { startOf, type EngineCalendar } from './calendar'
 import { forwardPass, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
@@ -121,15 +132,23 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   return { late, projectFinish }
 }
 
-/** ALAP activities sit on their late dates; then the forward pass is re-run for everything else with them
+/** ALAP activities sit on their late dates (or their early dates, if later: ruling 5a); then the forward pass is re-run for everything else with them
  *  held fixed, so their successors respect logic (ruling 4d). Late dates are not recomputed. Mutates `early`. */
 export function applyAlap(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
   early: Map<string, Times>, late: Map<string, LateTimes>): void {
   const held = new Map<string, Times>()
   for (const a of n.leaves) {
     if (a.constraint?.type !== 'alap' || a.type === 'level_of_effort' || a.type === 'module_summary') continue
+    // Ruling 5(a): the later of early and late by working position, so an ALAP activity with negative
+    // float never moves before what its predecessors allow. On a tie the late time is kept.
+    const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
+    const e = early.get(a.id)!
     const l = late.get(a.id)!
-    held.set(a.id, l.kind ? { es: l.ls, ef: l.lf, kind: l.kind } : { es: l.ls, ef: l.lf })
+    const useEarly = cal.workPos(e.es) > cal.workPos(l.ls)
+    const es = useEarly ? e.es : l.ls
+    const ef = cal.workPos(e.ef) > cal.workPos(l.lf) ? e.ef : l.lf
+    const kind = useEarly ? e.kind : l.kind
+    held.set(a.id, kind ? { es, ef, kind } : { es, ef })
   }
   if (held.size === 0) return
   for (const [id, t] of forwardPass(n, input, cals, held)) early.set(id, t)

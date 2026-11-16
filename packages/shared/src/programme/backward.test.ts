@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyAlap, backwardPass } from './backward'
 import { buildEngineCalendar, displayFinish, displayStart, startOf, type EngineCalendar } from './calendar'
-import { freeFloat, scheduleWarnings, totalFloat } from './float'
+import { freeFloats, scheduleWarnings, totalFloat, totalFloats } from './float'
 import { displayMilestone, forwardPass } from './forward'
 import { normaliseProgramme } from './normalise'
 import { act, dep, prog } from './test-fixtures'
@@ -12,6 +12,10 @@ function run(input: ProgrammeInput, opts: { alap?: boolean } = {}) {
   const cals = new Map<string, EngineCalendar>(input.calendars.map(c => [c.id, buildEngineCalendar(c)]))
   const early = forwardPass(n, input, cals)
   const { late, projectFinish } = backwardPass(n, input, cals, early)
+  // The call order Task 7 follows: floats from the pre-ALAP early dates, then ALAP, then warnings.
+  const pre = new Map(early)
+  const tfs = totalFloats(n, input, cals, early, late)
+  const ffs = freeFloats(n, input, cals, early, late, projectFinish)
   if (opts.alap) applyAlap(n, input, cals, early, late)
   const cal = cals.get('C')!
   const showLate = (id: string) => {
@@ -24,10 +28,10 @@ function run(input: ProgrammeInput, opts: { alap?: boolean } = {}) {
     if (e.kind) return { start: displayMilestone(cal, e.es, e.kind), finish: displayMilestone(cal, e.ef, e.kind) }
     return { start: displayStart(e.es), finish: displayFinish(cal, e.ef) }
   }
-  const tf = (id: string, on: ScheduleOptions['floatOn'] = 'smallest') => totalFloat(cal, early.get(id)!, late.get(id)!, on)
-  const ff = (id: string) => freeFloat(id, n, early, cals, projectFinish, input, late)
-  const warnings = () => scheduleWarnings(n, input, cals, early, late)
-  return { early, late, projectFinish, showLate, showEarly, tf, ff, warnings }
+  const tf = (id: string, on: ScheduleOptions['floatOn'] = 'smallest') => totalFloat(cal, pre.get(id)!, late.get(id)!, on)
+  const ff = (id: string) => ffs.get(id)!
+  const warnings = () => scheduleWarnings(n, input, cals, early, tfs)
+  return { n, cals, input, early, late, projectFinish, showLate, showEarly, tf, ff, warnings }
 }
 
 /** A(5) FS B(4), A FS C(1), C FS D(1). */
@@ -237,6 +241,72 @@ describe('ruling 4', () => {
     expect(r.showEarly('D')).toEqual({ start: '2026-03-12', finish: '2026-03-12' })
     expect(r.showEarly('B')).toEqual({ start: '2026-03-09', finish: '2026-03-12' })
     expect(r.showLate('D')).toEqual({ start: '2026-03-12', finish: '2026-03-12' })
+  })
+})
+
+describe('ruling 5 and lags (fix round 1)', () => {
+  it('5(a) C ALAP with D FNLT 03-09 (C TF −1): C is held at its early 03-09, D re-flows to 03-10', () => {
+    const r = run(network({
+      C: { constraint: { type: 'alap', date: null } },
+      D: { constraint: { type: 'fnlt', date: '2026-03-09' } },
+    }), { alap: true })
+    expect(r.showEarly('C')).toEqual({ start: '2026-03-09', finish: '2026-03-09' })
+    expect(r.showEarly('D')).toEqual({ start: '2026-03-10', finish: '2026-03-10' })
+    expect(r.tf('C')).toBe(-1)
+  })
+
+  it('5(b) C ALAP: floats come from the pre-ALAP early dates — C TF 2 FF 0, D TF 2 FF 2 (not critical at 0)', () => {
+    const r = run(network({ C: { constraint: { type: 'alap', date: null } } }), { alap: true })
+    expect(r.tf('C')).toBe(2)
+    expect(r.ff('C')).toBe(0)
+    expect(r.tf('D')).toBe(2)
+    expect(r.ff('D')).toBe(2)
+  })
+
+  it('freeFloats gives every leaf its free float in one pass', () => {
+    const r = run(network())
+    expect(freeFloats(r.n, r.input, r.cals, r.early, r.late, r.projectFinish)).toEqual(new Map([['A', 0], ['B', 0], ['C', 0], ['D', 2]]))
+  })
+
+  // A(5) FS B(3) with the lag under test; X(13) runs alone and sets projectFinish (end of Wed 03-18),
+  // so B has float and A's late finish comes from the reversed lag.
+  const S6 = { id: 'S6', workWeekdays: [1, 2, 3, 4, 5, 6], hoursPerDay: 8, nonWorkDates: [], workDates: [], coverage: { from: '2026-01-01', to: '2027-12-31' } }
+  const lagNet = (link: Partial<DependencyInput>, bCal: string | null = null): ProgrammeInput => {
+    const base = prog(
+      [act('A', { originalDuration: 5 }), act('B', { originalDuration: 3, calendarId: bCal }), act('X', { originalDuration: 13 })],
+      [dep('AB', 'A', 'B', link)],
+    )
+    return bCal ? { ...base, calendars: [...base.calendars, S6] } : base
+  }
+  const lateA = (input: ProgrammeInput) => {
+    const r = run(input)
+    return { lf: r.late.get('A')!.lf, shown: r.showLate('A').finish, tf: r.tf('A') }
+  }
+
+  it('FS +2 working: A late finish = end of Wed 03-11, TF 3', () => {
+    expect(lateA(lagNet({ lag: 2 }))).toEqual({ lf: startOf('2026-03-12'), shown: '2026-03-11', tf: 3 })
+  })
+
+  it('FS −2 lead: A late finish = end of Tue 03-17, TF 7', () => {
+    expect(lateA(lagNet({ lag: -2 }))).toEqual({ lf: startOf('2026-03-18'), shown: '2026-03-17', tf: 7 })
+  })
+
+  it('FS +2 elapsed: A late finish = Sat 03-14 00:00 = end of Fri 03-13, TF 5', () => {
+    expect(lateA(lagNet({ lag: 2, lagUnit: 'elapsed_days' }))).toEqual({ lf: startOf('2026-03-14'), shown: '2026-03-13', tf: 5 })
+  })
+
+  it('SS 50 %: A late start Wed 03-11 noon, late finish Wed 03-18 noon, TF 7.5', () => {
+    const r = run(lagNet({ type: 'SS', lag: 50, lagUnit: 'percent' }))
+    expect(r.late.get('A')).toEqual({ ls: startOf('2026-03-11') + 0.5, lf: startOf('2026-03-18') + 0.5 })
+    expect(r.tf('A')).toBe(7.5)
+  })
+
+  it("two calendars, FS +2 on the 'succ' calendar (B on Mon–Sat): A late finish = end of Thu 03-12, TF 4", () => {
+    expect(lateA(lagNet({ lag: 2, lagCalendar: 'succ' }, 'S6'))).toEqual({ lf: startOf('2026-03-13'), shown: '2026-03-12', tf: 4 })
+  })
+
+  it("two calendars, FS +2 on the 'pred' calendar (Mon–Fri): A late finish = end of Wed 03-11, TF 3", () => {
+    expect(lateA(lagNet({ lag: 2, lagCalendar: 'pred' }, 'S6'))).toEqual({ lf: startOf('2026-03-12'), shown: '2026-03-11', tf: 3 })
   })
 })
 
