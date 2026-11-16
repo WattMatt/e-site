@@ -45,6 +45,12 @@ describe('engine calendar', () => {
     expect(cal.addWork(startOf('2026-12-15'), 2, 'finish')).toBe(startOf('2027-01-12'))
     expect(cal.isWorkingDay(dayNumber('2026-12-19'))).toBe(false)
   })
+  it('rejects a calendar with no working weekdays', () => {
+    expect(() => buildEngineCalendar(spec({ workWeekdays: [], workDates: ['2026-03-04'] }))).toThrow(/no working weekdays/)
+  })
+  it('displayFinish tolerates near-integer instants', () => {
+    expect(displayFinish(C, startOf('2026-03-07') + 1e-12)).toBe('2026-03-06')
+  })
   it('coverage', () => {
     expect(C.inCoverage(startOf('2028-01-03'))).toBe(false)
     expect(C.inCoverage(startOf('2026-06-01'))).toBe(true)

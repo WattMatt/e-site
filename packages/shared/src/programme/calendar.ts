@@ -27,8 +27,8 @@ export function buildEngineCalendar(spec: EngineCalendarSpec): EngineCalendar {
   const extraWork = new Set(spec.workDates.map(dayNumber))
   const covFrom = dayNumber(spec.coverage.from)
   const covTo = dayNumber(spec.coverage.to)
-  if (weekdays.size === 0 && extraWork.size === 0) {
-    throw new Error(`Calendar ${spec.id} has no working days`)
+  if (weekdays.size === 0) {
+    throw new Error(`Calendar ${spec.id} has no working weekdays`)
   }
 
   const isoWeekday = (day: number) => ((((day + 3) % 7) + 7) % 7) + 1 // 1970-01-01 is a Thursday (4)
@@ -165,15 +165,16 @@ export function startOf(d: CalendarDate): Instant {
 }
 
 export function displayStart(t: Instant): CalendarDate {
-  return fromDayNumber(Math.floor(t))
+  return fromDayNumber(Math.floor(r))
 }
 
 /** Whole t → last working day strictly before day t; otherwise the day containing t. */
 export function displayFinish(cal: EngineCalendar, t: Instant): CalendarDate {
-  if (Number.isInteger(t)) {
-    let d = t - 1
+  const r = Math.round(t * 1e9) / 1e9
+  if (Number.isInteger(r)) {
+    let d = r - 1
     while (!cal.isWorkingDay(d)) d--
     return fromDayNumber(d)
   }
-  return fromDayNumber(Math.floor(t))
+  return fromDayNumber(Math.floor(r))
 }
