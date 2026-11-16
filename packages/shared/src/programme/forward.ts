@@ -97,8 +97,17 @@ export function detectOutOfSequence(n: NormalisedProgramme, _input: ProgrammeInp
   return issues
 }
 
+/** The pred duration a percent lag is measured against: the original duration, even with a remaining
+ *  duration (ruling 6(4)); 0 for a milestone; for a module_summary, the working days of its fixed span on
+ *  its own calendar (its originalDuration is 0). */
+export function lagDuration(a: ActivityInput, cal: EngineCalendar): number {
+  if (isMilestone(a)) return 0
+  if (a.type === 'module_summary' && a.fixed) return cal.workBetween(startOf(a.fixed.start), startOf(a.fixed.finish) + 1)
+  return a.originalDuration
+}
+
 /** `x` moved by the link's lag, on the lag calendar (or elapsed, or % of the pred's duration). */
-function applyLag(link: DependencyInput, x: Instant, mode: 'start' | 'finish', predCal: EngineCalendar,
+export function applyLag(link: DependencyInput, x: Instant, mode: 'start' | 'finish', predCal: EngineCalendar,
   succCal: EngineCalendar, projectCal: EngineCalendar, predDuration: number): Instant {
   if (link.lagUnit === 'elapsed_days') return x + link.lag
   if (link.lagUnit === 'percent') return predCal.addWork(x, (link.lag / 100) * predDuration, mode)
@@ -125,8 +134,7 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
-  /** Duration for percent lags: always the original duration, even with a remaining duration (ruling 6(4)). */
-  const durOf = (a: ActivityInput) => (isMilestone(a) ? 0 : a.originalDuration)
+  const durOf = (a: ActivityInput) => lagDuration(a, calOf(a))
   const projectStart = startOf(input.projectStart)
   const progress = progressContext(input)
   const times = new Map<string, Times>()

@@ -62,7 +62,7 @@ export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: 
     for (const link of succs) {
       const succ = byId.get(link.succId)!
       const se = early.get(succ.id)!
-      const { on, at } = linkLimit(link, { s: se.es, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a))
+      const { on, at } = linkLimit(link, { s: se.es, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a, cal))
       ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
     }
     if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish)

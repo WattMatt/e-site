@@ -10,7 +10,7 @@
  * step 4 keeps the pre-ALAP dates if they are needed afterwards.
  */
 import { startOf, type EngineCalendar } from './calendar'
-import { forwardPass, mandatoryTimes, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
+import { forwardPass, lagDuration, mandatoryTimes, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './types'
 
@@ -18,7 +18,8 @@ import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './
 export interface LateTimes { ls: Instant; lf: Instant; kind?: MomentKind }
 
 export const isMilestone = (a: ActivityInput) => a.type === 'start_milestone' || a.type === 'finish_milestone'
-export const durationOf = (a: ActivityInput) => (isMilestone(a) ? 0 : a.originalDuration)
+/** Duration for percent lags (see `lagDuration`). */
+export const durationOf = (a: ActivityInput, cal: EngineCalendar) => lagDuration(a, cal)
 /** Fixed in both passes: MSO, MFO and module_summary. */
 export const isFixed = (a: ActivityInput) =>
   a.type === 'module_summary' || a.constraint?.type === 'mso' || a.constraint?.type === 'mfo'
@@ -98,7 +99,7 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
       continue
     }
 
-    const dur = durationOf(a) // for percent lags (ruling 6(4): always the original duration)
+    const dur = durationOf(a, cal) // for percent lags (ruling 6(4): always the original duration)
     // Duration used to place the late dates: the remaining duration for an in-progress task.
     const span = state === 'in_progress' ? remainingFrom(a, cal, e.es, cal.snapStart(progress.dataDate))
       : plannedDuration(a, progress.active)
