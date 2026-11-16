@@ -336,3 +336,24 @@ describe('level of effort (ruling 1)', () => {
     expect(r.tf('A')).toBe(2)
   })
 })
+
+describe('projectFinish (ruling 7(1))', () => {
+  it('is the greatest working position; among equal positions the smallest instant', () => {
+    // A(5) ends at the Saturday 00:00 boundary; FS start_milestone S sits at Monday 00:00 (same working position).
+    const r = run(prog(
+      [act('A', { originalDuration: 5 }), act('S', { type: 'start_milestone', originalDuration: 0 }), act('F', { type: 'finish_milestone', originalDuration: 0 })],
+      [dep('AS', 'A', 'S'), dep('AF', 'A', 'F')],
+    ))
+    expect(r.early.get('S')!.ef).toBe(startOf('2026-03-09'))
+    expect(r.projectFinish).toBe(startOf('2026-03-07'))
+    expect(r.showLate('F')).toEqual({ start: '2026-03-06', finish: '2026-03-06' })
+    expect(r.showLate('S')).toEqual({ start: '2026-03-09', finish: '2026-03-09' })
+    expect(r.tf('F')).toBe(0)
+    expect(r.tf('S')).toBe(0)
+  })
+
+  it('a later working position still wins over a smaller instant', () => {
+    const r = run(prog([act('A', { originalDuration: 5 }), act('B', { originalDuration: 6 })]))
+    expect(r.projectFinish).toBe(startOf('2026-03-10'))
+  })
+})

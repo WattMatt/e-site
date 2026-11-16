@@ -74,11 +74,12 @@ function eligible(a: ActivityInput, progressActive: boolean): boolean {
  * Critical leaves.
  *  - `total_float`: TF ≤ threshold (TF from the pre-ALAP early dates, unrounded).
  *  - `longest_path`: walk the driving links backwards from every non-LOE activity whose final early finish
- *    equals the project finish (within 1e-9); every activity reached is critical.
+ *    is at the project finish's working position on the default calendar (within 1e-9, ruling 7(1): a start
+ *    moment at Monday 00:00 ties with Friday's end); every activity reached is critical.
  * Completed activities, level_of_effort and summaries are never critical.
  */
-export function criticalIds(n: NormalisedProgramme, input: ProgrammeInput, early: Map<string, Times>,
-  tf: Map<string, number>, driving: DependencyInput[], projectFinish: Instant): Set<string> {
+export function criticalIds(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
+  early: Map<string, Times>, tf: Map<string, number>, driving: DependencyInput[], projectFinish: Instant): Set<string> {
   const progressActive = progressContext(input).active
   const out = new Set<string>()
   const opt = input.options.critical
@@ -89,11 +90,13 @@ export function criticalIds(n: NormalisedProgramme, input: ProgrammeInput, early
     return out
   }
   const predsOf = drivingPredsOf(driving)
+  const projectCal = cals.get(input.defaultCalendarId)!
+  const pfPos = projectCal.workPos(projectFinish)
   const reached = new Set<string>()
   const stack: string[] = []
   for (const a of n.leaves) {
     if (a.type === 'level_of_effort') continue
-    if (Math.abs(early.get(a.id)!.ef - projectFinish) <= EPS) {
+    if (Math.abs(projectCal.workPos(early.get(a.id)!.ef) - pfPos) <= EPS) {
       reached.add(a.id)
       stack.push(a.id)
     }

@@ -61,7 +61,7 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
   const summaries = rollUpSummaries(n, input, early, late, tf)
 
   const driving = drivingLinks(n, input, cals, early)
-  const critical = criticalIds(n, input, early, tf, driving, projectFinish)
+  const critical = criticalIds(n, input, cals, early, tf, driving, projectFinish)
 
   issues.push(...coverageWarnings(n.leaves, calOf, early, late))
 

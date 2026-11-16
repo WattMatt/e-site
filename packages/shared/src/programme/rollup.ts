@@ -48,19 +48,21 @@ export function levelOfEffortTimes(n: NormalisedProgramme, input: ProgrammeInput
 export interface RolledUp { es: Instant; ef: Instant; ls: Instant; lf: Instant; tf: number }
 
 /** Summary roll-up, children before parents: es = min of the children's es, ef = max of their ef, late
- *  dates the same way, TF = min of the children's TF (FF is 0). A summary with no children sits at the
- *  project start with TF 0. */
+ *  dates the same way (FF is 0). TF = min over the non-LOE descendants (ruling 7(5)). A summary with no
+ *  non-LOE descendant has TF 0 and sits at the project start; its parent still rolls up its descendants' dates. */
 export function rollUpSummaries(n: NormalisedProgramme, input: ProgrammeInput, early: Map<string, Times>,
   late: Map<string, LateTimes>, tf: Map<string, number>): Map<string, RolledUp> {
+  const isLoe = new Set(n.leaves.filter(a => a.type === 'level_of_effort').map(a => a.id))
+  // Raw roll-up over every descendant; tf = Infinity while no non-LOE descendant has been seen.
+  const raw = new Map<string, RolledUp>()
   const out = new Map<string, RolledUp>()
   for (const s of n.summaries) {
     const r: RolledUp = { es: Infinity, ef: -Infinity, ls: Infinity, lf: -Infinity, tf: Infinity }
     for (const id of n.childrenOf.get(s.id) ?? []) {
-      const child = out.get(id)
-      const c = child ?? (() => {
+      const c = raw.get(id) ?? (() => {
         const e = early.get(id)!
         const l = late.get(id)!
-        return { es: e.es, ef: e.ef, ls: l.ls, lf: l.lf, tf: tf.get(id)! }
+        return { es: e.es, ef: e.ef, ls: l.ls, lf: l.lf, tf: isLoe.has(id) ? Infinity : tf.get(id)! }
       })()
       r.es = Math.min(r.es, c.es)
       r.ef = Math.max(r.ef, c.ef)
@@ -68,6 +70,7 @@ export function rollUpSummaries(n: NormalisedProgramme, input: ProgrammeInput, e
       r.lf = Math.max(r.lf, c.lf)
       r.tf = Math.min(r.tf, c.tf)
     }
+    raw.set(s.id, r)
     if (r.tf === Infinity) {
       const p = startOf(input.projectStart)
       out.set(s.id, { es: p, ef: p, ls: p, lf: p, tf: 0 })

@@ -104,6 +104,34 @@ describe('scheduleProgramme', () => {
     expect(r.projectFinish).toBe('2026-03-11')
   })
 
+  it('ruling 7(5): summary TF ignores level-of-effort descendants', () => {
+    // A(5) has 2 days of float against the unrelated B(7); L (SS from A, FF to B) is an LOE child of S.
+    const p = prog(
+      [
+        act('S', { type: 'summary' }),
+        act('A', { parentId: 'S', originalDuration: 5 }),
+        act('L', { parentId: 'S', type: 'level_of_effort', originalDuration: 0 }),
+        act('B', { originalDuration: 7 }),
+      ],
+      [dep('AL', 'A', 'L', { type: 'SS' }), dep('LB', 'L', 'B', { type: 'FF' })],
+    )
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('A')!.totalFloat).toBe(2)
+    expect(r.activities.get('L')!.totalFloat).toBe(0)
+    expect(r.activities.get('S')!.totalFloat).toBe(2)
+  })
+
+  it('ruling 7(5): a summary with only LOE descendants has TF 0 and sits at the project start', () => {
+    // L follows A (FS), so its own span starts 03-09; the summary still sits at the project start.
+    const p = prog(
+      [act('S', { type: 'summary' }), act('L', { parentId: 'S', type: 'level_of_effort', originalDuration: 0 }), act('A', { originalDuration: 5 }), act('B', { originalDuration: 1 })],
+      [dep('AL', 'A', 'L'), dep('AB', 'A', 'B'), dep('LB', 'L', 'B', { type: 'FF' })],
+    )
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('L')).toMatchObject({ earlyStart: '2026-03-09' })
+    expect(r.activities.get('S')).toMatchObject({ earlyStart: '2026-03-02', lateStart: '2026-03-02', totalFloat: 0 })
+  })
+
   it('longest path: only the chain that sets the finish is critical', () => {
     const p = withCritical(
       prog([act('P', { originalDuration: 5 }), act('Q', { originalDuration: 1 }), act('R', { originalDuration: 2 })], [dep('PQ', 'P', 'Q')]),
@@ -129,12 +157,23 @@ describe('scheduleProgramme', () => {
     expect(critical(r)).toEqual(['P', 'Q'])
   })
 
-  it('a start_milestone after an FS link is driven by it (the snapped moment, not the raw boundary)', () => {
-    const p = prog([act('A', { originalDuration: 5 }), act('M', { type: 'start_milestone', originalDuration: 0 })], [dep('AM', 'A', 'M')])
+  it('milestones after FS links are driven by them; a Monday-00:00 start milestone does not move the finish (ruling 7(1))', () => {
+    const p = prog(
+      [act('A', { originalDuration: 5 }), act('S', { type: 'start_milestone', originalDuration: 0 }), act('F', { type: 'finish_milestone', originalDuration: 0 })],
+      [dep('AS', 'A', 'S'), dep('AF', 'A', 'F')],
+    )
     const r = scheduleProgramme(p)
-    expect(r.activities.get('M')).toMatchObject({ earlyStart: '2026-03-09', earlyFinish: '2026-03-09', isCritical: true })
-    expect([...r.drivingLinkIds]).toEqual(['AM'])
-    expect(drivingPath(r, p, 'M')).toEqual({ activityIds: ['A', 'M'], dependencyIds: ['AM'] })
+    expect(r.projectFinish).toBe('2026-03-06')
+    expect(r.activities.get('F')).toMatchObject({
+      earlyStart: '2026-03-06', earlyFinish: '2026-03-06', lateStart: '2026-03-06', lateFinish: '2026-03-06', totalFloat: 0, isCritical: true,
+    })
+    expect(r.activities.get('S')).toMatchObject({
+      earlyStart: '2026-03-09', earlyFinish: '2026-03-09', lateStart: '2026-03-09', lateFinish: '2026-03-09', totalFloat: 0, isCritical: true,
+    })
+    expect([...r.drivingLinkIds].sort()).toEqual(['AF', 'AS'])
+    expect(drivingPath(r, p, 'S')).toEqual({ activityIds: ['A', 'S'], dependencyIds: ['AS'] })
+    // Longest path seeds on the project finish's working position too, so S (Monday 00:00) is on it.
+    expect(critical(scheduleProgramme(withCritical(p, { kind: 'longest_path' })))).toEqual(['A', 'F', 'S'])
   })
 
   it('an elapsed lag landing on a weekend still drives (compared after the forward pass snaps it)', () => {
@@ -147,15 +186,6 @@ describe('scheduleProgramme', () => {
     expect(r.activities.get('B')).toMatchObject({ earlyStart: '2026-03-09', earlyFinish: '2026-03-09' })
     expect(r.activities.get('C')).toMatchObject({ earlyStart: '2026-03-05', earlyFinish: '2026-03-06' })
     expect([...r.drivingLinkIds].sort()).toEqual(['AB', 'AC'])
-  })
-
-  it('a finish_milestone after an FS link is driven by it', () => {
-    const p = prog([act('A', { originalDuration: 5 }), act('F', { type: 'finish_milestone', originalDuration: 0 })], [dep('AF', 'A', 'F')])
-    const r = scheduleProgramme(p)
-    expect(r.activities.get('F')).toMatchObject({
-      earlyStart: '2026-03-06', earlyFinish: '2026-03-06', lateStart: '2026-03-06', lateFinish: '2026-03-06', isCritical: true,
-    })
-    expect([...r.drivingLinkIds]).toEqual(['AF'])
   })
 
   it('an SS-lagged link into a task drives it; an FF link drives by its finish', () => {

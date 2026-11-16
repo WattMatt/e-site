@@ -58,8 +58,17 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   const projectStart = startOf(input.projectStart)
   const progress = progressContext(input)
 
+  // Ruling 7(1): the greatest working position on the default calendar; among equal positions the
+  // smallest instant (the end-of-day boundary), so a start moment at Monday 00:00 never pushes it past Friday's end.
   let projectFinish = -Infinity
-  for (const t of early.values()) projectFinish = Math.max(projectFinish, t.ef)
+  let pfPos = -Infinity
+  for (const t of early.values()) {
+    const pos = projectCal.workPos(t.ef)
+    if (pos > pfPos + 1e-9 || (Math.abs(pos - pfPos) <= 1e-9 && t.ef < projectFinish)) {
+      projectFinish = t.ef
+      pfPos = Math.max(pfPos, pos)
+    }
+  }
   // Ruling 4(a): a limit from projectFinish takes the early kind of what set it ('finish' for tasks; ties → 'finish').
   let pfKind: MomentKind | null = null
   for (const a of n.leaves) {
