@@ -165,7 +165,7 @@ export function startOf(d: CalendarDate): Instant {
 }
 
 export function displayStart(t: Instant): CalendarDate {
-  return fromDayNumber(Math.floor(r))
+  return fromDayNumber(Math.floor(t))
 }
 
 /** Whole t → last working day strictly before day t; otherwise the day containing t. */
