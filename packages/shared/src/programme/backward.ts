@@ -1,5 +1,5 @@
 import { startOf, type EngineCalendar } from './calendar'
-import type { MomentKind, Times } from './forward'
+import { forwardPass, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './types'
 
@@ -44,6 +44,14 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
 
   let projectFinish = -Infinity
   for (const t of early.values()) projectFinish = Math.max(projectFinish, t.ef)
+  // Ruling 4(a): a limit from projectFinish takes the early kind of what set it ('finish' for tasks; ties → 'finish').
+  let pfKind: MomentKind | null = null
+  for (const a of n.leaves) {
+    const t = early.get(a.id)!
+    if (a.type === 'level_of_effort' || t.ef !== projectFinish) continue
+    if (t.kind === 'start' && pfKind === null) pfKind = 'start'
+    else if (t.kind !== 'start') pfKind = 'finish'
+  }
 
   const late = new Map<string, LateTimes>()
   for (let i = n.leaves.length - 1; i >= 0; i--) {
@@ -65,15 +73,16 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     const succs = liveLinks(n.succsOf.get(a.id), byId)
 
     // Every limit as a working position on this activity's calendar. `pos` limits the start ('start')
-    // or the finish ('finish'); `kind` is the milestone display kind it would give (ruling 3).
+    // or the finish ('finish'); `kind` is the milestone display kind it would give (ruling 4a: its source).
     const limits: Array<{ pos: number; on: 'start' | 'finish'; kind: MomentKind }> = []
     for (const link of succs) {
       const succ = byId.get(link.succId)!
       const sl = late.get(succ.id)!
       const { on, at } = linkLimit(link, { s: sl.ls, f: sl.lf }, cal, calOf(succ), projectCal, dur)
-      limits.push({ pos: cal.workPos(at), on, kind: 'finish' })
+      limits.push({ pos: cal.workPos(at), on, kind: on })
     }
-    if (succs.length === 0) limits.push({ pos: cal.workPos(projectFinish), on: 'finish', kind: 'finish' })
+    // Ruling 4(b): every activity's late finish is capped at projectFinish, successors or not.
+    limits.push({ pos: cal.workPos(projectFinish), on: 'finish', kind: pfKind ?? 'finish' })
     if (c?.type === 'snlt') limits.push({ pos: cal.workPos(startOf(c.date!)), on: 'start', kind: 'start' })
     if (c?.type === 'fnlt') limits.push({ pos: cal.workPos(startOf(c.date!) + 1), on: 'finish', kind: 'finish' })
     if (a.deadline) limits.push({ pos: cal.workPos(startOf(a.deadline) + 1), on: 'finish', kind: 'finish' })
@@ -112,15 +121,16 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   return { late, projectFinish }
 }
 
-/** ALAP activities sit on their late dates. Runs after the backward pass, before roll-up. Mutates `early`. */
+/** ALAP activities sit on their late dates; then the forward pass is re-run for everything else with them
+ *  held fixed, so their successors respect logic (ruling 4d). Late dates are not recomputed. Mutates `early`. */
 export function applyAlap(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
   early: Map<string, Times>, late: Map<string, LateTimes>): void {
+  const held = new Map<string, Times>()
   for (const a of n.leaves) {
     if (a.constraint?.type !== 'alap' || a.type === 'level_of_effort' || a.type === 'module_summary') continue
-    const e = early.get(a.id)!
     const l = late.get(a.id)!
-    e.es = l.ls
-    e.ef = l.lf
-    if (l.kind) e.kind = l.kind
+    held.set(a.id, l.kind ? { es: l.ls, ef: l.lf, kind: l.kind } : { es: l.ls, ef: l.lf })
   }
+  if (held.size === 0) return
+  for (const [id, t] of forwardPass(n, input, cals, held)) early.set(id, t)
 }

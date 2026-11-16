@@ -16,9 +16,10 @@ export function totalFloat(cal: EngineCalendar, e: Times, l: LateTimes, on: Sche
   return Math.min(start, finish)
 }
 
-/** The smallest slack before any successor's early date moves (or before projectFinish, with none). Never below 0. */
+/** The smallest slack before any successor's early date moves (or before projectFinish, with none),
+ *  capped at total float (ruling 4c): min(FF, max(TF, 0)). Never below 0. */
 export function freeFloat(id: string, n: NormalisedProgramme, early: Map<string, Times>,
-  cals: Map<string, EngineCalendar>, projectFinish: Instant, input: ProgrammeInput): number {
+  cals: Map<string, EngineCalendar>, projectFinish: Instant, input: ProgrammeInput, late: Map<string, LateTimes>): number {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const a = byId.get(id)!
   if (a.type === 'level_of_effort' || a.constraint?.type === 'alap') return 0
@@ -36,7 +37,8 @@ export function freeFloat(id: string, n: NormalisedProgramme, early: Map<string,
     ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
   }
   if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish)
-  return Math.max(0, ff)
+  const tf = totalFloat(cal, e, late.get(id)!, input.options.floatOn)
+  return Math.max(0, Math.min(ff, tf))
 }
 
 /** `negative_float` (one issue naming every activity with TF < 0) and `deadline_missed` (early finish after the deadline). */

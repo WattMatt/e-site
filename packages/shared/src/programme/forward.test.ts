@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildEngineCalendar, displayFinish, displayStart, type EngineCalendar } from './calendar'
+import { buildEngineCalendar, displayFinish, displayStart, startOf, type EngineCalendar } from './calendar'
 import { displayMilestone, forwardPass } from './forward'
 import { normaliseProgramme } from './normalise'
 import { act, dep, prog } from './test-fixtures'
@@ -190,5 +190,17 @@ describe('lag calendar choice', () => {
   })
   it("'project' uses the default calendar C: Tue 03-10", () => {
     expect(run(twoCal('project')).show('B').start).toBe('2026-03-10')
+  })
+})
+
+describe('forwardPass with held activities (ruling 4d)', () => {
+  it('a held activity keeps its times and drives its successor', () => {
+    const input = prog([act('A', { originalDuration: 1 }), act('B', { originalDuration: 2 })], [dep('L', 'A', 'B')])
+    const n = normaliseProgramme(input).value!
+    const cals = new Map<string, EngineCalendar>(input.calendars.map(c => [c.id, buildEngineCalendar(c)]))
+    const heldA = { es: startOf('2026-03-04'), ef: startOf('2026-03-05') }
+    const times = forwardPass(n, input, cals, new Map([['A', heldA]]))
+    expect(times.get('A')).toEqual(heldA)
+    expect(displayStart(times.get('B')!.es)).toBe('2026-03-05')
   })
 })

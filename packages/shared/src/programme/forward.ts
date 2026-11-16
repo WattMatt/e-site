@@ -29,9 +29,10 @@ export function linkDemand(link: DependencyInput, pred: Times, predCal: EngineCa
   return { on, at: applyLag(link, x, on, predCal, succCal, projectCal, predDuration) }
 }
 
-/** Early dates for every leaf, in topological order. No progress (Task 6). */
+/** Early dates for every leaf, in topological order. No progress (Task 6).
+ *  `held` activities keep the given times and only drive their successors (used for ALAP, ruling 4d). */
 export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
-  cals: Map<string, EngineCalendar>): Map<string, Times> {
+  cals: Map<string, EngineCalendar>, held?: Map<string, Times>): Map<string, Times> {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
@@ -40,6 +41,11 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   const times = new Map<string, Times>()
 
   for (const a of n.leaves) {
+    const h = held?.get(a.id)
+    if (h) {
+      times.set(a.id, { ...h })
+      continue
+    }
     const cal = calOf(a)
     const dur = durOf(a)
     const c = a.constraint

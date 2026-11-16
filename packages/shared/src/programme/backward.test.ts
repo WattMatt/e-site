@@ -25,7 +25,7 @@ function run(input: ProgrammeInput, opts: { alap?: boolean } = {}) {
     return { start: displayStart(e.es), finish: displayFinish(cal, e.ef) }
   }
   const tf = (id: string, on: ScheduleOptions['floatOn'] = 'smallest') => totalFloat(cal, early.get(id)!, late.get(id)!, on)
-  const ff = (id: string) => freeFloat(id, n, early, cals, projectFinish, input)
+  const ff = (id: string) => freeFloat(id, n, early, cals, projectFinish, input, late)
   const warnings = () => scheduleWarnings(n, input, cals, early, late)
   return { early, late, projectFinish, showLate, showEarly, tf, ff, warnings }
 }
@@ -190,6 +190,53 @@ describe('late moments of milestones', () => {
     expect(r.late.get('M')!.kind).toBe('finish')
     expect(r.showLate('M')).toEqual({ start: '2026-03-06', finish: '2026-03-06' })
     expect(r.tf('M')).toBe(0)
+  })
+})
+
+describe('ruling 4', () => {
+  it('(a) a lone finish_milestone at the project start shows its late date 03-02', () => {
+    const r = run(prog([act('M', { type: 'finish_milestone', originalDuration: 0 })]))
+    expect(r.late.get('M')!.kind).toBe('start')
+    expect(r.showLate('M')).toEqual({ start: '2026-03-02', finish: '2026-03-02' })
+    expect(r.tf('M')).toBe(0)
+  })
+
+  it("(a) finish_milestone M SS B(3): late moment from the SS reverse, kind 'start', shows 03-02, TF 0", () => {
+    const r = run(prog(
+      [act('M', { type: 'finish_milestone', originalDuration: 0 }), act('B', { originalDuration: 3 })],
+      [dep('MB', 'M', 'B', { type: 'SS' })],
+    ))
+    expect(r.late.get('M')!.kind).toBe('start')
+    expect(r.showLate('M')).toEqual({ start: '2026-03-02', finish: '2026-03-02' })
+    expect(r.tf('M')).toBe(0)
+  })
+
+  it('(b) A(5) SS B(2), B its only successor: A late finish is capped at the project finish 03-06, TF 0', () => {
+    // projectFinish = end 03-06 (A). B late 03-05..03-06, so the SS reverse alone would let A finish 03-11.
+    const r = run(prog([act('A', { originalDuration: 5 }), act('B', { originalDuration: 2 })], [dep('L', 'A', 'B', { type: 'SS' })]))
+    expect(r.showLate('B')).toEqual({ start: '2026-03-05', finish: '2026-03-06' })
+    expect(r.showLate('A')).toEqual({ start: '2026-03-02', finish: '2026-03-06' })
+    expect(r.tf('A')).toBe(0)
+  })
+
+  it('(c) D FNLT 03-11: raw free float 2 is capped at total float 1', () => {
+    const r = run(network({ D: { constraint: { type: 'fnlt', date: '2026-03-11' } } }))
+    expect(r.tf('D')).toBe(1)
+    expect(r.ff('D')).toBe(1)
+  })
+
+  it('(c) D FNLT 03-09: total float -1 caps free float at 0', () => {
+    const r = run(network({ D: { constraint: { type: 'fnlt', date: '2026-03-09' } } }))
+    expect(r.tf('D')).toBe(-1)
+    expect(r.ff('D')).toBe(0)
+  })
+
+  it('(d) C ALAP: C shows 03-11 and its FS successor D is re-flowed to 03-12; late dates unchanged', () => {
+    const r = run(network({ C: { constraint: { type: 'alap', date: null } } }), { alap: true })
+    expect(r.showEarly('C')).toEqual({ start: '2026-03-11', finish: '2026-03-11' })
+    expect(r.showEarly('D')).toEqual({ start: '2026-03-12', finish: '2026-03-12' })
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-09', finish: '2026-03-12' })
+    expect(r.showLate('D')).toEqual({ start: '2026-03-12', finish: '2026-03-12' })
   })
 })
 
