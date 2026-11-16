@@ -71,8 +71,9 @@ export function mandatoryTimes(a: ActivityInput, cal: EngineCalendar, dur: numbe
   return dur === 0 ? { es, ef: es } : { es, ef: cal.addWork(es, dur, 'finish') }
 }
 
-/** `out_of_sequence`: an activity with an actual start whose FS predecessor has no actual finish, or whose
- *  SS predecessor has no actual start. One warning per such activity, naming the offending links.
+/** `out_of_sequence`: an activity with an actual start whose FS predecessor is not complete, or whose
+ *  SS predecessor has not started (by `progressState`, so a milestone with only an actual start counts
+ *  as complete). One warning per such activity, naming the offending links.
  *  Links touching a level_of_effort are skipped (ruling 1). Actual dates are read from the leaves, so `_input` is unused. */
 export function detectOutOfSequence(n: NormalisedProgramme, _input: ProgrammeInput): ScheduleIssue[] {
   const byId = new Map(n.leaves.map(a => [a.id, a]))
@@ -82,8 +83,8 @@ export function detectOutOfSequence(n: NormalisedProgramme, _input: ProgrammeInp
     const bad = (n.predsOf.get(a.id) ?? []).filter(l => {
       const pred = byId.get(l.predId)!
       if (pred.type === 'level_of_effort') return false
-      if (l.type === 'FS') return pred.actualFinish === null
-      if (l.type === 'SS') return pred.actualStart === null && pred.actualFinish === null
+      if (l.type === 'FS') return progressState(pred) !== 'complete'
+      if (l.type === 'SS') return progressState(pred) === 'not_started'
       return false
     })
     if (bad.length === 0) continue

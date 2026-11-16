@@ -315,3 +315,14 @@ describe('ruling 6(2): a not-started activity never starts before the data date'
     expect(r.tf('B')).toBe(0)
   })
 })
+
+describe('detectOutOfSequence: milestones (fix round 1)', () => {
+  it('a start_milestone with only an actual start is complete, so its FS successor is in sequence', () => {
+    const issues = run(p(
+      [act('M', { type: 'start_milestone', originalDuration: 0, actualStart: '2026-03-02' }),
+        act('B', { originalDuration: 5, actualStart: '2026-03-03' })],
+      [dep('MB', 'M', 'B')],
+    )).outOfSequence()
+    expect(issues).toEqual([])
+  })
+})
