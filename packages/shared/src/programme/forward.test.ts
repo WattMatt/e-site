@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildEngineCalendar, displayFinish, displayStart, type EngineCalendar } from './calendar'
-import { forwardPass } from './forward'
+import { displayMilestone, forwardPass } from './forward'
 import { normaliseProgramme } from './normalise'
 import { act, dep, prog } from './test-fixtures'
 import type { ProgrammeInput } from './types'
@@ -125,5 +125,70 @@ describe('forwardPass', () => {
     ))
     expect(times.get('E')).toEqual({ es: times.get('A')!.es, ef: times.get('A')!.es })
     expect(show('B')).toEqual({ start: '2026-03-02', finish: '2026-03-04' })
+  })
+})
+
+describe('milestone moments (ruling 3)', () => {
+  const showM = (input: ProgrammeInput, id: string) => {
+    const n = normaliseProgramme(input).value!
+    const cals = new Map<string, EngineCalendar>(input.calendars.map(c => [c.id, buildEngineCalendar(c)]))
+    const t = forwardPass(n, input, cals).get(id)!
+    expect(t.es).toBe(t.ef)
+    return displayMilestone(cals.get('C')!, t.es, t.kind!)
+  }
+
+  it('finish_milestone with no preds shows the project start', () => {
+    expect(showM(prog([act('M', { type: 'finish_milestone', originalDuration: 0 })]), 'M')).toBe('2026-03-02')
+  })
+
+  it('finish_milestone with A(5) SS M shows 03-02', () => {
+    expect(showM(prog(
+      [act('A', { originalDuration: 5 }), act('M', { type: 'finish_milestone', originalDuration: 0 })],
+      [dep('L', 'A', 'M', { type: 'SS' })],
+    ), 'M')).toBe('2026-03-02')
+  })
+
+  it('finish_milestone after A(5) FS shows 03-06 and its FS successor starts 03-09', () => {
+    const input = prog(
+      [act('A', { originalDuration: 5 }), act('M', { type: 'finish_milestone', originalDuration: 0 }), act('B', { originalDuration: 3 })],
+      [dep('L1', 'A', 'M'), dep('L2', 'M', 'B')],
+    )
+    expect(showM(input, 'M')).toBe('2026-03-06')
+    expect(run(input).show('B')).toEqual({ start: '2026-03-09', finish: '2026-03-11' })
+  })
+
+  it('finish_milestone with MSO 03-04 shows 03-04', () => {
+    expect(showM(prog([act('M', { type: 'finish_milestone', originalDuration: 0, constraint: { type: 'mso', date: '2026-03-04' } })]), 'M')).toBe('2026-03-04')
+  })
+
+  it('start_milestone with MFO 03-04 shows 03-04', () => {
+    expect(showM(prog([act('M', { type: 'start_milestone', originalDuration: 0, constraint: { type: 'mfo', date: '2026-03-04' } })]), 'M')).toBe('2026-03-04')
+  })
+
+  it('start_milestone after A(5) FS shows 03-09', () => {
+    expect(showM(prog(
+      [act('A', { originalDuration: 5 }), act('M', { type: 'start_milestone', originalDuration: 0 })],
+      [dep('L', 'A', 'M')],
+    ), 'M')).toBe('2026-03-09')
+  })
+})
+
+describe('lag calendar choice', () => {
+  const S6 = { id: 'S6', workWeekdays: [1, 2, 3, 4, 5, 6], hoursPerDay: 8, nonWorkDates: [], workDates: [], coverage: { from: '2026-01-01', to: '2027-12-31' } }
+  const twoCal = (lagCalendar: 'pred' | 'succ' | 'project') => {
+    const base = prog(
+      [act('A', { originalDuration: 5 }), act('B', { originalDuration: 1, calendarId: 'S6' })],
+      [dep('L', 'A', 'B', { lag: 1, lagCalendar })],
+    )
+    return { ...base, calendars: [...base.calendars, S6] }
+  }
+  it("'pred' (C, Mon-Fri) puts B on Tue 03-10", () => {
+    expect(run(twoCal('pred')).show('B').start).toBe('2026-03-10')
+  })
+  it("'succ' (S6, Mon-Sat) counts Sat 03-07 as the lag day, so B starts Mon 03-09", () => {
+    expect(run(twoCal('succ')).show('B').start).toBe('2026-03-09')
+  })
+  it("'project' uses the default calendar C: Tue 03-10", () => {
+    expect(run(twoCal('project')).show('B').start).toBe('2026-03-10')
   })
 })
