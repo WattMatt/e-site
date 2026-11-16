@@ -1,0 +1,86 @@
+Global constraints (verbatim from the plan):
+- Pure functions only. No Supabase, no `Date.now()` inside the engine; today is always the input `dataDate`.
+- Dates in and out are `CalendarDate` strings `'YYYY-MM-DD'`. The internal `Instant` never leaves the engine's public result.
+- Display rule: a start shows the working day it starts on. A finish shows the last working day it occupies (an `Instant` on a day boundary shows the previous working day). A `start_milestone` shows the day of its instant. A `finish_milestone` follows the finish rule.
+- Durations, lags and floats are in working days of the calendar that owns them (the activity's calendar for duration and float; the lag calendar for lag). They are numbers, so part-days are allowed. Floats are rounded to 3 dp in the output.
+- Scheduling rules: `msp` (native and MSPDI) and `p6` (XER). They differ in P1 only where a task says so.
+- Programme calendars treat the builders' shutdown as non-working time. This differs on purpose from `lib/calendar/working-days.ts`, where shutdown only moves a due date.
+- Do not touch: `lib/calendar/working-days.ts` and `lib/jbcc/*`.
+- Suites: `pnpm --filter @esite/shared test` and `pnpm --filter @esite/shared type-check` both green before every commit.
+
+Controller rulings (ledger):
+- Ruling 1: level_of_effort activities never drive anything. In forwardPass/backwardPass (T4/T5), links whose pred OR succ is a level_of_effort are excluded from demands, and an LOE gets placeholder times es=ef=projectStart; T7 replaces them with the neighbour-derived span.
+- Ruling 2: summary ids never appear as link endpoints after normalise (summaries expanded under msp, refused under p6); module_summary is a leaf.
+- Ruling 3 (milestone moments, from Task 4 review): a milestone is a single moment m (es = ef = m) that carries a display kind, 'start' | 'finish'.
+  - Classify every demand on a milestone:
+    - start-type: projectStart, an SS/SF link (pred.es-based), an SNET/MSO date (startOf(date), snapped to a working start)
+    - finish-type: an FS/FF link (pred.ef-based, kept as the boundary), an FNET/MFO date (startOf(date)+1)
+  - start_milestone:
+    - every finish-type demand f becomes snapStart(f);
+    - FNET/MFO are treated as SNET/MSO on the same date;
+    - m = max; kind 'start'.
+  - finish_milestone:
+    - start-type demands are snapped to a working start; finish-type demands are left as is;
+    - m = max; kind = the kind of the winning demand, and on an equal instant 'finish' wins.
+  - Display: kind 'start' → displayStart(m); kind 'finish' → displayFinish(cal, m). Early and late dates each carry their own kind (late kinds: derived from a successor or from project finish → 'finish'; from an SNLT/MSO date → 'start'). ScheduledActivity shows a milestone's earlyStart = earlyFinish and lateStart = lateFinish using those kinds.
+  - Expected: a finish_milestone with no preds on projectStart Mon 2026-03-02 shows 03-02. With an SS pred starting 03-02 it shows 03-02. After an FS pred finishing Fri 03-06 it shows 03-06. With MSO 03-04 it shows 03-04. A start_milestone with MFO 03-04 shows 03-04. A start_milestone after an FS pred finishing 03-06 shows 03-09.
+- Ruling 4 (from Task 5 concerns):
+  - (a) The late moment kind of a milestone follows the SOURCE of the binding limit:
+    - FS/FF reverse → 'finish'
+    - SS/SF reverse → 'start'
+    - SNLT/MSO date → 'start'
+    - FNLT/MFO/deadline → 'finish'
+    - projectFinish → the early kind of the activity whose ef set projectFinish ('finish' for tasks)
+    - Ties → 'finish'. A start_milestone is still snapped, with kind 'start'.
+  - (b) Every activity's lf is capped at projectFinish (not only those without successors).
+  - (c) Free float is capped at total float: FF = min(FF, max(TF, 0)), never below 0.
+  - (d) ALAP: after placing ALAP activities at their late dates, the forward pass is re-run for the other activities with the ALAP activities held fixed, so successors respect logic. Late dates are not recomputed.
+  - (e) `scheduleWarnings(n, input, cals, early, late)` in float.ts is accepted; Task 7 calls it after ALAP.
+- Ruling 5 (from Task 5 review):
+  - (a) An ALAP activity is held at the later of its early and late times by working position: es = max(es, ls), ef = max(ef, lf). It never moves before what its predecessors allow (relevant when TF < 0).
+  - (b) Total float and free float are computed from the PRE-ALAP early dates. Float is a property of the network; ALAP only moves the displayed early dates. An ALAP activity's FF is 0. Activities re-flowed by ALAP keep their pre-ALAP float.
+- Ruling 6 (progress, from Task 6 concerns):
+  - (1) In-progress activities: start-side constraints (SNET/SNLT/MSO) are ignored because the activity has already started. Finish-side constraints still bind the remaining part:
+    - FNET/MFO in the forward pass (ef ≥ / = the date);
+    - FNLT/MFO/deadline in the backward pass.
+  - (2) A not-started activity never starts before the data date, even under MSO/MFO. If the constraint date is earlier than dd, then es = dd and the conflict shows as negative float. Remaining work cannot happen in the past.
+  - (3) Accepted: an in-progress activity's free float on SS/SF successors is measured from its actual start and capped at TF.
+  - (4) Accepted: percent lag uses originalDuration (documented).
+  - (5) Accepted: a completed activity with no actualStart derives its start back from actualFinish by originalDuration (documented).
+- Ruling 7 (from Task 7 concerns):
+  - (1) projectFinish is chosen by the greatest working position on the default calendar. Among equal positions it is the SMALLEST instant (the end-of-day boundary), so a start milestone at Monday 00:00 never pushes it past Friday's end.
+  - (2) Accepted: a zero-length task shows its start day as its finish.
+  - (3) Accepted: links into a successor whose logic is ignored never drive.
+  - (4) Accepted: the LOE fallbacks as implemented.
+  - (5) Summary total float is the min over its non-LOE descendants. A summary with no non-LOE descendant has TF 0 and sits at the project start.
+  - (6) Longest-path seeds are every non-LOE activity whose ef is at projectFinish's working position on the default calendar.
+- Ruling 8: an LOE's start comes only from predecessor links whose demand is start-side (FS/SS), snapped with snapStart; FF/SF predecessors do not set an LOE start.
+- Ruling 9 (from Task 8 goldens): a start-side link (FS/SS) into an IN-PROGRESS successor limits its predecessor by the successor's late RESUME point, never by its actual start:
+  - retained_logic: the late resume point is lf − remaining, on the successor's calendar.
+  - progress_override: start-side links into an in-progress successor do not limit the predecessor, mirroring the forward pass, where they do not drive it.
+  - Finish-side links (FF/SF) into an in-progress successor limit as normal.
+- Ruling 10: a link into a COMPLETE successor (progressState 'complete') never limits its predecessor, whatever the link type or progress mode. The work it points to already happened.
+- Ruling 11: free float follows Ruling 9. For FS/SS links into an IN-PROGRESS successor: under retained_logic, measure against its early resume point (ef − remaining, on the successor's calendar); under progress_override, skip those links. When every successor is skipped, measure to projectFinish.
+- Ruling 12 (final review; amends 7(1), 7(6) and 4(a)):
+  - (a) Each activity's finish is canonicalised on its OWN calendar. A task's ef becomes `ownCal.fromWorkPos(ownCal.workPos(ef), 'finish')`, the end of its last working day. A milestone uses its moment as is.
+  - (b) projectFinish is the numerically greatest canonical finish. Its displayed date is the displayed finish of the activity that set it (its own calendar and kind).
+  - (c) The cap lf ≤ projectFinish still holds.
+  - (d) The late kind of a milestone limited by projectFinish is that milestone's OWN early kind (replaces "setter's kind" in 4(a)).
+  - (e) Longest-path seeds are every non-LOE activity whose canonical finish has the same working position as projectFinish on the activity's own calendar.
+- Ruling 13 (final review): a summary displays the earliest displayed start and the latest displayed finish of its non-LOE descendants, the same way for its late dates. It is never computed from instants on the default calendar.
+- Ruling 14 (final review): an empty or non-finite schedule never loops. workPos/cumAt refuse non-finite input. With no leaves, projectFinish is null, and the critical and longest-path step is skipped.
+
+## Deferred minors from the P1 reviews (triaged 'later' by the final review)
+- Task 2: minor (deferred): site-calendar test can't fail if Saturday not added (add isWorkingDay(2026-03-07)).
+- Task 2: minor (deferred): weekday maths re-implemented instead of weekdayOf.
+- Task 2: minor (deferred): workPos(±Infinity) loops — add Number.isFinite guard.
+- Task 3: minor (deferred): expansion can yield identical (pred,succ,type) links under different ids — T4/T5 must tolerate redundant links (carried to T4).
+- Task 3: minor (deferred): summary with no leaves silently drops the user's link — consider a warning.
+- Task 3: minor (deferred): cycle dependencyIds picks first (pred,succ) link regardless of type.
+- Task 3: minor (deferred): test-fixtures.ts in src/ (not exported) — confirm excluded from public surface.
+- Task 4: minor (deferred): 'project' lag-calendar test uses default = pred calendar, so it can't distinguish 'project' from 'pred'.
+- Task 5: minor (deferred): isMilestone/durOf duplicated forward/backward; linkLimit re-implements applyLag with flipped sign — share a helper.
+- Task 5: minor (deferred): projectFinish includes LOE placeholders; all-LOE / empty programme edge (−Infinity); SNLT/FNLT/deadline on non-working days untested.
+- Task 6: minor (deferred): shadowed `on` in float.ts freeFloats; SS/SF limit on in-progress task via remaining duration untested.
+- Task 7: minor (deferred): percent lag from an LOE pred uses originalDuration not its span; drivingCache module state keyed without input identity; weak rounding assertion schedule.test.ts:765.
+- Task 8: minor (deferred): rename hand-progress-retained.json; untested R9 branches (SS / lagged FS / mixed calendars into in-progress succ); property 4 self-referential (brief-mandated); property 1 not tightness; generator activities<4 edge; README note on override FF/SF asymmetry.
