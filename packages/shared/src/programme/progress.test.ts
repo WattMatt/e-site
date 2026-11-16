@@ -326,3 +326,36 @@ describe('detectOutOfSequence: milestones (fix round 1)', () => {
     expect(issues).toEqual([])
   })
 })
+
+describe('ruling 9: a start-side link into an in-progress successor', () => {
+  // A (5, not started) FS → B (5, started 03-03, remaining 2); data date Mon 03-09 (goldens/README.md).
+  const inProgressSucc = (progress: ScheduleOptions['progress']) => run(p(
+    [act('A', { originalDuration: 5 }), act('B', { originalDuration: 5, actualStart: '2026-03-03', remainingDuration: 2 })],
+    [dep('AB', 'A', 'B')], {}, { progress },
+  ))
+
+  it('regression (Task 8 golden): retained logic limits A by B\'s late resume point, not its actual start', () => {
+    const r = inProgressSucc('retained_logic')
+    expect(r.showLate('A')).toEqual({ start: '2026-03-09', finish: '2026-03-13' })
+    expect(r.tf('A')).toBe(0)
+    expect(r.showLate('B')).toEqual({ start: '2026-03-03', finish: '2026-03-17' })
+  })
+
+  it('regression (Task 8 golden): progress override, the link does not limit A at all', () => {
+    const r = inProgressSucc('progress_override')
+    expect(r.showLate('A')).toEqual({ start: '2026-03-09', finish: '2026-03-13' })
+    expect(r.tf('A')).toBe(0)
+    expect(r.tf('B')).toBe(3)
+  })
+
+  it('an FF link into an in-progress successor still limits as normal', () => {
+    const r = run(p(
+      [act('A', { originalDuration: 5 }), act('B', { originalDuration: 5, actualStart: '2026-03-03', remainingDuration: 2 }),
+        act('C', { originalDuration: 8 })],
+      [dep('AB', 'A', 'B', { type: 'FF' })], {}, { progress: 'progress_override' },
+    ))
+    // B ends 03-10 (resumes at dd); C ends 03-18 = project finish, so B lf = 03-18 and FF 0 gives A lf ≤ 03-18.
+    expect(r.showLate('A')).toEqual({ start: '2026-03-12', finish: '2026-03-18' })
+    expect(r.tf('A')).toBe(3)
+  })
+})

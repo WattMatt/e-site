@@ -120,7 +120,16 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     for (const link of succs) {
       const succ = byId.get(link.succId)!
       const sl = late.get(succ.id)!
-      const { on, at } = linkLimit(link, { s: sl.ls, f: sl.lf }, cal, calOf(succ), projectCal, dur)
+      let s = sl.ls
+      // Ruling 9: a start-side link (FS/SS) into an in-progress successor never limits by its actual start.
+      // retained_logic: by its late resume point (lf − remaining, on its calendar); progress_override: not at all.
+      if ((link.type === 'FS' || link.type === 'SS') && progress.active && progressState(succ) === 'in_progress') {
+        if (input.options.progress === 'progress_override') continue
+        const succCal = calOf(succ)
+        const remaining = remainingFrom(succ, succCal, early.get(succ.id)!.es, succCal.snapStart(progress.dataDate))
+        s = succCal.addWork(sl.lf, -remaining, 'start')
+      }
+      const { on, at } = linkLimit(link, { s, f: sl.lf }, cal, calOf(succ), projectCal, dur)
       limits.push({ pos: cal.workPos(at), on, kind: on })
     }
     // Ruling 4(b): every activity's late finish is capped at projectFinish, successors or not.
