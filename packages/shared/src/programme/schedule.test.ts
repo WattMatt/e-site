@@ -132,6 +132,42 @@ describe('scheduleProgramme', () => {
     expect(r.activities.get('S')).toMatchObject({ earlyStart: '2026-03-02', lateStart: '2026-03-02', totalFloat: 0 })
   })
 
+  it('ruling 8: an LOE-only summary sits at the project start snapped to work on the default calendar', () => {
+    const p = prog(
+      [act('S', { type: 'summary' }), act('L', { parentId: 'S', type: 'level_of_effort', originalDuration: 0 }), act('A', { originalDuration: 5 }), act('B', { originalDuration: 1 })],
+      [dep('AL', 'A', 'L'), dep('AB', 'A', 'B'), dep('LB', 'L', 'B', { type: 'FF' })],
+      { projectStart: '2026-03-07' }, // a Saturday
+    )
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('S')).toMatchObject({ earlyStart: '2026-03-09', lateStart: '2026-03-09', totalFloat: 0 })
+  })
+
+  it('ruling 8: an LOE start comes from start-side predecessor demands, snapped on its calendar', () => {
+    // A(5) ends Fri 03-06; FS +1 elapsed = Sunday 00:00 → L starts Mon 03-09 (not Sunday 03-08).
+    const p = prog(
+      [act('A', { originalDuration: 5 }), act('L', { type: 'level_of_effort', originalDuration: 0 }), act('B', { originalDuration: 3 })],
+      [dep('AL', 'A', 'L', { lag: 1, lagUnit: 'elapsed_days' }), dep('AB', 'A', 'B'), dep('LB', 'L', 'B', { type: 'FF' })],
+    )
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('L')).toMatchObject({ earlyStart: '2026-03-09', earlyFinish: '2026-03-11' })
+  })
+
+  it('ruling 8: an FF predecessor does not set an LOE start; with only that, the snapped project start is used', () => {
+    // Before ruling 8, L showed Saturday 03-07 (A's raw finish boundary).
+    const p = prog([act('A', { originalDuration: 5 }), act('L', { type: 'level_of_effort', originalDuration: 0 })], [dep('AL', 'A', 'L', { type: 'FF' })])
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('L')).toMatchObject({ earlyStart: '2026-03-02' })
+  })
+
+  it('a finish milestone on the end-of-day boundary at the coverage edge raises no calendar_out_of_range', () => {
+    // A(5) and F end at the Saturday 00:00 boundary; both show 03-06 = coverage `to`.
+    const p = prog([act('A', { originalDuration: 5 }), act('F', { type: 'finish_milestone', originalDuration: 0 })], [dep('AF', 'A', 'F')])
+    p.calendars = [{ ...p.calendars[0], coverage: { from: '2026-01-01', to: '2026-03-06' } }]
+    const r = scheduleProgramme(p)
+    expect(r.activities.get('F')).toMatchObject({ earlyFinish: '2026-03-06', lateFinish: '2026-03-06' })
+    expect(r.issues.filter(i => i.code === 'calendar_out_of_range')).toEqual([])
+  })
+
   it('longest path: only the chain that sets the finish is critical', () => {
     const p = withCritical(
       prog([act('P', { originalDuration: 5 }), act('Q', { originalDuration: 1 }), act('R', { originalDuration: 2 })], [dep('PQ', 'P', 'Q')]),

@@ -58,7 +58,7 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
     tf.set(id, 0)
     ff.set(id, 0)
   }
-  const summaries = rollUpSummaries(n, input, early, late, tf)
+  const summaries = rollUpSummaries(n, input, defaultCal, early, late, tf)
 
   const driving = drivingLinks(n, input, cals, early)
   const critical = criticalIds(n, input, cals, early, tf, driving, projectFinish)
@@ -112,12 +112,15 @@ function compute(input: ProgrammeInput): { result: ScheduleResult; predsOf: Map<
 function coverageWarnings(leaves: ActivityInput[], calOf: (a: ActivityInput) => EngineCalendar,
   early: Map<string, Times>, late: Map<string, LateTimes>): ScheduleIssue[] {
   const byCal = new Map<string, string[]>()
-  const lastMoment = (s: Instant, f: Instant) => (f > s + EPS ? f - EPS : f)
+  // A finish instant, and a finish-kind milestone moment, are checked at t − ε (the day they end on).
+  // A zero-length task (f = s) shows its start day twice (ruling 7(2)), so its finish is checked at t.
+  const checks = (s: Instant, f: Instant, kind: MomentKind | undefined): Instant[] =>
+    kind === 'finish' ? [s - EPS, f - EPS] : kind === 'start' ? [s, f] : [s, f > s + EPS ? f - EPS : f]
   for (const a of leaves) {
     const cal = calOf(a)
     const e = early.get(a.id)!
     const l = late.get(a.id)!
-    const instants = [e.es, lastMoment(e.es, e.ef), l.ls, lastMoment(l.ls, l.lf)]
+    const instants = [...checks(e.es, e.ef, e.kind), ...checks(l.ls, l.lf, l.kind)]
     if (instants.every(t => cal.inCoverage(t))) continue
     const list = byCal.get(cal.id)
     if (list) list.push(a.id)
