@@ -10,7 +10,7 @@
  * step 4 keeps the pre-ALAP dates if they are needed afterwards.
  */
 import { startOf, type EngineCalendar } from './calendar'
-import { forwardPass, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
+import { forwardPass, mandatoryTimes, plannedDuration, progressContext, progressState, remainingFrom, type MomentKind, type Times } from './forward'
 import type { NormalisedProgramme } from './normalise'
 import type { ActivityInput, DependencyInput, Instant, ProgrammeInput } from './types'
 
@@ -78,17 +78,30 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
       continue
     }
     const state = progress.active ? progressState(a) : 'not_started'
-    if (isFixed(a) || state === 'complete') {
+    if (a.type === 'module_summary' || state === 'complete') {
       late.set(a.id, e.kind ? { ls: e.es, lf: e.ef, kind: e.kind } : { ls: e.es, lf: e.ef })
       continue
     }
 
     const cal = calOf(a)
-    const dur = durationOf(a) // for percent lags
+    const c = a.constraint
+    if (state === 'in_progress' && c?.type === 'mfo') {
+      // Ruling 6(1): an MFO still fixes the finish of a started task; its start stays the actual start.
+      late.set(a.id, { ls: e.es, lf: startOf(c.date!) + 1 })
+      continue
+    }
+    if (state === 'not_started' && isFixed(a)) {
+      // MSO/MFO fix the late side at the constraint date, even when the data date pushed the early side
+      // later (ruling 6(2)): that conflict is negative float. Without progress this equals the early dates.
+      const t = mandatoryTimes(a, cal, plannedDuration(a, progress.active))
+      late.set(a.id, t.kind ? { ls: t.es, lf: t.ef, kind: t.kind } : { ls: t.es, lf: t.ef })
+      continue
+    }
+
+    const dur = durationOf(a) // for percent lags (ruling 6(4): always the original duration)
     // Duration used to place the late dates: the remaining duration for an in-progress task.
     const span = state === 'in_progress' ? remainingFrom(a, cal, e.es, cal.snapStart(progress.dataDate))
       : plannedDuration(a, progress.active)
-    const c = a.constraint
     const succs = liveLinks(n.succsOf.get(a.id), byId)
 
     // Every limit as a working position on this activity's calendar. `pos` limits the start ('start')
@@ -102,7 +115,8 @@ export function backwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     }
     // Ruling 4(b): every activity's late finish is capped at projectFinish, successors or not.
     limits.push({ pos: cal.workPos(projectFinish), on: 'finish', kind: pfKind ?? 'finish' })
-    if (c?.type === 'snlt') limits.push({ pos: cal.workPos(startOf(c.date!)), on: 'start', kind: 'start' })
+    // Ruling 6(1): a started task ignores SNLT (start-side); FNLT and a deadline still bind its finish.
+    if (c?.type === 'snlt' && state !== 'in_progress') limits.push({ pos: cal.workPos(startOf(c.date!)), on: 'start', kind: 'start' })
     if (c?.type === 'fnlt') limits.push({ pos: cal.workPos(startOf(c.date!) + 1), on: 'finish', kind: 'finish' })
     if (a.deadline) limits.push({ pos: cal.workPos(startOf(a.deadline) + 1), on: 'finish', kind: 'finish' })
 

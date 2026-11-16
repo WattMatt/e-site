@@ -243,3 +243,75 @@ describe('detectOutOfSequence', () => {
     expect(issues).toEqual([])
   })
 })
+
+describe('ruling 6(1): constraints on an in-progress activity', () => {
+  // A(10) started 03-02, remaining 3: without constraints it resumes Mon 03-09 and finishes Wed 03-11.
+  const started = (constraint: ActivityInput['constraint'], extra: ActivityInput[] = []) => p(
+    [act('A', { originalDuration: 10, actualStart: '2026-03-02', remainingDuration: 3, constraint }), ...extra],
+  )
+
+  it('FNET still binds the remaining part: A finishes 03-13, not 03-11', () => {
+    const r = run(started({ type: 'fnet', date: '2026-03-13' }))
+    expect(r.showEarly('A')).toEqual({ start: '2026-03-02', finish: '2026-03-13' })
+  })
+
+  it('FNLT binds the late finish: TF −1 and a negative_float warning', () => {
+    const r = run(started({ type: 'fnlt', date: '2026-03-10' }))
+    expect(r.showLate('A')).toEqual({ start: '2026-03-02', finish: '2026-03-10' })
+    expect(r.tf('A')).toBe(-1)
+    expect(r.warnings()).toContainEqual(expect.objectContaining({ code: 'negative_float', activityIds: ['A'] }))
+  })
+
+  it('MFO sets the finish of the remaining part, early and late', () => {
+    const r = run(started({ type: 'mfo', date: '2026-03-13' }, [act('C', { originalDuration: 10 })]))
+    expect(r.showEarly('A')).toEqual({ start: '2026-03-02', finish: '2026-03-13' })
+    expect(r.showLate('A')).toEqual({ start: '2026-03-02', finish: '2026-03-13' })
+    expect(r.tf('A')).toBe(0)
+  })
+
+  // C(10) runs 03-09..03-20 and sets the project finish, so an unconstrained A has 7 days of finish float.
+  it('MSO is ignored once started: A keeps its progress dates and its finish float', () => {
+    const r = run(started({ type: 'mso', date: '2026-03-16' }, [act('C', { originalDuration: 10 })]))
+    expect(r.showEarly('A')).toEqual({ start: '2026-03-02', finish: '2026-03-11' })
+    expect(r.showLate('A')).toEqual({ start: '2026-03-02', finish: '2026-03-20' })
+    expect(r.tf('A')).toBe(7)
+  })
+
+  it('SNET and SNLT are ignored once started', () => {
+    for (const type of ['snet', 'snlt'] as const) {
+      const r = run(started({ type, date: '2026-03-03' }, [act('C', { originalDuration: 10 })]))
+      expect(r.showEarly('A')).toEqual({ start: '2026-03-02', finish: '2026-03-11' })
+      expect(r.tf('A')).toBe(7)
+    }
+  })
+})
+
+describe('ruling 6(2): a not-started activity never starts before the data date', () => {
+  it('MSO 03-04 before the data date: B is 03-09..03-10, negative float, late side fixed at the MSO date', () => {
+    const r = run(p([act('B', { originalDuration: 2, constraint: { type: 'mso', date: '2026-03-04' } })]))
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-09', finish: '2026-03-10' })
+    expect(r.showLate('B')).toEqual({ start: '2026-03-04', finish: '2026-03-05' })
+    expect(r.tf('B')).toBe(-3)
+    expect(r.warnings()).toContainEqual(expect.objectContaining({ code: 'negative_float', activityIds: ['B'] }))
+  })
+
+  it('MFO 03-05 before the data date: B is 03-09..03-10 with negative float', () => {
+    const r = run(p([act('B', { originalDuration: 2, constraint: { type: 'mfo', date: '2026-03-05' } })]))
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-09', finish: '2026-03-10' })
+    expect(r.showLate('B')).toEqual({ start: '2026-03-04', finish: '2026-03-05' })
+    expect(r.tf('B')).toBe(-3)
+  })
+
+  it('a milestone with an MSO before the data date sits on the data date with negative float', () => {
+    const r = run(p([act('M', { type: 'finish_milestone', originalDuration: 0, constraint: { type: 'mso', date: '2026-03-04' } })]))
+    expect(r.showEarly('M')).toEqual({ start: '2026-03-09', finish: '2026-03-09' })
+    expect(r.showLate('M')).toEqual({ start: '2026-03-04', finish: '2026-03-04' })
+    expect(r.tf('M')).toBe(-3)
+  })
+
+  it('an MSO on or after the data date is unchanged', () => {
+    const r = run(p([act('B', { originalDuration: 2, constraint: { type: 'mso', date: '2026-03-11' } })]))
+    expect(r.showEarly('B')).toEqual({ start: '2026-03-11', finish: '2026-03-12' })
+    expect(r.tf('B')).toBe(0)
+  })
+})

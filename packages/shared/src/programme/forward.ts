@@ -54,6 +54,23 @@ export function completedMilestone(a: ActivityInput): Times {
   return { es: m, ef: m, kind: 'finish' }
 }
 
+/** Where an MSO/MFO puts an activity of duration `dur`, ignoring logic and the data date. The backward
+ *  pass uses this as the late side of a not-started MSO/MFO (ruling 6(2)). A start_milestone treats MFO as
+ *  MSO on the same date; a finish_milestone's MSO is a start moment, its MFO a finish moment (ruling 3). */
+export function mandatoryTimes(a: ActivityInput, cal: EngineCalendar, dur: number): Times {
+  const c = a.constraint!
+  const day = startOf(c.date!)
+  if (isMilestone(a)) {
+    if (c.type === 'mso' || a.type === 'start_milestone') {
+      const m = cal.snapStart(day)
+      return { es: m, ef: m, kind: 'start' }
+    }
+    return { es: day + 1, ef: day + 1, kind: 'finish' }
+  }
+  const es = c.type === 'mso' ? cal.snapStart(day) : cal.snapStart(cal.addWork(day + 1, -dur, 'start'))
+  return dur === 0 ? { es, ef: es } : { es, ef: cal.addWork(es, dur, 'finish') }
+}
+
 /** `out_of_sequence`: an activity with an actual start whose FS predecessor has no actual finish, or whose
  *  SS predecessor has no actual start. One warning per such activity, naming the offending links.
  *  Links touching a level_of_effort are skipped (ruling 1). Actual dates are read from the leaves, so `_input` is unused. */
@@ -107,7 +124,7 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
   const byId = new Map(n.leaves.map(a => [a.id, a]))
   const projectCal = cals.get(input.defaultCalendarId)!
   const calOf = (a: ActivityInput) => cals.get(a.calendarId ?? input.defaultCalendarId)!
-  /** Duration for percent lags: always the original duration. */
+  /** Duration for percent lags: always the original duration, even with a remaining duration (ruling 6(4)). */
   const durOf = (a: ActivityInput) => (isMilestone(a) ? 0 : a.originalDuration)
   const projectStart = startOf(input.projectStart)
   const progress = progressContext(input)
@@ -144,21 +161,30 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
         continue
       }
       const ef = startOf(a.actualFinish!) + 1
+      // Ruling 6(5): with no actual start, the start is derived back from the actual finish by the original duration.
       const es = a.actualStart !== null ? startOf(a.actualStart) : cal.snapStart(cal.addWork(ef, -a.originalDuration, 'start'))
       times.set(a.id, { es, ef })
       continue
     }
     if (state === 'in_progress') {
-      // Only tasks get here: a milestone with an actual date is complete. Constraints are not applied.
+      // Only tasks get here: a milestone with an actual date is complete.
+      // Ruling 6(1): it has started, so SNET/SNLT/MSO are ignored; FNET/MFO still bind the remaining part.
       const es = startOf(a.actualStart!)
       const remaining = remainingFrom(a, cal, es, dd)
+      /** The remaining part must finish no earlier than `f` (a finish boundary). */
+      const finishFloor = (f: Instant) => cal.addWork(f, -remaining, 'start')
       let resume = Math.max(es, dd)
-      if (input.options.progress === 'retained_logic') {
-        for (const link of preds) {
-          const pred = byId.get(link.predId)!
-          const d = linkDemand(link, times.get(pred.id)!, calOf(pred), cal, projectCal, durOf(pred))
-          resume = Math.max(resume, d.on === 'start' ? d.at : cal.addWork(d.at, -remaining, 'start'))
+      if (c?.type === 'mfo') {
+        resume = Math.max(resume, finishFloor(startOf(c.date!) + 1)) // logic ignored; never before dd
+      } else {
+        if (input.options.progress === 'retained_logic') {
+          for (const link of preds) {
+            const pred = byId.get(link.predId)!
+            const d = linkDemand(link, times.get(pred.id)!, calOf(pred), cal, projectCal, durOf(pred))
+            resume = Math.max(resume, d.on === 'start' ? d.at : finishFloor(d.at))
+          }
         }
+        if (c?.type === 'fnet') resume = Math.max(resume, finishFloor(startOf(c.date!) + 1))
       }
       resume = cal.snapStart(resume)
       // addWork(resume, 0, 'finish') would land before resume, so a task with nothing left ends at resume.
@@ -182,6 +208,8 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
 
       if (c?.type === 'mso' || c?.type === 'mfo') {
         dateDemand(c.type, c.date!) // logic ignored
+        // Ruling 6(2): never before the data date, even under MSO/MFO (shows as negative float).
+        if (progress.active) startType(dd)
       } else {
         startType(projectStart)
         if (progress.active) startType(dd)
@@ -210,12 +238,10 @@ export function forwardPass(n: NormalisedProgramme, input: ProgrammeInput,
     /** Place the task so it finishes at `ef`. */
     const fromFinish = (ef: Instant): Times => fromStart(cal.snapStart(cal.addWork(ef, -dur, 'start')))
 
-    if (c?.type === 'mso') {
-      times.set(a.id, fromStart(cal.snapStart(startOf(c.date!))))
-      continue
-    }
-    if (c?.type === 'mfo') {
-      times.set(a.id, fromFinish(startOf(c.date!) + 1))
+    if (c?.type === 'mso' || c?.type === 'mfo') {
+      // Logic ignored. Ruling 6(2): never before the data date; the conflict shows as negative float.
+      const t = mandatoryTimes(a, cal, dur)
+      times.set(a.id, progress.active && cal.workPos(t.es) < cal.workPos(dd) ? fromStart(dd) : t)
       continue
     }
 
