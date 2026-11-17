@@ -6,6 +6,9 @@ import type { ProgrammeOp, ScheduleIssue } from '@esite/shared/programme'
 
 export type ProgrammeRefusal = { ok: false; error: string }
 
+/** The stale-version refusal (40001). The client store recognises a stale save by this exact sentence. */
+export const PROGRAMME_STALE = 'Someone else changed this programme. Reload to see their version.'
+
 export interface CreateProgrammeInput {
   projectId: string
   kind: 'project' | 'module' | 'contractor'

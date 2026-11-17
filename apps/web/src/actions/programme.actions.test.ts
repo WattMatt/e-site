@@ -4,8 +4,8 @@ const h = vi.hoisted(() => ({ createClient: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 
 import {
-  createProgrammeAction, decideFieldUpdatesAction, deleteBaselineAction, moduleSummaryAction, recalculateProgrammeAction,
-  saveBaselineAction, saveProgrammeChangesAction, setActiveBaselineAction, submitFieldUpdateAction,
+  createProgrammeAction, decideFieldUpdatesAction, deleteBaselineAction, moduleSummaryAction, programmeVersionAction,
+  recalculateProgrammeAction, saveBaselineAction, saveProgrammeChangesAction, setActiveBaselineAction, submitFieldUpdateAction,
 } from './programme.actions'
 import { fakeSupabase, type FakeOptions, type FakeResult } from '@/test/fake-supabase'
 import { activityRow, PRJ, PROG, programmeRow, programmeTables, VERSION } from '@/lib/programme/test-fixtures'
@@ -56,6 +56,7 @@ describe('the PROGRAMME_ENABLED switch', () => {
       submitFieldUpdateAction({ activityId: 'A', percent: 10 }),
       decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'rejected' }] }),
       moduleSummaryAction({ projectId: PRJ, moduleKey: 'solar' }),
+      programmeVersionAction({ programmeId: PROG }),
     ])
     for (const r of results) expect(r).toEqual({ ok: false, error: OFF })
     expect(rpcCalls).toHaveLength(0)
@@ -424,5 +425,28 @@ describe('moduleSummaryAction', () => {
   it('no module programme yet: a null summary', async () => {
     setup({ rpc: { 'programme.module_summary': { data: [{ start: null, finish: null, percent_complete: null }], error: null } } })
     await expect(moduleSummaryAction({ projectId: PRJ, moduleKey: 'solar' })).resolves.toEqual({ ok: true, summary: null })
+  })
+})
+
+describe('programmeVersionAction', () => {
+  it('a reader gets the programme version (updated_at) and nothing else is called', async () => {
+    const { rpcCalls } = setup({ role: 'contractor' })
+    await expect(programmeVersionAction({ programmeId: PROG })).resolves.toEqual({ ok: true, version: VERSION })
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
+  })
+  it('a client viewer is refused', async () => {
+    setup({ role: 'client_viewer' })
+    await expect(programmeVersionAction({ programmeId: PROG }))
+      .resolves.toEqual({ ok: false, error: 'You do not have access to this project.' })
+  })
+  it('signed out: refused before any read', async () => {
+    const { calls } = setup({ userId: null })
+    await expect(programmeVersionAction({ programmeId: PROG })).resolves.toEqual({ ok: false, error: 'You are not signed in.' })
+    expect(calls).toHaveLength(0)
+  })
+  it('a programme the person cannot see is gone', async () => {
+    setup({ tables: programmeTables({ 'programme.programmes': [] }) })
+    await expect(programmeVersionAction({ programmeId: PROG }))
+      .resolves.toEqual({ ok: false, error: 'That programme no longer exists, or you do not have access to it.' })
   })
 })

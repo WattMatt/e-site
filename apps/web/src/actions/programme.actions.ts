@@ -31,6 +31,7 @@ import type {
   CreateProgrammeInput, DecideFieldUpdatesResult, FieldUpdateDecision, FieldUpdateInput, ModuleSummary,
   ProgrammeRefusal, SaveProgrammeChangesInput, SaveProgrammeResult,
 } from '@/lib/programme/action-types'
+import { PROGRAMME_STALE } from '@/lib/programme/action-types'
 import { ORG_ROLES, ORG_WRITE_ROLES, solarLevelAllows } from '@esite/shared'
 import {
   applyOps, computedForSave, ProgrammeOpError, rowsToProgrammeInput, scheduleProgramme,
@@ -42,7 +43,7 @@ type AnyClient = SupabaseClient<any, any, any>
 
 const OFF = 'The programme module is not switched on yet.'
 const SIGNED_OUT = 'You are not signed in.'
-const STALE = 'Someone else changed this programme. Reload to see their version.'
+const STALE = PROGRAMME_STALE
 const KEYLESS = 'Give each new activity a key so its schedule can be saved.'
 const NOT_A_LIST = 'The changes must be sent as a list.'
 const PROJECT_REFUSED = 'You do not have permission to edit programmes on this project.'
@@ -356,4 +357,23 @@ export async function moduleSummaryAction(input: { projectId: string; moduleKey:
       percentComplete: row.percent_complete === null ? null : Number(row.percent_complete),
     },
   }
+}
+
+/**
+ * The programme's current version (`programmes.updated_at`), for the screen's 30-second
+ * poll. Same read gate as the page: every project role except client_viewer, and the
+ * row read as the person (RLS), so a programme they cannot see is "gone".
+ */
+export async function programmeVersionAction(input: { programmeId: string }): Promise<{ ok: true; version: string } | ProgrammeRefusal> {
+  if (!programmeEnabled()) return off()
+  const supabase = await signedInClient()
+  if (!supabase) return refuse(SIGNED_OUT)
+  const { data, error } = await programmeSchema(supabase)
+    .from('programmes').select('id, project_id, updated_at').eq('id', input.programmeId).maybeSingle()
+  if (error) return refuse('The programme could not be read. Try again.')
+  if (!data) return refuse(PROGRAMME_GONE)
+  const row = data as { project_id: string; updated_at: string | null }
+  const gate = await requireEffectiveRole(supabase, row.project_id, READ_ROLES)
+  if (!gate.ok) return refuse(NO_PROJECT_ACCESS)
+  return { ok: true, version: String(row.updated_at ?? '') }
 }

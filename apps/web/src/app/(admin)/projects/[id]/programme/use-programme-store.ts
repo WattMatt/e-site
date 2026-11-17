@@ -1,0 +1,343 @@
+/**
+ * The programme screen's client state: optimistic preview, serial save pipeline,
+ * key → id reconciliation, undo/redo and stale handling.
+ *
+ * `createProgrammeStore` is a plain external store (no React) so the pipeline can be
+ * tested with an injected `save`; `useProgrammeStore` wraps it for the screen.
+ *
+ * - A gesture's ops are applied locally with `applyOps` (the twin of save_changes) and
+ *   scheduled with the engine. A refusal from either is shown and nothing is saved.
+ * - Saves are serial: the next gesture's ops go only after the previous save answered,
+ *   with the version that save returned.
+ * - New rows are previewed under `key:<k>`. A save answers `ids: { k: uuid }`; every
+ *   `key:<k>` is then rewritten to the uuid in the state, the undo/redo snapshots and the
+ *   still-queued gestures (their ops and rollback snapshots).
+ * - The stale refusal (40001) keeps the preview, marked unsaved, and blocks further edits
+ *   until a reload. Any other refusal rolls back to before that gesture and drops whatever
+ *   was queued on top of it.
+ * - Undo/redo save `diffToOps(current, target)` as an ordinary gesture.
+ */
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  applyOps, diffToOps, ProgrammeOpError, rowsToProgrammeInput, scheduleProgramme,
+  type ProgrammeOp, type ProgrammeState, type ScheduleResult,
+} from '@esite/shared/programme'
+import { programmeVersionAction, saveProgrammeChangesAction } from '@/actions/programme.actions'
+import { PROGRAMME_STALE, type SaveProgrammeChangesInput, type SaveProgrammeResult } from '@/lib/programme/action-types'
+import type { ProgrammeViewData } from '@/lib/programme/view-types'
+
+export const UNDO_DEPTH = 100
+export const UNDO_GONE = 'This change can no longer be undone. Reload to see the current programme.'
+const SAVE_FAILED = 'The programme could not be saved. Try again.'
+const PREVIEW_FAILED = 'That change could not be applied.'
+const POLL_MS = 30_000
+
+export type SaveFn = (input: SaveProgrammeChangesInput) => Promise<SaveProgrammeResult>
+
+interface Entry { before: ProgrammeState; after: ProgrammeState; label: string }
+interface Gesture { ops: ProgrammeOp[]; rollback: { state: ProgrammeState; undo: Entry[]; redo: Entry[] } }
+
+interface Internal {
+  state: ProgrammeState
+  /** The last state the server confirmed (equal to `state` when nothing is unsaved). */
+  saved: ProgrammeState
+  version: string
+  undo: Entry[]
+  redo: Entry[]
+  queue: Gesture[]
+  sending: boolean
+  stale: boolean
+  error: string | null
+  offerReload: boolean
+}
+
+export interface ProgrammeStoreSnapshot {
+  state: ProgrammeState
+  version: string
+  /** A gesture is queued or its save is in flight. */
+  pending: boolean
+  /** Someone else changed the programme; edits are blocked until a reload. */
+  stale: boolean
+  /** The preview shows changes the server does not hold. */
+  unsaved: boolean
+  error: string | null
+  /** The error is one only a reload can clear. */
+  offerReload: boolean
+  canUndo: boolean
+  canRedo: boolean
+  undoLabel: string | null
+  redoLabel: string | null
+}
+
+// ── id rewriting ────────────────────────────────────────────────────────────
+
+/** Field names that hold a row reference, in state rows and in ops. */
+const ID_FIELDS = new Set([
+  'id', 'parent_id', 'pred_id', 'succ_id', 'calendar_id', 'default_calendar_id', 'activity_id', 'code_type_id', 'code_value_id',
+  'pred', 'succ', 'activity', 'calendar', 'code_type', 'code_value',
+])
+
+/**
+ * Rewrites every reference found in `map` (`key:<k>` → uuid). Only id-bearing fields and
+ * the `*Ids` string arrays are touched, never a name or an op's own `key`. Objects that
+ * hold nothing to rewrite are returned as they are.
+ */
+export function rewriteIds<T>(value: T, map: Readonly<Record<string, string>>): T {
+  const walk = (v: unknown, field: string | null): unknown => {
+    if (typeof v === 'string') {
+      const idish = field !== null && (ID_FIELDS.has(field) || field.endsWith('Ids'))
+      return idish && Object.prototype.hasOwnProperty.call(map, v) ? map[v] : v
+    }
+    if (Array.isArray(v)) {
+      let changed = false
+      const out = v.map((x) => { const y = walk(x, typeof x === 'string' ? field : null); if (y !== x) changed = true; return y })
+      return changed ? out : v
+    }
+    if (v !== null && typeof v === 'object') {
+      let changed = false
+      const out: Record<string, unknown> = {}
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        const y = walk(x, k)
+        if (y !== x) changed = true
+        out[k] = y
+      }
+      return changed ? out : v
+    }
+    return v
+  }
+  return walk(value, null) as T
+}
+
+// ── schedule cache ──────────────────────────────────────────────────────────
+
+const schedules = new WeakMap<ProgrammeState, ScheduleResult>()
+/** The engine's result for a state, computed once per state object. */
+export function scheduleFor(state: ProgrammeState): ScheduleResult {
+  let r = schedules.get(state)
+  if (!r) {
+    r = scheduleProgramme(rowsToProgrammeInput(state))
+    schedules.set(state, r)
+  }
+  return r
+}
+
+/** applyOps then the engine. A refusal is a sentence; nothing is thrown. */
+function preview(state: ProgrammeState, ops: ProgrammeOp[]): { ok: true; next: ProgrammeState } | { ok: false; error: string; opError: boolean } {
+  let next: ProgrammeState
+  try {
+    next = applyOps(state, ops)
+  } catch (e) {
+    return { ok: false, error: e instanceof ProgrammeOpError ? e.message : PREVIEW_FAILED, opError: true }
+  }
+  const sched = scheduleFor(next)
+  if (!sched.ok) {
+    const first = sched.issues.find((i) => i.severity === 'error')
+    return { ok: false, error: first?.message ?? 'The programme could not be scheduled.', opError: false }
+  }
+  return { ok: true, next }
+}
+
+/** A key for a new row, unique across this page load (the server needs it unique per save only). */
+function defaultNewKey(): () => string {
+  const prefix = Math.random().toString(36).slice(2, 8)
+  let n = 0
+  return () => `c${prefix}${(++n).toString(36)}`
+}
+
+// ── the store ───────────────────────────────────────────────────────────────
+
+export interface ProgrammeStore {
+  getSnapshot(): ProgrammeStoreSnapshot
+  subscribe(listener: () => void): () => void
+  /** Previews and queues a gesture. False when nothing was applied (read-only, stale, refused, empty). */
+  apply(ops: ProgrammeOp[], label: string): boolean
+  undo(): void
+  redo(): void
+  setCanEdit(canEdit: boolean): void
+  /** The poll's answer: marks the screen stale when the version moved and nothing is pending. */
+  noteServerVersion(version: string): void
+  /** Takes a fresh server view when nothing is pending. True when it was taken. */
+  resetFrom(view: ProgrammeViewData): boolean
+  clearError(): void
+}
+
+export function createProgrammeStore(
+  view: ProgrammeViewData,
+  opts: { canEdit: boolean; save: SaveFn; newKey?: () => string },
+): ProgrammeStore {
+  const newKey = opts.newKey ?? defaultNewKey()
+  let canEdit = opts.canEdit
+  let s: Internal = fresh(view)
+  let snap = toSnapshot(s)
+  const listeners = new Set<() => void>()
+
+  function fresh(v: ProgrammeViewData): Internal {
+    return {
+      state: v.state, saved: v.state, version: v.version, undo: [], redo: [], queue: [],
+      sending: false, stale: false, error: null, offerReload: false,
+    }
+  }
+  function toSnapshot(i: Internal): ProgrammeStoreSnapshot {
+    return {
+      state: i.state, version: i.version, pending: i.queue.length > 0, stale: i.stale,
+      unsaved: i.state !== i.saved, error: i.error, offerReload: i.offerReload,
+      canUndo: canEdit && !i.stale && i.undo.length > 0, canRedo: canEdit && !i.stale && i.redo.length > 0,
+      undoLabel: i.undo.at(-1)?.label ?? null, redoLabel: i.redo.at(-1)?.label ?? null,
+    }
+  }
+  function set(next: Internal): void {
+    s = next
+    snap = toSnapshot(s)
+    for (const l of listeners) l()
+  }
+  const editable = () => canEdit && !s.stale
+
+  function enqueue(ops: ProgrammeOp[], next: ProgrammeState, undo: Entry[], redo: Entry[]): void {
+    const gesture: Gesture = { ops, rollback: { state: s.state, undo: s.undo, redo: s.redo } }
+    set({ ...s, state: next, undo, redo, queue: [...s.queue, gesture], error: null, offerReload: false })
+    void pump()
+  }
+
+  async function pump(): Promise<void> {
+    if (s.sending || s.stale || s.queue.length === 0) return
+    const head = s.queue[0]
+    s = { ...s, sending: true }
+    let r: SaveProgrammeResult
+    try {
+      r = await opts.save({ programmeId: s.state.programme.id, expectedVersion: s.version, ops: head.ops })
+    } catch {
+      r = { ok: false, error: SAVE_FAILED }
+    }
+    if (r.ok) {
+      const map: Record<string, string> = {}
+      for (const [k, id] of Object.entries(r.ids ?? {})) map[`key:${k}`] = id
+      const rw = <T>(v: T): T => (Object.keys(map).length > 0 ? rewriteIds(v, map) : v)
+      const rest = rw(s.queue.slice(1))
+      const state = rw(s.state)
+      // Everything queued on top of this gesture is still unsaved; when nothing is, the preview IS the server state.
+      const savedState = rest.length === 0 ? state : rw(rest[0].rollback.state)
+      set({
+        ...s, sending: false, version: r.version, state, saved: savedState,
+        undo: rw(s.undo), redo: rw(s.redo), queue: rest,
+      })
+      void pump()
+      return
+    }
+    if (r.error === PROGRAMME_STALE) {
+      set({ ...s, sending: false, stale: true, queue: [], error: null, offerReload: false })
+      return
+    }
+    const back = head.rollback
+    set({ ...s, sending: false, state: back.state, undo: back.undo, redo: back.redo, queue: [], error: r.error, offerReload: false })
+  }
+
+  function step(direction: 'undo' | 'redo'): void {
+    if (!editable()) return
+    const from = direction === 'undo' ? s.undo : s.redo
+    const entry = from.at(-1)
+    if (!entry) return
+    const target = direction === 'undo' ? entry.before : entry.after
+    let ops: ProgrammeOp[]
+    try {
+      ops = diffToOps(s.state, target, newKey)
+    } catch {
+      set({ ...s, error: UNDO_GONE, offerReload: true })
+      return
+    }
+    const rest = from.slice(0, -1)
+    const undo = direction === 'undo' ? rest : [...s.undo, entry]
+    const redo = direction === 'undo' ? [...s.redo, entry] : rest
+    if (ops.length === 0) {
+      set({ ...s, undo, redo, error: null, offerReload: false })
+      return
+    }
+    const p = preview(s.state, ops)
+    if (!p.ok) {
+      set({ ...s, error: p.opError ? UNDO_GONE : p.error, offerReload: p.opError })
+      return
+    }
+    enqueue(ops, p.next, undo, redo)
+  }
+
+  return {
+    getSnapshot: () => snap,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    apply(ops, label) {
+      if (!editable() || ops.length === 0) return false
+      const p = preview(s.state, ops)
+      if (!p.ok) {
+        set({ ...s, error: p.error, offerReload: false })
+        return false
+      }
+      const undo = [...s.undo, { before: s.state, after: p.next, label }].slice(-UNDO_DEPTH)
+      enqueue(ops, p.next, undo, [])
+      return true
+    },
+    undo: () => step('undo'),
+    redo: () => step('redo'),
+    setCanEdit(next) {
+      if (next === canEdit) return
+      canEdit = next
+      set({ ...s })
+    },
+    noteServerVersion(version) {
+      if (s.queue.length > 0 || s.sending || s.stale || version === '' || version === s.version) return
+      set({ ...s, stale: true })
+    },
+    resetFrom(v) {
+      if (s.queue.length > 0 || s.sending) return false
+      set(fresh(v))
+      return true
+    },
+    clearError() {
+      if (s.error !== null) set({ ...s, error: null, offerReload: false })
+    },
+  }
+}
+
+// ── the hook ────────────────────────────────────────────────────────────────
+
+export interface ProgrammeStoreApi extends ProgrammeStoreSnapshot {
+  schedule: ScheduleResult
+  apply(ops: ProgrammeOp[], label: string): boolean
+  undo(): void
+  redo(): void
+  reload(): void
+  clearError(): void
+}
+
+export function useProgrammeStore(initial: ProgrammeViewData, opts: { canEdit: boolean }): ProgrammeStoreApi {
+  const router = useRouter()
+  const [store] = useState(() => createProgrammeStore(initial, { canEdit: opts.canEdit, save: saveProgrammeChangesAction }))
+  const snap = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+
+  useEffect(() => { store.setCanEdit(opts.canEdit) }, [store, opts.canEdit])
+
+  // A refreshed page hands a new view: take it when it is a different version and nothing is pending.
+  const latest = useRef(initial)
+  latest.current = initial
+  useEffect(() => {
+    if (initial.version !== store.getSnapshot().version) store.resetFrom(latest.current)
+  }, [store, initial.version])
+
+  const programmeId = snap.state.programme.id
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (store.getSnapshot().pending) return
+      void programmeVersionAction({ programmeId }).then((r) => { if (r.ok) store.noteServerVersion(r.version) }, () => {})
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [store, programmeId])
+
+  const schedule = useMemo(() => scheduleFor(snap.state), [snap.state])
+  return {
+    ...snap, schedule,
+    apply: store.apply, undo: store.undo, redo: store.redo, clearError: store.clearError,
+    reload: () => router.refresh(),
+  }
+}
