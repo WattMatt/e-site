@@ -978,7 +978,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 ### Programme (`programme.actions.ts`; schema `programme`, migration `00261`; dark behind `PROGRAMME_ENABLED`)
 
-No page or nav entry yet. Every action refuses with "The programme module is not switched on yet." until `PROGRAMME_ENABLED=true`. Roles below are the EFFECTIVE project role (`user_effective_project_role`). A **module** (Solar) programme is gated by Solar access instead: read needs `solar_can_view`, edit needs `solar_can_edit`.
+The screen is `/projects/[id]/programme` (P3); its nav entry shows only when `PROGRAMME_ENABLED`. Every action refuses with "The programme module is not switched on yet." until `PROGRAMME_ENABLED=true`. Roles below are the EFFECTIVE project role (`user_effective_project_role`). A **module** (Solar) programme is gated by Solar access instead: read needs `solar_can_view`, edit needs `solar_can_edit`.
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -988,6 +988,9 @@ No page or nav entry yet. Every action refuses with "The programme module is not
 | `submitFieldUpdateAction` (report progress from site) | W | W | W | W¹ | W¹ | — | — |
 | `moduleSummaryAction` (start, finish, % complete bar) | R | R | R | R | R | R | — |
 | Read any programme table | R | R | R | R | R | R | — |
+| **Programme screen** `/projects/[id]/programme` (`PROGRAMME_READ_ROLES`: every role except client_viewer; page gate `requireEffectiveRole`) | R | R | R | R | R | R | — |
+| Programme screen: editing controls (`canEdit` from the server: `ORG_WRITE_ROLES`; a solar module programme uses Solar Edit instead) | W | W | W | — | — | — | — |
+| Programme screen: create the project programme (empty state) | W | W | W | — | — | — | — |
 | Read cost tables (`assignment_costs`, `baseline_costs`, `progress_period_costs`): by EFFECTIVE project role | R | R | R | — | — | — | — |
 | Read resource rates (`resource_rates`): by ORG role² | R | R | R | — | — | — | — |
 
