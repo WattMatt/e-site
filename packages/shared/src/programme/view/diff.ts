@@ -10,13 +10,13 @@ const DEP_FIELDS = ['type', 'lag', 'lag_unit', 'lag_calendar'] as const
  * Covers the programme row, activities and dependencies (calendars, exceptions and codes are not edited
  * on the Gantt, so they are not diffed). Only writable fields are emitted, never cache columns.
  *
- * - Order: dependency deletes, `set_programme`, activity upserts (parents before children, in the order of
+ * - Order: dependency deletes, `set_programme`, activity restores/upserts (parents before children, in the order of
  *   the `to` tree, which cannot make a transient cycle), dependency upserts, activity deletes (deepest first).
  * - Matching is by id. A tombstoned activity counts as absent on both sides.
- * - P2 cannot restore a tombstoned activity (an upsert on it is refused). So an activity that is live in
- *   `to` but tombstoned (or missing) in `from` is created as a NEW row under a new key, and references to it
- *   in `to` (parent, link ends) are rewritten to that key. The old tombstone stays. Deleting a row that has
- *   history tombstones it in P2, so undo of such a delete yields a new row, not the old id.
+ * - A tombstoned activity in `from` that is live in `to` is brought back with `restore_activity` (same row, same id,
+ *   its history stays attached), then an `upsert_activity` for any field differences. Restores run parents first.
+ *   Its links are not recreated by P2, so they come back as new `upsert_dependency` ops. An activity that is absent
+ *   from `from` altogether (hard-deleted) is created as a new row under a new key; references to it are rewritten.
  * - Every new row carries a non-blank key from `newKey`.
  */
 export function diffToOps(from: ProgrammeState, to: ProgrammeState, newKey: () => string): ProgrammeOp[] {
@@ -29,7 +29,8 @@ export function diffToOps(from: ProgrammeState, to: ProgrammeState, newKey: () =
   const toLive = new Map(to.activities.filter((a) => !a.is_tombstoned).map((a) => [a.id, a]))
   /** `to` id → key, for activities that must be created. */
   const created = new Map<string, string>()
-  for (const a of to.activities) if (!a.is_tombstoned && !fromLive.has(a.id)) created.set(a.id, mint())
+  const fromTomb = new Set(from.activities.filter((a) => a.is_tombstoned).map((a) => a.id))
+  for (const a of to.activities) if (!a.is_tombstoned && !fromLive.has(a.id) && !fromTomb.has(a.id)) created.set(a.id, mint())
   const ref = (id: string): string => created.get(id) ?? id
 
   const ops: ProgrammeOp[] = []
@@ -64,7 +65,9 @@ export function diffToOps(from: ProgrammeState, to: ProgrammeState, newKey: () =
       fields.parent_id = parent
       ops.push({ op: 'upsert_activity', key: created.get(a.id), fields })
     } else {
-      const prev = fromLive.get(a.id) as ActivityRow
+      const restoring = fromTomb.has(a.id)
+      if (restoring) ops.push({ op: 'restore_activity', id: a.id })
+      const prev = (fromLive.get(a.id) ?? from.activities.find((x) => x.id === a.id)) as ActivityRow
       const fields: Record<string, unknown> = {}
       for (const f of ACT_FIELDS) {
         const next = f === 'parent_id' ? parent : a[f]
@@ -74,10 +77,11 @@ export function diffToOps(from: ProgrammeState, to: ProgrammeState, newKey: () =
     }
   }
 
-  // 4. dependency upserts
+  // 4. dependency updates, then creates (an update can free the pair a create needs)
+  const creates: ProgrammeOp[] = []
   for (const d of toDeps.values()) {
     if (!fromDepIds.has(d.id)) {
-      ops.push({ op: 'upsert_dependency', key: mint(), pred: ref(d.pred_id), succ: ref(d.succ_id), type: d.type, lag: d.lag, lag_unit: d.lag_unit, lag_calendar: d.lag_calendar })
+      creates.push({ op: 'upsert_dependency', key: mint(), pred: ref(d.pred_id), succ: ref(d.succ_id), type: d.type, lag: d.lag, lag_unit: d.lag_unit, lag_calendar: d.lag_calendar })
       continue
     }
     const prev = from.dependencies.find((x) => x.id === d.id) as DependencyRow
@@ -88,6 +92,7 @@ export function diffToOps(from: ProgrammeState, to: ProgrammeState, newKey: () =
     for (const f of DEP_FIELDS) if (!same(prev[f], d[f])) { op[f] = d[f]; changed = true }
     if (changed) ops.push(op as unknown as ProgrammeOp)
   }
+  ops.push(...creates)
 
   // 5. activity deletes, deepest first (in the `from` tree)
   const fromDepth = new Map<string, number>()

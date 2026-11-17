@@ -37,7 +37,7 @@ export function outlineRows(activities: ActivityRow[], collapsed: ReadonlySet<st
       const here = path === '' ? String(i + 1) : `${path}.${i + 1}`
       const children = byParent.get(a.id) ?? []
       const isCollapsed = collapsed.has(a.id) && children.length > 0
-      out.push({ id: a.id, depth, wbs: a.wbs_code ?? here, hasChildren: children.length > 0, collapsed: isCollapsed })
+      out.push({ id: a.id, depth, wbs: a.wbs_code !== null && a.wbs_code.trim() !== '' ? a.wbs_code : here, hasChildren: children.length > 0, collapsed: isCollapsed })
       if (!isCollapsed) walk(a.id, depth + 1, here)
     })
   }

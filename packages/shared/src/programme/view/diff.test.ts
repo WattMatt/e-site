@@ -86,14 +86,44 @@ describe('diffToOps: shape', () => {
 })
 
 describe('diffToOps: tombstones', () => {
-  it('a tombstoned row in `from` that is live in `to` is re-created under a NEW key (P2 cannot restore)', () => {
+  it('a tombstoned row in `from` that is live in `to` is RESTORED under its own id, then updated, then re-linked', () => {
     const from = base({ activities: [activityRow('A', { name: 'A', is_tombstoned: true }), activityRow('B', { name: 'B' })] })
-    const to = base({ activities: [activityRow('A', { name: 'A' }), activityRow('B', { name: 'B' })], dependencies: [dependencyRow('d', 'B', 'A')] })
+    const to = base({ activities: [activityRow('A', { name: 'A renamed' }), activityRow('B', { name: 'B' })], dependencies: [dependencyRow('d', 'B', 'A')] })
     const ops = diffToOps(from, to, keys())
-    expect(ops.some((o) => o.op === 'upsert_activity' && o.id === 'A')).toBe(false)
+    expect(ops.map((o) => o.op)).toEqual(['restore_activity', 'upsert_activity', 'upsert_dependency'])
+    expect(ops[0]).toEqual({ op: 'restore_activity', id: 'A' })
+    expect(ops[1]).toEqual({ op: 'upsert_activity', id: 'A', fields: { name: 'A renamed' } })
     const out = applyOps(from, ops)
     expect(view(out)).toEqual(view(to))
-    expect(out.activities.filter((a) => a.name === 'A')).toHaveLength(2) // the old tombstone stays
+    expect(out.activities.filter((a) => a.name.startsWith('A'))).toHaveLength(1)
+  })
+  it('undo of a delete restores an activity with external_uid and field-update history under the same id', () => {
+    const live = base({
+      activities: [activityRow('A', { name: 'A', external_uid: 'X-1' }), activityRow('B', { name: 'B' })],
+      dependencies: [dependencyRow('d', 'A', 'B')], fieldUpdateActivityIds: ['A'],
+    })
+    const deleted = applyOps(live, diffToOps(live, base({ activities: [activityRow('B', { name: 'B' })], fieldUpdateActivityIds: ['A'] }), keys()))
+    expect(deleted.activities.find((a) => a.id === 'A')?.is_tombstoned).toBe(true)
+    const undone = applyOps(deleted, diffToOps(deleted, live, keys()))
+    const a = undone.activities.filter((x) => x.external_uid === 'X-1')
+    expect(a).toHaveLength(1)
+    expect(a[0].id).toBe('A')
+    expect(a[0].is_tombstoned).toBe(false)
+    expect(view(undone)).toEqual(view(live))
+  })
+  it('restores a deleted parent before its deleted child', () => {
+    const from = base({ activities: [activityRow('P', { name: 'P', type: 'summary', original_duration: 0, is_tombstoned: true }),
+      activityRow('C', { name: 'C', parent_id: 'P', is_tombstoned: true })] })
+    const to = base({ activities: [activityRow('C', { name: 'C', parent_id: 'P' }), activityRow('P', { name: 'P', type: 'summary', original_duration: 0 })] })
+    const ops = diffToOps(from, to, keys())
+    expect(ops.map((o) => (o as { id: string }).id)).toEqual(['P', 'C'])
+    expect(view(applyOps(from, ops))).toEqual(view(to))
+  })
+  it('link updates precede link creates (no transient duplicate)', () => {
+    const from = base({ activities: [activityRow('A'), activityRow('B')], dependencies: [dependencyRow('d1', 'A', 'B')] })
+    const to = clone(from)
+    to.dependencies = [dependencyRow('d3', 'A', 'B'), { ...dependencyRow('d1', 'A', 'B'), type: 'SS' }]
+    expect(view(applyOps(from, diffToOps(from, to, keys())))).toEqual(view(to))
   })
   it('deleting a row with history tombstones it; a tombstone in both sides is untouched', () => {
     const from = base({ activities: [activityRow('A'), activityRow('T', { is_tombstoned: true })], baselineActivityIds: ['A'] })
@@ -176,6 +206,7 @@ describe('diffToOps property: applyOps(from, diff(from, to)) equals to on every 
     it(`seed ${seed}`, () => {
       const r = rng(seed)
       const from = seedState(r)
+      if (seed % 2 === 1) { from.baselineActivityIds = from.activities.map((a) => a.id); from.activities.forEach((a, i) => { if (i % 2 === 0) a.external_uid = `X${i}` }) }
       let to = from
       const steps = 1 + Math.floor(r() * 5)
       for (let i = 0; i < steps; i++) to = edit(to, r, seed * 10 + i)
@@ -185,7 +216,12 @@ describe('diffToOps property: applyOps(from, diff(from, to)) equals to on every 
       const out = applyOps(from, ops)
       expect(view(out)).toEqual(view(to))
       // and the reverse trip (undo) lands back on `from`
-      expect(view(applyOps(out, diffToOps(out, from, nextKey)))).toEqual(view(from))
+      const back = applyOps(out, diffToOps(out, from, nextKey))
+      expect(view(back)).toEqual(view(from))
+      // with history (odd seeds) a delete tombstones, so the undo restores the SAME id
+      if (seed % 2 === 1) for (const a of from.activities) if (to.activities.some((x) => x.id === a.id) === false) {
+        expect(back.activities.find((x) => x.id === a.id)?.is_tombstoned).toBe(false)
+      }
     })
   }
 })
