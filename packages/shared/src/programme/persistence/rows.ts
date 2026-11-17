@@ -4,6 +4,7 @@
  * 'YYYY-MM-DD' strings and numerics are numbers. Pure: no I/O.
  */
 import type { CalendarDate } from '../../lib/dates/calendar-date'
+import { ProgrammeOpError } from './errors'
 import type {
   ActivityInput, ActivityType, ConstraintType, DependencyInput, EngineCalendarSpec, LagCalendar, LagUnit,
   LinkType, ProgrammeInput, ScheduleOptions, ScheduleResult,
@@ -207,4 +208,28 @@ export function computedFromResult(
     })
   }
   return { project_finish: result.projectFinish, activities }
+}
+
+/** One `p_computed.activities` entry: `id` for an existing row, `key` for a row created in the same save. */
+export type ComputedSaveEntry = Omit<ComputedRow, 'id'> & ({ id: string; key?: undefined } | { key: string; id?: undefined })
+
+/**
+ * `computedFromResult` for a save that also creates rows. `save_changes`
+ * resolves each entry by `coalesce(id, key)`, where a key is the one given in
+ * the op list. `applyOps` names a new row `key:<k>`, so this maps it back to
+ * `{ key: k }`; existing rows stay `{ id }`. A new row created WITHOUT a key
+ * (`new:<n>`) cannot be addressed by the database at all, so it is refused
+ * here rather than saved with a cache that can never land.
+ */
+export function computedForSave(
+  result: ScheduleResult,
+  dependencies: DependencyRow[],
+): { project_finish: string | null; activities: ComputedSaveEntry[] } {
+  const base = computedFromResult(result, dependencies)
+  const activities = base.activities.map(({ id, ...cache }): ComputedSaveEntry => {
+    if (id.startsWith('key:')) return { ...cache, key: id.slice(4) }
+    if (id.startsWith('new:')) throw new ProgrammeOpError('Give each new activity a key so its schedule can be saved.', '22023')
+    return { ...cache, id }
+  })
+  return { project_finish: base.project_finish, activities }
 }

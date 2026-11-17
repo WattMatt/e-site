@@ -109,11 +109,13 @@ function date(v: unknown): string | null {
   if (typeof v !== 'string' || !isCalendarDate(v)) throw badForm()
   return v
 }
-function num(v: unknown): number | null {
+/** Parses a numeric value and rounds it to the column scale as Postgres NUMERIC(p,2) stores it (half away from zero). */
+function num(v: unknown, scale = 2): number | null {
   if (v === null || v === undefined) return null
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v
   if (typeof n !== 'number' || !Number.isFinite(n)) throw badForm()
-  return n
+  const f = 10 ** scale
+  return (Math.sign(n) * Math.round(Math.abs(n) * f + 1e-9)) / f
 }
 function isRec(v: unknown): v is Rec { return typeof v === 'object' && v !== null && !Array.isArray(v) }
 
@@ -152,7 +154,7 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         : kind === 'upsert_calendar' ? CAL_FIELDS
         : kind === 'set_programme' ? [...PROG_FIELDS, ...PROG_CACHE] : []
       const unknown = Object.keys(op.fields).filter((k) => !known.includes(k)).sort()[0]
-      if (unknown !== undefined) throw fail(`That change names a field the programme does not have: ${unknown}.`)
+      if (unknown !== undefined) throw fail(`That change names a field the programme does not have: ${unknown}`)
     }
     const writable = (names: readonly string[]): Rec => {
       const f = isRec(op.fields) ? op.fields : {}
@@ -166,7 +168,10 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
     switch (kind) {
       case 'upsert_activity': {
         const f = writable(ACT_FIELDS)
-        if (typeof f.parent_id === 'string') f.parent_id = ref(f.parent_id, 'activities', 'parent activity')
+        if (typeof f.parent_id === 'string') {
+          f.parent_id = ref(f.parent_id, 'activities', 'parent activity')
+          if (findAct(f.parent_id as string).is_tombstoned) throw fail('That activity was removed. Restore it first.')
+        }
         if (typeof f.calendar_id === 'string') f.calendar_id = ref(f.calendar_id, 'calendars', 'calendar')
         let a: ActivityRow
         if (op.id !== undefined && op.id !== null) {
@@ -178,7 +183,7 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
           id = newId()
           a = {
             id, programme_id: s.programme.id, parent_id: null, wbs_code: null, code: null, name: null as unknown as string,
-            type: 'task', original_duration: 0, remaining_duration: null, calendar_id: null, constraint_type: null,
+            type: null as unknown as ActivityRow['type'], original_duration: 0, remaining_duration: null, calendar_id: null, constraint_type: null,
             constraint_date: null, deadline: null, actual_start: null, actual_finish: null, percent_complete: 0,
             percent_complete_type: 'duration', fixed_start: null, fixed_finish: null, early_start: null, early_finish: null,
             late_start: null, late_finish: null, total_float: null, free_float: null, is_critical: false, is_driving: false,
@@ -219,7 +224,7 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         s.dependencies = s.dependencies.filter((d) => d.pred_id !== gone && d.succ_id !== gone)
         if (hasHistory) a.is_tombstoned = true
         else s.activities = s.activities.filter((x) => x.id !== gone)
-        id = null
+        // like the SQL, the key (if any) is registered against the deleted id, so it cannot be reused
         break
       }
 
@@ -264,7 +269,6 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         if (id === null) throw fail('Say which link to delete.')
         const gone = id
         s.dependencies = s.dependencies.filter((d) => d.id !== gone)
-        id = null
         break
       }
 
@@ -413,6 +417,7 @@ function checkActivity(a: ActivityRow, all: ActivityRow[]): void {
   if (blank(a.name) || len(a.name) > 300) throw bad()
   if (!ACT_TYPES.includes(a.type)) throw bad()
   if (a.code !== null && a.code.length > 40) throw bad()
+  if (a.original_duration === null || a.percent_complete === null) throw bad()
   if (a.original_duration < 0 || (a.remaining_duration !== null && a.remaining_duration < 0)) throw bad()
   if (a.percent_complete < 0 || a.percent_complete > 100) throw bad()
   if (!['duration', 'physical', 'units'].includes(a.percent_complete_type)) throw bad()

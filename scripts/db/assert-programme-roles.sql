@@ -396,6 +396,17 @@ BEGIN
   END;
   RESET ROLE;
   PERFORM pg_temp.r('link_to_tombstoned_REFUSED_22023', v_st = '22023' AND v_h IS NOT NULL, v_st);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, v_ver, jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'key', 'under_tomb', 'fields', jsonb_build_object('name', 'Under a removed parent', 'type', 'task', 'parent_id', v_h::text))), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('parent_tombstoned_REFUSED_22023', v_st = '22023 That activity was removed. Restore it first.' AND v_h IS NOT NULL, v_st);
 
   -- Direct DML: no table grant to clients, even the owner.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);

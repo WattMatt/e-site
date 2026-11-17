@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { scheduleProgramme } from '../schedule'
-import { computedFromResult, parseProgrammeOptions, rowsToProgrammeInput } from './rows'
+import { applyOps } from './ops'
+import { computedForSave, computedFromResult, parseProgrammeOptions, rowsToProgrammeInput } from './rows'
 import { activityRow, calendarRow, dependencyRow, exceptionRow, programmeRow } from './fixtures'
 
 // Site (Mon-Fri, 5 Mar 2026 a holiday, no stored coverage) and Office (Mon-Fri, a working Saturday).
@@ -101,9 +102,48 @@ describe('computedFromResult', () => {
     expect(byId.C).toBe(true)
     expect(byId.A).toBe(false)
   })
+  it('I3: a non-driving link does not make its successor driving', () => {
+    // E is held by a start-no-earlier-than constraint; its only link (A -> E) has slack, so it must not drive.
+    const acts = [...activities, activityRow('E', { constraint_type: 'snet', constraint_date: '2026-03-20' })]
+    const deps = [...dependencies, dependencyRow('L4', 'A', 'E')]
+    const r = scheduleProgramme(rowsToProgrammeInput({ ...base, activities: acts, dependencies: deps }))
+    expect(r.ok).toBe(true)
+    expect(r.drivingLinkIds.has('L4')).toBe(false)
+    expect(r.drivingLinkIds.has('L1')).toBe(true)
+    const byId = Object.fromEntries(computedFromResult(r, deps).activities.map((a) => [a.id, a.is_driving]))
+    expect(byId.E).toBe(false)
+    expect(byId.B).toBe(true)
+  })
   it('returns nothing to save when the schedule failed', () => {
     const bad = scheduleProgramme(rowsToProgrammeInput({ ...base, dependencies: [dependencyRow('X', 'A', 'B'), dependencyRow('Y', 'B', 'A')] }))
     expect(bad.ok).toBe(false)
     expect(computedFromResult(bad, [])).toEqual({ project_finish: null, activities: [] })
+  })
+})
+
+describe('computedForSave (I2)', () => {
+  const s0 = {
+    programme: programmeRow(), calendars, exceptions, activities: [activityRow('A', { original_duration: 2 })], dependencies: [],
+    codeTypes: [], codeValues: [], activityCodes: [], fieldUpdateActivityIds: [], assignmentActivityIds: [], baselineActivityIds: [],
+  }
+  it('keys new rows by their key (not key:<k>) and existing rows by id', () => {
+    const s = applyOps(s0, [
+      { op: 'upsert_activity', key: 'n1', fields: { type: 'task', name: 'One', original_duration: 1 } },
+      { op: 'upsert_activity', key: 'n2', fields: { type: 'task', name: 'Two', original_duration: 1 } },
+      { op: 'upsert_dependency', pred: 'n1', succ: 'n2' },
+    ])
+    const r = scheduleProgramme(rowsToProgrammeInput(s))
+    const c = computedForSave(r, s.dependencies)
+    const entries = c.activities.map((a) => ('key' in a ? { key: a.key } : { id: a.id }))
+    expect(entries).toEqual(expect.arrayContaining([{ id: 'A' }, { key: 'n1' }, { key: 'n2' }]))
+    expect(JSON.stringify(c)).not.toContain('key:')
+    expect(c.activities.every((a) => !('key' in a && 'id' in a))).toBe(true)
+    const n2 = c.activities.find((a) => 'key' in a && a.key === 'n2')
+    expect(n2).toMatchObject({ early_start: '2026-03-03', is_driving: true })
+  })
+  it('refuses a new row with no key: its cache could never be addressed', () => {
+    const s = applyOps(s0, [{ op: 'upsert_activity', fields: { type: 'task', name: 'Keyless' } }])
+    const r = scheduleProgramme(rowsToProgrammeInput(s))
+    expect(() => computedForSave(r, s.dependencies)).toThrow('Give each new activity a key so its schedule can be saved.')
   })
 })

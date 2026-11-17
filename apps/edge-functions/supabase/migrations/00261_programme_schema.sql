@@ -1612,6 +1612,10 @@ BEGIN
              WHERE e.k = ANY (c_act_fields);
             IF jsonb_typeof(v_f -> 'parent_id') = 'string' THEN
                 v_f := jsonb_set(v_f, '{parent_id}', to_jsonb(programme.resolve_ref(v_f ->> 'parent_id', v_keys, 'activities', p_programme_id, 'parent activity')));
+                -- A removed (tombstoned) activity is out of the schedule: nothing may be placed under it.
+                IF EXISTS (SELECT 1 FROM programme.activities a WHERE a.id = (v_f ->> 'parent_id')::uuid AND a.is_tombstoned) THEN
+                    RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
+                END IF;
             END IF;
             IF jsonb_typeof(v_f -> 'calendar_id') = 'string' THEN
                 v_f := jsonb_set(v_f, '{calendar_id}', to_jsonb(programme.resolve_ref(v_f ->> 'calendar_id', v_keys, 'calendars', p_programme_id, 'calendar')));

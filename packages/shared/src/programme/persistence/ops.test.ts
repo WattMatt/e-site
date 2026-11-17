@@ -27,8 +27,8 @@ const refuses = (s: ProgrammeState, ops: unknown[], message: string, code?: stri
 describe('applyOps: creating rows and keys', () => {
   it('upserts a new activity under key:<k>, defaults applied, and later ops use the key', () => {
     const out = applyOps(state(), [
-      { op: 'upsert_activity', key: 'n1', fields: { name: 'New', original_duration: 4, parent_id: 'S' } },
-      { op: 'upsert_activity', key: 'n2', fields: { name: 'Next' } },
+      { op: 'upsert_activity', key: 'n1', fields: { type: 'task', name: 'New', original_duration: 4, parent_id: 'S' } },
+      { op: 'upsert_activity', key: 'n2', fields: { type: 'task', name: 'Next' } },
       { op: 'upsert_dependency', pred: 'n1', succ: 'n2', type: 'SS', lag: 2 },
     ])
     const n1 = out.activities.find((a) => a.id === 'key:n1')
@@ -48,25 +48,25 @@ describe('applyOps: creating rows and keys', () => {
     expect(a).toMatchObject({ name: 'Pour', early_start: null, is_critical: false, work_item_id: null, total_float: null })
   })
   it('refuses a duplicate key', () => {
-    refuses(state(), [{ op: 'upsert_activity', key: 'k', fields: { name: 'x' } }, { op: 'upsert_activity', key: 'k', fields: { name: 'y' } }],
+    refuses(state(), [{ op: 'upsert_activity', key: 'k', fields: { type: 'task', name: 'x' } }, { op: 'upsert_activity', key: 'k', fields: { type: 'task', name: 'y' } }],
       'Each new row in one save needs its own key.', '22023')
   })
 })
 
 describe('applyOps: field-name refusals', () => {
   it('refuses an unknown field name', () => {
-    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { nmae: 'x' } }], 'That change names a field the programme does not have: nmae.', '22023')
+    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { nmae: 'x' } }], 'That change names a field the programme does not have: nmae', '22023')
   })
   it('refuses is_tombstoned and ids (not writable), naming the first alphabetically', () => {
-    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { is_tombstoned: true, id: 'x' } }], 'That change names a field the programme does not have: id.', '22023')
+    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { is_tombstoned: true, id: 'x' } }], 'That change names a field the programme does not have: id', '22023')
   })
   it('knows the programme cache name project_finish and ignores it', () => {
     const out = applyOps(state(), [{ op: 'set_programme', fields: { project_finish: '2030-01-01', name: 'Renamed' } }])
     expect(out.programme).toMatchObject({ name: 'Renamed', project_finish: null })
   })
   it('refuses unknown names on calendars and set_programme; activity-only names are unknown on a calendar', () => {
-    refuses(state(), [{ op: 'upsert_calendar', fields: { code: 'x' } }], 'That change names a field the programme does not have: code.', '22023')
-    refuses(state(), [{ op: 'set_programme', fields: { status: 'archived' } }], 'That change names a field the programme does not have: status.', '22023')
+    refuses(state(), [{ op: 'upsert_calendar', fields: { code: 'x' } }], 'That change names a field the programme does not have: code', '22023')
+    refuses(state(), [{ op: 'set_programme', fields: { status: 'archived' } }], 'That change names a field the programme does not have: status', '22023')
   })
 })
 
@@ -127,7 +127,7 @@ describe('applyOps: references', () => {
   })
   it('a key whose row was hard-deleted earlier in the call no longer exists', () => {
     refuses(state(), [
-      { op: 'upsert_activity', key: 'n', fields: { name: 'x' } },
+      { op: 'upsert_activity', key: 'n', fields: { type: 'task', name: 'x' } },
       { op: 'delete_activity', id: 'n' },
       { op: 'upsert_activity', id: 'n', fields: { name: 'y' } },
     ], 'That activity no longer exists. Reload to see the current programme.', 'P0002')
@@ -143,6 +143,39 @@ describe('applyOps: tree and links', () => {
     refuses(state(), [{ op: 'upsert_dependency', pred: 'A', succ: 'A' }], 'An activity cannot be linked to itself.', '22023')
     refuses(state(), [{ op: 'upsert_dependency', pred: 'A' }], 'A link needs a predecessor and a successor.', '22023')
     refuses(state(), [{ op: 'upsert_dependency', pred: 'A', succ: 'B' }], 'Those two activities are already linked that way.', '23505')
+  })
+  it('I1: a new activity with no type, and null on a NOT NULL column, are refused as the SQL does', () => {
+    const bad = 'One of the values in this change is missing or not allowed.'
+    refuses(state(), [{ op: 'upsert_activity', key: 'n', fields: { name: 'X' } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { original_duration: null as unknown as number } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { percent_complete: null as unknown as number } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', id: 'A', fields: { percent_complete_type: null as unknown as 'duration' } }], bad, '22023')
+    // on insert the SQL coalesces a null duration / percent to the default
+    const out = applyOps(state(), [{ op: 'upsert_activity', key: 'n', fields: { type: 'task', name: 'X', original_duration: null as unknown as number, percent_complete: null as unknown as number } }])
+    expect(out.activities.find((a) => a.id === 'key:n')).toMatchObject({ original_duration: 0, percent_complete: 0 })
+  })
+  it('M3: numerics are rounded to the column scale (2 dp) before checks and storage', () => {
+    const out = applyOps(state(), [
+      { op: 'upsert_activity', id: 'A', fields: { original_duration: 2.004, percent_complete: 100.004 } },
+      { op: 'upsert_activity', key: 'm', fields: { type: 'start_milestone', name: 'M', original_duration: 0.004 } },
+      { op: 'upsert_dependency', id: 'L1', lag: 1.006 },
+      { op: 'upsert_calendar', id: 'SITE', fields: { hours_per_day: 7.499 } },
+    ])
+    expect(out.activities.find((a) => a.id === 'A')).toMatchObject({ original_duration: 2, percent_complete: 100 })
+    expect(out.activities.find((a) => a.id === 'key:m')?.original_duration).toBe(0)
+    expect(out.dependencies[0]?.lag).toBe(1.01)
+    expect(out.calendars.find((c) => c.id === 'SITE')?.hours_per_day).toBe(7.5)
+  })
+  it('M5: a key registered by a delete op cannot be reused', () => {
+    refuses(state(), [{ op: 'delete_activity', id: 'B', key: 'k' } as unknown as ProgrammeOp, { op: 'upsert_activity', key: 'k', fields: { type: 'task', name: 'x' } }],
+      'Each new row in one save needs its own key.', '22023')
+    refuses(state(), [{ op: 'delete_dependency', id: 'L1', key: 'k' } as unknown as ProgrammeOp, { op: 'upsert_activity', key: 'k', fields: { type: 'task', name: 'x' } }],
+      'Each new row in one save needs its own key.', '22023')
+  })
+  it('M6: a live activity cannot be placed under a tombstoned parent', () => {
+    const s = state({ activities: [activityRow('A'), activityRow('T', { type: 'summary', is_tombstoned: true })] })
+    refuses(s, [{ op: 'upsert_activity', id: 'A', fields: { parent_id: 'T' } }], 'That activity was removed. Restore it first.', '22023')
+    refuses(s, [{ op: 'upsert_activity', key: 'n', fields: { type: 'task', name: 'x', parent_id: 'T' } }], 'That activity was removed. Restore it first.', '22023')
   })
   it('allows the same pair with another type, and edits a link by id keeping its ends', () => {
     const out = applyOps(state(), [{ op: 'upsert_dependency', pred: 'A', succ: 'B', type: 'SS' }, { op: 'upsert_dependency', id: 'L1', lag: 3, lag_unit: 'elapsed_days' }])
@@ -162,20 +195,20 @@ describe('applyOps: tree and links', () => {
 describe('applyOps: value checks', () => {
   const bad = 'One of the values in this change is missing or not allowed.'
   it('refuses the activity CHECK constraints', () => {
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: '   ' } }], bad, '22023')
-    refuses(state(), [{ op: 'upsert_activity', fields: {} }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: '   ' } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task' } }], bad, '22023')
     refuses(state(), [{ op: 'upsert_activity', fields: { name: 'm', type: 'start_milestone', original_duration: 2 } }], bad, '22023')
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', constraint_type: 'snet' } }], bad, '22023')
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', actual_start: '2026-03-05', actual_finish: '2026-03-04' } }], bad, '22023')
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', fixed_start: '2026-03-05' } }], bad, '22023')
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', percent_complete: 101 } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', constraint_type: 'snet' } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', actual_start: '2026-03-05', actual_finish: '2026-03-04' } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', fixed_start: '2026-03-05' } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', percent_complete: 101 } }], bad, '22023')
     refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', type: 'bogus' } }], bad, '22023')
   })
   it('refuses a malformed date with the form sentence', () => {
-    refuses(state(), [{ op: 'upsert_activity', fields: { name: 'x', deadline: '05/03/2026' } }], 'One of the values in this change is not in the expected form.', '22023')
+    refuses(state(), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', deadline: '05/03/2026' } }], 'One of the values in this change is not in the expected form.', '22023')
   })
   it('refuses a duplicate external uid', () => {
-    refuses(state({ activities: [activityRow('A', { external_uid: 'U' })] }), [{ op: 'upsert_activity', fields: { name: 'x', external_uid: 'U' } }], 'Another activity already has that external id.', '23505')
+    refuses(state({ activities: [activityRow('A', { external_uid: 'U' })] }), [{ op: 'upsert_activity', fields: { type: 'task', name: 'x', external_uid: 'U' } }], 'Another activity already has that external id.', '23505')
   })
 })
 
