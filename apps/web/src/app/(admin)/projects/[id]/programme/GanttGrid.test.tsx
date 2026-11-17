@@ -220,6 +220,24 @@ describe('GanttGrid: indent and outdent', () => {
   })
 })
 
+describe('GanttGrid: a refused gesture', () => {
+  it('leaves no scroll-into-view waiting: a later row change does not jump back to the old row', () => {
+    const acts = Array.from({ length: 200 }, (_, i) => activityRow(`a${i}`, { sort_order: i + 1 }))
+    acts[150] = activityRow('a150', { sort_order: 151, type: 'summary', original_duration: 0 })
+    acts.push(activityRow('kid', { parent_id: 'a150', sort_order: 1 }))
+    const store = storeOf(acts, emptySchedule())
+    store.apply.mockReturnValue(false)
+    render(<Harness store={store} />)
+    fireEvent.click(cell('a0', 'name'))
+    fireEvent.keyDown(grid(), { key: 'ArrowDown', altKey: true })
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    const scroll = screen.getByTestId('programme-grid-scroll')
+    fireEvent.scroll(scroll, { target: { scrollTop: 28 * 140 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse a150' }))
+    expect(scroll.scrollTop).toBe(28 * 140)
+  })
+})
+
 describe('GanttGrid: inline editing', () => {
   it('double-click on Name edits it; Enter commits one upsert', () => {
     const store = storeOf(abc())

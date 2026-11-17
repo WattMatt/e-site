@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { ProgrammeState } from '@esite/shared/programme'
 import type { ProgrammeViewData } from '@/lib/programme/view-types'
@@ -38,15 +38,44 @@ const renderClient = (a: ProgrammeStoreApi, canEdit = true) => {
   return render(<ProgrammeClient projectId="p" view={view()} canEdit={canEdit} programmes={[]} />)
 }
 
-beforeEach(() => { vi.clearAllMocks() })
+// This jsdom build has no PointerEvent.
+class TestPointerEvent extends MouseEvent {
+  pointerId: number
+  constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 0 }
+}
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('PointerEvent', TestPointerEvent) })
+afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProgrammeClient', () => {
-  it('shows the outline rows, their dates and the project finish', () => {
+  it('shows the outline rows, their bars and the project finish', () => {
     const a = api()
     renderClient(a)
     expect(screen.getByRole('grid', { name: 'Activities' }).querySelector('[data-row-id="A"]')).not.toBeNull()
     expect(screen.getByTestId('programme-finish').textContent).toBe(a.schedule.projectFinish)
-    expect(screen.getByRole('list', { name: 'Timeline' }).textContent).toMatch(/\d{4}-\d{2}-\d{2} – \d{4}-\d{2}-\d{2}/)
+    expect(document.querySelector('[data-bar-id="A"]')).not.toBeNull()
+    expect(document.querySelector('[data-bar-id="B"]')).not.toBeNull()
+  })
+
+  it('a click on a bar selects its row in the grid', () => {
+    renderClient(api())
+    const body = screen.getByTestId('programme-timeline-body')
+    const bar = document.querySelector('[data-bar-id="B"] [data-part="bar"]') as Element
+    const x = Number(bar.getAttribute('x')) + 4
+    const y = Number(bar.getAttribute('y')) + 4
+    fireEvent.pointerDown(body, { clientX: x, clientY: y, pointerId: 1, button: 0 })
+    fireEvent.pointerUp(body, { clientX: x, clientY: y, pointerId: 1 })
+    const grid = screen.getByRole('grid', { name: 'Activities' })
+    expect(grid.querySelector('[data-row-id="B"]')!.getAttribute('aria-selected')).toBe('true')
+    expect(grid.querySelector('[data-row-id="A"]')!.getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('the grid and the timeline end in footers of one height, so their viewports match', () => {
+    renderClient(api())
+    const g = screen.getByTestId('programme-grid-footer').style
+    const t = screen.getByTestId('programme-timeline-footer').style
+    expect(g.height).toBe('40px')
+    expect(t.height).toBe(g.height)
+    expect(t.flex).toBe(g.flex)
   })
 
   it('⌘Z undoes, ⇧⌘Z and Ctrl+Shift+Z redo; ignored while a field has focus', () => {
@@ -110,9 +139,9 @@ describe('ProgrammeClient', () => {
       { ...v.state.activities[1], id: 'K', name: 'K', parent_id: 'P' },
     ] } as ProgrammeState
     renderClient(api({ state, schedule: scheduleFor(state) }))
-    expect(screen.getByRole('list', { name: 'Timeline' }).children).toHaveLength(2)
+    expect(document.querySelectorAll('[data-bar-id]')).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: 'Collapse P' }))
-    expect(screen.getByRole('list', { name: 'Timeline' }).children).toHaveLength(1)
+    expect(document.querySelectorAll('[data-bar-id]')).toHaveLength(1)
   })
 
   it('the splitter resizes the grid between 30 and 70 per cent', () => {

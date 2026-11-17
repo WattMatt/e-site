@@ -17,11 +17,12 @@
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
+  type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction,
 } from 'react'
 import { HEADER_HEIGHT, outlineRows, ROW_HEIGHT, visibleRange, type ActivityRow, type ProgrammeOp } from '@esite/shared/programme'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import { addOps, deleteOps, deletionSet, indentOps, moveOps, outdentOps, type NewRowKind } from './grid-ops'
+import { PANE_FOOTER_HEIGHT } from './pane'
 
 export type GanttGridStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey' | 'keyIds'>
 
@@ -81,6 +82,10 @@ const button: CSSProperties = {
   color: 'var(--c-text)', fontSize: 12, cursor: 'pointer',
 }
 
+/** Selected row ids (as given: a new row's `key:<k>` until its save) and the range anchor. */
+export interface GridSelection { ids: ReadonlySet<string>; anchor: string | null }
+const NO_SELECTION: GridSelection = { ids: new Set(), anchor: null }
+
 export interface GanttGridProps {
   store: GanttGridStore
   canEdit: boolean
@@ -89,9 +94,12 @@ export interface GanttGridProps {
   collapsed: ReadonlySet<string>
   onToggleCollapsed: (id: string) => void
   userId?: string | null
+  /** Selection owned by the screen (the timeline selects bars too); the grid keeps its own without it. */
+  selection?: GridSelection
+  onSelection?: Dispatch<SetStateAction<GridSelection>>
 }
 
-export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, userId }: GanttGridProps) {
+export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, userId, selection, onSelection }: GanttGridProps) {
   const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
 
@@ -160,8 +168,11 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   // Ids are held as given (a new row's `key:<k>`) and resolved through the store's
   // key → uuid map, so a save landing mid-gesture keeps the selection and the open editor.
   const resolve = useCallback((id: string) => keyIds[id] ?? id, [keyIds])
-  const [selectedRaw, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [anchorRaw, setAnchor] = useState<string | null>(null)
+  const [ownSelection, setOwnSelection] = useState<GridSelection>(NO_SELECTION)
+  const { ids: selectedRaw, anchor: anchorRaw } = selection ?? ownSelection
+  const setSelection = onSelection ?? setOwnSelection
+  const setSelected = useCallback((ids: ReadonlySet<string>) => setSelection((s) => ({ ...s, ids })), [setSelection])
+  const setAnchor = useCallback((anchor: string | null) => setSelection((s) => ({ ...s, anchor })), [setSelection])
   const [activeCol, setActiveCol] = useState<ColumnId>('name')
   const [armed, setArmed] = useState<string[] | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -173,7 +184,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   const anchor = anchorRaw === null ? null : resolve(anchorRaw)
   const primary = anchor !== null && selected.has(anchor) ? anchor : null
 
-  const selectOnly = useCallback((id: string) => { setSelected(new Set([id])); setAnchor(id); setArmed(null) }, [])
+  const selectOnly = useCallback((id: string) => { setSelection({ ids: new Set([id]), anchor: id }); setArmed(null) }, [setSelection])
   const ensureVisible = (index: number) => {
     const top = index * ROW_HEIGHT
     const body = Math.max(ROW_HEIGHT, viewport - HEADER_HEIGHT)
@@ -264,7 +275,8 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   const run = (ops: ProgrammeOp[], label: string) => {
     if (!canEdit || ops.length === 0) return
     if (primary !== null) reveal.current = { id: primary, edit: false }
-    apply(ops, label)
+    // A refused gesture changes no rows, so nothing must be left waiting to scroll later.
+    if (!apply(ops, label)) reveal.current = null
   }
   const structure = (direction: 'indent' | 'outdent') => {
     if (!canEdit || selected.size === 0) return
@@ -343,7 +355,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
       <div ref={scroller} data-testid="programme-grid-scroll" role="grid" aria-label="Activities"
         aria-rowcount={rows.length + 1} aria-multiselectable tabIndex={0}
         onScroll={(e) => onScrollTop(e.currentTarget.scrollTop)} onKeyDown={onGridKey}
-        style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', position: 'relative', outline: 'none', fontSize: 13 }}>
+        style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'scroll', position: 'relative', outline: 'none', fontSize: 13 }}>
         <div role="row" style={{
           position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', height: HEADER_HEIGHT,
           width: totalWidth, minWidth: '100%', background: 'var(--c-panel)', borderBottom: '1px solid var(--c-border)',
@@ -410,7 +422,10 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
         </div>
       </div>
 
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderTop: '1px solid var(--c-border)', flexWrap: 'wrap' }}>
+      <div data-testid="programme-grid-footer" style={{
+        position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', borderTop: '1px solid var(--c-border)',
+        flex: `0 0 ${PANE_FOOTER_HEIGHT}px`, height: PANE_FOOTER_HEIGHT, boxSizing: 'border-box', whiteSpace: 'nowrap',
+      }}>
         {canEdit && armed === null && (
           <>
             <button type="button" style={button} onClick={() => add('task')}>Add task</button>
@@ -429,7 +444,8 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
             <button type="button" style={button} onClick={() => setArmed(null)}>Cancel</button>
           </div>
         )}
-        {notice && <span data-testid="programme-grid-notice" role="status" style={{ fontSize: 12, color: 'var(--c-red)' }}>{notice}</span>}
+        {notice && <span data-testid="programme-grid-notice" role="status" title={notice}
+          style={{ fontSize: 12, color: 'var(--c-red)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{notice}</span>}
         <span style={{ flex: '1 1 auto' }} />
         <button type="button" style={button} aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)}>Columns</button>
         {pickerOpen && (

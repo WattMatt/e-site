@@ -4,15 +4,16 @@
  * The programme screen: toolbar, then a split view (grid left, resizable 30–70 %, timeline
  * right) sharing one vertical scroll. State, saves and undo/redo live in `useProgrammeStore`;
  * the grid, timeline and toolbar receive the store as a prop. The grid and the timeline each
- * scroll themselves and share one `scrollTop` (and one collapse set), so their rows line up.
- * Tasks 5–6 replace the timeline and toolbar placeholders below.
+ * scroll themselves and share one `scrollTop`, one collapse set and one selection (a bar
+ * click selects its grid row), so their rows line up. Task 6 replaces the toolbar placeholder.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { HEADER_HEIGHT, outlineRows, ROW_HEIGHT } from '@esite/shared/programme'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import type { Zoom } from '@esite/shared/programme'
 import type { ProgrammeSummary, ProgrammeViewData } from '@/lib/programme/view-types'
 import { PROGRAMME_STALE } from '@/lib/programme/action-types'
 import { useProgrammeStore, type ProgrammeStoreApi } from './use-programme-store'
-import { GanttGrid } from './GanttGrid'
+import { GanttGrid, type GridSelection } from './GanttGrid'
+import { GanttTimeline } from './GanttTimeline'
 
 export const SPLIT_MIN = 30
 export const SPLIT_MAX = 70
@@ -52,6 +53,15 @@ export function ProgrammeClient({ view, canEdit, userId }: {
     else next.add(id)
     return next
   }), [])
+  const [selection, setSelection] = useState<GridSelection>(() => ({ ids: new Set(), anchor: null }))
+  const selectFromTimeline = useCallback((id: string, mode: 'only' | 'toggle') => setSelection((s) => {
+    if (mode === 'only') return { ids: new Set([id]), anchor: id }
+    const ids = new Set(s.ids)
+    if (ids.has(id)) ids.delete(id)
+    else ids.add(id)
+    return { ids, anchor: id }
+  }), [])
+  const [zoom, setZoom] = useState<Zoom>('week')
 
   // ⌘/Ctrl+Z undo, ⇧⌘/Ctrl+Z redo; ignored while a field has focus.
   const { undo, redo } = store
@@ -87,8 +97,11 @@ export function ProgrammeClient({ view, canEdit, userId }: {
       )}
       <SplitView split={split} onSplit={setSplit}
         left={<GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
-          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} userId={userId} />}
-        right={<TimelinePlaceholder store={store} collapsed={collapsed} scrollTop={scrollTop} onScrollTop={setScrollTop} />} />
+          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} userId={userId}
+          selection={selection} onSelection={setSelection} />}
+        right={<GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
+          collapsed={collapsed} selected={selection.ids} onSelect={selectFromTimeline}
+          activeBaseline={view.activeBaseline} zoom={zoom} onZoom={setZoom} />} />
     </div>
   )
 }
@@ -150,46 +163,6 @@ function SplitView({ split, onSplit, left, right }: {
         }}
         style={{ flex: '0 0 6px', cursor: 'col-resize', touchAction: 'none', background: 'var(--c-border)' }} />
       <div style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden' }}>{right}</div>
-    </div>
-  )
-}
-
-function useRows(store: ProgrammeStoreApi, collapsed: ReadonlySet<string>) {
-  const activities = store.state.activities
-  return useMemo(() => {
-    const byId = new Map(activities.map((a) => [a.id, a]))
-    return outlineRows(activities, collapsed).flatMap((r) => {
-      const activity = byId.get(r.id)
-      return activity ? [{ ...r, activity }] : []
-    })
-  }, [activities, collapsed])
-}
-
-/** Placeholder until Task 5: each row's scheduled dates, scrolled with the grid. */
-function TimelinePlaceholder({ store, collapsed, scrollTop, onScrollTop }: {
-  store: ProgrammeStoreApi; collapsed: ReadonlySet<string>; scrollTop: number; onScrollTop: (top: number) => void
-}) {
-  const rows = useRows(store, collapsed)
-  const box = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = box.current
-    if (el && Math.abs(el.scrollTop - scrollTop) > 0.5) el.scrollTop = scrollTop
-  }, [scrollTop])
-  return (
-    <div ref={box} data-testid="programme-timeline-scroll" onScroll={(e) => onScrollTop(e.currentTarget.scrollTop)}
-      style={{ height: '100%', overflow: 'auto' }}>
-      <div style={{ position: 'sticky', top: 0, height: HEADER_HEIGHT, background: 'var(--c-panel)', borderBottom: '1px solid var(--c-border)' }} />
-      <ol aria-label="Timeline" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-        {rows.map((r) => {
-          const s = store.schedule.activities.get(r.id)
-          return (
-            <li key={r.id} style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center', paddingLeft: 8, fontSize: 13, boxSizing: 'border-box',
-              color: s?.isCritical ? 'var(--c-red)' : 'var(--c-text)' }}>
-              {s ? `${s.earlyStart} – ${s.earlyFinish}` : '—'}
-            </li>
-          )
-        })}
-      </ol>
     </div>
   )
 }
