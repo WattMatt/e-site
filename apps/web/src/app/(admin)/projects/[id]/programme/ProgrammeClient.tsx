@@ -61,7 +61,7 @@ export function ProgrammeClient({ view, canEdit }: {
       <ToolbarPlaceholder store={store} canEdit={canEdit} />
       {store.stale && (
         <div role="alert" style={banner('amber')} data-testid="programme-stale">
-          <span>{PROGRAMME_STALE}{store.unsaved ? ' Your last change is shown but was not saved.' : ''}</span>
+          <span>{PROGRAMME_STALE}{store.unsaved ? ' Your unsaved changes are still shown here; they were not saved.' : ''}</span>
           <button type="button" className="btn-primary-amber" onClick={store.reload}>Reload</button>
         </div>
       )}

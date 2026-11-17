@@ -30,7 +30,7 @@ function api(over: Partial<ProgrammeStoreApi> = {}): ProgrammeStoreApi {
   return {
     state: v.state, version: VERSION, pending: false, stale: false, unsaved: false, error: null, offerReload: false,
     canUndo: true, canRedo: true, undoLabel: 'Add', redoLabel: null, schedule: scheduleFor(v.state),
-    apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
+    newKey: vi.fn(() => 'n1-x'), apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
   }
 }
 const renderClient = (a: ProgrammeStoreApi, canEdit = true) => {
@@ -78,7 +78,7 @@ describe('ProgrammeClient', () => {
     renderClient(a)
     const b = screen.getByTestId('programme-stale')
     expect(b.textContent).toContain('Someone else changed this programme. Reload to see their version.')
-    expect(b.textContent).toContain('not saved')
+    expect(b.textContent).toContain('Your unsaved changes are still shown here')
     fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
     expect(a.reload).toHaveBeenCalled()
   })

@@ -20,6 +20,8 @@ function view(version = VERSION, activities = programmeTables()['programme.activ
   return { state, version, activeBaseline: null, baselines: [] }
 }
 
+const LATER = '2026-11-17T09:00:00.000000+00:00'
+
 let visibility: DocumentVisibilityState = 'visible'
 beforeEach(() => {
   vi.clearAllMocks()
@@ -34,7 +36,7 @@ afterEach(() => {
 
 describe('useProgrammeStore', () => {
   it('polls the version every 30 s while visible and marks the screen stale when it moved', async () => {
-    h.version.mockResolvedValue({ ok: true, version: 'elsewhere' })
+    h.version.mockResolvedValue({ ok: true, version: LATER })
     const { result } = renderHook(() => useProgrammeStore(view(), { canEdit: true }))
     expect(result.current.schedule.ok).toBe(true)
 
@@ -66,16 +68,27 @@ describe('useProgrammeStore', () => {
   })
 
   it('reload refreshes the route, and a new server version resets the store', async () => {
-    h.version.mockResolvedValue({ ok: true, version: 'v9' })
+    h.version.mockResolvedValue({ ok: true, version: LATER })
     const { result, rerender } = renderHook(({ v }) => useProgrammeStore(v, { canEdit: true }), { initialProps: { v: view() } })
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(result.current.stale).toBe(true)
     act(() => { result.current.reload() })
     expect(h.refresh).toHaveBeenCalled()
 
-    rerender({ v: view('v9', [activityRow('Z')]) })
+    rerender({ v: view(LATER, [activityRow('Z')]) })
     expect(result.current.stale).toBe(false)
-    expect(result.current.version).toBe('v9')
+    expect(result.current.version).toBe(LATER)
     expect(result.current.state.activities.map((a) => a.id)).toEqual(['Z'])
+  })
+
+  it('reload resets the store even when the refreshed view has the same version', () => {
+    const { result, rerender } = renderHook(({ v }) => useProgrammeStore(v, { canEdit: true }), { initialProps: { v: view() } })
+    act(() => { result.current.apply([{ op: 'delete_activity', id: 'NOPE' }], 'Delete') })
+    expect(result.current.error).not.toBeNull()
+    rerender({ v: view() }) // a re-render with an equal version, no reload asked: kept
+    expect(result.current.error).not.toBeNull()
+    act(() => { result.current.reload() })
+    rerender({ v: view() })
+    expect(result.current.error).toBeNull()
   })
 })

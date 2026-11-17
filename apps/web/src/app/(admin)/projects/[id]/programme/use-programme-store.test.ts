@@ -6,7 +6,7 @@ import type { SaveProgrammeChangesInput, SaveProgrammeResult } from '@/lib/progr
 import type { ProgrammeViewData } from '@/lib/programme/view-types'
 import { activityRow, PROG, programmeTables, VERSION } from '@/lib/programme/test-fixtures'
 import {
-  createProgrammeStore, rewriteIds, UNDO_DEPTH, UNDO_GONE, type SaveFn,
+  createProgrammeStore, rewriteIds, UNDO_DEPTH, UNDO_GONE, undoDepthFor, type SaveFn,
 } from './use-programme-store'
 
 const STALE = 'Someone else changed this programme. Reload to see their version.'
@@ -22,6 +22,9 @@ function view(over: Partial<ProgrammeState> = {}): ProgrammeViewData {
   } as unknown as ProgrammeState
   return { state, version: VERSION, activeBaseline: null, baselines: [] }
 }
+
+/** Versions as the database writes them: instants after the fixture's VERSION (08:00). */
+const V = (n: number) => `2026-11-17T09:00:${String(n).padStart(2, '0')}.000000+00:00`
 
 const keys = () => { let n = 0; return () => `k${++n}` }
 
@@ -50,11 +53,11 @@ describe('apply: optimistic preview and save', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].input).toEqual({ programmeId: PROG, expectedVersion: VERSION, ops: [newActivity('n1', 'C')] })
 
-    calls[0].resolve(ok('v2', { n1: 'uuid-c' }))
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
     await flush()
     snap = store.getSnapshot()
     expect(snap.pending).toBe(false)
-    expect(snap.version).toBe('v2')
+    expect(snap.version).toBe(V(2))
     expect(snap.state.activities.map((a) => a.id)).toEqual(['A', 'B', 'uuid-c'])
     expect(snap.error).toBeNull()
   })
@@ -100,17 +103,17 @@ describe('serial saves', () => {
     await flush()
     expect(calls).toHaveLength(1)
 
-    calls[0].resolve(ok('v2', { n1: 'uuid-c' }))
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
     await flush()
     expect(calls).toHaveLength(2)
     expect(calls[1].input).toEqual({
-      programmeId: PROG, expectedVersion: 'v2', ops: [{ op: 'upsert_activity', id: 'uuid-c', fields: { name: 'C2' } }],
+      programmeId: PROG, expectedVersion: V(2), ops: [{ op: 'upsert_activity', id: 'uuid-c', fields: { name: 'C2' } }],
     })
-    calls[1].resolve(ok('v3'))
+    calls[1].resolve(ok(V(3)))
     await flush()
     const snap = store.getSnapshot()
     expect(snap.pending).toBe(false)
-    expect(snap.version).toBe('v3')
+    expect(snap.version).toBe(V(3))
   })
 })
 
@@ -119,15 +122,15 @@ describe('key → id reconciliation through the undo stack', () => {
     const { save, calls } = deferredSave()
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     store.apply([newActivity('n1', 'C')], 'Add')
-    calls[0].resolve(ok('v2', { n1: 'uuid-c' }))
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
     await flush()
 
     store.undo()
     expect(names(store.getSnapshot().state)).toEqual(['A', 'B'])
     expect(store.getSnapshot().canRedo).toBe(true)
     await flush()
-    expect(calls[1].input).toEqual({ programmeId: PROG, expectedVersion: 'v2', ops: [{ op: 'delete_activity', id: 'uuid-c' }] })
-    calls[1].resolve(ok('v3'))
+    expect(calls[1].input).toEqual({ programmeId: PROG, expectedVersion: V(2), ops: [{ op: 'delete_activity', id: 'uuid-c' }] })
+    calls[1].resolve(ok(V(3)))
     await flush()
     expect(store.getSnapshot().canUndo).toBe(false)
   })
@@ -136,10 +139,10 @@ describe('key → id reconciliation through the undo stack', () => {
     const { save, calls } = deferredSave()
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     store.apply([newActivity('n1', 'C')], 'Add')
-    calls[0].resolve(ok('v2', { n1: 'uuid-c' }))
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
     await flush()
     store.undo()
-    calls[1].resolve(ok('v3'))
+    calls[1].resolve(ok(V(3)))
     await flush()
 
     store.redo()
@@ -150,7 +153,7 @@ describe('key → id reconciliation through the undo stack', () => {
     expect(op.key).not.toBe('n1')
     expect(op.fields.name).toBe('C')
     expect(names(store.getSnapshot().state)).toEqual(['A', 'B', 'C'])
-    calls[2].resolve(ok('v4', { k1: 'uuid-c2' }))
+    calls[2].resolve(ok(V(4), { k1: 'uuid-c2' }))
     await flush()
     expect(store.getSnapshot().state.activities.map((a) => a.id)).toEqual(['A', 'B', 'uuid-c2'])
 
@@ -165,9 +168,9 @@ describe('key → id reconciliation through the undo stack', () => {
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     store.apply([newActivity('n1', 'C')], 'Add')
     store.apply([{ op: 'upsert_activity', id: 'key:n1', fields: { name: 'C2' } }], 'Rename')
-    calls[0].resolve(ok('v2', { n1: 'uuid-c' }))
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
     await flush()
-    calls[1].resolve(ok('v3'))
+    calls[1].resolve(ok(V(3)))
     await flush()
     store.undo() // rename back
     await flush()
@@ -204,7 +207,7 @@ describe('refusals', () => {
     await flush()
     const snap = store.getSnapshot()
     expect(names(snap.state)).toEqual(['A', 'B'])
-    expect(snap.error).toBe('You do not have permission to edit programmes on this project.')
+    expect(snap.error).toBe('You do not have permission to edit programmes on this project. 1 later change was not saved.')
     expect(snap.canUndo).toBe(false)
     expect(snap.pending).toBe(false)
     expect(calls).toHaveLength(1)
@@ -228,7 +231,7 @@ describe('refusals', () => {
     const { save, calls } = deferredSave()
     const store = createProgrammeStore(v, { canEdit: true, save, newKey: keys() })
     store.apply([{ op: 'delete_activity', id: 'C' }], 'Delete')
-    calls[0].resolve(ok('v2'))
+    calls[0].resolve(ok(V(2)))
     await flush()
     store.undo()
     const snap = store.getSnapshot()
@@ -242,7 +245,7 @@ describe('refusals', () => {
 
 describe('undo depth, version poll and reset', () => {
   it('keeps at most 100 undo entries', async () => {
-    const save: SaveFn = vi.fn((i: SaveProgrammeChangesInput) => Promise.resolve(ok(`v${i.ops.length}`)))
+    const save: SaveFn = vi.fn((i: SaveProgrammeChangesInput) => Promise.resolve(ok(V(i.ops.length))))
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     for (let i = 0; i < UNDO_DEPTH + 5; i++) store.apply([{ op: 'upsert_activity', id: 'A', fields: { name: `A${i}` } }], 'Rename')
     let n = 0
@@ -250,19 +253,19 @@ describe('undo depth, version poll and reset', () => {
     expect(n).toBe(UNDO_DEPTH)
   })
 
-  it('a moved server version marks the screen stale only when nothing is pending', async () => {
+  it('a later server version marks the screen stale only when nothing is pending', async () => {
     const { save, calls } = deferredSave()
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     store.noteServerVersion(VERSION)
     expect(store.getSnapshot().stale).toBe(false)
     store.apply([newActivity('n1')], 'Add')
-    store.noteServerVersion('elsewhere')
+    store.noteServerVersion(V(30))
     expect(store.getSnapshot().stale).toBe(false)
-    calls[0].resolve(ok('v2', { n1: 'x' }))
+    calls[0].resolve(ok(V(2), { n1: 'x' }))
     await flush()
-    store.noteServerVersion('v2')
+    store.noteServerVersion(V(2))
     expect(store.getSnapshot().stale).toBe(false)
-    store.noteServerVersion('v9')
+    store.noteServerVersion(V(9))
     expect(store.getSnapshot().stale).toBe(true)
     expect(store.getSnapshot().unsaved).toBe(false)
   })
@@ -271,20 +274,189 @@ describe('undo depth, version poll and reset', () => {
     const { save, calls } = deferredSave()
     const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
     store.apply([newActivity('n1', 'C')], 'Add')
-    expect(store.resetFrom({ ...view(), version: 'v7' })).toBe(false) // pending: kept
+    expect(store.resetFrom({ ...view(), version: V(7) })).toBe(false) // pending: kept
     calls[0].resolve({ ok: false, error: STALE })
     await flush()
     const fresh = view({ activities: [activityRow('Z')] as never, dependencies: [] })
-    expect(store.resetFrom({ ...fresh, version: 'v7' })).toBe(true)
+    expect(store.resetFrom({ ...fresh, version: V(7) })).toBe(true)
     const snap = store.getSnapshot()
     expect(snap.stale).toBe(false)
-    expect(snap.version).toBe('v7')
+    expect(snap.version).toBe(V(7))
     expect(names(snap.state)).toEqual(['Z'])
     expect(snap.canUndo).toBe(false)
   })
 })
 
+describe('versions are instants', () => {
+  it('the same instant written two ways is not stale', () => {
+    const v = { ...view(), version: '2026-11-17T10:00:00.5+00:00' }
+    const store = createProgrammeStore(v, { canEdit: true, save: vi.fn(), newKey: keys() })
+    store.noteServerVersion('2026-11-17T10:00:00.500000+00:00')
+    expect(store.getSnapshot().stale).toBe(false)
+  })
+  it('an older server version, or one that does not parse, is never stale', () => {
+    const store = createProgrammeStore(view(), { canEdit: true, save: vi.fn(), newKey: keys() })
+    store.noteServerVersion('2026-11-17T07:00:00.000000+00:00')
+    store.noteServerVersion('not a time')
+    expect(store.getSnapshot().stale).toBe(false)
+    const odd = createProgrammeStore({ ...view(), version: 'v1' }, { canEdit: true, save: vi.fn(), newKey: keys() })
+    odd.noteServerVersion(V(9))
+    expect(odd.getSnapshot().stale).toBe(false)
+  })
+  it('a poll answer issued before the latest save completed is dropped', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    const seq = store.saveSeq()
+    store.apply([newActivity('n1')], 'Add')
+    calls[0].resolve(ok(V(2), { n1: 'x' }))
+    await flush()
+    store.noteServerVersion(V(5), seq) // issued before the save: its answer says nothing about now
+    expect(store.getSnapshot().stale).toBe(false)
+    store.noteServerVersion(V(5), store.saveSeq())
+    expect(store.getSnapshot().stale).toBe(true)
+  })
+})
+
+describe('reload', () => {
+  it('a requested reset takes the next view even at the same version, so UNDO_GONE can be cleared', async () => {
+    const v = view({
+      activities: [activityRow('P', { type: 'summary', is_tombstoned: true }), activityRow('C', { parent_id: 'P' })] as never,
+      dependencies: [], fieldUpdateActivityIds: ['C'],
+    })
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(v, { canEdit: true, save, newKey: keys() })
+    store.apply([{ op: 'delete_activity', id: 'C' }], 'Delete')
+    calls[0].resolve(ok(V(2)))
+    await flush()
+    store.undo()
+    expect(store.getSnapshot().error).toBe(UNDO_GONE)
+
+    const same = { ...view({ activities: [activityRow('P', { is_tombstoned: true }), activityRow('C', { is_tombstoned: true, parent_id: 'P' })] as never, dependencies: [] }), version: V(2) }
+    expect(store.offerView(same)).toBe(false) // not asked for, same version: kept
+    store.requestReset()
+    expect(store.offerView(same)).toBe(true)
+    const snap = store.getSnapshot()
+    expect(snap.error).toBeNull()
+    expect(snap.canUndo).toBe(false)
+    expect(snap.stale).toBe(false)
+    // the user can carry on
+    expect(store.apply([newActivity('n5', 'E')], 'Add')).toBe(true)
+  })
+  it('an unrequested view is taken only when it is newer', () => {
+    const store = createProgrammeStore(view(), { canEdit: true, save: vi.fn(), newKey: keys() })
+    expect(store.offerView({ ...view(), version: '2026-11-17T07:00:00+00:00' })).toBe(false)
+    expect(store.offerView({ ...view(), version: '2026-11-17T08:00:00.123+00:00' })).toBe(false) // same instant
+    expect(store.offerView({ ...view(), version: V(1) })).toBe(true)
+    expect(store.getSnapshot().version).toBe(V(1))
+  })
+})
+
+describe('keys', () => {
+  it('the store hands out unique keys', () => {
+    const store = createProgrammeStore(view(), { canEdit: true, save: vi.fn() })
+    const a = store.newKey()
+    const b = store.newKey()
+    expect(a).toMatch(/^n\d+-[a-z0-9]+$/)
+    expect(a).not.toBe(b)
+  })
+  it('a gesture that reuses a key still previewed as key:<k> is refused and not saved', () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([newActivity('dup', 'C')], 'Add')
+    expect(store.apply([newActivity('dup', 'D')], 'Add')).toBe(false)
+    expect(store.getSnapshot().error).toBe('Each new row needs its own key.')
+    expect(names(store.getSnapshot().state)).toEqual(['A', 'B', 'C'])
+    expect(calls).toHaveLength(1)
+  })
+  it('undo/redo mint keys from the store', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save })
+    store.apply([newActivity(store.newKey(), 'C')], 'Add')
+    calls[0].resolve(ok(V(2), { [(calls[0].input.ops[0] as { key: string }).key]: 'uuid-c' }))
+    await flush()
+    store.undo()
+    calls[1].resolve(ok(V(3)))
+    await flush()
+    store.redo()
+    await flush()
+    expect((calls[2].input.ops[0] as { key: string }).key).toMatch(/^n\d+-[a-z0-9]+$/)
+  })
+})
+
+describe('refusals of queued work', () => {
+  it('an undo queued behind a refused save is dropped too, and the stacks return to before the refused gesture', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([{ op: 'upsert_activity', id: 'A', fields: { name: 'A1' } }], 'Rename')
+    calls[0].resolve(ok(V(2)))
+    await flush()
+    store.apply([{ op: 'upsert_activity', id: 'A', fields: { name: 'A2' } }], 'Rename')
+    store.undo()
+    calls[1].resolve({ ok: false, error: 'No.' })
+    await flush()
+    const snap = store.getSnapshot()
+    expect(names(snap.state)).toEqual(['A1', 'B'])
+    expect(snap.canUndo).toBe(true)
+    expect(snap.canRedo).toBe(false)
+    expect(snap.error).toBe('No. 1 later change was not saved.')
+    expect(calls).toHaveLength(2)
+  })
+  it('an undo the server refuses offers Reload', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([{ op: 'upsert_activity', id: 'A', fields: { name: 'A1' } }], 'Rename')
+    calls[0].resolve(ok(V(2)))
+    await flush()
+    store.undo()
+    calls[1].resolve({ ok: false, error: 'That activity no longer exists. Reload to see the current programme.' })
+    await flush()
+    expect(store.getSnapshot().offerReload).toBe(true)
+  })
+})
+
+describe('size', () => {
+  it('undo depth is min(100, max(10, floor(200000 / activities)))', () => {
+    expect(undoDepthFor(2)).toBe(100)
+    expect(undoDepthFor(2000)).toBe(100)
+    expect(undoDepthFor(5000)).toBe(40)
+    expect(undoDepthFor(100000)).toBe(10)
+    expect(undoDepthFor(0)).toBe(100)
+  })
+
+  it('5,000 activities: 20 gestures and a key-reconciling save finish under 2 s, and depth respects the cap', async () => {
+    const acts = Array.from({ length: 5000 }, (_, i) => activityRow(`A${i}`, { name: `A${i}` }))
+    const big = view({ activities: acts as never, dependencies: [] })
+    const save: SaveFn = vi.fn((i: SaveProgrammeChangesInput) => {
+      const ids: Record<string, string> = {}
+      for (const o of i.ops) if (o.op === 'upsert_activity' && o.key) ids[o.key] = `uuid-${o.key}`
+      return Promise.resolve(ok(V(1), ids))
+    })
+    const store = createProgrammeStore(big, { canEdit: true, save })
+    const t0 = performance.now()
+    for (let g = 0; g < 19; g++) store.apply([{ op: 'upsert_activity', id: `A${g}`, fields: { name: `R${g}` } }], 'Rename')
+    const k = store.newKey()
+    store.apply([newActivity(k, 'New')], 'Add')
+    while (store.getSnapshot().pending) await flush()
+    const elapsed = performance.now() - t0
+    expect(elapsed).toBeLessThan(2000)
+    expect(store.getSnapshot().state.activities.at(-1)?.id).toBe(`uuid-${k}`)
+
+    for (let g = 0; g < 25; g++) store.apply([{ op: 'upsert_activity', id: `A${g}`, fields: { name: `S${g}` } }], 'Rename')
+    while (store.getSnapshot().pending) await flush()
+    let n = 0
+    while (store.getSnapshot().canUndo) { store.undo(); n++; while (store.getSnapshot().pending) await flush() }
+    expect(n).toBe(undoDepthFor(5001))
+  }, 60_000)
+})
+
 describe('rewriteIds', () => {
+  it('rewrites a shared object once, so snapshots that shared it still share it', () => {
+    const shared = { id: 'key:n1' }
+    const out = rewriteIds({ a: shared, b: [shared] }, { 'key:n1': 'U' })
+    expect(out.a).toEqual({ id: 'U' })
+    expect(out.b[0]).toBe(out.a)
+  })
+
   it('rewrites id-bearing fields and *Ids arrays only, never names or op keys', () => {
     const map = { 'key:n1': 'U' }
     expect(rewriteIds({
