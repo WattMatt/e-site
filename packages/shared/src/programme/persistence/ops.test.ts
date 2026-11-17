@@ -12,6 +12,7 @@ const state = (over: Partial<ProgrammeState> = {}): ProgrammeState => ({
   codeTypes: [{ id: 'CT', programme_id: 'P', name: 'Phase', sort_order: null }],
   codeValues: [{ id: 'CV', code_type_id: 'CT', programme_id: 'P', value: 'Design', description: null, colour: null, organisation_tag: null, user_tag: null }],
   activityCodes: [],
+  fieldUpdateActivityIds: [], assignmentActivityIds: [], baselineActivityIds: [],
   ...over,
 })
 const op = (o: unknown) => o as ProgrammeOp
@@ -84,6 +85,10 @@ describe('applyOps: tombstone vs hard delete', () => {
   tombstones('an external uid', state({ activities: [activityRow('A'), activityRow('B', { external_uid: 'U1' })] }))
   tombstones('a field update', state({ fieldUpdateActivityIds: ['B'] }))
   tombstones('a resource assignment', state({ assignmentActivityIds: ['B'] }))
+  it('a delete of an activity listed only in assignmentActivityIds tombstones', () => {
+    const out = applyOps(state({ assignmentActivityIds: ['A'] }), [{ op: 'delete_activity', id: 'A' }])
+    expect(out.activities.find((a) => a.id === 'A')?.is_tombstoned).toBe(true)
+  })
   tombstones('a baseline row', state({ baselineActivityIds: ['B'] }))
   tombstones('an activity code', state({ activityCodes: [{ activity_id: 'B', code_type_id: 'CT', code_value_id: 'CV', programme_id: 'P' }] }))
   tombstones('a tombstoned child', state({ activities: [activityRow('A'), activityRow('B', { type: 'summary' }), activityRow('Z', { parent_id: 'B', is_tombstoned: true })] }))

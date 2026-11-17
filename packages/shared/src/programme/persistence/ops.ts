@@ -25,8 +25,8 @@
  *    editable state, yet delete_activity's tombstone decision reads them.
  *    Callers that load them pass `fieldUpdateActivityIds`,
  *    `assignmentActivityIds` and `baselineActivityIds` (activity ids that have
- *    at least one such row). Left out, they count as "none". Passing them is
- *    required for a faithful tombstone decision.
+ *    at least one such row). They are REQUIRED (empty arrays when none) so a
+ *    caller cannot silently get a hard delete the database would tombstone.
  *  - Not checked here (the database does, and `save_changes` stays the
  *    authority): permission (42501), the optimistic version (40001), and
  *    "that row belongs to a different programme" (state holds one programme, so
@@ -53,11 +53,11 @@ export interface ProgrammeState {
   codeValues: CodeValueRow[]
   activityCodes: ActivityCodeRow[]
   /** Activity ids with at least one field update (history: forces a tombstone). */
-  fieldUpdateActivityIds?: string[]
+  fieldUpdateActivityIds: string[]
   /** Activity ids with at least one resource assignment (and its rand cost). */
-  assignmentActivityIds?: string[]
+  assignmentActivityIds: string[]
   /** Activity ids present in at least one baseline snapshot of this programme. */
-  baselineActivityIds?: string[]
+  baselineActivityIds: string[]
 }
 
 type ActivityWritable = Pick<ActivityRow,
@@ -211,10 +211,10 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         const children = s.activities.filter((x) => x.parent_id === id)
         if (children.some((x) => !x.is_tombstoned)) throw fail('Delete or move its sub-activities first.')
         const hasHistory = a.work_item_id !== null || a.external_uid !== null || children.length > 0
-          || (s.fieldUpdateActivityIds ?? []).includes(id)
-          || (s.assignmentActivityIds ?? []).includes(id)
+          || s.fieldUpdateActivityIds.includes(id)
+          || s.assignmentActivityIds.includes(id)
           || s.activityCodes.some((c) => c.activity_id === id)
-          || (s.baselineActivityIds ?? []).includes(id)
+          || s.baselineActivityIds.includes(id)
         const gone = id
         s.dependencies = s.dependencies.filter((d) => d.pred_id !== gone && d.succ_id !== gone)
         if (hasHistory) a.is_tombstoned = true
