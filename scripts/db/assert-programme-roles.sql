@@ -93,6 +93,7 @@ DECLARE
   v_solcon   uuid := gen_random_uuid();
   v_lapsed   uuid := gen_random_uuid();
   v_stranger uuid := gen_random_uuid();
+  v_solview  uuid := gen_random_uuid();   -- Solar VIEW grant only
   u uuid; i int;
   v_users uuid[]; v_labels text[];
   v_prog uuid; v_prog2 uuid; v_mod uuid;
@@ -107,12 +108,15 @@ DECLARE
   v_e_prog bigint; v_e_act bigint; v_e_dep bigint; v_e_aud bigint;
   v_e_bact bigint; v_e_bcost bigint;
   v_txt text;
+  v_ids uuid[];
+  v_tb uuid; v_tf uuid; v_tc uuid; v_tw uuid; v_tp uuid; v_tpc uuid; v_wi uuid; v_mr uuid; v_masg uuid;
+  v_fu3 uuid; v_fu4 uuid; v_fu5 uuid;
 BEGIN
   -- ── 0. Fixtures (as postgres) ─────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES
     (v_org, 'programme-roles-probe'), (v_orgc, 'programme-roles-probe-contractor-co');
   FOREACH u IN ARRAY ARRAY[v_owner, v_pm, v_orgpm, v_offpm, v_con, v_insp, v_insp2, v_client, v_supplier,
-                           v_nogrant, v_solcon, v_lapsed, v_stranger] LOOP
+                           v_nogrant, v_solcon, v_lapsed, v_stranger, v_solview] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -124,7 +128,7 @@ BEGIN
     (v_con, v_orgc, 'contractor', TRUE), (v_insp, v_org, 'inspector', TRUE), (v_insp2, v_org, 'inspector', TRUE),
     (v_client, v_org, 'client_viewer', TRUE), (v_supplier, v_orgc, 'supplier', TRUE),
     (v_nogrant, v_org, 'contractor', TRUE), (v_solcon, v_org, 'contractor', TRUE),
-    (v_lapsed, v_org, 'contractor', FALSE);
+    (v_lapsed, v_org, 'contractor', FALSE), (v_solview, v_org, 'contractor', TRUE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
     (v_p, v_org, 'programme-roles-probe', v_owner), (v_p2, v_org, 'programme-roles-probe-2', v_owner);
   INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES
@@ -132,7 +136,8 @@ BEGIN
     (v_p, v_con, v_orgc, 'contractor', TRUE), (v_p, v_insp, v_org, 'inspector', TRUE),
     (v_p, v_insp2, v_org, 'inspector', TRUE), (v_p, v_client, v_org, 'client_viewer', TRUE),
     (v_p, v_supplier, v_orgc, 'supplier', TRUE), (v_p, v_nogrant, v_org, 'contractor', TRUE),
-    (v_p, v_solcon, v_org, 'contractor', TRUE), (v_p, v_lapsed, v_org, 'contractor', TRUE);
+    (v_p, v_solcon, v_org, 'contractor', TRUE), (v_p, v_lapsed, v_org, 'contractor', TRUE),
+    (v_p, v_solview, v_org, 'contractor', TRUE);
   INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo, current_period_end)
   VALUES (v_org, 'solar', 'active', 199900, now() + interval '1 year');
 
@@ -153,7 +158,7 @@ BEGIN
   -- The Solar Edit grant, written by the grantor (org owner) as 00208 requires.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
-  INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_p, v_solcon, 'edit');
+  INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_p, v_solcon, 'edit'), (v_p, v_solview, 'view');
   RESET ROLE;
 
   -- ── 1. create_programme ───────────────────────────────────────────────────
@@ -346,9 +351,12 @@ BEGIN
     v_ret := programme.save_changes(v_prog, v_ver, jsonb_build_array(
       jsonb_build_object('op', 'upsert_activity', 'key', 'h', 'fields', jsonb_build_object('name', 'H', 'type', 'task', 'external_uid', 'EXT-H')),
       jsonb_build_object('op', 'upsert_activity', 'key', 'b', 'fields', jsonb_build_object('name', 'Bare', 'type', 'task')),
+      -- TB: history = a baseline snapshot only (deleted after the baselines, section 5b)
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tb', 'fields', jsonb_build_object('name', 'TB baselined', 'type', 'task')),
       jsonb_build_object('op', 'upsert_dependency', 'key', 'dh', 'pred', v_a2, 'succ', 'h', 'type', 'FS')), NULL);
     v_saves := v_saves + 1;
     v_h := (v_ret -> 'ids' ->> 'h')::uuid; v_bare := (v_ret -> 'ids' ->> 'b')::uuid; v_dh := (v_ret -> 'ids' ->> 'dh')::uuid;
+    v_tb := (v_ret -> 'ids' ->> 'tb')::uuid;
     v_ret := programme.save_changes(v_prog, (v_ret ->> 'version')::timestamptz, jsonb_build_array(
       jsonb_build_object('op', 'delete_activity', 'id', v_h),
       jsonb_build_object('op', 'delete_activity', 'id', v_bare)), NULL);
@@ -619,6 +627,88 @@ BEGIN
   PERFORM pg_temp.r('decided_update_moves_no_activity_field',
     pg_temp.b(format('SELECT actual_start IS NULL AND percent_complete = 0 FROM programme.activities WHERE id = %L', v_a2)));
 
+  -- ── 5a. Editor arm: an editor reports on an UNTAGGED activity (A1) ──────
+  v_users := ARRAY[v_owner, v_pm];
+  v_labels := ARRAY['owner', 'pm'];
+  FOR i IN 1..2 LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    v_st := NULL; v_fu3 := NULL;
+    BEGIN
+      v_fu3 := programme.submit_field_update(v_a1, NULL, NULL, 20, NULL, 'Editor report');
+    EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+    END;
+    RESET ROLE;
+    PERFORM pg_temp.r(v_labels[i] || '_editor_submits_on_untagged_activity_reported',
+      v_fu3 IS NOT NULL AND pg_temp.b(format($q$SELECT status = 'reported' AND author_id = %L
+                                               FROM programme.field_updates WHERE id = %L$q$, v_users[i], v_fu3)), v_st);
+  END LOOP;
+
+  -- ── 5b. Tombstone: one activity per history arm, nothing else on it ─────
+  -- TB (baseline snapshot) was created before the baselines. The rest are
+  -- created now, AFTER the baselines, so the snapshot arm does not cover them.
+  v_ver := pg_temp.ver(v_prog);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    v_ret := programme.save_changes(v_prog, v_ver, jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tf', 'fields', jsonb_build_object('name', 'TF field update', 'type', 'task')),
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tc', 'fields', jsonb_build_object('name', 'TC coded', 'type', 'task')),
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tw', 'fields', jsonb_build_object('name', 'TW work item', 'type', 'task')),
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tp', 'fields', jsonb_build_object('name', 'TP parent', 'type', 'summary')),
+      jsonb_build_object('op', 'upsert_activity', 'key', 'tpc', 'fields', jsonb_build_object(
+        'name', 'TPC child', 'type', 'task', 'parent_id', 'tp', 'external_uid', 'EXT-PC')),
+      jsonb_build_object('op', 'upsert_code_type', 'key', 'ct2', 'name', 'Area'),
+      jsonb_build_object('op', 'upsert_code_value', 'key', 'cv2', 'code_type', 'ct2', 'value', 'Roof'),
+      jsonb_build_object('op', 'set_activity_code', 'activity', 'tc', 'code_type', 'ct2', 'code_value', 'cv2')), NULL);
+    v_saves := v_saves + 1;
+    v_tf := (v_ret -> 'ids' ->> 'tf')::uuid; v_tc := (v_ret -> 'ids' ->> 'tc')::uuid; v_tw := (v_ret -> 'ids' ->> 'tw')::uuid;
+    v_tp := (v_ret -> 'ids' ->> 'tp')::uuid; v_tpc := (v_ret -> 'ids' ->> 'tpc')::uuid;
+    v_fu5 := programme.submit_field_update(v_tf, NULL, NULL, 5, NULL, NULL);
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  BEGIN
+    INSERT INTO projects.work_items (organisation_id, project_id, item_type, origin, title, status, assignee_id, gatekeeper_id, due_date, created_by)
+    VALUES (v_org, v_p, 'task', 'manual', 'Programme probe task', 'open', v_owner, v_owner, DATE '2026-11-20', v_owner)
+    RETURNING id INTO v_wi;
+    EXECUTE format('UPDATE programme.activities SET work_item_id = %L WHERE id = %L', v_wi, v_tw);
+  EXCEPTION WHEN OTHERS THEN v_st := coalesce(v_st, '') || ' wi: ' || SQLSTATE || ' ' || SQLERRM;
+  END;
+  PERFORM pg_temp.r('fixture_tombstone_arm_activities',
+    v_tf IS NOT NULL AND v_tc IS NOT NULL AND v_tw IS NOT NULL AND v_tp IS NOT NULL AND v_tpc IS NOT NULL AND v_tb IS NOT NULL
+    AND v_fu5 IS NOT NULL AND v_wi IS NOT NULL
+    AND pg_temp.n(format('SELECT count(*) FROM programme.baseline_activities WHERE activity_id IN (%L, %L, %L, %L, %L)',
+                         v_tf, v_tc, v_tw, v_tp, v_tpc)) = 0
+    AND pg_temp.n(format('SELECT count(*) FROM programme.baseline_activities WHERE activity_id = %L', v_tb)) >= 1, v_st);
+
+  -- The child goes first (its own arm is external_uid), then the parent.
+  v_ids := ARRAY[v_tpc, v_tf, v_tc, v_tb, v_tw, v_tp];
+  v_labels := ARRAY['external_uid_child', 'field_update', 'activity_code', 'baseline_snapshot', 'work_item', 'sub_activity'];
+  FOR i IN 1..6 LOOP
+    v_ver := pg_temp.ver(v_prog);
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    v_st := NULL; v_ret := NULL;
+    BEGIN
+      v_ret := programme.save_changes(v_prog, v_ver, jsonb_build_array(jsonb_build_object('op', 'delete_activity', 'id', v_ids[i])), NULL);
+      v_saves := v_saves + 1;
+    EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+    END;
+    RESET ROLE;
+    PERFORM pg_temp.r('tombstone_arm_' || v_labels[i],
+      v_ids[i] IS NOT NULL AND coalesce(v_ret -> 'tombstoned' @> to_jsonb(ARRAY[v_ids[i]]), false)
+      AND pg_temp.b(format('SELECT is_tombstoned FROM programme.activities WHERE id = %L', v_ids[i])),
+      coalesce(v_st, v_ret::text));
+  END LOOP;
+  PERFORM pg_temp.r('tombstone_keeps_history_rows',
+    pg_temp.n(format('SELECT count(*) FROM programme.field_updates WHERE id = %L AND activity_id = %L', v_fu5, v_tf)) = 1
+    AND pg_temp.n(format('SELECT count(*) FROM programme.activity_codes WHERE activity_id = %L', v_tc)) = 1
+    AND pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE id = %L AND work_item_id = %L', v_tw, v_wi)) = 1
+    AND pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE id = %L AND parent_id = %L', v_tpc, v_tp)) = 1);
+
   -- ── 6. The Solar module programme ─────────────────────────────────────────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solcon::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
@@ -644,7 +734,9 @@ BEGIN
       jsonb_build_object('op', 'upsert_activity', 'key', 'mm', 'fields', jsonb_build_object(
         'name', 'Commissioned', 'type', 'finish_milestone', 'original_duration', 0, 'percent_complete', 100)),
       jsonb_build_object('op', 'upsert_activity', 'key', 'me', 'fields', jsonb_build_object(
-        'name', 'Imported then removed', 'type', 'task', 'original_duration', 100, 'percent_complete', 100, 'external_uid', 'EXT-E'))),
+        'name', 'Imported then removed', 'type', 'task', 'original_duration', 100, 'percent_complete', 100, 'external_uid', 'EXT-E')),
+      jsonb_build_object('op', 'upsert_activity', 'key', 'mr', 'fields', jsonb_build_object(
+        'name', 'Resourced then removed', 'type', 'task', 'original_duration', 5))),
       jsonb_build_object('activities', jsonb_build_array(
         jsonb_build_object('key', 'ma', 'early_start', '2026-03-02', 'early_finish', '2026-03-13'),
         jsonb_build_object('key', 'mb', 'early_start', '2026-03-16', 'early_finish', '2026-04-24'),
@@ -652,6 +744,7 @@ BEGIN
         jsonb_build_object('key', 'mm', 'early_start', '2026-04-24', 'early_finish', '2026-04-24'),
         jsonb_build_object('key', 'me', 'early_start', '2025-01-01', 'early_finish', '2028-01-01'))));
     v_mod_saves := v_mod_saves + 1;
+    v_mr := (v_ret -> 'ids' ->> 'mr')::uuid;
     v_ret := programme.save_changes(v_mod, (v_ret ->> 'version')::timestamptz, jsonb_build_array(
       jsonb_build_object('op', 'delete_activity', 'id', v_ret -> 'ids' ->> 'me')), NULL);
     v_mod_saves := v_mod_saves + 1;
@@ -666,7 +759,69 @@ BEGIN
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solcon::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   PERFORM pg_temp.r('solar_edit_contractor_reads_module_activities',
-    pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE programme_id = %L', v_mod)) = 5);
+    pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE programme_id = %L', v_mod)) = 6);
+  RESET ROLE;
+
+  -- Resource-assignment arm: a Solar editor (who cannot see rands) deletes an
+  -- assigned activity; it is tombstoned and the cost rows survive.
+  PERFORM set_config('request.jwt.claims', '', true);
+  BEGIN
+    INSERT INTO programme.resource_assignments (programme_id, activity_id, resource_id, units_per_day, budgeted_qty)
+      VALUES (v_mod, v_mr, v_res, 1, 5) RETURNING id INTO v_masg;
+    INSERT INTO programme.assignment_costs (assignment_id, budgeted_cost, actual_cost) VALUES (v_masg, 2500, 0);
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  v_ver := pg_temp.ver(v_mod);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solcon::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL; v_ret := NULL;
+  BEGIN
+    v_ret := programme.save_changes(v_mod, v_ver, jsonb_build_array(jsonb_build_object('op', 'delete_activity', 'id', v_mr)), NULL);
+    v_mod_saves := v_mod_saves + 1;
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('tombstone_arm_resource_assignment_by_solar_editor',
+    v_masg IS NOT NULL AND coalesce(v_ret -> 'tombstoned' @> to_jsonb(ARRAY[v_mr]), false)
+    AND pg_temp.b(format('SELECT is_tombstoned FROM programme.activities WHERE id = %L', v_mr)), coalesce(v_st, v_ret::text));
+  PERFORM pg_temp.r('assigned_activity_delete_keeps_assignment_and_cost',
+    v_masg IS NOT NULL
+    AND pg_temp.n(format('SELECT count(*) FROM programme.resource_assignments WHERE id = %L', v_masg)) = 1
+    AND pg_temp.n(format('SELECT count(*) FROM programme.assignment_costs WHERE assignment_id = %L AND budgeted_cost = 2500', v_masg)) = 1);
+
+  -- Solar VIEW only: reads the module programme, edits nothing on it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solview::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.r('fixture_solview_view_not_edit',
+    coalesce(public.solar_can_view(v_p), false) AND NOT coalesce(public.solar_can_edit(v_p), false));
+  v_txt := pg_temp.n(format('SELECT count(*) FROM programme.programmes WHERE id = %L', v_mod)) || '/'
+        || pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE programme_id = %L', v_mod));
+  RESET ROLE;
+  PERFORM pg_temp.r('solar_view_reads_module_rows', v_txt = '1/6', v_txt);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solview::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_mod, pg_temp.ver(v_mod), jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'key', 'v', 'fields', jsonb_build_object('name', 'Viewer edit', 'type', 'task'))), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('solar_view_save_module_REFUSED_42501', v_st = '42501', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_baseline(v_mod, 'Viewer baseline', true);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('solar_view_save_baseline_module_REFUSED_42501', v_st = '42501', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.create_programme(v_p, 'module', 'Viewer solar', DATE '2026-03-02', 'solar');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('solar_view_create_module_REFUSED_42501', v_st = '42501', v_st);
   RESET ROLE;
 
   v_users := ARRAY[v_nogrant, v_con, v_insp];
@@ -733,6 +888,24 @@ BEGIN
     PERFORM pg_temp.r(v_labels[i] || '_reads_programme_activities_links_audit',
       v_txt = v_e_prog || '/' || v_e_act || '/' || v_e_dep || '/' || v_e_aud
       AND v_e_prog = 1 AND v_e_act > 0 AND v_e_dep > 0 AND v_e_aud > 0, v_txt);
+  END LOOP;
+
+  -- field_updates and baselines: the policy is can_read, so every reader
+  -- (contractor and inspector included) sees ALL rows of the programme, not
+  -- only their own.
+  v_n := pg_temp.n(format('SELECT count(*) FROM programme.field_updates WHERE programme_id = %L', v_prog));
+  v_m := pg_temp.n(format('SELECT count(*) FROM programme.baselines WHERE programme_id = %L', v_prog));
+  PERFORM pg_temp.r('fixture_field_updates_and_baselines_exist', v_n = 5 AND v_m = 2, v_n || '/' || v_m);
+  v_users := ARRAY[v_owner, v_pm, v_con, v_insp];
+  v_labels := ARRAY['owner', 'pm', 'contractor', 'inspector'];
+  FOR i IN 1..array_length(v_users, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    v_txt := pg_temp.n(format('SELECT count(*) FROM programme.field_updates WHERE programme_id = %L', v_prog)) || '/'
+          || pg_temp.n(format('SELECT count(*) FROM programme.baselines WHERE programme_id = %L', v_prog));
+    RESET ROLE;
+    PERFORM pg_temp.r(v_labels[i] || '_reads_all_field_updates_and_baselines',
+      v_txt = v_n || '/' || v_m AND v_n > 0 AND v_m > 0, v_txt);
   END LOOP;
 
   v_users := ARRAY[v_client, v_offpm, v_stranger, v_lapsed];
@@ -807,19 +980,19 @@ BEGIN
   PERFORM pg_temp.r('org_contractor_reads_resource_not_rate', v_txt = '1/0', v_txt);
 
   -- ── 9. Audit: one row per successful write, attributed to the caller ──────
-  PERFORM pg_temp.r('fixture_save_counters', v_saves = 5 AND v_mod_saves = 2, v_saves || '/' || v_mod_saves);
+  PERFORM pg_temp.r('fixture_save_counters', v_saves = 12 AND v_mod_saves = 3, v_saves || '/' || v_mod_saves);
   v_txt := pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.created' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved'$q$, v_prog)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'baseline.saved' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'baseline.activated' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'field_update.submitted'$q$, v_prog)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'field_updates.decided' AND actor_id = %L$q$, v_prog, v_owner));
-  PERFORM pg_temp.r('audit_rows_for_every_write_on_project_programme', v_txt = '1/' || v_saves || '/2/1/2/1', v_txt);
+  PERFORM pg_temp.r('audit_rows_for_every_write_on_project_programme', v_txt = '1/' || v_saves || '/2/1/5/1', v_txt);
   PERFORM pg_temp.r('audit_save_actors_are_the_callers',
     pg_temp.n(format($q$SELECT count(DISTINCT actor_id) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved'
                         AND actor_id IN (%L, %L, %L)$q$, v_prog, v_owner, v_orgpm, v_pm)) = 3
     AND pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'field_update.submitted'
-                           AND actor_id IN (%L, %L)$q$, v_prog, v_con, v_insp2)) = 2);
+                           AND actor_id IN (%L, %L, %L, %L)$q$, v_prog, v_con, v_insp2, v_owner, v_pm)) = 5);
   PERFORM pg_temp.r('audit_rows_for_module_and_p2',
     pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.created'$q$, v_mod)) = 1
     AND pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved' AND actor_id = %L$q$, v_mod, v_solcon)) = v_mod_saves
