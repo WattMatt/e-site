@@ -286,6 +286,7 @@
 -- grant_absent: anon EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb)
 -- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' AND p.prosrc LIKE '%''40001''%' FROM pg_proc p WHERE p.oid = 'programme.save_changes(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
 -- sql: (SELECT count(*) = 10 AND bool_and(p.prosecdef AND p.proconfig @> ARRAY['search_path=""']) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND p.proname IN ('write_audit', 'resolve_ref', 'create_programme', 'save_changes', 'save_baseline', 'set_active_baseline', 'delete_baseline', 'submit_field_update', 'decide_field_updates', 'module_summary'))
+-- behaviour: scripts/db/assert-programme-roles.sql — every row ok
 -- @verify:end
 
 -- ── 0. Schema ───────────────────────────────────────────────────────────────
