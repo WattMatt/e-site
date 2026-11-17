@@ -976,6 +976,33 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 
 > **Changed 2026-10-12 (`00249`).** A plan no longer anchors to a drawing: `floor_plan_id`, `page_index` and `source_file_path` are dropped, `organisation_id` is bound from the project, and `(project_id, purpose)` is unique. A sheet is one page of one file in the private `tenant-plan-files` bucket (60 MB, PDF / PNG / JPEG); its file must live under its own plan's folder (`{org}/{project}/{plan}/…`, enforced by trigger, so the service-side renderers can never be pointed at another project's object). Replacing the file is an UPDATE of `file_path`; the trigger sets `revision + 1`, `replaced_at` and `replaced_from_path` (client values discarded) and keeps the masks and the scale; re-anchoring clears `replaced_at` only. A shape's sheet must belong to its plan and is fixed; `(status_plan_id, node_id)` stays unique, so a board appears once per plan across sheets. `tenants.tenant_plan_file_project(name)` (definer, `anon` revoked) returns the project only when the path's org / project / plan segments name a real plan. Read = every project member, **client_viewer included**; write = `ORG_WRITE_ROLES` through PERMISSIVE membership + **RESTRICTIVE per-verb** gates; the generated `site_scope` policy on all three tables and `site_scope_objects` now covering `tenant-plan-files`. Proven by `scripts/db/assert-status-plans-roles.sql` (91 impersonation assertions, red first, seven mutations). Cloud sync's `isAnnotated()` no longer reads status plans (nothing there references a drawing).
 
+### Programme (`programme.actions.ts`; schema `programme`, migration `00261`; dark behind `PROGRAMME_ENABLED`)
+
+No page or nav entry yet. Every action refuses with "The programme module is not switched on yet." until `PROGRAMME_ENABLED=true`. Roles below are the EFFECTIVE project role (`user_effective_project_role`). A **module** (Solar) programme is gated by Solar access instead: read needs `solar_can_view`, edit needs `solar_can_edit`.
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `createProgrammeAction` · `saveProgrammeChangesAction` · `recalculateProgrammeAction` | W | W | W | — | — | — | — |
+| `saveBaselineAction` · `setActiveBaselineAction` · `deleteBaselineAction` | W | W | W | — | — | — | — |
+| `decideFieldUpdatesAction` (apply, adjust or reject reported progress) | W | W | W | — | — | — | — |
+| `submitFieldUpdateAction` (report progress from site) | W | W | W | W¹ | W¹ | — | — |
+| `moduleSummaryAction` (start, finish, % complete bar) | R | R | R | R | R | R | — |
+| Read any programme table | R | R | R | R | R | R | — |
+| Read cost tables and resource rates | R | R | R | — | — | — | — |
+
+> **Added 2026-11-17 (P2, migration `00261`).** Clients read only: there is no INSERT, UPDATE or DELETE policy or grant. Every write is a `SECURITY DEFINER` function (`create_programme`, `save_changes`, `save_baseline`, `set_active_baseline`, `delete_baseline`, `submit_field_update`, `decide_field_updates`) that checks the caller from `auth.uid()`, takes an advisory lock, refuses a stale version (40001) and writes an audit row. The server actions refuse early with a sentence; the database stays the authority.
+>
+> - **Read** = `programme.can_read`: project access and an effective role other than `client_viewer`. Edit = `programme.can_edit`: read, plus owner, admin or project manager (`ORG_WRITE_ROLES`).
+> - **Site scope.** A RESTRICTIVE `site_scope` policy sits on the 19 project-keyed tables, not the two org-library tables `resources` and `resource_rates` (generated text, held by `programme-site-scope.contract.test.ts`).
+> - **Cost rule.** `assignment_costs`, `baseline_costs`, `progress_period_costs` and `resource_rates` also need `cost_visible` (owner, admin, project manager = `COST_VIEW_ROLES`). Only rands are masked. Dates, durations and percentages are open to every reader.
+> - **Resources** are org-wide. Any non-client-viewer member of the organisation reads them (`can_read_org_library`). Rates need an active owner, admin or project-manager membership (`org_cost_visible`).
+> - **Audit** rows are readable by anyone who can read the programme, so they hold ids, counts and verbs only, never a rand figure.
+> - ¹ **Field-update tag rule (spec 4.6).** `submit_field_update` accepts an editor, or a **contractor or inspector** whose user or organisation is tagged on a code value of that activity. An untagged contractor or inspector, a supplier, or a project manager without edit gets 42501. It records progress as "reported" and moves no date. `decide_field_updates` is editor only and does not change actuals itself; the action applies the agreed values through `save_changes`.
+> - **Delete.** `delete_activity` tombstones an activity that carries history and hard-deletes a bare one. A tombstoned activity cannot be upserted, linked or deleted again.
+> - **Module summary.** Any project reader may call `module_summary`. The Solar module gate is deliberately not required, so a person without Solar access sees the bar and nothing else.
+> - **Not exposed:** `anon` has no EXECUTE on any `programme` function. The two internals (`write_audit`, `resolve_ref`) are callable by no client role.
+> - Apply and verification steps: `docs/programme/runbook.md`.
+
 ## MCP tools (`apps/web/src/mcp/*`)
 
 Seven database tools sit beside the four slice-1 read tools. Every tool runs as the signed-in person (the OAuth bearer's `sub`), re-reads their role on every call, and sits on RLS; no tool uses the service key.
