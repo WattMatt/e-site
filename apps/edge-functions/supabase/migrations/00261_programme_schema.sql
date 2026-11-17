@@ -22,8 +22,13 @@
 --      on UPDATE; updated_at is clock_timestamp() (strictly increasing, it is
 --      the optimistic-concurrency token). Links refuse another programme.
 --   3. Row level security ENABLED and FORCED on every table, with no policy:
---      deny by default. Policies, grants and write functions are added by
---      later sections.
+--      deny by default.
+--   4. Read gates: programme.can_read / can_edit / cost_visible and the org
+--      library pair can_read_org_library / org_cost_visible.
+--   5. SELECT-only policies (cost tables also need cost_visible: the rand
+--      mask), the generator's site_scope on every project_id table, and
+--      grants: SELECT to authenticated, nothing to anon, no client writes.
+--      Write functions are added by later sections.
 --
 -- A new schema needs a PostgREST db_schema PATCH AFTER apply (never before:
 -- PGRST002). That is a runbook step, not part of this file.
@@ -115,6 +120,143 @@
 -- trigger: imports_attrib ON programme.imports
 -- trigger: field_updates_attrib ON programme.field_updates
 -- sql: (SELECT count(*) = 21 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND c.relkind = 'r')
+-- function: programme.can_read(uuid)
+-- function: programme.can_edit(uuid)
+-- function: programme.cost_visible(uuid)
+-- function: programme.can_read_org_library(uuid)
+-- function: programme.org_cost_visible(uuid)
+-- policy: programmes_select ON programme.programmes PERMISSIVE
+-- policy: calendars_select ON programme.calendars PERMISSIVE
+-- policy: calendar_exceptions_select ON programme.calendar_exceptions PERMISSIVE
+-- policy: activities_select ON programme.activities PERMISSIVE
+-- policy: dependencies_select ON programme.dependencies PERMISSIVE
+-- policy: code_types_select ON programme.code_types PERMISSIVE
+-- policy: code_values_select ON programme.code_values PERMISSIVE
+-- policy: activity_codes_select ON programme.activity_codes PERMISSIVE
+-- policy: resources_select ON programme.resources PERMISSIVE
+-- policy: resource_rates_select ON programme.resource_rates PERMISSIVE
+-- policy: resource_assignments_select ON programme.resource_assignments PERMISSIVE
+-- policy: assignment_costs_select ON programme.assignment_costs PERMISSIVE
+-- policy: baselines_select ON programme.baselines PERMISSIVE
+-- policy: baseline_activities_select ON programme.baseline_activities PERMISSIVE
+-- policy: baseline_dependencies_select ON programme.baseline_dependencies PERMISSIVE
+-- policy: baseline_costs_select ON programme.baseline_costs PERMISSIVE
+-- policy: progress_periods_select ON programme.progress_periods PERMISSIVE
+-- policy: progress_period_costs_select ON programme.progress_period_costs PERMISSIVE
+-- policy: field_updates_select ON programme.field_updates PERMISSIVE
+-- policy: imports_select ON programme.imports PERMISSIVE
+-- policy: audit_select ON programme.audit PERMISSIVE
+-- policy: site_scope ON programme.programmes RESTRICTIVE
+-- policy: site_scope ON programme.calendars RESTRICTIVE
+-- policy: site_scope ON programme.calendar_exceptions RESTRICTIVE
+-- policy: site_scope ON programme.activities RESTRICTIVE
+-- policy: site_scope ON programme.dependencies RESTRICTIVE
+-- policy: site_scope ON programme.code_types RESTRICTIVE
+-- policy: site_scope ON programme.code_values RESTRICTIVE
+-- policy: site_scope ON programme.activity_codes RESTRICTIVE
+-- policy: site_scope ON programme.resource_assignments RESTRICTIVE
+-- policy: site_scope ON programme.assignment_costs RESTRICTIVE
+-- policy: site_scope ON programme.baselines RESTRICTIVE
+-- policy: site_scope ON programme.baseline_activities RESTRICTIVE
+-- policy: site_scope ON programme.baseline_dependencies RESTRICTIVE
+-- policy: site_scope ON programme.baseline_costs RESTRICTIVE
+-- policy: site_scope ON programme.progress_periods RESTRICTIVE
+-- policy: site_scope ON programme.progress_period_costs RESTRICTIVE
+-- policy: site_scope ON programme.field_updates RESTRICTIVE
+-- policy: site_scope ON programme.imports RESTRICTIVE
+-- policy: site_scope ON programme.audit RESTRICTIVE
+-- grant_absent: authenticated INSERT ON programme.programmes
+-- grant_absent: authenticated UPDATE ON programme.programmes
+-- grant_absent: authenticated DELETE ON programme.programmes
+-- grant_absent: authenticated INSERT ON programme.calendars
+-- grant_absent: authenticated UPDATE ON programme.calendars
+-- grant_absent: authenticated DELETE ON programme.calendars
+-- grant_absent: authenticated INSERT ON programme.calendar_exceptions
+-- grant_absent: authenticated UPDATE ON programme.calendar_exceptions
+-- grant_absent: authenticated DELETE ON programme.calendar_exceptions
+-- grant_absent: authenticated INSERT ON programme.activities
+-- grant_absent: authenticated UPDATE ON programme.activities
+-- grant_absent: authenticated DELETE ON programme.activities
+-- grant_absent: authenticated INSERT ON programme.dependencies
+-- grant_absent: authenticated UPDATE ON programme.dependencies
+-- grant_absent: authenticated DELETE ON programme.dependencies
+-- grant_absent: authenticated INSERT ON programme.code_types
+-- grant_absent: authenticated UPDATE ON programme.code_types
+-- grant_absent: authenticated DELETE ON programme.code_types
+-- grant_absent: authenticated INSERT ON programme.code_values
+-- grant_absent: authenticated UPDATE ON programme.code_values
+-- grant_absent: authenticated DELETE ON programme.code_values
+-- grant_absent: authenticated INSERT ON programme.activity_codes
+-- grant_absent: authenticated UPDATE ON programme.activity_codes
+-- grant_absent: authenticated DELETE ON programme.activity_codes
+-- grant_absent: authenticated INSERT ON programme.resources
+-- grant_absent: authenticated UPDATE ON programme.resources
+-- grant_absent: authenticated DELETE ON programme.resources
+-- grant_absent: authenticated INSERT ON programme.resource_rates
+-- grant_absent: authenticated UPDATE ON programme.resource_rates
+-- grant_absent: authenticated DELETE ON programme.resource_rates
+-- grant_absent: authenticated INSERT ON programme.resource_assignments
+-- grant_absent: authenticated UPDATE ON programme.resource_assignments
+-- grant_absent: authenticated DELETE ON programme.resource_assignments
+-- grant_absent: authenticated INSERT ON programme.assignment_costs
+-- grant_absent: authenticated UPDATE ON programme.assignment_costs
+-- grant_absent: authenticated DELETE ON programme.assignment_costs
+-- grant_absent: authenticated INSERT ON programme.baselines
+-- grant_absent: authenticated UPDATE ON programme.baselines
+-- grant_absent: authenticated DELETE ON programme.baselines
+-- grant_absent: authenticated INSERT ON programme.baseline_activities
+-- grant_absent: authenticated UPDATE ON programme.baseline_activities
+-- grant_absent: authenticated DELETE ON programme.baseline_activities
+-- grant_absent: authenticated INSERT ON programme.baseline_dependencies
+-- grant_absent: authenticated UPDATE ON programme.baseline_dependencies
+-- grant_absent: authenticated DELETE ON programme.baseline_dependencies
+-- grant_absent: authenticated INSERT ON programme.baseline_costs
+-- grant_absent: authenticated UPDATE ON programme.baseline_costs
+-- grant_absent: authenticated DELETE ON programme.baseline_costs
+-- grant_absent: authenticated INSERT ON programme.progress_periods
+-- grant_absent: authenticated UPDATE ON programme.progress_periods
+-- grant_absent: authenticated DELETE ON programme.progress_periods
+-- grant_absent: authenticated INSERT ON programme.progress_period_costs
+-- grant_absent: authenticated UPDATE ON programme.progress_period_costs
+-- grant_absent: authenticated DELETE ON programme.progress_period_costs
+-- grant_absent: authenticated INSERT ON programme.field_updates
+-- grant_absent: authenticated UPDATE ON programme.field_updates
+-- grant_absent: authenticated DELETE ON programme.field_updates
+-- grant_absent: authenticated INSERT ON programme.imports
+-- grant_absent: authenticated UPDATE ON programme.imports
+-- grant_absent: authenticated DELETE ON programme.imports
+-- grant_absent: authenticated INSERT ON programme.audit
+-- grant_absent: authenticated UPDATE ON programme.audit
+-- grant_absent: authenticated DELETE ON programme.audit
+-- grant_present: authenticated SELECT ON programme.programmes
+-- grant_present: authenticated SELECT ON programme.calendars
+-- grant_present: authenticated SELECT ON programme.calendar_exceptions
+-- grant_present: authenticated SELECT ON programme.activities
+-- grant_present: authenticated SELECT ON programme.dependencies
+-- grant_present: authenticated SELECT ON programme.code_types
+-- grant_present: authenticated SELECT ON programme.code_values
+-- grant_present: authenticated SELECT ON programme.activity_codes
+-- grant_present: authenticated SELECT ON programme.resources
+-- grant_present: authenticated SELECT ON programme.resource_rates
+-- grant_present: authenticated SELECT ON programme.resource_assignments
+-- grant_present: authenticated SELECT ON programme.assignment_costs
+-- grant_present: authenticated SELECT ON programme.baselines
+-- grant_present: authenticated SELECT ON programme.baseline_activities
+-- grant_present: authenticated SELECT ON programme.baseline_dependencies
+-- grant_present: authenticated SELECT ON programme.baseline_costs
+-- grant_present: authenticated SELECT ON programme.progress_periods
+-- grant_present: authenticated SELECT ON programme.progress_period_costs
+-- grant_present: authenticated SELECT ON programme.field_updates
+-- grant_present: authenticated SELECT ON programme.imports
+-- grant_present: authenticated SELECT ON programme.audit
+-- grant_absent: anon SELECT ON programme.activities
+-- grant_absent: anon SELECT ON programme.assignment_costs
+-- grant_absent: anon EXECUTE ON programme.can_read(uuid)
+-- anon_execute_absent: ALL prosecdef functions in programme
+-- sql: (SELECT NOT EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND p.polcmd = '*' AND p.polname <> 'site_scope'))
+-- sql: (SELECT count(*) = 19 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND p.polname = 'site_scope' AND p.polcmd = '*' AND NOT p.polpermissive)
+-- sql: (SELECT count(*) = 21 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND p.polcmd = 'r' AND p.polpermissive)
+-- sql: (SELECT count(*) = 3 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND p.polcmd = 'r' AND pg_get_expr(p.polqual, p.polrelid) LIKE '%cost_visible(project_id)%')
 -- @verify:end
 
 -- ── 0. Schema ───────────────────────────────────────────────────────────────
@@ -912,3 +1054,219 @@ REVOKE ALL ON FUNCTION programme.field_updates_refs() FROM PUBLIC, anon, authent
 REVOKE ALL ON FUNCTION programme.imports_refs() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION programme.attrib() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION programme.audit_bind() FROM PUBLIC, anon, authenticated;
+
+-- ── 4. Read gates (SECURITY DEFINER, search_path '', row_security off) ──────
+-- Policies call these as `authenticated`. Identity is auth.uid() (inside the
+-- role helpers), never current_user. Each returns false, never NULL.
+--   can_read     every effective project role except client_viewer; a module
+--                programme (kind = 'module', solar) also needs solar_can_view.
+--   can_edit     can_read AND (module: solar_can_edit; otherwise the effective
+--                role is owner/admin/project_manager = ORG_WRITE_ROLES).
+--   cost_visible effective project role owner/admin/project_manager
+--                (= COST_VIEW_ROLES). Rands only; nothing else is masked.
+--   can_read_org_library / org_cost_visible: the same two rules for the org
+--                resource library, from the caller's ACTIVE org membership.
+
+CREATE OR REPLACE FUNCTION programme.can_read(p_programme_id uuid)
+ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$
+  SELECT EXISTS (
+    SELECT 1 FROM programme.programmes p
+     WHERE p.id = p_programme_id
+       AND public.user_has_project_access(p.project_id)
+       AND coalesce(public.user_effective_project_role(p.project_id), 'client_viewer') <> 'client_viewer'
+       AND (p.kind <> 'module' OR coalesce(public.solar_can_view(p.project_id), false))
+  )
+$f$;
+
+CREATE OR REPLACE FUNCTION programme.can_edit(p_programme_id uuid)
+ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$
+  SELECT programme.can_read(p_programme_id) AND EXISTS (
+    SELECT 1 FROM programme.programmes p
+     WHERE p.id = p_programme_id
+       AND CASE WHEN p.kind = 'module'
+                THEN coalesce(public.solar_can_edit(p.project_id), false)
+                ELSE coalesce(public.user_effective_project_role(p.project_id), '') IN ('owner', 'admin', 'project_manager')
+           END
+  )
+$f$;
+
+CREATE OR REPLACE FUNCTION programme.cost_visible(p_project_id uuid)
+ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$
+  SELECT coalesce(public.user_effective_project_role(p_project_id), '') IN ('owner', 'admin', 'project_manager')
+$f$;
+
+CREATE OR REPLACE FUNCTION programme.can_read_org_library(p_org uuid)
+ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_organisations uo
+     WHERE uo.organisation_id = p_org
+       AND uo.user_id = auth.uid()
+       AND uo.is_active
+       AND uo.role <> 'client_viewer'
+  )
+$f$;
+
+CREATE OR REPLACE FUNCTION programme.org_cost_visible(p_org uuid)
+ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' SET row_security TO 'off'
+AS $f$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_organisations uo
+     WHERE uo.organisation_id = p_org
+       AND uo.user_id = auth.uid()
+       AND uo.is_active
+       AND uo.role IN ('owner', 'admin', 'project_manager')
+  )
+$f$;
+
+-- PUBLIC holds EXECUTE by default and Supabase's default privileges grant anon
+-- directly, so both are named.
+REVOKE ALL ON FUNCTION programme.can_read(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION programme.can_edit(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION programme.cost_visible(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION programme.can_read_org_library(uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION programme.org_cost_visible(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION programme.can_read(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION programme.can_edit(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION programme.cost_visible(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION programme.can_read_org_library(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION programme.org_cost_visible(uuid) TO authenticated, service_role;
+
+-- ── 5. Policies, grants, site scope ─────────────────────────────────────────
+-- Clients READ only. Every write is a SECURITY DEFINER function (later
+-- sections), so there is no INSERT/UPDATE/DELETE policy and no such grant.
+-- Read policies are PERMISSIVE FOR SELECT, one per table. The only FOR ALL
+-- policy is site_scope (RESTRICTIVE), whose text is the generator's, byte for
+-- byte (packages/db/src/site-scope/manifest.ts; held by
+-- packages/db/src/__tests__/security/programme-site-scope.contract.test.ts).
+-- The cost tables add the rand mask: cost_visible on top of can_read.
+
+CREATE POLICY programmes_select ON programme.programmes FOR SELECT TO authenticated
+  USING (programme.can_read(id));
+CREATE POLICY calendars_select ON programme.calendars FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY calendar_exceptions_select ON programme.calendar_exceptions FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY activities_select ON programme.activities FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY dependencies_select ON programme.dependencies FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY code_types_select ON programme.code_types FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY code_values_select ON programme.code_values FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY activity_codes_select ON programme.activity_codes FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY resources_select ON programme.resources FOR SELECT TO authenticated
+  USING (programme.can_read_org_library(organisation_id));
+CREATE POLICY resource_rates_select ON programme.resource_rates FOR SELECT TO authenticated
+  USING (programme.can_read_org_library(organisation_id) AND programme.org_cost_visible(organisation_id));
+CREATE POLICY resource_assignments_select ON programme.resource_assignments FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY assignment_costs_select ON programme.assignment_costs FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id) AND programme.cost_visible(project_id));
+CREATE POLICY baselines_select ON programme.baselines FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY baseline_activities_select ON programme.baseline_activities FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY baseline_dependencies_select ON programme.baseline_dependencies FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY baseline_costs_select ON programme.baseline_costs FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id) AND programme.cost_visible(project_id));
+CREATE POLICY progress_periods_select ON programme.progress_periods FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY progress_period_costs_select ON programme.progress_period_costs FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id) AND programme.cost_visible(project_id));
+CREATE POLICY field_updates_select ON programme.field_updates FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY imports_select ON programme.imports FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+CREATE POLICY audit_select ON programme.audit FOR SELECT TO authenticated
+  USING (programme.can_read(programme_id));
+
+-- site_scope: GENERATED text (scripts/db/site-scope/emit.ts). Do not edit by hand.
+DROP POLICY IF EXISTS site_scope ON programme.programmes;
+CREATE POLICY site_scope ON programme.programmes AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.calendars;
+CREATE POLICY site_scope ON programme.calendars AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.calendar_exceptions;
+CREATE POLICY site_scope ON programme.calendar_exceptions AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.activities;
+CREATE POLICY site_scope ON programme.activities AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.dependencies;
+CREATE POLICY site_scope ON programme.dependencies AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.code_types;
+CREATE POLICY site_scope ON programme.code_types AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.code_values;
+CREATE POLICY site_scope ON programme.code_values AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.activity_codes;
+CREATE POLICY site_scope ON programme.activity_codes AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.resource_assignments;
+CREATE POLICY site_scope ON programme.resource_assignments AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.assignment_costs;
+CREATE POLICY site_scope ON programme.assignment_costs AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.baselines;
+CREATE POLICY site_scope ON programme.baselines AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.baseline_activities;
+CREATE POLICY site_scope ON programme.baseline_activities AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.baseline_dependencies;
+CREATE POLICY site_scope ON programme.baseline_dependencies AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.baseline_costs;
+CREATE POLICY site_scope ON programme.baseline_costs AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.progress_periods;
+CREATE POLICY site_scope ON programme.progress_periods AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.progress_period_costs;
+CREATE POLICY site_scope ON programme.progress_period_costs AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.field_updates;
+CREATE POLICY site_scope ON programme.field_updates AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.imports;
+CREATE POLICY site_scope ON programme.imports AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS site_scope ON programme.audit;
+CREATE POLICY site_scope ON programme.audit AS RESTRICTIVE FOR ALL
+  USING (public.user_has_project_access(project_id))
+  WITH CHECK (public.user_has_project_access(project_id));
+
+-- Grants. Clear whatever the default privileges handed out, then give SELECT
+-- to authenticated only. anon gets nothing; writes go through definer functions.
+REVOKE ALL ON ALL TABLES IN SCHEMA programme FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON ALL TABLES IN SCHEMA programme TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA programme TO service_role;
