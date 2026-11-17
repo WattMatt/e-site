@@ -1,11 +1,17 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useState } from 'react'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { useState, useSyncExternalStore } from 'react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import {
   rowsToProgrammeInput, scheduleProgramme, type ProgrammeOp, type ProgrammeState, type ScheduleResult,
 } from '@esite/shared/programme'
-import { activityRow, calendarRow, programmeRow } from '@/lib/programme/test-fixtures'
+import { activityRow, calendarRow, programmeRow, VERSION } from '@/lib/programme/test-fixtures'
+import type { ProgrammeViewData } from '@/lib/programme/view-types'
+import type { SaveProgrammeChangesInput, SaveProgrammeResult } from '@/lib/programme/action-types'
 import { GanttGrid, columnsStorageKey, type GanttGridStore } from './GanttGrid'
+import { createProgrammeStore, scheduleFor, type ProgrammeStore } from './use-programme-store'
+
+vi.mock('@/actions/programme.actions', () => ({ saveProgrammeChangesAction: vi.fn(), programmeVersionAction: vi.fn() }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
 
 type Row = Record<string, unknown>
 
@@ -27,6 +33,7 @@ function storeOf(activities: Row[], schedule?: ScheduleResult) {
     schedule: schedule ?? scheduleProgramme(rowsToProgrammeInput(state)),
     apply: vi.fn((_ops: ProgrammeOp[], _label: string) => true),
     newKey: vi.fn(() => `n${++n}-x`),
+    keyIds: {},
   } satisfies GanttGridStore
 }
 
@@ -93,12 +100,15 @@ describe('GanttGrid: virtualisation', () => {
   })
 })
 
+const INDENT = { key: 'ArrowRight', altKey: true, shiftKey: true }
+const OUTDENT = { key: 'ArrowLeft', altKey: true, shiftKey: true }
+
 describe('GanttGrid: indent and outdent', () => {
-  it('Tab puts the selected row under its previous sibling, which becomes a summary', () => {
+  it('⌥⇧→ puts the selected row under its previous sibling, which becomes a summary', () => {
     const store = storeOf(abc())
     render(<Harness store={store} />)
     fireEvent.click(cell('B', 'name'))
-    fireEvent.keyDown(grid(), { key: 'Tab' })
+    fireEvent.keyDown(grid(), INDENT)
     expect(store.apply).toHaveBeenCalledTimes(1)
     const ops = opsOf(store)
     expect(upsertFor(ops, 'B')?.fields).toEqual({ parent_id: 'A', sort_order: 1 })
@@ -107,27 +117,70 @@ describe('GanttGrid: indent and outdent', () => {
     expect(store.apply.mock.calls[0][1]).toBe('Indent')
   })
 
-  it('Tab on the first row does nothing', () => {
+  it('the Indent and Outdent buttons do the same, and say their keys', () => {
     const store = storeOf(abc())
     render(<Harness store={store} />)
-    fireEvent.click(cell('A', 'name'))
-    fireEvent.keyDown(grid(), { key: 'Tab' })
+    fireEvent.click(cell('B', 'name'))
+    const indent = screen.getByRole('button', { name: 'Indent' })
+    expect(indent.getAttribute('title')).toContain('⌥⇧→')
+    expect(screen.getByRole('button', { name: 'Outdent' }).getAttribute('title')).toContain('⌥⇧←')
+    fireEvent.click(indent)
+    expect(upsertFor(opsOf(store), 'B')?.fields).toEqual({ parent_id: 'A', sort_order: 1 })
+  })
+
+  it('Tab is never taken: it is not prevented and makes no op', () => {
+    const store = storeOf(abc())
+    render(<Harness store={store} />)
+    fireEvent.click(cell('B', 'name'))
+    const notPrevented = fireEvent.keyDown(grid(), { key: 'Tab' })
+    expect(notPrevented).toBe(true)
+    expect(fireEvent.keyDown(grid(), { key: 'Tab', shiftKey: true })).toBe(true)
     expect(store.apply).not.toHaveBeenCalled()
   })
 
-  it('⇧Tab moves the row to its grandparent, after its old parent; an emptied summary becomes a task', () => {
+  it('Escape clears the selection', () => {
+    const store = storeOf(abc())
+    render(<Harness store={store} />)
+    fireEvent.click(cell('B', 'name'))
+    expect(row('B').getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(grid(), { key: 'Escape' })
+    expect(row('B').getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('indent on the first row does nothing', () => {
+    const store = storeOf(abc())
+    render(<Harness store={store} />)
+    fireEvent.click(cell('A', 'name'))
+    fireEvent.keyDown(grid(), INDENT)
+    expect(store.apply).not.toHaveBeenCalled()
+  })
+
+  it('indenting under a milestone is refused with a sentence and no op', () => {
     const store = storeOf([
-      activityRow('A', { sort_order: 1, type: 'summary', original_duration: 0 }),
-      activityRow('B', { sort_order: 1, parent_id: 'A' }),
-      activityRow('C', { sort_order: 2 }),
+      activityRow('M', { sort_order: 1, type: 'finish_milestone', original_duration: 0 }),
+      activityRow('B', { sort_order: 2 }),
     ])
     render(<Harness store={store} />)
     fireEvent.click(cell('B', 'name'))
-    fireEvent.keyDown(grid(), { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(grid(), INDENT)
+    expect(store.apply).not.toHaveBeenCalled()
+    expect(screen.getByTestId('programme-grid-notice').textContent).toContain("A milestone can't have sub-activities.")
+  })
+
+  it('⌥⇧← keeps the row in place: its following siblings become its children (MS Project)', () => {
+    const store = storeOf([
+      activityRow('A', { sort_order: 1, type: 'summary', original_duration: 0 }),
+      activityRow('B', { sort_order: 1, parent_id: 'A' }),
+      activityRow('C', { sort_order: 2, parent_id: 'A' }),
+      activityRow('D', { sort_order: 3, parent_id: 'A' }),
+    ])
+    render(<Harness store={store} />)
+    fireEvent.click(cell('C', 'name'))
+    fireEvent.keyDown(grid(), OUTDENT)
     const ops = opsOf(store)
-    expect(upsertFor(ops, 'B')?.fields).toEqual({ parent_id: null, sort_order: 2 })
-    expect(upsertFor(ops, 'C')?.fields).toEqual({ sort_order: 3 })
-    expect(upsertFor(ops, 'A')?.fields).toEqual({ type: 'task', original_duration: 1 })
+    expect(upsertFor(ops, 'C')?.fields).toEqual({ parent_id: null, type: 'summary' }) // sort_order 2 is unchanged
+    expect(upsertFor(ops, 'D')?.fields).toEqual({ parent_id: 'C', sort_order: 1 })
+    expect(upsertFor(ops, 'A')).toBeUndefined()
     expect(store.apply.mock.calls[0][1]).toBe('Outdent')
   })
 
@@ -136,7 +189,7 @@ describe('GanttGrid: indent and outdent', () => {
     render(<Harness store={store} />)
     fireEvent.click(cell('B', 'name'))
     fireEvent.click(cell('C', 'name'), { metaKey: true })
-    fireEvent.keyDown(grid(), { key: 'Tab' })
+    fireEvent.keyDown(grid(), INDENT)
     const ops = opsOf(store)
     expect(upsertFor(ops, 'B')?.fields).toEqual({ parent_id: 'A', sort_order: 1 })
     expect(upsertFor(ops, 'C')?.fields).toEqual({ parent_id: 'A', sort_order: 2 })
@@ -151,6 +204,19 @@ describe('GanttGrid: indent and outdent', () => {
     expect(upsertFor(ops, 'A')?.fields).toEqual({ sort_order: 2 })
     expect(upsertFor(ops, 'B')?.fields).toEqual({ sort_order: 1 })
     expect(upsertFor(ops, 'C')).toBeUndefined()
+  })
+
+  it('collapsing a parent drops its hidden children from the selection', () => {
+    const store = storeOf([
+      activityRow('P', { sort_order: 1, type: 'summary', original_duration: 0 }),
+      activityRow('K', { sort_order: 1, parent_id: 'P' }),
+      activityRow('Z', { sort_order: 2 }),
+    ])
+    render(<Harness store={store} />)
+    fireEvent.click(cell('K', 'name'))
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse P' }))
+    fireEvent.keyDown(grid(), { key: 'Delete' })
+    expect(screen.queryByTestId('programme-grid-confirm')).toBeNull()
   })
 })
 
@@ -188,15 +254,20 @@ describe('GanttGrid: inline editing', () => {
     expect(store.apply).toHaveBeenCalledWith([{ op: 'upsert_activity', id: 'B', fields: { original_duration: 5 } }], 'Change duration')
   })
 
-  it('a duration that is not a whole number of days is refused and stays open', () => {
+  it('a duration of zero or not a number is refused and stays open; two decimals are fine', () => {
     const store = storeOf(abc())
     render(<Harness store={store} />)
     fireEvent.doubleClick(cell('B', 'duration'))
     const input = within(row('B')).getByRole('textbox', { name: 'Duration' })
-    fireEvent.change(input, { target: { value: '2.5' } })
+    for (const bad of ['0', 'two', '1.234', '-1']) {
+      fireEvent.change(input, { target: { value: bad } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(store.apply).not.toHaveBeenCalled()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+    }
+    fireEvent.change(input, { target: { value: '2.5d' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(store.apply).not.toHaveBeenCalled()
-    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(store.apply).toHaveBeenCalledWith([{ op: 'upsert_activity', id: 'B', fields: { original_duration: 2.5 } }], 'Change duration')
   })
 
   it('a Start edit sets a start-no-earlier-than constraint on that date', () => {
@@ -209,6 +280,18 @@ describe('GanttGrid: inline editing', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(store.apply).toHaveBeenCalledWith(
       [{ op: 'upsert_activity', id: 'C', fields: { constraint_type: 'snet', constraint_date: '2026-04-06' } }], 'Change start')
+  })
+})
+
+describe('GanttGrid: start edit that changes nothing', () => {
+  it('Enter on the shown start of an unconstrained row adds no constraint', () => {
+    const store = storeOf(abc())
+    render(<Harness store={store} />)
+    fireEvent.doubleClick(cell('A', 'start'))
+    const input = row('A').querySelector('input[aria-label="Start"]') as HTMLInputElement
+    expect(input.value).toBe(store.schedule.activities.get('A')!.earlyStart)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(store.apply).not.toHaveBeenCalled()
   })
 })
 
@@ -283,13 +366,16 @@ describe('GanttGrid: read-only', () => {
     fireEvent.doubleClick(cell('A', 'name'))
     fireEvent.click(cell('B', 'name'))
     fireEvent.keyDown(grid(), { key: 'Enter' })
-    fireEvent.keyDown(grid(), { key: 'Tab' })
+    fireEvent.keyDown(grid(), INDENT)
+    fireEvent.keyDown(grid(), OUTDENT)
     fireEvent.keyDown(grid(), { key: 'Delete' })
     fireEvent.keyDown(grid(), { key: 'ArrowDown', altKey: true })
     expect(document.querySelectorAll('input:not([type="checkbox"])')).toHaveLength(0)
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add milestone' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Indent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Outdent' })).toBeNull()
     expect(screen.queryByTestId('programme-grid-confirm')).toBeNull()
     expect(store.apply).not.toHaveBeenCalled()
   })
@@ -363,5 +449,43 @@ describe('GanttGrid: display', () => {
     fireEvent.pointerMove(handle, { clientX: 140, pointerId: 1 })
     fireEvent.pointerUp(handle, { clientX: 140, pointerId: 1 })
     expect(parseFloat(cell('A', 'duration').style.width)).toBe(before + 40)
+  })
+})
+
+/** The grid over the REAL store, with saves the test answers by hand. */
+function LiveHarness({ store }: { store: ProgrammeStore }) {
+  const snap = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  const api: GanttGridStore = { state: snap.state, schedule: scheduleFor(snap.state), apply: store.apply, newKey: store.newKey, keyIds: snap.keyIds }
+  const [scrollTop, setScrollTop] = useState(0)
+  return <GanttGrid store={api} canEdit scrollTop={scrollTop} onScrollTop={setScrollTop} collapsed={new Set()} onToggleCollapsed={() => {}} />
+}
+
+describe('GanttGrid: a new row re-keyed by its save', () => {
+  it('keeps the open editor, the typed text, the focus and the selection; the rename lands on the uuid row', async () => {
+    const answers: Array<(r: SaveProgrammeResult) => void> = []
+    const save = vi.fn((_input: SaveProgrammeChangesInput) => new Promise<SaveProgrammeResult>((res) => { answers.push(res) }))
+    const view = { state: stateOf(abc()), version: VERSION, activeBaseline: null, baselines: [] } as unknown as ProgrammeViewData
+    const store = createProgrammeStore(view, { canEdit: true, save, newKey: () => 'k1' })
+    render(<LiveHarness store={store} />)
+
+    fireEvent.click(cell('A', 'name'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    // Add opens the new row's Name for typing.
+    const input = within(row('key:k1')).getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'Pour slab' } })
+    expect(save).toHaveBeenCalledTimes(1)
+
+    await act(async () => { answers[0]({ ok: true, version: '2026-11-17T09:00:00Z', ids: { k1: 'U1' }, issues: [] }) })
+
+    expect(row('key:k1')).toBeNull()
+    expect(row('U1').getAttribute('aria-selected')).toBe('true')
+    const same = within(row('U1')).getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    expect(same).toBe(input)
+    expect(same.value).toBe('Pour slab')
+    expect(document.activeElement).toBe(same)
+
+    fireEvent.keyDown(same, { key: 'Enter' })
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(save.mock.calls[1][0].ops).toEqual([{ op: 'upsert_activity', id: 'U1', fields: { name: 'Pour slab' } }])
   })
 })

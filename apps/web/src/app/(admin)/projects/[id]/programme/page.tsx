@@ -62,5 +62,8 @@ export default async function ProgrammePage({ params, searchParams }: {
   const canEdit = loaded.view.state.programme.kind === 'module'
     ? solarLevelAllows(await getSolarAccessLevel(id, supabase), 'edit')
     : roleCanEdit
-  return <ProgrammeClient projectId={id} view={loaded.view} canEdit={canEdit} programmes={loaded.programmes} />
+  // Keys the grid's remembered column choice; null keeps it per browser.
+  const { data: auth } = await supabase.auth.getUser()
+  const userId = auth?.user?.id ?? null
+  return <ProgrammeClient projectId={id} view={loaded.view} canEdit={canEdit} programmes={loaded.programmes} userId={userId} />
 }

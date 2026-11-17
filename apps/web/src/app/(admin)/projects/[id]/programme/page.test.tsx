@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   enabled: vi.fn(() => true), gate: vi.fn(), view: vi.fn(), solar: vi.fn(), client: vi.fn(), form: vi.fn(),
-  supabase: { from: vi.fn(), schema: vi.fn() },
+  supabase: { from: vi.fn(), schema: vi.fn(), auth: { getUser: vi.fn() } },
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: async () => h.supabase }))
 vi.mock('@/lib/programme/flag', () => ({ programmeEnabled: h.enabled }))
@@ -25,6 +25,7 @@ beforeEach(() => {
   h.gate.mockResolvedValue({ ok: true, role: 'owner' })
   h.view.mockResolvedValue({ ok: true, view, programmes: [{ id: 'g1', kind: 'project', name: 'Main', module_key: null, contractor_label: null }] })
   h.solar.mockResolvedValue('edit')
+  h.supabase.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
   // projects.projects start_date lookup
   h.supabase.schema.mockReturnValue({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { start_date: '2026-05-04' }, error: null }) }) }) }) })
 })
@@ -76,6 +77,14 @@ describe('Programme page', () => {
     h.gate.mockResolvedValue({ ok: true, role: 'contractor' })
     await run()
     expect(h.client.mock.calls[0][0]).toMatchObject({ canEdit: false })
+  })
+  it('passes the signed-in user id, so the grid remembers column choices per user', async () => {
+    await run()
+    expect(h.client.mock.calls[0][0]).toMatchObject({ userId: 'user-1' })
+    h.client.mockClear()
+    h.supabase.auth.getUser.mockResolvedValue({ data: { user: null }, error: null })
+    await run()
+    expect(h.client.mock.calls[0][0]).toMatchObject({ userId: null })
   })
   it('props are JSON only', async () => {
     await run()

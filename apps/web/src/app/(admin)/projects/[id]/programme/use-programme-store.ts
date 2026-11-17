@@ -94,6 +94,12 @@ export interface ProgrammeStoreSnapshot {
   canRedo: boolean
   undoLabel: string | null
   redoLabel: string | null
+  /**
+   * Every `key:<k>` preview id rewritten so far on this page, to its saved uuid. Views
+   * holding ids of their own (selection, an open editor) resolve them through it, so a
+   * row's save landing mid-gesture does not lose it.
+   */
+  keyIds: Readonly<Record<string, string>>
 }
 
 // ── id rewriting ────────────────────────────────────────────────────────────
@@ -225,6 +231,7 @@ export function createProgrammeStore(
 ): ProgrammeStore {
   const newKey = opts.newKey ?? defaultNewKey()
   let canEdit = opts.canEdit
+  let keyIds: Readonly<Record<string, string>> = {}
   let s: Internal = fresh(view)
   let snap = toSnapshot(s)
   let seq = 0
@@ -243,6 +250,7 @@ export function createProgrammeStore(
       unsaved: i.state !== i.saved, error: i.error, offerReload: i.offerReload,
       canUndo: canEdit && !i.stale && i.undo.length > 0, canRedo: canEdit && !i.stale && i.redo.length > 0,
       undoLabel: i.undo.at(-1)?.label ?? null, redoLabel: i.redo.at(-1)?.label ?? null,
+      keyIds,
     }
   }
   function set(next: Internal): void {
@@ -273,6 +281,7 @@ export function createProgrammeStore(
       seq += 1
       const map: Record<string, string> = {}
       for (const [k, id] of Object.entries(r.ids ?? {})) map[`key:${k}`] = id
+      if (Object.keys(map).length > 0) keyIds = { ...keyIds, ...map }
       const memo = new WeakMap<object, unknown>()
       const rw = <T>(v: T): T => (Object.keys(map).length > 0 ? rewriteIds(v, map, memo) : v)
       const rest = rw(s.queue.slice(1))

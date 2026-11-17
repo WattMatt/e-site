@@ -30,7 +30,7 @@ function api(over: Partial<ProgrammeStoreApi> = {}): ProgrammeStoreApi {
   return {
     state: v.state, version: VERSION, pending: false, stale: false, unsaved: false, error: null, offerReload: false,
     canUndo: true, canRedo: true, undoLabel: 'Add', redoLabel: null, schedule: scheduleFor(v.state),
-    newKey: vi.fn(() => 'n1-x'), apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
+    newKey: vi.fn(() => 'n1-x'), keyIds: {}, apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
   }
 }
 const renderClient = (a: ProgrammeStoreApi, canEdit = true) => {

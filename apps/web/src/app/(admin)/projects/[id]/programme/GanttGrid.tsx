@@ -23,7 +23,7 @@ import { HEADER_HEIGHT, outlineRows, ROW_HEIGHT, visibleRange, type ActivityRow,
 import type { ProgrammeStoreApi } from './use-programme-store'
 import { addOps, deleteOps, deletionSet, indentOps, moveOps, outdentOps, type NewRowKind } from './grid-ops'
 
-export type GanttGridStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey'>
+export type GanttGridStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey' | 'keyIds'>
 
 export type ColumnId = 'wbs' | 'name' | 'duration' | 'start' | 'finish' | 'float' | 'percent'
 interface ColumnDef { id: ColumnId; label: string; width: number; hideable: boolean; align?: 'right' }
@@ -92,7 +92,7 @@ export interface GanttGridProps {
 }
 
 export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, userId }: GanttGridProps) {
-  const { state, schedule, apply, newKey } = store
+  const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
 
   // ── rows ──
@@ -157,10 +157,20 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   }
 
   // ── selection ──
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [anchor, setAnchor] = useState<string | null>(null)
+  // Ids are held as given (a new row's `key:<k>`) and resolved through the store's
+  // key → uuid map, so a save landing mid-gesture keeps the selection and the open editor.
+  const resolve = useCallback((id: string) => keyIds[id] ?? id, [keyIds])
+  const [selectedRaw, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [anchorRaw, setAnchor] = useState<string | null>(null)
   const [activeCol, setActiveCol] = useState<ColumnId>('name')
   const [armed, setArmed] = useState<string[] | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  /** Only rows that are shown: a row hidden by a collapse is never acted on. */
+  const selected = useMemo(
+    () => new Set([...selectedRaw].map(resolve).filter((id) => indexOf.has(id))) as ReadonlySet<string>,
+    [selectedRaw, resolve, indexOf],
+  )
+  const anchor = anchorRaw === null ? null : resolve(anchorRaw)
   const primary = anchor !== null && selected.has(anchor) ? anchor : null
 
   const selectOnly = useCallback((id: string) => { setSelected(new Set([id])); setAnchor(id); setArmed(null) }, [])
@@ -175,6 +185,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
     const col = (e.target as HTMLElement).closest('[data-col]')?.getAttribute('data-col') as ColumnId | null
     if (col) setActiveCol(col)
     setArmed(null)
+    setNotice(null)
     if (e.shiftKey && anchor !== null && indexOf.has(anchor)) {
       const [a, b] = [indexOf.get(anchor)!, indexOf.get(id)!].sort((x, y) => x - y)
       setSelected(new Set(rows.slice(a, b + 1).map((r) => r.id)))
@@ -191,7 +202,8 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   }
 
   // ── editing ──
-  const [editing, setEditing] = useState<Editing | null>(null)
+  const [editingRaw, setEditing] = useState<Editing | null>(null)
+  const editing = editingRaw === null ? null : { ...editingRaw, id: resolve(editingRaw.id) }
   const startEdit = (a: ActivityRow, col: EditCol) => {
     if (!canEdit || !editable(a, col)) return
     const value = col === 'name' ? a.name
@@ -205,7 +217,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   }
   /** True when the edit closed (committed or nothing to do); false keeps it open as invalid. */
   const commit = (ed: Editing): boolean => {
-    const a = byId.get(ed.id)
+    const a = byId.get(resolve(ed.id))
     if (!a) return true
     let op: ProgrammeOp | null = null
     let label = ''
@@ -214,14 +226,17 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
       if (name === '' || name.length > 300) return false
       if (name !== a.name) { op = { op: 'upsert_activity', id: a.id, fields: { name } }; label = 'Rename' }
     } else if (ed.col === 'duration') {
-      const m = /^\s*(\d+)\s*d?\s*$/i.exec(ed.value)
+      // Working days, up to two decimals (the column is NUMERIC); more than zero.
+      const m = /^\s*(\d{1,5}(?:\.\d{1,2})?)\s*d?\s*$/i.exec(ed.value)
       const n = m ? Number(m[1]) : NaN
-      if (!Number.isInteger(n) || n < 1) return false
+      if (!(n > 0)) return false
       if (n !== a.original_duration) { op = { op: 'upsert_activity', id: a.id, fields: { original_duration: n } }; label = 'Change duration' }
     } else {
       const d = ed.value.trim()
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false
-      if (!(a.constraint_type === 'snet' && a.constraint_date === d)) {
+      const shown = schedule.activities.get(a.id)?.earlyStart ?? null
+      const unchanged = a.constraint_type === 'snet' ? a.constraint_date === d : a.constraint_type === null && shown === d
+      if (!unchanged) {
         op = { op: 'upsert_activity', id: a.id, fields: { constraint_type: 'snet', constraint_date: d } }
         label = 'Change start'
       }
@@ -231,12 +246,40 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   }
 
   // ── gestures ──
-  const run = (ops: ProgrammeOp[], label: string) => { if (canEdit && ops.length > 0) apply(ops, label) }
+  /** After a gesture lands, scroll its row into view (and, for a new row, open its Name). */
+  const reveal = useRef<{ id: string; edit: boolean } | null>(null)
+  useEffect(() => {
+    const r = reveal.current
+    if (!r) return
+    const id = resolve(r.id)
+    const index = indexOf.get(id)
+    if (index === undefined) return
+    reveal.current = null
+    ensureVisible(index)
+    const a = byId.get(id)
+    if (r.edit && a) startEdit(a, 'name')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the rows change, not on every helper identity
+  }, [rows, indexOf, resolve])
+
+  const run = (ops: ProgrammeOp[], label: string) => {
+    if (!canEdit || ops.length === 0) return
+    if (primary !== null) reveal.current = { id: primary, edit: false }
+    apply(ops, label)
+  }
+  const structure = (direction: 'indent' | 'outdent') => {
+    if (!canEdit || selected.size === 0) return
+    const g = direction === 'indent' ? indentOps(activities, selected) : outdentOps(activities, selected)
+    setNotice(g.error)
+    run(g.ops, direction === 'indent' ? 'Indent' : 'Outdent')
+  }
   const add = (kind: NewRowKind) => {
     if (!canEdit) return
     const key = newKey()
     const after = primary ?? rows.filter((r) => selected.has(r.id)).at(-1)?.id ?? null
+    setNotice(null)
+    reveal.current = { id: `key:${key}`, edit: true }
     if (apply(addOps(activities, after, kind, key), kind === 'task' ? 'Add task' : 'Add milestone')) selectOnly(`key:${key}`)
+    else reveal.current = null
   }
   const arm = () => { if (canEdit && selected.size > 0) setArmed(deletionSet(activities, selected)) }
   const confirmDelete = () => {
@@ -247,6 +290,13 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
 
   const onGridKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (typingInField(e.target)) return
+    // ⌥⇧→ / ⌥⇧← indent and outdent (MS Project). Tab is never taken, so focus can leave.
+    if (e.altKey && e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+      if (!canEdit || selected.size === 0) return
+      e.preventDefault()
+      structure(e.key === 'ArrowRight' ? 'indent' : 'outdent')
+      return
+    }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault()
       if (e.altKey) {
@@ -260,13 +310,15 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
       ensureVisible(next)
       return
     }
-    if (e.key === 'Escape') { setArmed(null); return }
+    if (e.key === 'Escape') {
+      setArmed(null)
+      setNotice(null)
+      setSelected(new Set())
+      setAnchor(null)
+      return
+    }
     if (!canEdit || selected.size === 0) return
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      if (e.shiftKey) run(outdentOps(activities, selected), 'Outdent')
-      else run(indentOps(activities, selected), 'Indent')
-    } else if (e.key === 'Enter') {
+    if (e.key === 'Enter') {
       const a = primary !== null ? byId.get(primary) : undefined
       if (!a) return
       e.preventDefault()
@@ -284,10 +336,12 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   })
 
   const visible = rows.slice(first, last)
+  /** A re-keyed row keeps its React key (its first id), so an open editor is not remounted. */
+  const originOf = new Map(Object.entries(keyIds).map(([k, id]) => [id, k]))
   return (
     <div data-testid="programme-grid" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div ref={scroller} data-testid="programme-grid-scroll" role="grid" aria-label="Activities"
-        aria-rowcount={rows.length} aria-multiselectable tabIndex={0}
+        aria-rowcount={rows.length + 1} aria-multiselectable tabIndex={0}
         onScroll={(e) => onScrollTop(e.currentTarget.scrollTop)} onKeyDown={onGridKey}
         style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', position: 'relative', outline: 'none', fontSize: 13 }}>
         <div role="row" style={{
@@ -311,7 +365,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
             const s = schedule.activities.get(a.id)
             const isSel = selected.has(a.id)
             return (
-              <div key={a.id} role="row" data-row-id={a.id} data-critical={s?.isCritical === true} aria-rowindex={i + 1} aria-selected={isSel}
+              <div key={originOf.get(a.id) ?? a.id} role="row" data-row-id={a.id} data-critical={s?.isCritical === true} aria-rowindex={i + 2} aria-selected={isSel}
                 onClick={(e) => onRowClick(e, a.id)} onDoubleClick={(e) => onRowDoubleClick(e, a)}
                 style={{
                   position: 'absolute', top: i * ROW_HEIGHT, left: 0, height: ROW_HEIGHT, width: totalWidth, minWidth: '100%',
@@ -361,6 +415,10 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
           <>
             <button type="button" style={button} onClick={() => add('task')}>Add task</button>
             <button type="button" style={button} onClick={() => add('milestone')}>Add milestone</button>
+            <button type="button" style={button} onClick={() => structure('indent')} disabled={selected.size === 0}
+              title="Indent under the row above (⌥⇧→)">Indent</button>
+            <button type="button" style={button} onClick={() => structure('outdent')} disabled={selected.size === 0}
+              title="Outdent; the rows below it become its sub-activities (⌥⇧←)">Outdent</button>
             <button type="button" style={button} onClick={arm} disabled={selected.size === 0}>Delete</button>
           </>
         )}
@@ -371,6 +429,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
             <button type="button" style={button} onClick={() => setArmed(null)}>Cancel</button>
           </div>
         )}
+        {notice && <span data-testid="programme-grid-notice" role="status" style={{ fontSize: 12, color: 'var(--c-red)' }}>{notice}</span>}
         <span style={{ flex: '1 1 auto' }} />
         <button type="button" style={button} aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)}>Columns</button>
         {pickerOpen && (
