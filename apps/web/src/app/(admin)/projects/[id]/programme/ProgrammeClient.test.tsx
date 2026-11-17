@@ -44,7 +44,7 @@ describe('ProgrammeClient', () => {
   it('shows the outline rows, their dates and the project finish', () => {
     const a = api()
     renderClient(a)
-    expect(screen.getByRole('list', { name: 'Activities' }).textContent).toContain('A')
+    expect(screen.getByRole('grid', { name: 'Activities' }).querySelector('[data-row-id="A"]')).not.toBeNull()
     expect(screen.getByTestId('programme-finish').textContent).toBe(a.schedule.projectFinish)
     expect(screen.getByRole('list', { name: 'Timeline' }).textContent).toMatch(/\d{4}-\d{2}-\d{2} – \d{4}-\d{2}-\d{2}/)
   })
@@ -93,6 +93,26 @@ describe('ProgrammeClient', () => {
     renderClient(b)
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(b.clearError).toHaveBeenCalled()
+  })
+
+  it('the grid and the timeline share one scroll position', () => {
+    renderClient(api())
+    fireEvent.scroll(screen.getByTestId('programme-grid-scroll'), { target: { scrollTop: 56 } })
+    expect(screen.getByTestId('programme-timeline-scroll').scrollTop).toBe(56)
+    fireEvent.scroll(screen.getByTestId('programme-timeline-scroll'), { target: { scrollTop: 28 } })
+    expect(screen.getByTestId('programme-grid-scroll').scrollTop).toBe(28)
+  })
+
+  it('collapsing a summary in the grid hides its children in the timeline too', () => {
+    const v = view()
+    const state = { ...v.state, dependencies: [], activities: [
+      { ...v.state.activities[0], id: 'P', name: 'P', type: 'summary', original_duration: 0 },
+      { ...v.state.activities[1], id: 'K', name: 'K', parent_id: 'P' },
+    ] } as ProgrammeState
+    renderClient(api({ state, schedule: scheduleFor(state) }))
+    expect(screen.getByRole('list', { name: 'Timeline' }).children).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse P' }))
+    expect(screen.getByRole('list', { name: 'Timeline' }).children).toHaveLength(1)
   })
 
   it('the splitter resizes the grid between 30 and 70 per cent', () => {
