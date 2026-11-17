@@ -86,6 +86,13 @@ describe('Programme page', () => {
     await run()
     expect(h.client.mock.calls[0][0]).toMatchObject({ userId: null })
   })
+  it('keys the client by programme id, so switching programmes mounts a fresh client and store', async () => {
+    const a = await Page({ params, searchParams: Promise.resolve({}) }) as unknown as { key: string | null }
+    expect(a.key).toBe('g1')
+    h.view.mockResolvedValue({ ok: true, view: { ...view, state: { programme: { id: 'g9', kind: 'project', name: 'Contractor' } } }, programmes: [] })
+    const b = await Page({ params, searchParams: Promise.resolve({ programme: 'g9' }) }) as unknown as { key: string | null }
+    expect(b.key).toBe('g9')
+  })
   it('props are JSON only', async () => {
     await run()
     for (const v of Object.values(h.client.mock.calls[0][0])) expect(JSON.parse(JSON.stringify(v))).toEqual(v)

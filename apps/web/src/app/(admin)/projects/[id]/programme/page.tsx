@@ -65,5 +65,7 @@ export default async function ProgrammePage({ params, searchParams }: {
   // Keys the grid's remembered column choice; null keeps it per browser.
   const { data: auth } = await supabase.auth.getUser()
   const userId = auth?.user?.id ?? null
-  return <ProgrammeClient projectId={id} view={loaded.view} canEdit={canEdit} programmes={loaded.programmes} userId={userId} />
+  // Keyed by programme: the switcher pushes ?programme= on the same route segment, and without a
+  // key React would keep the old client and its store (still showing and saving the old programme).
+  return <ProgrammeClient key={loaded.view.state.programme.id} projectId={id} view={loaded.view} canEdit={canEdit} programmes={loaded.programmes} userId={userId} />
 }
