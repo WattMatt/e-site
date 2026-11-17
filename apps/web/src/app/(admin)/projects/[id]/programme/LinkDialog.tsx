@@ -95,7 +95,7 @@ export function LinkDialog({ dep, predName, succName, canEdit, onApply, onClose 
               </select>
             </label>
           </div>
-          {invalid && <span role="status" style={{ color: 'var(--c-red)', fontSize: 12 }}>The lag is a number of days, up to two decimals.</span>}
+          {invalid && <span role="status" style={{ color: 'var(--c-red)', fontSize: 12 }}>{unit === 'percent' ? 'The lag is a percentage, up to two decimals.' : 'The lag is a number of days, up to two decimals.'}</span>}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {armed ? (
               <>

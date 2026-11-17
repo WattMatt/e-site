@@ -7,7 +7,7 @@
  * Coordinates are content pixels: x from the timescale origin, y from the top of row 0.
  */
 import {
-  barX, buildEngineCalendar, DAY_WIDTH, displayStart, ROW_HEIGHT, rowsToProgrammeInput, startOf, xOfDate,
+  barX, buildEngineCalendar, DAY_WIDTH, displayFinish, displayStart, ROW_HEIGHT, rowsToProgrammeInput, startOf, xOfDate,
   type ActivityRow, type CalendarDate, type EngineCalendar, type LinkType, type ProgrammeState, type Timescale, type Zoom,
 } from '@esite/shared/programme'
 
@@ -61,7 +61,11 @@ export function barGeometry(
   const top = index * ROW_HEIGHT
   const midY = top + ROW_HEIGHT / 2
   if (kind === 'milestone') {
-    const { x } = barX(scale, dates.earlyStart, dates.earlyStart, true)
+    // The moment by type: a finish milestone is the END of its display day (after its
+    // predecessor's last day), a start milestone the start of its day.
+    const x = type === 'finish_milestone'
+      ? xOfDate(scale, dates.earlyFinish) + scale.dayWidth
+      : barX(scale, dates.earlyStart, dates.earlyStart, true).x
     return { id, kind, index, x, width: 0, y: midY - MILESTONE_HALF, height: MILESTONE_HALF * 2, midY, floatTo: null }
   }
   const { x, width } = barX(scale, dates.earlyStart, dates.earlyFinish)
@@ -92,6 +96,12 @@ const SIDES: Record<LinkType, ['start' | 'end', 'start' | 'end']> = {
 export function linkPoints(type: LinkType, pred: BarGeometry, succ: BarGeometry): Array<{ x: number; y: number }> {
   const [ps, ss] = SIDES[type]
   const p = barPoint(pred, ps)
+  // Into a milestone on another row, drop vertically onto the diamond's tip when its centre
+  // lies on the side the link travels towards: no backwards hook into a point.
+  if (succ.kind === 'milestone' && succ.midY !== p.y && (ss === 'start' ? succ.x >= p.x : succ.x <= p.x)) {
+    const tipY = succ.midY + (succ.midY > p.y ? -MILESTONE_HALF : MILESTONE_HALF)
+    return succ.x === p.x ? [p, { x: succ.x, y: tipY }] : [p, { x: succ.x, y: p.y }, { x: succ.x, y: tipY }]
+  }
   const q = barPoint(succ, ss)
   const outX = p.x + (ps === 'end' ? LINK_STUB : -LINK_STUB)
   const inX = q.x + (ss === 'start' ? -LINK_STUB : LINK_STUB)
@@ -172,6 +182,16 @@ export function workingDaysInclusive(cal: EngineCalendar | null, start: Calendar
 /** The new start for a move of `dx` px: whole days, snapped forward to a working day. */
 export function movedStart(scale: Scale, cal: EngineCalendar | null, start: CalendarDate, dx: number): CalendarDate {
   return snapForward(cal, addDays(start, Math.round(dx / scale.dayWidth)))
+}
+
+/**
+ * The display finish of `duration` working days from `start` on the calendar, as the engine
+ * places it (`addWork` to a finish instant, then `displayFinish`); calendar days without one.
+ */
+export function finishAfter(cal: EngineCalendar | null, start: CalendarDate, duration: number): CalendarDate {
+  if (duration <= 0) return start
+  if (!cal) return addDays(start, Math.ceil(duration) - 1)
+  return displayFinish(cal, cal.addWork(cal.snapStart(startOf(start)), duration, 'finish'))
 }
 
 /** The new duration for a right-edge drag of `dx` px: working days from start to the day the edge lands on. */

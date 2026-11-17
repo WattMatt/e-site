@@ -22,14 +22,14 @@ import {
   type CSSProperties, type PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
-  DAY_WIDTH, HEADER_HEIGHT, outlineRows, ROW_HEIGHT, timescale, visibleRange, xOfDate,
+  barX, DAY_WIDTH, HEADER_HEIGHT, outlineRows, ROW_HEIGHT, timescale, visibleRange, xOfDate,
   type ActivityRow, type CalendarDate, type ProgrammeOp, type Zoom,
 } from '@esite/shared/programme'
 import type { ActiveBaselineView } from '@/lib/programme/view-types'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import {
-  addDays, BAR_HEIGHT, BASELINE_HEIGHT, BASELINE_TOP, barGeometry, fitZoom, HANDLE_OFFSET, HANDLE_RADIUS, hitTest,
-  linkPoints, MILESTONE_HALF, movedStart, pathD, resizedDuration, scrollLeftAround, timelineCalendars, ZOOMS, zoomStep,
+  BAR_HEIGHT, BASELINE_HEIGHT, BASELINE_TOP, barGeometry, finishAfter, fitZoom, HANDLE_OFFSET, HANDLE_RADIUS, hitTest,
+  linkPoints, MILESTONE_HALF, movedStart, pathD, resizedDuration, scrollLeftAround, timelineCalendars, workingDaysInclusive, ZOOMS, zoomStep,
   type BarGeometry, type Hit,
 } from './timeline-geometry'
 import { LinkDialog } from './LinkDialog'
@@ -55,6 +55,9 @@ export interface GanttTimelineProps {
 
 const OVERSCAN = 10
 const DRAG_SLOP = 3
+/** Accumulated wheel delta per zoom step (a mouse notch is 100–120), and the least time between steps. */
+const WHEEL_STEP = 100
+const WHEEL_GAP_MS = 150
 const ZOOM_LABEL: Record<Zoom, string> = { day: 'Days', week: 'Weeks', month: 'Months', quarter: 'Quarters', year: 'Years' }
 const button: CSSProperties = {
   padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-panel)',
@@ -92,6 +95,10 @@ export function GanttTimeline({
   )
   const indexOf = useMemo(() => new Map(rows.map((r, i) => [r.id, i])), [rows])
 
+  const [autoToday, setAutoToday] = useState<CalendarDate | null>(null)
+  useEffect(() => { if (todayProp === undefined) setAutoToday(localToday()) }, [todayProp])
+  const today = todayProp === undefined ? autoToday : todayProp
+
   // ── scale ──
   const range = useMemo(() => {
     let lo = state.programme.project_start
@@ -99,18 +106,15 @@ export function GanttTimeline({
     const see = (d: string | null | undefined) => { if (!d) return; if (d < lo) lo = d; if (d > hi) hi = d }
     for (const s of schedule.activities.values()) { see(s.earlyStart); see(s.earlyFinish); see(s.lateFinish) }
     see(state.programme.data_date)
+    see(today)
     if (activeBaseline) for (const b of Object.values(activeBaseline.activities)) { see(b.early_start); see(b.early_finish) }
     return { lo, hi }
-  }, [state.programme.project_start, state.programme.data_date, schedule, activeBaseline])
+  }, [state.programme.project_start, state.programme.data_date, schedule, activeBaseline, today])
   const scale = useMemo(() => timescale(range.lo, range.hi, zoom), [range, zoom])
   const calendars = useMemo(
     () => timelineCalendars({ programme: state.programme, calendars: state.calendars, exceptions: state.exceptions }),
     [state.programme, state.calendars, state.exceptions],
   )
-
-  const [autoToday, setAutoToday] = useState<CalendarDate | null>(null)
-  useEffect(() => { if (todayProp === undefined) setAutoToday(localToday()) }, [todayProp])
-  const today = todayProp === undefined ? autoToday : todayProp
 
   // ── scroll + viewport ──
   const scroller = useRef<HTMLDivElement>(null)
@@ -152,13 +156,25 @@ export function GanttTimeline({
   }, [zoom, onZoom])
 
   // ⌘/Ctrl + wheel zooms around the date under the cursor (a native listener: React's is passive).
+  // Deltas accumulate, so a trackpad pinch (dozens of small ctrl+wheel events) steps one level
+  // per WHEEL_STEP units and at most once per WHEEL_GAP_MS, as one mouse notch does.
+  const wheel = useRef({ acc: 0, last: -Infinity })
   useEffect(() => {
     const el = scroller.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.deltaY === 0) return
+      if (!(e.metaKey || e.ctrlKey)) { wheel.current.acc = 0; return }
       e.preventDefault()
-      const next = zoomStep(zoom, e.deltaY < 0 ? 'in' : 'out')
+      const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1)
+      if (dy === 0) return
+      const w = wheel.current
+      if (Math.sign(dy) !== Math.sign(w.acc)) w.acc = 0
+      w.acc += dy
+      const now = Date.now()
+      if (Math.abs(w.acc) < WHEEL_STEP || now - w.last < WHEEL_GAP_MS) return
+      const next = zoomStep(zoom, w.acc < 0 ? 'in' : 'out')
+      w.acc = 0
+      w.last = now
       const offset = e.clientX - el.getBoundingClientRect().left
       zoomTo(next, scrollLeftAround(el.scrollLeft, offset, DAY_WIDTH[zoom], DAY_WIDTH[next]))
     }
@@ -204,15 +220,19 @@ export function GanttTimeline({
     return { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }
   }
 
+  const dragging = drag !== null
   useEffect(() => {
-    if (!drag) return
+    if (!dragging) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setDragBoth(null) } }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [drag])
+  }, [dragging])
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
+    // A press on a link belongs to the link (its click opens the dialog), even where its
+    // first stub runs through a bar's link-handle zone.
+    if (e.target instanceof Element && e.target.closest('[data-part="link-hit"]')) return
     const { x, y } = local(e)
     const hit = hitTest(bars, x, y, canEdit)
     if (!hit) return
@@ -303,8 +323,9 @@ export function GanttTimeline({
       const pts = linkPoints(dep.type, p, q)
       const tip = pts[pts.length - 1]
       const prev = pts[pts.length - 2]
-      const dir = Math.sign(tip.x - prev.x) || 1
-      const arrow = `M${tip.x} ${tip.y} L${tip.x - dir * 5} ${tip.y - 4} L${tip.x - dir * 5} ${tip.y + 4} Z`
+      const arrow = tip.x === prev.x
+        ? (() => { const dy = Math.sign(tip.y - prev.y) || 1; return `M${tip.x} ${tip.y} L${tip.x - 4} ${tip.y - dy * 5} L${tip.x + 4} ${tip.y - dy * 5} Z` })()
+        : (() => { const dx = Math.sign(tip.x - prev.x) || 1; return `M${tip.x} ${tip.y} L${tip.x - dx * 5} ${tip.y - 4} L${tip.x - dx * 5} ${tip.y + 4} Z` })()
       const driving = schedule.drivingLinkIds.has(dep.id)
       const critical = driving && schedule.activities.get(dep.pred_id)?.isCritical && schedule.activities.get(dep.succ_id)?.isCritical
       out.push({
@@ -328,17 +349,25 @@ export function GanttTimeline({
       return <line data-testid="timeline-link-preview" x1={g.kind === 'milestone' ? g.x + MILESTONE_HALF : g.x + g.width} y1={g.midY}
         x2={drag.x} y2={drag.y} stroke="var(--c-text)" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />
     }
+    // The same working-day maths as the commit and the engine: snap the start forward, then
+    // place the working-day span on the activity's calendar.
     const cal = calendars.forActivity(a.calendar_id)
-    if (drag.mode === 'move') {
-      const x = xOfDate(scale, movedStart(scale, cal, s.earlyStart, dx))
-      const width = Math.max(g.width, MILESTONE_HALF * 2)
-      return <rect data-testid="timeline-preview" x={g.kind === 'milestone' ? x - MILESTONE_HALF : x} y={g.index * ROW_HEIGHT + 5} width={width} height={BAR_HEIGHT}
+    const outline = (x: number, width: number) => (
+      <rect data-testid="timeline-preview" x={x} y={g.index * ROW_HEIGHT + 5} width={width} height={BAR_HEIGHT}
         rx={3} fill="none" stroke="var(--c-text)" strokeWidth={1.5} pointerEvents="none" />
+    )
+    if (drag.mode === 'move') {
+      const start = movedStart(scale, cal, s.earlyStart, dx)
+      if (g.kind === 'milestone') {
+        const m = barGeometry(scale, g.id, a.type, g.index, { earlyStart: start, earlyFinish: start })
+        return outline(m.x - MILESTONE_HALF, MILESTONE_HALF * 2)
+      }
+      const span = barX(scale, start, finishAfter(cal, start, workingDaysInclusive(cal, s.earlyStart, s.earlyFinish)))
+      return outline(span.x, span.width)
     }
-    const finish = addDays(s.earlyFinish, Math.round(dx / scale.dayWidth))
-    const width = Math.max(scale.dayWidth, xOfDate(scale, finish) + scale.dayWidth - g.x)
-    return <rect data-testid="timeline-preview" x={g.x} y={g.index * ROW_HEIGHT + 5} width={width} height={BAR_HEIGHT}
-      rx={3} fill="none" stroke="var(--c-text)" strokeWidth={1.5} pointerEvents="none" />
+    const duration = resizedDuration(scale, cal, s.earlyStart, s.earlyFinish, dx)
+    const span = barX(scale, s.earlyStart, finishAfter(cal, s.earlyStart, duration))
+    return outline(span.x, span.width)
   })()
 
   const xMin = viewport.width > 0 ? scrollLeft - 200 : -Infinity
@@ -424,7 +453,11 @@ export function GanttTimeline({
       }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-dim)' }}>
           Zoom
-          <select aria-label="Zoom" value={zoom} onChange={(e) => zoomTo(e.target.value as Zoom, null)}
+          <select aria-label="Zoom" value={zoom} onChange={(e) => {
+              const next = e.target.value as Zoom
+              const el = scroller.current
+              zoomTo(next, el ? scrollLeftAround(el.scrollLeft, el.clientWidth / 2, DAY_WIDTH[zoom], DAY_WIDTH[next]) : null)
+            }}
             style={{ ...button, padding: '3px 6px' }}>
             {ZOOMS.map((z) => <option key={z} value={z}>{ZOOM_LABEL[z]}</option>)}
           </select>

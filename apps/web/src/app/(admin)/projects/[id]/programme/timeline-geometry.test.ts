@@ -32,9 +32,14 @@ describe('barGeometry', () => {
     expect(barGeometry(scale, 'A', 'task', 0, { earlyStart: '2026-03-02', earlyFinish: '2026-03-04', lateFinish: '2026-03-04' }).floatTo).toBeNull()
   })
 
-  it('a milestone is a diamond centred on its date; a summary is a thinner bracket bar; level of effort draws as a task', () => {
-    const m = barGeometry(scale, 'M', 'finish_milestone', 1, { earlyStart: '2026-03-05', earlyFinish: '2026-03-05' })
-    expect(m).toMatchObject({ kind: 'milestone', x: X0 + 3 * 36, width: 0, height: MILESTONE_HALF * 2 })
+  it('a milestone is a diamond at its moment: a finish milestone at the END of its day, a start milestone at the start', () => {
+    const f = barGeometry(scale, 'F', 'finish_milestone', 1, { earlyStart: '2026-03-05', earlyFinish: '2026-03-05' })
+    expect(f).toMatchObject({ kind: 'milestone', x: X0 + 4 * 36, width: 0, height: MILESTONE_HALF * 2 })
+    const st = barGeometry(scale, 'S', 'start_milestone', 1, { earlyStart: '2026-03-05', earlyFinish: '2026-03-05' })
+    expect(st.x).toBe(X0 + 3 * 36)
+  })
+
+  it('a summary is a thinner bracket bar; level of effort draws as a task', () => {
     const s = barGeometry(scale, 'S', 'module_summary', 0, { earlyStart: '2026-03-02', earlyFinish: '2026-03-03' })
     expect(s.kind).toBe('summary')
     expect(s.height).toBeLessThan(BAR_HEIGHT)
@@ -56,6 +61,16 @@ describe('linkPoints', () => {
   ] as const)('%s leaves the predecessor and meets the successor on the right sides', (type, fromX, toX) => {
     const pts = linkPoints(type, pred, succ)
     expect(ends(pts)).toEqual([{ x: fromX, y: pred.midY }, { x: toX, y: succ.midY }])
+  })
+
+  it('a task → finish milestone FS link does not hook backwards: it drops into the diamond from above', () => {
+    const t = barGeometry(scale, 'T', 'task', 0, { earlyStart: '2026-03-02', earlyFinish: '2026-03-03' }) // ends x 324
+    const m = barGeometry(scale, 'M', 'finish_milestone', 1, { earlyStart: '2026-03-03', earlyFinish: '2026-03-03' })
+    expect(m.x).toBe(324)
+    const pts = linkPoints('FS', t, m)
+    expect(pts[0]).toEqual({ x: 324, y: t.midY })
+    expect(pts.at(-1)).toEqual({ x: 324, y: m.midY - MILESTONE_HALF })
+    for (const pt of pts) expect(pt.x).toBeGreaterThanOrEqual(324)
   })
 
   it('every segment is horizontal or vertical', () => {

@@ -2,7 +2,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { useState } from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import {
-  rowsToProgrammeInput, scheduleProgramme, type ProgrammeOp, type ProgrammeState, type ScheduleResult, type Zoom,
+  applyOps, barX, rowsToProgrammeInput, scheduleProgramme, timescale,
+  type ProgrammeOp, type ProgrammeState, type ScheduleResult, type Zoom,
 } from '@esite/shared/programme'
 import { activityRow, calendarRow, dependencyRow, programmeRow } from '@/lib/programme/test-fixtures'
 import type { ActiveBaselineView } from '@/lib/programme/view-types'
@@ -13,16 +14,16 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
 
 type Row = Record<string, unknown>
 
-function stateOf(activities: Row[], dependencies: Row[] = [], programme: Row = {}): ProgrammeState {
+function stateOf(activities: Row[], dependencies: Row[] = [], programme: Row = {}, exceptions: Row[] = []): ProgrammeState {
   return {
-    programme: programmeRow(programme), calendars: [calendarRow('SITE')], exceptions: [],
+    programme: programmeRow(programme), calendars: [calendarRow('SITE')], exceptions,
     activities, dependencies, codeTypes: [], codeValues: [], activityCodes: [],
     fieldUpdateActivityIds: [], assignmentActivityIds: [], baselineActivityIds: [],
   } as unknown as ProgrammeState
 }
 
-function storeOf(activities: Row[], dependencies: Row[] = [], opts: { schedule?: ScheduleResult; programme?: Row; apply?: boolean } = {}) {
-  const state = stateOf(activities, dependencies, opts.programme)
+function storeOf(activities: Row[], dependencies: Row[] = [], opts: { schedule?: ScheduleResult; programme?: Row; apply?: boolean; exceptions?: Row[] } = {}) {
+  const state = stateOf(activities, dependencies, opts.programme, opts.exceptions)
   let n = 0
   return {
     state,
@@ -82,7 +83,7 @@ class TestPointerEvent extends MouseEvent {
   constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 0 }
 }
 beforeEach(() => { vi.stubGlobal('PointerEvent', TestPointerEvent) })
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('GanttTimeline: drawing', () => {
   it('renders at most 60 bar groups for 5,000 activities, and only links touching visible rows', () => {
@@ -218,10 +219,15 @@ describe('GanttTimeline: drag', () => {
     const store = storeOf([
       activityRow('S', { type: 'summary', sort_order: 1, original_duration: 0 }),
       activityRow('A', { parent_id: 'S', sort_order: 1 }),
+      activityRow('M', { type: 'start_milestone', sort_order: 2, original_duration: 0 }),
     ])
     render(<Harness store={store} />)
     drag([280, 14], [280 + 3 * 36, 14])
     expect(store.apply).not.toHaveBeenCalled()
+    // M (row 2, centre y 70) is a diamond at the start of Mon 2, x 252: a drag just right of its centre moves it.
+    drag([254, 70], [254 + 2 * 36, 70])
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    expect(opsOf(store)).toEqual([{ op: 'upsert_activity', id: 'M', fields: { constraint_type: 'snet', constraint_date: '2026-03-04' } }])
   })
 
   it('read-only: no handles, and a drag produces no op', () => {
@@ -241,6 +247,55 @@ describe('GanttTimeline: drag', () => {
     drag([280, 14], [280, 14])
     expect(store.apply).not.toHaveBeenCalled()
     expect(onSelect).toHaveBeenCalledWith('A', 'only')
+  })
+
+  it('the move preview spans the working days the engine will schedule (weekend and holiday inside)', () => {
+    const holiday = [{ id: 'E1', calendar_id: 'SITE', day: '2026-03-09', kind: 'non_work', label: 'Holiday' }]
+    const store = storeOf([activityRow('A', { sort_order: 1, original_duration: 5 })], [], { exceptions: holiday })
+    render(<Harness store={store} />)
+    // A: Mon 2 – Fri 6. Two days right: starts Wed 4, so Wed 4, Thu 5, Fri 6, Tue 10, Wed 11.
+    fireEvent.pointerDown(body(), { clientX: 280, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerMove(body(), { clientX: 280 + 2 * 36, clientY: 14, pointerId: 1 })
+    const pv = screen.getByTestId('timeline-preview')
+    const shown = { x: Number(pv.getAttribute('x')), width: Number(pv.getAttribute('width')) }
+    fireEvent.pointerUp(body(), { clientX: 280 + 2 * 36, clientY: 14, pointerId: 1 })
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    const after = scheduleProgramme(rowsToProgrammeInput(applyOps(store.state, opsOf(store)))).activities.get('A')!
+    expect(after.earlyFinish).toBe('2026-03-11')
+    expect(shown).toEqual(barX(timescale('2026-03-02', '2026-03-06', 'day'), after.earlyStart, after.earlyFinish))
+  })
+
+  it('the resize preview ends where the engine will finish: a drop on a weekend previews the Friday', () => {
+    const holiday = [{ id: 'E1', calendar_id: 'SITE', day: '2026-03-09', kind: 'non_work', label: 'Holiday' }]
+    const store = storeOf([activityRow('A', { sort_order: 1, original_duration: 5 })], [], { exceptions: holiday })
+    render(<Harness store={store} />)
+    const scale = timescale('2026-03-02', '2026-03-06', 'day')
+    // A ends at x 432 (end of Fri 6). One day right lands on Sat 7: still Fri 6.
+    fireEvent.pointerDown(body(), { clientX: 429, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerMove(body(), { clientX: 429 + 36, clientY: 14, pointerId: 1 })
+    expect(Number(screen.getByTestId('timeline-preview').getAttribute('width'))).toBe(barX(scale, '2026-03-02', '2026-03-06').width)
+    // Four days right lands on Tue 10 (Mon 9 is a holiday): 6 working days, finishing Tue 10.
+    fireEvent.pointerMove(body(), { clientX: 429 + 4 * 36, clientY: 14, pointerId: 1 })
+    const width = Number(screen.getByTestId('timeline-preview').getAttribute('width'))
+    fireEvent.pointerUp(body(), { clientX: 429 + 4 * 36, clientY: 14, pointerId: 1 })
+    expect(opsOf(store)).toEqual([{ op: 'upsert_activity', id: 'A', fields: { original_duration: 6 } }])
+    const after = scheduleProgramme(rowsToProgrammeInput(applyOps(store.state, opsOf(store)))).activities.get('A')!
+    expect(after.earlyFinish).toBe('2026-03-10')
+    expect(width).toBe(barX(scale, after.earlyStart, after.earlyFinish).width)
+  })
+
+  it('a click on the first pixels of an FS link (over the handle zone) opens the link, not a drag', () => {
+    const onSelect = vi.fn()
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} onSelect={onSelect} />)
+    const hit = document.querySelector('[data-link-id="D1"] [data-part="link-hit"]') as Element
+    // A ends at x 324; its handle zone is centred at 332 on y 14, where the link's first stub runs.
+    fireEvent.pointerDown(hit, { clientX: 330, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerUp(hit, { clientX: 330, clientY: 14, pointerId: 1 })
+    fireEvent.click(hit)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(store.apply).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Link A → B' })).toBeTruthy()
   })
 
   it('a refused move leaves nothing pending: the next drag still works', () => {
@@ -305,16 +360,42 @@ describe('GanttTimeline: link dialog', () => {
 })
 
 describe('GanttTimeline: zoom and navigation', () => {
-  it('⌘/Ctrl + wheel zooms in and out; a plain wheel does not', () => {
+  it('a mouse wheel notch with ⌘/Ctrl steps one level and stops the page zoom; a plain wheel does nothing', () => {
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     const onZoom = vi.fn()
     const store = storeOf(two(), linked())
     render(<Harness store={store} onZoom={onZoom} initialZoom="week" />)
     const scroll = screen.getByTestId('programme-timeline-scroll')
-    fireEvent.wheel(scroll, { deltaY: 100 })
+    expect(fireEvent.wheel(scroll, { deltaY: 120 })).toBe(true)
     expect(onZoom).not.toHaveBeenCalled()
-    fireEvent.wheel(scroll, { deltaY: -100, metaKey: true })
+    expect(fireEvent.wheel(scroll, { deltaY: -120, metaKey: true })).toBe(false)
+    expect(onZoom).toHaveBeenCalledTimes(1)
     expect(onZoom).toHaveBeenLastCalledWith('day')
-    fireEvent.wheel(scroll, { deltaY: 100, ctrlKey: true })
+    now += 200
+    // One large notch is still one level.
+    fireEvent.wheel(scroll, { deltaY: 480, ctrlKey: true })
+    expect(onZoom).toHaveBeenCalledTimes(2)
+    expect(onZoom).toHaveBeenLastCalledWith('week')
+  })
+
+  it('a trackpad pinch (many small ctrl+wheel deltas) steps one level per ~120 units, at most one per 150 ms', () => {
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const onZoom = vi.fn()
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} onZoom={onZoom} initialZoom="week" />)
+    const scroll = screen.getByTestId('programme-timeline-scroll')
+    // 40 events of 4 units, 5 ms apart: 160 units in 200 ms is one level, not five.
+    for (let i = 0; i < 40; i++) { fireEvent.wheel(scroll, { deltaY: 4, ctrlKey: true }); now += 5 }
+    expect(onZoom).toHaveBeenCalledTimes(1)
+    expect(onZoom).toHaveBeenLastCalledWith('month')
+    // A change of direction starts counting again: 60 back is not enough.
+    now += 200
+    for (let i = 0; i < 15; i++) { fireEvent.wheel(scroll, { deltaY: -4, ctrlKey: true }); now += 5 }
+    expect(onZoom).toHaveBeenCalledTimes(1)
+    for (let i = 0; i < 20; i++) { fireEvent.wheel(scroll, { deltaY: -4, ctrlKey: true }); now += 5 }
+    expect(onZoom).toHaveBeenCalledTimes(2)
     expect(onZoom).toHaveBeenLastCalledWith('week')
   })
 
@@ -327,9 +408,16 @@ describe('GanttTimeline: zoom and navigation', () => {
     // 4 days + 14 days of padding = 18 days fit 1,000 px at day zoom.
     fireEvent.click(screen.getByRole('button', { name: 'Fit programme' }))
     expect(onZoom).toHaveBeenLastCalledWith('day')
+  })
+
+  it('Scroll to today centres today, even when today is past the end of the programme', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} today="2026-06-01" initialZoom="day" />)
     const scroll = screen.getByTestId('programme-timeline-scroll')
     scroll.scrollLeft = 0
     fireEvent.click(screen.getByRole('button', { name: 'Scroll to today' }))
-    expect(scroll.scrollLeft).toBe(Math.max(0, 9 * 36 - 500))
+    // Origin 2026-02-23; 2026-06-01 is 98 days later.
+    expect(scroll.scrollLeft).toBe(98 * 36 - 500)
+    expect(parseFloat(screen.getByTestId('programme-timeline-spacer').style.width)).toBeGreaterThan(98 * 36)
   })
 })
