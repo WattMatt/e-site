@@ -12,8 +12,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import type { Zoom } from '@esite/shared/programme'
 import type { ProgrammeSummary, ProgrammeViewData } from '@/lib/programme/view-types'
 import { PROGRAMME_STALE } from '@/lib/programme/action-types'
+import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
 import { useProgrammeStore } from './use-programme-store'
-import { GanttGrid, useHiddenColumns, type GridSelection } from './GanttGrid'
+import { GanttGrid, GRID_COLUMNS, useHiddenColumns, type ColumnId, type GridSelection } from './GanttGrid'
 import { GanttTimeline } from './GanttTimeline'
 import { GanttToolbar } from './GanttToolbar'
 import { buildDisplayRows, filtersActive, GROUP_BY_WBS, NO_FILTERS, type Filters, type GroupBy } from './display-rows'
@@ -21,6 +22,9 @@ import { NO_GRID_UI, type GridCommands, type GridUi, type TimelineCommands } fro
 
 export const SPLIT_MIN = 30
 export const SPLIT_MAX = 70
+/** On a phone the grid keeps only these; every other hideable column is hidden. */
+export const PHONE_COLUMNS: readonly ColumnId[] = ['name', 'start', 'finish']
+const PHONE_HIDDEN: ColumnId[] = GRID_COLUMNS.filter((c) => !PHONE_COLUMNS.includes(c.id)).map((c) => c.id)
 const clampSplit = (n: number) => Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, n))
 
 /** True when keystrokes belong to a field, not to the screen. */
@@ -69,6 +73,8 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [groupBy, setGroupBy] = useState<GroupBy>(GROUP_BY_WBS)
   const columns = useHiddenColumns(userId)
+  const phone = usePhoneViewport()
+  const [showTimeline, setShowTimeline] = useState(false)
   const gridCommands = useRef<GridCommands | null>(null)
   const timelineCommands = useRef<TimelineCommands | null>(null)
   const [gridUi, setGridUi] = useState<GridUi>(NO_GRID_UI)
@@ -113,9 +119,14 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
             : <button type="button" style={button} onClick={store.clearError}>Dismiss</button>}
         </div>
       )}
-      <SplitView split={split} onSplit={setSplit}
+      {phone && (
+        <div style={{ marginBottom: 8 }}>
+          <button type="button" style={button} aria-pressed={showTimeline} onClick={() => setShowTimeline((v) => !v)}>Timeline</button>
+        </div>
+      )}
+      <SplitView split={split} onSplit={setSplit} phone={phone} showTimeline={showTimeline}
         left={<GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
-          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={columns.hidden}
+          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={phone ? PHONE_HIDDEN : columns.hidden}
           commandsRef={gridCommands} onUi={setGridUi} structureLocked={structureLocked} selection={selection} onSelection={setSelection} />}
         right={<GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
           collapsed={collapsed} selected={selection.ids} onSelect={selectFromTimeline}
@@ -125,8 +136,10 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
 }
 
 /** Grid left (`split` %) and timeline right, each scrolling itself, with a pointer-driven splitter. */
-function SplitView({ split, onSplit, left, right }: {
+function SplitView({ split, onSplit, left, right, phone, showTimeline }: {
   split: number; onSplit: (n: number) => void; left: ReactNode; right: ReactNode
+  /** Below 768 px one pane at a time: the grid, or the timeline once its toggle is pressed. */
+  phone: boolean; showTimeline: boolean
 }) {
   const box = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
@@ -147,6 +160,16 @@ function SplitView({ split, onSplit, left, right }: {
   const onUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     dragging.current = false
     e.currentTarget.releasePointerCapture?.(e.pointerId)
+  }
+  if (phone) {
+    return (
+      <div ref={box} data-testid="programme-split"
+        style={{ height: 'calc(100vh - 260px)', minHeight: 320, border: '1px solid var(--c-border)', borderRadius: 8, overflow: 'hidden', maxWidth: '100%' }}>
+        {showTimeline
+          ? <div style={{ height: '100%', minWidth: 0 }}>{right}</div>
+          : <div data-testid="programme-grid-pane" style={{ height: '100%', minWidth: 0 }}>{left}</div>}
+      </div>
+    )
   }
   return (
     <div ref={box} data-testid="programme-split"

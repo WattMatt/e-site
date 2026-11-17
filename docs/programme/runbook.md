@@ -94,3 +94,28 @@ If the head is `00261` or higher, renumber the file above it. Re-run the `@verif
 - `decideFieldUpdatesAction` reads the field updates with `.in(ids)`. At the 500-decision limit the URL is about 18.5 KB. Consider a limit of 200 until it is measured.
 - The action's early version check compares to the millisecond; `save_changes` then compares exactly under the lock, so it only ever fails safe.
 - No web test makes a positive module-programme save; the role assertions cover it in SQL.
+
+## 4. Turning the screen on for a test (P3)
+
+`PROGRAMME_ENABLED` is a global switch: setting it on Production shows the Programme screen to every project, so do not use it to try the screen out. Verify on a Vercel Preview deployment instead.
+
+1. Apply the P2 migration first and confirm it (section 1), then do the PostgREST `db_schema` PATCH. The screen reads through the programme tables and fails without both.
+2. In Vercel, add `PROGRAMME_ENABLED=true` for the **Preview** environment only (leave Production and Development unset). Redeploy the branch so the Preview build picks it up.
+3. Open the Preview URL, sign in as an owner/admin/project manager, and open the project. The sidebar now shows Programme.
+4. Run the signed-in walk (below) against the Preview URL, then remove the Preview variable if the screen is not meant to stay on.
+
+### The signed-in walk (`apps/web/e2e/tests/13-programme.spec.ts`)
+
+It starts at the projects list, opens the project, goes to Programme, creates a programme, adds three tasks, links them, checks the finish date moves, saves a baseline, drags the middle task, checks the baseline bar differs, undoes, then reloads and checks the changes persisted. It writes to the named project and removes nothing, so use a throwaway project that has **no programme yet**.
+
+| Variable | Meaning |
+|---|---|
+| `E2E_PROGRAMME_PROJECT_ID` | The throwaway project (uuid). The spec skips when this is unset. |
+| `BASE_URL` | The Preview URL (default `http://localhost:3000`). |
+| `E2E_USER_EMAIL` / `E2E_USER_PASSWORD` | The signed-in owner account used by `auth.setup`. |
+
+Run: `E2E_PROGRAMME_PROJECT_ID=<uuid> BASE_URL=<preview url> pnpm --filter web test:e2e --project=chromium-owner 13-programme`. The Vercel deployment-protection bypass may be needed for the Preview URL.
+
+On a phone (under 768 px) the grid shows Name, Start and Finish only and the timeline sits behind a Timeline toggle. The spec also resizes to 390 px and checks the page does not scroll sideways.
+
+The 5,000-activity store test only asserts its 2 s wall-clock limit when `PERF_STRICT` is set.

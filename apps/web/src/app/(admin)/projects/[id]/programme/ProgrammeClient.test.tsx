@@ -451,4 +451,33 @@ describe('ProgrammeClient: a baseline change refreshes the view, not the store',
       view={{ ...view(), baselines: [{ id: 'b1', name: 'Tender', is_active: true, created_at: '2026-03-01T08:00:00Z' }] }} />)
     expect(within(toolbar()).getByRole('button', { name: 'Baselines (1)' })).toBeTruthy()
   })
+
+  describe('on a phone (390 px)', () => {
+    const phoneMedia = () => vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q.includes('max-width: 767.98px'), media: q, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }))
+
+    it('grid shows Name, Start and Finish only, and the timeline is behind a Timeline toggle', () => {
+      phoneMedia()
+      renderClient(api())
+      const headers = within(screen.getByRole('grid', { name: 'Activities' })).getAllByRole('columnheader').map((c) => c.getAttribute('aria-label'))
+      expect(headers).toEqual(['Name', 'Start', 'Finish'])
+      expect(screen.queryByTestId('programme-timeline')).toBeNull()
+      const toggle = screen.getByRole('button', { name: 'Timeline' })
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      fireEvent.click(toggle)
+      expect(screen.getByTestId('programme-timeline')).not.toBeNull()
+      expect(screen.queryByRole('grid', { name: 'Activities' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Timeline' }))
+      expect(screen.getByRole('grid', { name: 'Activities' })).not.toBeNull()
+    })
+
+    it('on a wide screen there is no toggle and both panes show all columns', () => {
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+      renderClient(api())
+      expect(screen.queryByRole('button', { name: 'Timeline' })).toBeNull()
+      expect(screen.getByTestId('programme-timeline')).not.toBeNull()
+      expect(within(screen.getByRole('grid', { name: 'Activities' })).getAllByRole('columnheader').length).toBe(7)
+    })
+  })
 })
