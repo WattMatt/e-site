@@ -294,6 +294,10 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         if (blank(c.name) || len(c.name) > 80 || !['site', 'office', 'custom'].includes(c.variant)
           || !Array.isArray(c.work_weekdays) || c.work_weekdays.length < 1 || c.work_weekdays.length > 7
           || c.work_weekdays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)
+          // calendars_work_weekdays_distinct: no weekday twice
+          || new Set(c.work_weekdays).size !== c.work_weekdays.length
+          // calendars_coverage_order (ISO dates compare as strings)
+          || (c.coverage_from !== null && c.coverage_to !== null && c.coverage_from > c.coverage_to)
           || !(c.hours_per_day > 0 && c.hours_per_day <= 24)) throw bad()
         break
       }

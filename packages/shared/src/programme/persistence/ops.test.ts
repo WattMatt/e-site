@@ -228,6 +228,19 @@ describe('applyOps: calendars, codes, programme', () => {
     refuses(state(), [{ op: 'set_calendar_exceptions', exceptions: [] }], 'Say which calendar the exceptions belong to.', '22023')
     refuses(state(), [{ op: 'set_calendar_exceptions', calendar: 'SITE', exceptions: 'x' }], 'The calendar exceptions must be sent as a list.', '22023')
   })
+  it('refuses a weekday listed twice and coverage that ends before it starts (the calendars CHECKs)', () => {
+    const bad = 'One of the values in this change is missing or not allowed.'
+    refuses(state(), [{ op: 'upsert_calendar', key: 'c', fields: { name: 'Mondays', work_weekdays: [1, 1, 1] } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_calendar', id: 'SITE', fields: { work_weekdays: [1, 2, 2] } }], bad, '22023')
+    refuses(state(), [{ op: 'upsert_calendar', id: 'SITE', fields: { coverage_from: '2027-01-01', coverage_to: '2026-12-31' } }], bad, '22023')
+    // equal bounds, one bound only, and distinct days are all fine
+    const out = applyOps(state(), [
+      { op: 'upsert_calendar', id: 'SITE', fields: { coverage_from: '2026-06-01', coverage_to: '2026-06-01', work_weekdays: [6, 1, 2] } },
+      { op: 'upsert_calendar', key: 'c', fields: { name: 'Open', coverage_from: '2027-01-01' } },
+    ])
+    expect(out.calendars.find((c) => c.id === 'SITE')).toMatchObject({ coverage_from: '2026-06-01', coverage_to: '2026-06-01', work_weekdays: [6, 1, 2] })
+    expect(out.calendars.find((c) => c.id === 'key:c')).toMatchObject({ coverage_from: '2027-01-01', coverage_to: null })
+  })
   it('code types, values and activity codes', () => {
     const out = applyOps(state(), [
       { op: 'upsert_code_type', key: 't', name: 'Area' },
