@@ -166,3 +166,41 @@ describe('deleteOps', () => {
     expect(accept(s, deleteOps(acts(s), sel('K1'))).outline).toEqual(['0:P', '1:K2'])
   })
 })
+
+describe('large selections (5,000 activities, 2,000 selected)', () => {
+  const N = 5000
+  const name = (i: number) => `R${String(i).padStart(4, '0')}`
+  const parentOf = (ops: ProgrammeOp[]) => {
+    const m = new Map<string, unknown>()
+    for (const o of ops) if (o.op === 'upsert_activity' && 'id' in o && o.fields.parent_id !== undefined) m.set(o.id as string, o.fields.parent_id)
+    return m
+  }
+  const timed = <T,>(f: () => T): { out: T; ms: number } => { const t = performance.now(); const out = f(); return { out, ms: performance.now() - t } }
+
+  it('indent: every selected odd row goes under the row before it, all in one gesture', () => {
+    const rows = Array.from({ length: N }, (_, i) => activityRow(name(i), { sort_order: i + 1 }))
+    const selected = new Set(Array.from({ length: 2000 }, (_, k) => name(2 * k + 1)))
+    const { out, ms } = timed(() => indentOps(rows as unknown as ActivityRow[], selected))
+    expect(out.error).toBeNull()
+    const parents = parentOf(out.ops)
+    expect(parents.size).toBe(2000)
+    for (let k = 0; k < 2000; k++) expect(parents.get(name(2 * k + 1))).toBe(name(2 * k))
+    if (process.env.PERF_STRICT) expect(ms).toBeLessThan(150)
+  })
+
+  it('outdent: 2,000 children of one summary come out, each taking the next one as its child', () => {
+    const rows = [summary('P', 1), ...Array.from({ length: N - 1 }, (_, i) => kid(name(i), 'P', i + 1))]
+    const selected = new Set(Array.from({ length: 2000 }, (_, k) => name(2 * k + 1)))
+    const { out, ms } = timed(() => outdentOps(rows as unknown as ActivityRow[], selected))
+    expect(out.error).toBeNull()
+    const parents = parentOf(out.ops)
+    for (let k = 0; k < 2000; k++) {
+      expect(parents.get(name(2 * k + 1))).toBe(null)
+      // the unselected row after each outdented one becomes its child
+      expect(parents.get(name(2 * k + 2))).toBe(name(2 * k + 1))
+    }
+    // the last outdented row also takes every row after the block
+    expect(parents.get(name(N - 2))).toBe(name(3999))
+    if (process.env.PERF_STRICT) expect(ms).toBeLessThan(150)
+  })
+})

@@ -13,6 +13,9 @@
  * - Outdent follows MS Project: the row keeps its place on screen, so the siblings that
  *   followed it under its old parent become its children.
  * - A selected row whose ancestor is also selected moves with that ancestor, not on its own.
+ * - Indent and outdent run on linked sibling lists (`Linked`): each move is O(1) and each touched
+ *   list is renumbered once at the end, so 2,000 selected rows of 5,000 cost O(N log N) (the
+ *   outline sort), not one sort of the whole list per row. Types are fixed once at the end too.
  */
 import { outlineRows, type ActivityFields, type ActivityRow, type ProgrammeOp } from '@esite/shared/programme'
 
@@ -107,8 +110,116 @@ class Work {
   }
 }
 
+/**
+ * The same rows as `Work`, with each sibling list held as a doubly linked list (built once in
+ * outline order). Moves relink in O(1) and mark their lists; `finish` renumbers each marked list
+ * once and fixes the types of every marked parent.
+ */
+class Linked {
+  readonly rows = new Map<string, Mutable>()
+  private readonly original = new Map<string, Mutable>()
+  private readonly next = new Map<string, string | null>()
+  private readonly prev = new Map<string, string | null>()
+  private readonly head = new Map<string | null, string | null>()
+  private readonly tail = new Map<string | null, string | null>()
+  private readonly touched = new Set<string | null>()
+
+  constructor(activities: readonly ActivityRow[]) {
+    const w = new Work(activities)
+    const byParent = new Map<string | null, Mutable[]>()
+    for (const r of w.rows.values()) {
+      const m = { ...r }
+      this.rows.set(m.id, m)
+      this.original.set(m.id, { ...r })
+      const list = byParent.get(m.parent_id)
+      if (list) list.push(m)
+      else byParent.set(m.parent_id, [m])
+    }
+    for (const [parent, list] of byParent) {
+      list.sort(cmp)
+      for (const r of list) this.append(parent, r.id)
+    }
+    this.touched.clear()
+  }
+
+  prevOf(id: string): Mutable | null {
+    const p = this.prev.get(id) ?? null
+    return p === null ? null : this.rows.get(p)!
+  }
+
+  /** The rows after `id` in its sibling list, in order. */
+  following(id: string): string[] {
+    const out: string[] = []
+    for (let n = this.next.get(id) ?? null; n !== null; n = this.next.get(n) ?? null) out.push(n)
+    return out
+  }
+
+  unlink(id: string): void {
+    const parent = this.rows.get(id)!.parent_id
+    const p = this.prev.get(id) ?? null
+    const n = this.next.get(id) ?? null
+    if (p === null) this.head.set(parent, n)
+    else this.next.set(p, n)
+    if (n === null) this.tail.set(parent, p)
+    else this.prev.set(n, p)
+    this.prev.set(id, null)
+    this.next.set(id, null)
+    this.touched.add(parent)
+  }
+
+  /** Links `id` (unlinked) as the last child of `parent`. */
+  append(parent: string | null, id: string): void {
+    const t = this.tail.get(parent) ?? null
+    this.rows.get(id)!.parent_id = parent
+    this.prev.set(id, t)
+    this.next.set(id, null)
+    if (t === null) this.head.set(parent, id)
+    else this.next.set(t, id)
+    this.tail.set(parent, id)
+    this.touched.add(parent)
+  }
+
+  /** Links `id` (unlinked) straight after `anchor`, in the anchor's list. */
+  insertAfter(anchor: string, id: string): void {
+    const parent = this.rows.get(anchor)!.parent_id
+    const n = this.next.get(anchor) ?? null
+    this.rows.get(id)!.parent_id = parent
+    this.prev.set(id, anchor)
+    this.next.set(id, n)
+    this.next.set(anchor, id)
+    if (n === null) this.tail.set(parent, id)
+    else this.prev.set(n, id)
+    this.touched.add(parent)
+  }
+
+  /** Renumbers each touched list once and fixes each touched parent's type; then the ops. */
+  finish(): ProgrammeOp[] {
+    for (const parent of this.touched) {
+      let i = 0
+      for (let n = this.head.get(parent) ?? null; n !== null; n = this.next.get(n) ?? null) this.rows.get(n)!.sort_order = ++i
+      if (parent === null) continue
+      const row = this.rows.get(parent)
+      if (!row) continue
+      const hasKids = (this.head.get(parent) ?? null) !== null
+      if (hasKids && row.type !== 'summary' && row.type !== 'module_summary') row.type = 'summary'
+      if (!hasKids && row.type === 'summary') {
+        row.type = 'task'
+        row.original_duration = Math.max(1, row.original_duration)
+      }
+    }
+    const out: ProgrammeOp[] = []
+    for (const [id, r] of this.rows) {
+      const o = this.original.get(id)!
+      const fields: ActivityFields = {}
+      for (const k of TRACKED) if (r[k] !== o[k]) (fields as Record<string, unknown>)[k] = r[k]
+      if (Object.keys(fields).length > 0) out.push({ op: 'upsert_activity', id, fields })
+    }
+    return out
+  }
+}
+
 /** Selected ids in outline order, without those whose ancestor is selected too. */
-function topSelected(activities: readonly ActivityRow[], work: Work, selected: ReadonlySet<string>): string[] {
+function topSelected(activities: readonly ActivityRow[], work: { rows: Map<string, Mutable> }, selected: ReadonlySet<string>): string[] {
   const order = outlineRows(activities as ActivityRow[], new Set()).map((r) => r.id)
   const covered = (id: string): boolean => {
     let p = work.rows.get(id)?.parent_id ?? null
@@ -122,38 +233,36 @@ function topSelected(activities: readonly ActivityRow[], work: Work, selected: R
 }
 
 export function indentOps(activities: readonly ActivityRow[], selected: ReadonlySet<string>): Gesture {
-  const w = new Work(activities)
+  const w = new Linked(activities)
   for (const id of topSelected(activities, w, selected)) {
-    const r = w.rows.get(id)!
-    const sibs = w.kids(r.parent_id)
-    const i = sibs.findIndex((x) => x.id === id)
-    if (i <= 0) return NOTHING
-    const parent = sibs[i - 1]
+    // The previous sibling now: earlier selected rows of this list have already moved out.
+    const parent = w.prevOf(id)
+    if (parent === null) return NOTHING
     const refused = noChildren(parent.type)
     if (refused) return { ops: [], error: refused }
-    w.place(id, parent.id, w.kids(parent.id).length)
+    w.unlink(id)
+    w.append(parent.id, id)
   }
-  return { ops: w.ops(), error: null }
+  return { ops: w.finish(), error: null }
 }
 
 export function outdentOps(activities: readonly ActivityRow[], selected: ReadonlySet<string>): Gesture {
-  const w = new Work(activities)
+  const w = new Linked(activities)
   // Last first: each lands straight after the old parent, so the block keeps its order.
   for (const id of topSelected(activities, w, selected).reverse()) {
     const r = w.rows.get(id)!
     if (r.parent_id === null) continue
-    const parent = w.rows.get(r.parent_id)!
-    const sibs = w.kids(parent.id)
-    const following = sibs.slice(sibs.findIndex((x) => x.id === id) + 1)
+    const parent = r.parent_id
+    const following = w.following(id)
     if (following.length > 0) {
       const refused = noChildren(r.type)
       if (refused) return { ops: [], error: refused }
     }
-    const grand = parent.parent_id
-    w.place(id, grand, w.kids(grand).findIndex((x) => x.id === parent.id) + 1)
-    for (const f of following) w.place(f.id, id, w.kids(id).length)
+    w.unlink(id)
+    w.insertAfter(parent, id)
+    for (const f of following) { w.unlink(f); w.append(id, f) }
   }
-  return { ops: w.ops(), error: null }
+  return { ops: w.finish(), error: null }
 }
 
 export function moveOps(activities: readonly ActivityRow[], selected: ReadonlySet<string>, direction: 'up' | 'down'): ProgrammeOp[] {
