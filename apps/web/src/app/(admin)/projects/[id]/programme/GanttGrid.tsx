@@ -195,7 +195,8 @@ export function GanttGrid({
   const setSelected = useCallback((ids: ReadonlySet<string>) => setSelection((s) => ({ ...s, ids })), [setSelection])
   const setAnchor = useCallback((anchor: string | null) => setSelection((s) => ({ ...s, anchor })), [setSelection])
   const [activeCol, setActiveCol] = useState<ColumnId>('name')
-  const [armed, setArmed] = useState<string[] | null>(null)
+  /** A delete awaiting its confirm: the rows chosen (`roots`) and every row it removes (`ids`). */
+  const [armed, setArmed] = useState<{ roots: string[]; ids: string[] } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   /** Only rows that are shown: a row hidden by a collapse is never acted on. */
   const selected = useMemo(
@@ -203,6 +204,9 @@ export function GanttGrid({
     [selectedRaw, resolve, indexOf],
   )
   const anchor = anchorRaw === null ? null : resolve(anchorRaw)
+  // Any change of selection (a row, a key, a bar click in the timeline) withdraws an armed delete:
+  // its sentence named the rows selected when it was asked for.
+  useEffect(() => { setArmed(null) }, [selectedRaw])
   const primary = anchor !== null && selected.has(anchor) ? anchor : null
 
   const selectOnly = useCallback((id: string) => { setSelection({ ids: new Set([id]), anchor: id }); setArmed(null) }, [setSelection])
@@ -316,11 +320,13 @@ export function GanttGrid({
     if (apply(addOps(activities, after, kind, key), kind === 'task' ? 'Add task' : 'Add milestone')) selectOnly(`key:${key}`)
     else reveal.current = null
   }
-  const arm = () => { if (canEdit && selected.size > 0) setArmed(deletionSet(activities, selected)) }
+  const arm = () => { if (canEdit && selected.size > 0) setArmed({ roots: [...selected], ids: deletionSet(activities, selected) }) }
+  /** Deletes exactly the rows that were confirmed (those still there), never the selection of the moment. */
   const confirmDelete = () => {
-    if (!canEdit || selected.size === 0) return
-    if (apply(deleteOps(activities, selected), 'Delete')) { setSelected(new Set()); setAnchor(null) }
+    const roots = armed?.roots.map(resolve).filter((id) => byId.has(id)) ?? []
     setArmed(null)
+    if (!canEdit || roots.length === 0) return
+    if (apply(deleteOps(activities, new Set(roots)), 'Delete')) { setSelected(new Set()); setAnchor(null) }
   }
 
   const cancelDelete = () => setArmed(null)
@@ -336,7 +342,7 @@ export function GanttGrid({
     return () => { if (commandsRef.current === stable) commandsRef.current = null }
   }, [commandsRef])
   const selectedCount = selected.size
-  const armedCount = armed === null ? null : armed.length
+  const armedCount = armed === null ? null : armed.ids.length
   useEffect(() => { onUi?.({ selectedCount, armedCount, notice }) }, [onUi, selectedCount, armedCount, notice])
 
   const onGridKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {

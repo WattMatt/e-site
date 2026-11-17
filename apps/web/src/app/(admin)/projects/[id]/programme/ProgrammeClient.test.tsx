@@ -205,6 +205,33 @@ describe('ProgrammeClient: toolbar editing', () => {
     expect(a.apply).toHaveBeenCalledWith([{ op: 'delete_activity', id: 'B' }], 'Delete')
   })
 
+  it('a bar click after Delete disarms the confirm, so a different row is never deleted under the old sentence', () => {
+    const a = api()
+    renderClient(a)
+    selectRow('B')
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Delete' }))
+    expect(within(toolbar()).getByTestId('programme-grid-confirm')).toBeTruthy()
+    const body = screen.getByTestId('programme-timeline-body')
+    const bar = document.querySelector('[data-bar-id="A"] [data-part="bar"]') as Element
+    const x = Number(bar.getAttribute('x')) + 4
+    const y = Number(bar.getAttribute('y')) + 4
+    fireEvent.pointerDown(body, { clientX: x, clientY: y, pointerId: 1, button: 0 })
+    fireEvent.pointerUp(body, { clientX: x, clientY: y, pointerId: 1 })
+    expect(screen.getByRole('grid', { name: 'Activities' }).querySelector('[data-row-id="A"]')!.getAttribute('aria-selected')).toBe('true')
+    expect(within(toolbar()).queryByTestId('programme-grid-confirm')).toBeNull()
+    expect(a.apply).not.toHaveBeenCalled()
+  })
+
+  it('Confirm deletes exactly the rows that were confirmed', () => {
+    const a = api()
+    renderClient(a)
+    selectRow('B')
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Confirm delete' }))
+    expect(a.apply).toHaveBeenCalledTimes(1)
+    expect((a.apply as ReturnType<typeof vi.fn>).mock.calls[0][0]).toEqual([{ op: 'delete_activity', id: 'B' }])
+  })
+
   it('a refused indent shows its sentence in the toolbar and sends nothing', () => {
     const v = view()
     const state = { ...v.state, dependencies: [], activities: [
