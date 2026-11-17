@@ -29,7 +29,7 @@ import type { ActiveBaselineView } from '@/lib/programme/view-types'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import {
   BAR_HEIGHT, BASELINE_HEIGHT, BASELINE_TOP, barGeometry, finishAfter, fitZoom, HANDLE_OFFSET, HANDLE_RADIUS, hitTest,
-  linkPoints, MILESTONE_HALF, movedStart, pathD, resizedDuration, scrollLeftAround, timelineCalendars, workingDaysInclusive, ZOOMS, zoomStep,
+  linkPoints, MILESTONE_HALF, movedStart, onDrawnHandle, pathD, resizedDuration, scrollLeftAround, timelineCalendars, workingDaysInclusive, ZOOMS, zoomStep,
   type BarGeometry, type Hit,
 } from './timeline-geometry'
 import { LinkDialog } from './LinkDialog'
@@ -106,10 +106,9 @@ export function GanttTimeline({
     const see = (d: string | null | undefined) => { if (!d) return; if (d < lo) lo = d; if (d > hi) hi = d }
     for (const s of schedule.activities.values()) { see(s.earlyStart); see(s.earlyFinish); see(s.lateFinish) }
     see(state.programme.data_date)
-    see(today)
     if (activeBaseline) for (const b of Object.values(activeBaseline.activities)) { see(b.early_start); see(b.early_finish) }
     return { lo, hi }
-  }, [state.programme.project_start, state.programme.data_date, schedule, activeBaseline, today])
+  }, [state.programme.project_start, state.programme.data_date, schedule, activeBaseline])
   const scale = useMemo(() => timescale(range.lo, range.hi, zoom), [range, zoom])
   const calendars = useMemo(
     () => timelineCalendars({ programme: state.programme, calendars: state.calendars, exceptions: state.exceptions }),
@@ -182,10 +181,15 @@ export function GanttTimeline({
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoom, zoomTo])
 
+  /** Today stays outside the timescale (a future job would open on empty canvas): its x when it falls on it. */
+  const todayRaw = today ? xOfDate(scale, today) : null
+  const todayX = todayRaw !== null && todayRaw >= 0 && todayRaw < scale.width ? todayRaw : null
   const scrollToToday = () => {
     const el = scroller.current
-    if (!el || !today) return
-    const left = Math.max(0, xOfDate(scale, today) - el.clientWidth / 2)
+    if (!el || todayRaw === null) return
+    const end = Math.max(0, scale.width - el.clientWidth)
+    // Off the programme: the nearer edge.
+    const left = todayX !== null ? Math.min(end, Math.max(0, todayX - el.clientWidth / 2)) : todayRaw < 0 ? 0 : end
     el.scrollLeft = left
     setScrollLeft(left)
   }
@@ -232,7 +236,12 @@ export function GanttTimeline({
     if (e.button !== 0) return
     // A press on a link belongs to the link (its click opens the dialog), even where its
     // first stub runs through a bar's link-handle zone.
-    if (e.target instanceof Element && e.target.closest('[data-part="link-hit"]')) return
+    // A press on the drawn handle itself still wins (touch has no hover to tell them apart).
+    if (e.target instanceof Element && e.target.closest('[data-part="link-hit"]')) {
+      const { x, y } = local(e)
+      const b = bars.find((g) => g.index === Math.floor(y / ROW_HEIGHT))
+      if (!canEdit || !b || !onDrawnHandle(b, x, y)) return
+    }
     const { x, y } = local(e)
     const hit = hitTest(bars, x, y, canEdit)
     if (!hit) return
@@ -374,7 +383,6 @@ export function GanttTimeline({
   const xMax = viewport.width > 0 ? scrollLeft + viewport.width + 200 : Infinity
   const inView = (b: { x: number; width: number }) => b.x + b.width >= xMin && b.x <= xMax
   const dataDate = state.programme.data_date
-  const todayX = today ? xOfDate(scale, today) : null
   const cursor = drag
     ? (drag.mode === 'resize' ? 'ew-resize' : drag.mode === 'link' ? 'crosshair' : drag.mode === 'move' ? 'grabbing' : 'default')
     : hover?.part === 'edge' ? 'ew-resize' : hover?.part === 'handle' ? 'crosshair' : hover && canEdit ? 'grab' : 'default'

@@ -118,6 +118,13 @@ export function pathD(points: Array<{ x: number; y: number }>): string {
 }
 const round = (n: number) => Math.round(n * 100) / 100
 
+/** True when (x, y) is on the drawn link handle of a task or milestone (radius HANDLE_RADIUS). */
+export function onDrawnHandle(b: BarGeometry, x: number, y: number): boolean {
+  if (b.kind === 'summary') return false
+  const end = b.kind === 'milestone' ? b.x + MILESTONE_HALF : b.x + b.width
+  return Math.hypot(x - (end + HANDLE_OFFSET), y - b.midY) <= HANDLE_RADIUS
+}
+
 export type Hit = { part: 'handle' | 'edge' | 'body'; id: string }
 
 /**

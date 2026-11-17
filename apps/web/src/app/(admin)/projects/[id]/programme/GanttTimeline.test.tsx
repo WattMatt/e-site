@@ -289,13 +289,26 @@ describe('GanttTimeline: drag', () => {
     const store = storeOf(two(), linked())
     render(<Harness store={store} onSelect={onSelect} />)
     const hit = document.querySelector('[data-link-id="D1"] [data-part="link-hit"]') as Element
-    // A ends at x 324; its handle zone is centred at 332 on y 14, where the link's first stub runs.
-    fireEvent.pointerDown(hit, { clientX: 330, clientY: 14, pointerId: 1, button: 0 })
-    fireEvent.pointerUp(hit, { clientX: 330, clientY: 14, pointerId: 1 })
+    // A ends at x 324; its handle (radius 5) is centred at 332 on y 14, where the link's first stub runs.
+    // x 326 is on the stub, outside the drawn handle.
+    fireEvent.pointerDown(hit, { clientX: 326, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerUp(hit, { clientX: 326, clientY: 14, pointerId: 1 })
     fireEvent.click(hit)
     expect(onSelect).not.toHaveBeenCalled()
     expect(store.apply).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Link A → B' })).toBeTruthy()
+  })
+
+  it('a press on the drawn handle starts a link even where an outgoing link runs under it (touch)', () => {
+    const store = storeOf([...two(), activityRow('C', { sort_order: 3 })], linked())
+    render(<Harness store={store} />)
+    const hit = document.querySelector('[data-link-id="D1"] [data-part="link-hit"]') as Element
+    // C (row 2) starts Mon 2 with no predecessor: x 252..324, centre y 70.
+    fireEvent.pointerDown(hit, { clientX: 332, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerMove(body(), { clientX: 300, clientY: 70, pointerId: 1 })
+    fireEvent.pointerUp(body(), { clientX: 290, clientY: 70, pointerId: 1 })
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    expect(opsOf(store)).toEqual([{ op: 'upsert_dependency', key: 'n1-x', pred: 'A', succ: 'C', type: 'FS', lag: 0 }])
   })
 
   it('a refused move leaves nothing pending: the next drag still works', () => {
@@ -410,14 +423,47 @@ describe('GanttTimeline: zoom and navigation', () => {
     expect(onZoom).toHaveBeenLastCalledWith('day')
   })
 
-  it('Scroll to today centres today, even when today is past the end of the programme', () => {
-    const store = storeOf(two(), linked())
-    render(<Harness store={store} today="2026-06-01" initialZoom="day" />)
+  it('Scroll to today centres today when it falls inside the programme', () => {
+    const store = storeOf([activityRow('A', { sort_order: 1, original_duration: 60 })])
+    render(<Harness store={store} today="2026-04-15" initialZoom="day" />)
     const scroll = screen.getByTestId('programme-timeline-scroll')
     scroll.scrollLeft = 0
     fireEvent.click(screen.getByRole('button', { name: 'Scroll to today' }))
-    // Origin 2026-02-23; 2026-06-01 is 98 days later.
-    expect(scroll.scrollLeft).toBe(98 * 36 - 500)
-    expect(parseFloat(screen.getByTestId('programme-timeline-spacer').style.width)).toBeGreaterThan(98 * 36)
+    // Origin 2026-02-23; 2026-04-15 is 51 days later.
+    expect(scroll.scrollLeft).toBe(51 * 36 - 500)
+    expect(screen.getByTestId('timeline-today').getAttribute('x1')).toBe(String(51 * 36))
+  })
+
+  it('a future programme opens with its first bar at the left, and draws no today line', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} today="2025-11-17" initialZoom="day" />)
+    expect(bar('A')!.querySelector('[data-part="bar"]')!.getAttribute('x')).toBe('252')
+    expect(screen.queryByTestId('timeline-today')).toBeNull()
+    expect(within(screen.getByTestId('programme-timeline-header')).queryByText('Today')).toBeNull()
+  })
+
+  it('Fit programme ignores today', () => {
+    const onZoom = vi.fn()
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} onZoom={onZoom} today="2026-12-01" initialZoom="year" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Fit programme' }))
+    expect(onZoom).toHaveBeenLastCalledWith('day')
+  })
+
+  it('Scroll to today on a finished programme goes to its end; on a future one to its start', () => {
+    const store = storeOf([activityRow('A', { sort_order: 1, original_duration: 60 })])
+    const { unmount } = render(<Harness store={store} today="2027-01-04" initialZoom="day" />)
+    const scroll = screen.getByTestId('programme-timeline-scroll')
+    const width = parseFloat(screen.getByTestId('programme-timeline-spacer').style.width)
+    expect(width).toBeGreaterThan(1000)
+    scroll.scrollLeft = 0
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to today' }))
+    expect(scroll.scrollLeft).toBe(width - 1000)
+    unmount()
+    render(<Harness store={store} today="2025-11-17" initialZoom="day" />)
+    const again = screen.getByTestId('programme-timeline-scroll')
+    again.scrollLeft = 700
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to today' }))
+    expect(again.scrollLeft).toBe(0)
   })
 })
