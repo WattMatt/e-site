@@ -60,6 +60,9 @@ describe('loadProgrammeView', () => {
     const { client } = fakeSupabase({ tables })
     const mod = await loadProgrammeView(client as never, PRJ, { module: 'solar' })
     expect(mod.ok && mod.view?.state.programme.id).toBe(OTHER)
+    // A real programme on ANOTHER project is refused by id: the project filter is the guard.
+    const foreign = fakeSupabase({ tables: { ...tables, 'programme.programmes': [programmeRow({ id: OTHER, project_id: '44444444-4444-4444-8444-444444444444' })] } })
+    expect(await loadProgrammeView(foreign.client as never, PRJ, { programmeId: OTHER })).toEqual({ ok: false, error: expect.any(String) })
     const unknown = await loadProgrammeView(client as never, PRJ, { programmeId: '99999999-9999-4999-8999-999999999999' })
     expect(unknown.ok).toBe(false)
   })

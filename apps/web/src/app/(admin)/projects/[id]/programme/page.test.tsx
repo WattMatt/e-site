@@ -58,6 +58,16 @@ describe('Programme page', () => {
     await run()
     expect(h.form).toHaveBeenCalledWith({ projectId: 'p1', defaultStart: '2026-05-04' })
   })
+  it('?module=solar with no module programme says so to every role and never offers the project form', async () => {
+    h.view.mockResolvedValue({ ok: true, view: null, programmes: [] })
+    for (const role of ['owner', 'contractor']) {
+      h.gate.mockResolvedValue({ ok: true, role })
+      const { unmount } = await run({ module: 'solar' })
+      expect(screen.getByText('No Solar programme yet.')).toBeTruthy()
+      expect(h.form).not.toHaveBeenCalled()
+      unmount()
+    }
+  })
   it('an existing programme renders the client; canEdit follows the role', async () => {
     await run()
     expect(h.view).toHaveBeenCalledWith(expect.anything(), 'p1', { programmeId: undefined, module: undefined })

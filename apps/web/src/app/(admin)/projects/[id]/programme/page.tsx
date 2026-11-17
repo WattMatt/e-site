@@ -46,13 +46,15 @@ export default async function ProgrammePage({ params, searchParams }: {
   const gate = await requireEffectiveRole(supabase, id, PROGRAMME_READ_ROLES)
   if (!gate.ok) return card('Programme', "You do not have access to this project's programme.")
 
-  const programmeId = sp.programme || undefined
+  const programmeId = sp.programme ? sp.programme.toLowerCase() : undefined
   const module = sp.module === 'solar' ? ('solar' as const) : undefined
   const loaded = await loadProgrammeView(supabase, id, { programmeId, module })
   if (!loaded.ok) return card('Programme', loaded.error, true)
 
   const roleCanEdit = PROGRAMME_WRITE_ROLES.includes(gate.role)
   if (!loaded.view) {
+    // Module programmes are created elsewhere (P9): never offer the project form for them.
+    if (module === 'solar') return card('Programme', 'No Solar programme yet.')
     if (!roleCanEdit) return card('Programme', 'No programme yet.')
     return <CreateProgrammeForm projectId={id} defaultStart={await defaultStart(supabase, id)} />
   }
