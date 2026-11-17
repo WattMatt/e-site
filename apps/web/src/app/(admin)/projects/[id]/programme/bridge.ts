@@ -8,6 +8,9 @@ import type { MutableRefObject } from 'react'
 import type { Zoom } from '@esite/shared/programme'
 import type { NewRowKind } from './grid-ops'
 
+/** Why indent, outdent, move and add are off while the rows shown are not the whole outline. */
+export const STRUCTURE_LOCKED = 'Clear filters and grouping to restructure the programme.'
+
 export interface GridCommands {
   add(kind: NewRowKind): void
   structure(direction: 'indent' | 'outdent'): void

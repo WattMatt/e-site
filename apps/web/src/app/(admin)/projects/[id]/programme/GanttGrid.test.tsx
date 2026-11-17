@@ -535,8 +535,9 @@ describe('GanttGrid: grouped rows', () => {
     const store = { ...storeOf([]), state, schedule: scheduleProgramme(rowsToProgrammeInput(state)) }
     const rows = buildDisplayRows(state, store.schedule, { collapsed: new Set(), filters: NO_FILTERS, groupBy: 'T1' })
     const apply = store.apply
-    render(<GanttGrid store={store} canEdit scrollTop={0} onScrollTop={() => {}} collapsed={new Set()} onToggleCollapsed={onToggle} rows={rows} />)
-    return { apply, rows }
+    const onUi = vi.fn()
+    render(<GanttGrid store={store} canEdit scrollTop={0} onScrollTop={() => {}} collapsed={new Set()} onToggleCollapsed={onToggle} rows={rows} onUi={onUi} />)
+    return { apply, rows, onUi }
   }
 
   it('shows a header row per group, with its count, and the members under it', () => {
@@ -564,12 +565,13 @@ describe('GanttGrid: grouped rows', () => {
   })
 
   it('a shift-range across a header selects activities only', () => {
-    const { apply } = grouped()
+    const { apply, onUi } = grouped()
     fireEvent.click(cell('A', 'name'))
     fireEvent.click(cell('B', 'name'), { shiftKey: true })
     expect(row('A').getAttribute('aria-selected')).toBe('true')
     expect(row('B').getAttribute('aria-selected')).toBe('true')
-    fireEvent.keyDown(grid(), { key: 'Delete' })
+    // The header between them (group:V2) must not be in the selection.
+    expect(onUi.mock.calls.at(-1)![0].selectedCount).toBe(2)
     expect(apply).not.toHaveBeenCalled()
   })
 })

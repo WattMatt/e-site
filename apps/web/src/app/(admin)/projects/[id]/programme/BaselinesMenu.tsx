@@ -56,6 +56,7 @@ export function BaselinesMenu({ programmeId, baselines, canEdit, unsaved, onChan
   }
   const save = () => {
     const n = name.trim()
+    if (unsaved) { setError(BASELINE_WAIT); return }
     if (n === '') { setError('Give the baseline a name.'); return }
     void run(
       () => saveBaselineAction({ programmeId, name: n, setActive }),
@@ -104,9 +105,9 @@ export function BaselinesMenu({ programmeId, baselines, canEdit, unsaved, onChan
             <>
               <button type="button" style={button} disabled={unsaved || busy} title={unsaved ? BASELINE_WAIT : undefined}
                 onClick={() => { setNaming(true); setError(null) }}>Save baseline…</button>
-              {unsaved && <span style={{ color: 'var(--c-text-dim)' }}>{BASELINE_WAIT}</span>}
             </>
           )}
+          {canEdit && unsaved && <span style={{ color: 'var(--c-text-dim)' }}>{BASELINE_WAIT}</span>}
           {canEdit && naming && (
             <form onSubmit={(e) => { e.preventDefault(); save() }} style={{ display: 'grid', gap: 6 }}>
               <input aria-label="Baseline name" value={name} maxLength={120} autoFocus onChange={(e) => setName(e.target.value)}
@@ -116,7 +117,7 @@ export function BaselinesMenu({ programmeId, baselines, canEdit, unsaved, onChan
                 Set as active
               </label>
               <span style={{ display: 'flex', gap: 6 }}>
-                <button type="submit" style={button} disabled={busy}>Save</button>
+                <button type="submit" style={button} disabled={busy || unsaved} title={unsaved ? BASELINE_WAIT : undefined}>Save</button>
                 <button type="button" style={button} onClick={() => { setNaming(false); setError(null) }}>Cancel</button>
               </span>
             </form>

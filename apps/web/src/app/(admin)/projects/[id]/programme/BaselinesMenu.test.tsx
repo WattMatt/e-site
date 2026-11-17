@@ -13,9 +13,13 @@ const baselines: BaselineSummary[] = [
   { id: 'b2', name: 'Rev 1', is_active: true, created_at: '2026-03-10T08:00:00Z' },
 ]
 const onChanged = vi.fn()
+const menu = (over: Partial<{ canEdit: boolean; unsaved: boolean; baselines: BaselineSummary[] }> = {}) => (
+  <BaselinesMenu programmeId="P1" baselines={over.baselines ?? baselines} canEdit={over.canEdit ?? true} unsaved={over.unsaved ?? false} onChanged={onChanged} />
+)
 function open(over: Partial<{ canEdit: boolean; unsaved: boolean; baselines: BaselineSummary[] }> = {}) {
-  render(<BaselinesMenu programmeId="P1" baselines={over.baselines ?? baselines} canEdit={over.canEdit ?? true} unsaved={over.unsaved ?? false} onChanged={onChanged} />)
+  const r = render(menu(over))
   fireEvent.click(screen.getByRole('button', { name: /^Baselines/ }))
+  return r
 }
 const click = async (name: string | RegExp) => { await act(async () => { fireEvent.click(screen.getByRole('button', { name })) }) }
 
@@ -110,5 +114,17 @@ describe('BaselinesMenu', () => {
     open({ canEdit: false })
     expect(screen.getAllByTestId('baseline-active')).toHaveLength(1)
     expect(screen.queryByRole('button', { name: /Save baseline|Set .* active|Delete/ })).toBeNull()
+  })
+
+  it('the form\'s Save is disabled, and refuses, once edits are unsaved after the form was opened', async () => {
+    const { rerender } = open()
+    await click('Save baseline…')
+    fireEvent.change(screen.getByLabelText('Baseline name'), { target: { value: 'Rev 2' } })
+    rerender(menu({ unsaved: true }))
+    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    expect(screen.getByText(BASELINE_WAIT)).toBeTruthy()
+    fireEvent.submit(save.closest('form')!)
+    expect(saveBaselineAction).not.toHaveBeenCalled()
   })
 })

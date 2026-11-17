@@ -12,17 +12,16 @@
  * here now: the panes register commands in refs (`bridge.ts`) and the buttons call them.
  * `GridControls` and `TimelineControls` are exported so those pieces can be driven alone.
  */
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { ZOOMS } from './timeline-geometry'
 import type { Zoom } from '@esite/shared/programme'
-import { recalculateProgrammeAction } from '@/actions/programme.actions'
 import type { BaselineSummary, ProgrammeSummary } from '@/lib/programme/view-types'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import { GRID_COLUMNS, type ColumnId } from './GanttGrid'
 import { filtersActive, GROUP_BY_WBS, NO_FILTERS, summaryOf, type Filters, type GroupBy } from './display-rows'
 import { BaselinesMenu } from './BaselinesMenu'
-import type { CommandsRef, GridCommands, GridUi, TimelineCommands } from './bridge'
+import { STRUCTURE_LOCKED, type CommandsRef, type GridCommands, type GridUi, type TimelineCommands } from './bridge'
 
 const button: CSSProperties = {
   padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-panel)',
@@ -39,8 +38,9 @@ const ZOOM_LABEL: Record<Zoom, string> = { day: 'Days', week: 'Weeks', month: 'M
 
 // ── the grid's buttons ──────────────────────────────────────────────────────
 
-export function GridControls({ canEdit, commandsRef, ui, columns }: {
+export function GridControls({ canEdit, commandsRef, ui, columns, structureLocked = false }: {
   canEdit: boolean
+  structureLocked?: boolean
   commandsRef: CommandsRef<GridCommands>
   ui: GridUi
   columns: { hidden: ColumnId[]; toggle: (id: ColumnId) => void }
@@ -52,12 +52,14 @@ export function GridControls({ canEdit, commandsRef, ui, columns }: {
     <div style={group}>
       {canEdit && ui.armedCount === null && (
         <>
-          <button type="button" style={button} onClick={() => cmd()?.add('task')}>Add task</button>
-          <button type="button" style={button} onClick={() => cmd()?.add('milestone')}>Add milestone</button>
-          <button type="button" style={button} onClick={() => cmd()?.structure('indent')} disabled={none}
-            title="Indent under the row above (⌥⇧→)">Indent</button>
-          <button type="button" style={button} onClick={() => cmd()?.structure('outdent')} disabled={none}
-            title="Outdent; the rows below it become its sub-activities (⌥⇧←)">Outdent</button>
+          <button type="button" style={button} onClick={() => cmd()?.add('task')} disabled={structureLocked}
+            title={structureLocked ? STRUCTURE_LOCKED : undefined}>Add task</button>
+          <button type="button" style={button} onClick={() => cmd()?.add('milestone')} disabled={structureLocked}
+            title={structureLocked ? STRUCTURE_LOCKED : undefined}>Add milestone</button>
+          <button type="button" style={button} onClick={() => cmd()?.structure('indent')} disabled={none || structureLocked}
+            title={structureLocked ? STRUCTURE_LOCKED : 'Indent under the row above (⌥⇧→)'}>Indent</button>
+          <button type="button" style={button} onClick={() => cmd()?.structure('outdent')} disabled={none || structureLocked}
+            title={structureLocked ? STRUCTURE_LOCKED : 'Outdent; the rows below it become its sub-activities (⌥⇧←)'}>Outdent</button>
           <button type="button" style={button} onClick={() => cmd()?.arm()} disabled={none}>Delete</button>
         </>
       )}
@@ -141,7 +143,7 @@ function DataDateControl({ store }: { store: ToolbarStore }) {
 
 export type ToolbarStore = Pick<ProgrammeStoreApi,
   'state' | 'schedule' | 'apply' | 'undo' | 'redo' | 'canUndo' | 'canRedo' | 'undoLabel' | 'redoLabel'
-  | 'pending' | 'unsaved' | 'stale' | 'version' | 'reload'>
+  | 'pending' | 'unsaved' | 'stale' | 'recalculate'>
 
 export interface GanttToolbarProps {
   projectId: string
@@ -164,26 +166,9 @@ export interface GanttToolbarProps {
 export function GanttToolbar(p: GanttToolbarProps) {
   const { store, canEdit } = p
   const router = useRouter()
-  const [recalcBusy, setRecalcBusy] = useState(false)
-  const [recalcError, setRecalcError] = useState<string | null>(null)
-  const summary = summaryOf(store.state, store.schedule)
+  const summary = useMemo(() => summaryOf(store.state, store.schedule), [store.state, store.schedule])
   const programmeId = store.state.programme.id
-  const blocked = store.pending || store.unsaved || store.stale
-
-  const recalculate = async () => {
-    if (recalcBusy || blocked) return
-    setRecalcBusy(true)
-    setRecalcError(null)
-    try {
-      const r = await recalculateProgrammeAction({ programmeId, expectedVersion: store.version })
-      if (r.ok) store.reload()
-      else setRecalcError(r.error)
-    } catch {
-      setRecalcError('The programme could not be recalculated. Try again.')
-    } finally {
-      setRecalcBusy(false)
-    }
-  }
+  const structureLocked = filtersActive(p.filters) || p.groupBy !== GROUP_BY_WBS
 
   return (
     <div role="toolbar" aria-label="Programme" style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
@@ -198,17 +183,16 @@ export function GanttToolbar(p: GanttToolbarProps) {
             </div>
           </>
         )}
-        <GridControls canEdit={canEdit} commandsRef={p.gridCommands} ui={p.gridUi} columns={p.columns} />
+        <GridControls canEdit={canEdit} commandsRef={p.gridCommands} ui={p.gridUi} columns={p.columns} structureLocked={structureLocked} />
         {canEdit && (
           <>
             <DataDateControl store={store} />
-            <button type="button" style={button} onClick={() => void recalculate()} disabled={blocked || recalcBusy}
-              title="Re-run the schedule on the saved programme and store the result">Recalculate</button>
+            <button type="button" style={button} onClick={() => store.recalculate()} disabled={store.stale}
+              title="Re-run the schedule on the saved programme and store the result (after any save in progress)">Recalculate</button>
           </>
         )}
         {store.pending && <span style={dim}>Saving…</span>}
         {!store.pending && store.unsaved && <span style={dim}>Not saved</span>}
-        {recalcError && <span role="alert" data-testid="programme-recalc-error" style={{ fontSize: 12, color: 'var(--c-red)' }}>{recalcError}</span>}
       </div>
 
       <div style={{ ...group, gap: 12 }}>
@@ -246,7 +230,7 @@ export function GanttToolbar(p: GanttToolbarProps) {
           </label>
           {filtersActive(p.filters) && <button type="button" style={button} onClick={() => p.onFilters(NO_FILTERS)}>Clear filters</button>}
         </div>
-        <BaselinesMenu programmeId={programmeId} baselines={p.baselines} canEdit={canEdit} unsaved={store.pending || store.unsaved} onChanged={store.reload} />
+        <BaselinesMenu programmeId={programmeId} baselines={p.baselines} canEdit={canEdit} unsaved={store.pending || store.unsaved} onChanged={() => router.refresh()} />
         <span data-testid="programme-summary" style={{ ...dim, marginLeft: 'auto' }}>
           Finish: <span data-testid="programme-finish">{summary.finish ?? '—'}</span>
           {' · '}{summary.critical} critical{' · '}{summary.negativeFloat} negative float

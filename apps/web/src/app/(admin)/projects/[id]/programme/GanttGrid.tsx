@@ -29,7 +29,7 @@ import { HEADER_HEIGHT, ROW_HEIGHT, visibleRange, type ActivityRow, type Program
 import type { ProgrammeStoreApi } from './use-programme-store'
 import { addOps, deleteOps, deletionSet, indentOps, moveOps, outdentOps, type NewRowKind } from './grid-ops'
 import { buildDisplayRows, NO_FILTERS, type DisplayRow } from './display-rows'
-import type { CommandsRef, GridCommands, GridUi } from './bridge'
+import { STRUCTURE_LOCKED, type CommandsRef, type GridCommands, type GridUi } from './bridge'
 
 export type GanttGridStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey' | 'keyIds'>
 
@@ -115,6 +115,8 @@ export interface GanttGridProps {
   rows?: DisplayRow[]
   /** Columns the toolbar has hidden. */
   hiddenColumns?: ColumnId[]
+  /** Filters or grouping hide part of the outline: structural edits are refused. */
+  structureLocked?: boolean
   /** The toolbar's Add / Indent / Outdent / Delete call these. */
   commandsRef?: CommandsRef<GridCommands>
   /** What those buttons need to show: the selection size, a delete awaiting its confirm, a refusal sentence. */
@@ -125,7 +127,7 @@ export interface GanttGridProps {
 }
 
 export function GanttGrid({
-  store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, rows: rowsProp, hiddenColumns, commandsRef, onUi, selection, onSelection,
+  store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, rows: rowsProp, hiddenColumns, commandsRef, onUi, structureLocked = false, selection, onSelection,
 }: GanttGridProps) {
   const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
@@ -299,12 +301,14 @@ export function GanttGrid({
   }
   const structure = (direction: 'indent' | 'outdent') => {
     if (!canEdit || selected.size === 0) return
+    if (structureLocked) { setNotice(STRUCTURE_LOCKED); return }
     const g = direction === 'indent' ? indentOps(activities, selected) : outdentOps(activities, selected)
     setNotice(g.error)
     run(g.ops, direction === 'indent' ? 'Indent' : 'Outdent')
   }
   const add = (kind: NewRowKind) => {
     if (!canEdit) return
+    if (structureLocked) { setNotice(STRUCTURE_LOCKED); return }
     const key = newKey()
     const after = primary ?? rows.filter((r) => selected.has(r.id)).at(-1)?.id ?? null
     setNotice(null)
@@ -347,6 +351,7 @@ export function GanttGrid({
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault()
       if (e.altKey) {
+        if (canEdit && structureLocked) { setNotice(STRUCTURE_LOCKED); return }
         run(moveOps(activities, selected, e.key === 'ArrowUp' ? 'up' : 'down'), e.key === 'ArrowUp' ? 'Move up' : 'Move down')
         return
       }

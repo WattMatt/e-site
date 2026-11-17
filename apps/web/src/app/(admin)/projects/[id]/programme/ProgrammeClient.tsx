@@ -16,7 +16,7 @@ import { useProgrammeStore } from './use-programme-store'
 import { GanttGrid, useHiddenColumns, type GridSelection } from './GanttGrid'
 import { GanttTimeline } from './GanttTimeline'
 import { GanttToolbar } from './GanttToolbar'
-import { buildDisplayRows, GROUP_BY_WBS, NO_FILTERS, type Filters, type GroupBy } from './display-rows'
+import { buildDisplayRows, filtersActive, GROUP_BY_WBS, NO_FILTERS, type Filters, type GroupBy } from './display-rows'
 import { NO_GRID_UI, type GridCommands, type GridUi, type TimelineCommands } from './bridge'
 
 export const SPLIT_MIN = 30
@@ -73,6 +73,7 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
   const timelineCommands = useRef<TimelineCommands | null>(null)
   const [gridUi, setGridUi] = useState<GridUi>(NO_GRID_UI)
 
+  const structureLocked = filtersActive(filters) || groupBy !== GROUP_BY_WBS
   const rows = useMemo(
     () => buildDisplayRows(store.state, store.schedule, { collapsed, filters, groupBy }),
     [store.state, store.schedule, collapsed, filters, groupBy],
@@ -115,7 +116,7 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
       <SplitView split={split} onSplit={setSplit}
         left={<GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
           collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={columns.hidden}
-          commandsRef={gridCommands} onUi={setGridUi} selection={selection} onSelection={setSelection} />}
+          commandsRef={gridCommands} onUi={setGridUi} structureLocked={structureLocked} selection={selection} onSelection={setSelection} />}
         right={<GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
           collapsed={collapsed} selected={selection.ids} onSelect={selectFromTimeline}
           activeBaseline={view.activeBaseline} zoom={zoom} onZoom={setZoom} rows={rows} commandsRef={timelineCommands} />} />

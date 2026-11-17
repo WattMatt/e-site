@@ -468,3 +468,57 @@ describe('rewriteIds', () => {
     })
   })
 })
+
+describe('recalculate: a gesture with no ops through the save pipeline', () => {
+  it('saves empty ops with the current version, and an edit made meanwhile goes after it with the NEW version', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    expect(store.recalculate()).toBe(true)
+    expect(store.getSnapshot().pending).toBe(true)
+    expect(calls[0].input).toEqual({ programmeId: PROG, expectedVersion: VERSION, ops: [] })
+
+    expect(store.apply([newActivity('n1', 'C')], 'Add activity')).toBe(true)
+    expect(calls).toHaveLength(1) // queued behind the recalculation
+    calls[0].resolve(ok(V(2)))
+    await flush()
+    expect(calls).toHaveLength(2)
+    expect(calls[1].input.expectedVersion).toBe(V(2))
+    calls[1].resolve(ok(V(3), { n1: 'uuid-c' }))
+    await flush()
+    const snap = store.getSnapshot()
+    expect(snap.stale).toBe(false)
+    expect(snap.version).toBe(V(3))
+  })
+
+  it('adds nothing to the undo history, and is refused read-only or stale', () => {
+    const { save } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.recalculate()
+    expect(store.getSnapshot().canUndo).toBe(false)
+    const ro = createProgrammeStore(view(), { canEdit: false, save, newKey: keys() })
+    expect(ro.recalculate()).toBe(false)
+  })
+
+  it('a refusal shows its sentence and leaves the state as it was', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.recalculate()
+    calls[0].resolve({ ok: false, error: 'The programme could not be saved. Try again.' })
+    await flush()
+    expect(store.getSnapshot().error).toBe('The programme could not be saved. Try again.')
+    expect(store.getSnapshot().pending).toBe(false)
+  })
+})
+
+describe('a baseline change does not reset the store', () => {
+  it('the same version offered again (what router.refresh brings) keeps the undo history', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([newActivity('n1', 'C')], 'Add activity')
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
+    await flush()
+    expect(store.getSnapshot().canUndo).toBe(true)
+    expect(store.offerView({ ...view(), version: V(2), baselines: [{ id: 'b', name: 'B', is_active: true, created_at: V(2) }] })).toBe(false)
+    expect(store.getSnapshot().canUndo).toBe(true)
+  })
+})

@@ -143,7 +143,17 @@ describe('buildDisplayRows: group by code', () => {
 })
 
 describe('summaryOf', () => {
-  it('counts critical and negative-float activities (summaries not counted) and gives the project finish', () => {
-    expect(summaryOf(stateOf(tree()), sched())).toEqual({ finish: '2026-04-30', critical: 1, negativeFloat: 1 })
+  it('counts critical and negative-float activities, never summaries or tombstones, and gives the project finish', () => {
+    const acts = [
+      ...tree().map((a) => (a.id === 'A' ? { ...a, type: 'summary' } : a)),
+      activityRow('X', { sort_order: 9, name: 'Gone', is_tombstoned: true }),
+    ]
+    const s = scheduleOf({
+      A: { start: '2026-03-02', finish: '2026-03-10', critical: true, float: -1 }, B: { start: '2026-03-02', finish: '2026-03-04', critical: true },
+      C: { start: '2026-03-05', finish: '2026-03-10', float: -2 }, D: { start: '2026-03-11', finish: '2026-03-11' },
+      E: { start: '2026-03-11', finish: '2026-03-11' }, F: { start: '2026-03-12', finish: '2026-03-13', float: 5 },
+      X: { start: '2026-03-12', finish: '2026-03-13', critical: true, float: -3 },
+    })
+    expect(summaryOf(stateOf(acts), s)).toEqual({ finish: '2026-04-30', critical: 1, negativeFloat: 1 })
   })
 })

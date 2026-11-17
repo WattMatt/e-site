@@ -6,19 +6,20 @@ import { programmeTables, VERSION } from '@/lib/programme/test-fixtures'
 import { scheduleFor, type ProgrammeStoreApi } from './use-programme-store'
 
 const h = vi.hoisted(() => ({ api: null as unknown as Record<string, unknown> }))
-const nav = vi.hoisted(() => ({ push: vi.fn() }))
+const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }))
 vi.mock('@/actions/programme.actions', () => ({
   saveProgrammeChangesAction: vi.fn(), programmeVersionAction: vi.fn(), recalculateProgrammeAction: vi.fn(),
   saveBaselineAction: vi.fn(), setActiveBaselineAction: vi.fn(), deleteBaselineAction: vi.fn(),
 }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: nav.push }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: nav.refresh, push: nav.push }) }))
 vi.mock('./use-programme-store', async (orig) => {
   const real = await orig<typeof import('./use-programme-store')>()
   return { ...real, useProgrammeStore: () => h.api }
 })
 
 import { ProgrammeClient } from './ProgrammeClient'
-import { recalculateProgrammeAction } from '@/actions/programme.actions'
+import { saveBaselineAction } from '@/actions/programme.actions'
+import { STRUCTURE_LOCKED } from './bridge'
 
 function view(): ProgrammeViewData {
   const t = programmeTables()
@@ -35,7 +36,7 @@ function api(over: Partial<ProgrammeStoreApi> = {}): ProgrammeStoreApi {
   return {
     state: v.state, version: VERSION, pending: false, stale: false, unsaved: false, error: null, offerReload: false,
     canUndo: true, canRedo: true, undoLabel: 'Add', redoLabel: null, schedule: scheduleFor(v.state),
-    newKey: vi.fn(() => 'n1-x'), keyIds: {}, apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
+    newKey: vi.fn(() => 'n1-x'), keyIds: {}, recalculate: vi.fn(() => true), apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
   }
 }
 const renderClient = (a: ProgrammeStoreApi, canEdit = true, over: Partial<{ view: ProgrammeViewData; programmes: ProgrammeSummary[] }> = {}) => {
@@ -249,23 +250,63 @@ describe('ProgrammeClient: toolbar editing', () => {
     expect(input.value).toBe('')
   })
 
-  it('Recalculate sends the saved version, then reloads; a refusal is shown', async () => {
+  it('Recalculate goes through the store (its serial pipeline), not a separate call', () => {
     const a = api()
     renderClient(a)
-    vi.mocked(recalculateProgrammeAction).mockResolvedValueOnce({ ok: true, version: 'v2', ids: {}, issues: [] })
-    await act(async () => { fireEvent.click(within(toolbar()).getByRole('button', { name: 'Recalculate' })) })
-    expect(recalculateProgrammeAction).toHaveBeenCalledWith({ programmeId: a.state.programme.id, expectedVersion: VERSION })
-    expect(a.reload).toHaveBeenCalledTimes(1)
-
-    vi.mocked(recalculateProgrammeAction).mockResolvedValueOnce({ ok: false, error: 'Someone else changed this programme. Reload to see their version.' })
-    await act(async () => { fireEvent.click(within(toolbar()).getByRole('button', { name: 'Recalculate' })) })
-    expect(screen.getByTestId('programme-recalc-error').textContent).toContain('Someone else changed')
-    expect(a.reload).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Recalculate' }))
+    expect(a.recalculate).toHaveBeenCalledTimes(1)
   })
 
-  it('Recalculate waits while changes are unsaved', () => {
-    renderClient(api({ unsaved: true }))
+  it('Recalculate is not offered while the screen is stale', () => {
+    renderClient(api({ stale: true }))
     expect((within(toolbar()).getByRole('button', { name: 'Recalculate' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('ProgrammeClient: structure is locked in a filtered or grouped view', () => {
+  const buttons = ['Add task', 'Add milestone', 'Indent', 'Outdent']
+  const lockedChecks = (a: ProgrammeStoreApi) => {
+    for (const name of buttons) {
+      const b = within(toolbar()).getByRole('button', { name }) as HTMLButtonElement
+      expect(b.disabled).toBe(true)
+      expect(b.title).toBe(STRUCTURE_LOCKED)
+    }
+    selectRow('B')
+    for (const k of [
+      { key: 'ArrowRight', altKey: true, shiftKey: true }, { key: 'ArrowLeft', altKey: true, shiftKey: true },
+      { key: 'ArrowUp', altKey: true }, { key: 'ArrowDown', altKey: true },
+    ]) fireEvent.keyDown(screen.getByRole('grid', { name: 'Activities' }), k)
+    expect(a.apply).not.toHaveBeenCalled()
+  }
+
+  it('with a filter on: Add, Indent, Outdent and the structural keys do nothing', () => {
+    const a = api()
+    renderClient(a)
+    fireEvent.click(within(toolbar()).getByRole('checkbox', { name: 'Critical only' }))
+    lockedChecks(a)
+  })
+
+  it('with a code group on: the same', () => {
+    const v = view()
+    const state = { ...v.state, codeTypes: [{ id: 'T1', name: 'Trade', programme_id: 'P', sort_order: 1 }], codeValues: [], activityCodes: [] } as unknown as ProgrammeState
+    const a = api({ state, schedule: scheduleFor(state) })
+    renderClient(a)
+    fireEvent.change(within(toolbar()).getByRole('combobox', { name: 'Group by' }), { target: { value: 'T1' } })
+    lockedChecks(a)
+  })
+
+  it('delete, drags and inline edits stay allowed, and clearing the filters unlocks structure', () => {
+    const a = api()
+    renderClient(a)
+    fireEvent.click(within(toolbar()).getByRole('checkbox', { name: 'Critical only' }))
+    selectRow('B')
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Confirm delete' }))
+    expect(a.apply).toHaveBeenCalledWith([{ op: 'delete_activity', id: 'B' }], 'Delete')
+    fireEvent.doubleClick(screen.getByRole('grid', { name: 'Activities' }).querySelector('[data-row-id="A"] [data-col="name"]')!)
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeTruthy()
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Clear filters' }))
+    expect((within(toolbar()).getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false)
   })
 })
 
@@ -386,5 +427,28 @@ describe('ProgrammeClient: baselines', () => {
     expect(within(menu).getAllByTestId('baseline-active')).toHaveLength(1)
     expect(menu.querySelector('[data-baseline-id="b2"]')!.textContent).toContain('Active')
     expect(within(menu).queryByRole('button', { name: /Set .* active|Delete|Save baseline/ })).toBeNull()
+  })
+})
+
+describe('ProgrammeClient: a baseline change refreshes the view, not the store', () => {
+  it('saving a baseline calls router.refresh and never the store reload (undo survives)', async () => {
+    vi.mocked(saveBaselineAction).mockResolvedValue({ ok: true, baselineId: 'b9' })
+    const a = api()
+    renderClient(a)
+    fireEvent.click(within(toolbar()).getByRole('button', { name: /^Baselines/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save baseline…' }))
+    fireEvent.change(screen.getByLabelText('Baseline name'), { target: { value: 'Rev 1' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+    expect(nav.refresh).toHaveBeenCalledTimes(1)
+    expect(a.reload).not.toHaveBeenCalled()
+  })
+
+  it('the list follows the view prop without anything resetting', () => {
+    const a = api()
+    const { rerender } = renderClient(a)
+    expect(within(toolbar()).getByRole('button', { name: 'Baselines (0)' })).toBeTruthy()
+    rerender(<ProgrammeClient projectId="p" canEdit programmes={[]}
+      view={{ ...view(), baselines: [{ id: 'b1', name: 'Tender', is_active: true, created_at: '2026-03-01T08:00:00Z' }] }} />)
+    expect(within(toolbar()).getByRole('button', { name: 'Baselines (1)' })).toBeTruthy()
   })
 })

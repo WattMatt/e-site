@@ -203,6 +203,11 @@ export interface ProgrammeStore {
   subscribe(listener: () => void): () => void
   /** A fresh key for a new row in a gesture. */
   newKey(): string
+  /**
+   * Re-runs the schedule on the server: a gesture with no ops, so it waits for earlier saves, later
+   * edits wait for it, and the version it returns becomes the store's. False when read-only or stale.
+   */
+  recalculate(): boolean
   /** Previews and queues a gesture. False when nothing was applied (read-only, stale, refused, empty). */
   apply(ops: ProgrammeOp[], label: string): boolean
   undo(): void
@@ -366,6 +371,11 @@ export function createProgrammeStore(
       enqueue('apply', ops, p.next, undo, [])
       return true
     },
+    recalculate() {
+      if (!editable()) return false
+      enqueue('apply', [], s.state, s.undo, s.redo)
+      return true
+    },
     undo: () => step('undo'),
     redo: () => step('redo'),
     setCanEdit(next) {
@@ -403,6 +413,7 @@ export interface ProgrammeStoreApi extends ProgrammeStoreSnapshot {
   schedule: ScheduleResult
   newKey(): string
   apply(ops: ProgrammeOp[], label: string): boolean
+  recalculate(): boolean
   undo(): void
   redo(): void
   reload(): void
@@ -433,7 +444,7 @@ export function useProgrammeStore(initial: ProgrammeViewData, opts: { canEdit: b
   const schedule = useMemo(() => scheduleFor(snap.state), [snap.state])
   return {
     ...snap, schedule, newKey: store.newKey,
-    apply: store.apply, undo: store.undo, redo: store.redo, clearError: store.clearError,
+    apply: store.apply, recalculate: store.recalculate, undo: store.undo, redo: store.redo, clearError: store.clearError,
     reload: () => { store.requestReset(); router.refresh() },
   }
 }
