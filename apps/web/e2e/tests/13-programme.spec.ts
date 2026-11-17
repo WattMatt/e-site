@@ -121,6 +121,10 @@ test.describe('programme (Gantt)', () => {
     const phoneGrid = page.getByRole('grid', { name: 'Activities' })
     await expect(phoneGrid).toBeVisible({ timeout: 20_000 })
     await expect(phoneGrid.getByRole('columnheader')).toHaveText(['Name', 'Start', 'Finish'])
+    // The grid pane itself must not scroll sideways (the page cannot, its split is overflow: hidden,
+    // so the document's scrollWidth would never show it).
+    const gridOverflow = await page.getByTestId('programme-grid-scroll').evaluate((el) => el.scrollWidth - el.clientWidth)
+    expect(gridOverflow).toBeLessThanOrEqual(0)
     await expect(page.getByTestId('programme-timeline')).toHaveCount(0)
     await page.getByRole('button', { name: 'Timeline', exact: true }).click()
     await expect(page.getByTestId('programme-timeline')).toBeVisible()

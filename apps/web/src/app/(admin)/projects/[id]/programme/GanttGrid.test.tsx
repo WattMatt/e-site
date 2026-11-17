@@ -7,7 +7,7 @@ import {
 import { activityRow, calendarRow, programmeRow, VERSION } from '@/lib/programme/test-fixtures'
 import type { ProgrammeViewData } from '@/lib/programme/view-types'
 import type { SaveProgrammeChangesInput, SaveProgrammeResult } from '@/lib/programme/action-types'
-import { GanttGrid, columnsStorageKey, useHiddenColumns, type GanttGridStore } from './GanttGrid'
+import { GanttGrid, columnsStorageKey, phoneColumnWidths, shortDate, useHiddenColumns, type GanttGridStore } from './GanttGrid'
 import { GridControls } from './GanttToolbar'
 import { buildDisplayRows, NO_FILTERS } from './display-rows'
 import { NO_GRID_UI, type GridCommands, type GridUi } from './bridge'
@@ -581,5 +581,47 @@ describe('GanttGrid: no footer', () => {
     render(<Harness store={storeOf(abc())} />)
     expect(screen.queryByTestId('programme-grid-footer')).toBeNull()
     expect(within(grid().parentElement!).queryByRole('button', { name: 'Columns' })).toBeNull()
+  })
+})
+
+describe('GanttGrid on a phone (fitColumns)', () => {
+  // 390 px viewport minus the 16 px gutters and the split's 1 px borders; with and without a 15 px scrollbar.
+  const PANES = [390 - 32 - 2, 390 - 32 - 2 - 15]
+
+  it('the three phone columns add up to no more than the pane at 390 px', () => {
+    for (const pane of PANES) {
+      const w = phoneColumnWidths(pane)
+      expect(w.name + w.start + w.finish).toBeLessThanOrEqual(pane)
+      expect(w.name).toBeGreaterThanOrEqual(96)
+    }
+  })
+
+  it('dates are short ("12 Mar 26") so they fit their column', () => {
+    expect(shortDate('2026-03-12')).toBe('12 Mar 26')
+    expect(shortDate('2027-11-04')).toBe('4 Nov 27')
+    expect(shortDate(null)).toBe('—')
+    // 13 px text: about 7 px a character plus 12 px of padding.
+    expect(phoneColumnWidths(356).start).toBeGreaterThanOrEqual('12 Mar 26'.length * 7 + 12)
+  })
+
+  it('renders the columns at the measured pane width: no sideways scroll, Name truncates', () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return 356 } })
+    try {
+      const store = storeOf([activityRow('A', { sort_order: 1, name: 'A very long activity name that cannot possibly fit on a phone screen' })])
+      render(<GanttGrid store={store} canEdit scrollTop={0} onScrollTop={() => {}} collapsed={new Set()} onToggleCollapsed={() => {}}
+        hiddenColumns={['wbs', 'duration', 'float', 'percent']} fitColumns />)
+      const widths = within(grid()).getAllByRole('columnheader').map((h) => parseFloat(h.style.width))
+      expect(widths.reduce((x, y) => x + y, 0)).toBeLessThanOrEqual(356)
+      expect(parseFloat(screen.getByTestId('programme-grid-spacer').style.width)).toBeLessThanOrEqual(356)
+      expect(grid().style.overflowX).not.toBe('scroll')
+      const name = cell('A', 'name').querySelector('span:last-child') as HTMLElement
+      expect(name.style.textOverflow).toBe('ellipsis')
+      expect(cell('A', 'start').textContent).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{2}$/)
+      // no column resize handles on a phone
+      expect(within(grid()).queryAllByRole('separator')).toHaveLength(0)
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', desc)
+    }
   })
 })

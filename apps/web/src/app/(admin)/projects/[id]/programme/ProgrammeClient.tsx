@@ -126,7 +126,7 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
       )}
       <SplitView split={split} onSplit={setSplit} phone={phone} showTimeline={showTimeline}
         left={<GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
-          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={phone ? PHONE_HIDDEN : columns.hidden}
+          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={phone ? PHONE_HIDDEN : columns.hidden} fitColumns={phone}
           commandsRef={gridCommands} onUi={setGridUi} structureLocked={structureLocked} selection={selection} onSelection={setSelection} />}
         right={<GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
           collapsed={collapsed} selected={selection.ids} onSelect={selectFromTimeline}

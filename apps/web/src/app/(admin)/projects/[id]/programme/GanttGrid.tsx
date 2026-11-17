@@ -49,6 +49,20 @@ const MIN_WIDTH = 40
 const INDENT = 16
 const OVERSCAN = 10
 
+/** Phone: Start and Finish at a fixed narrow width (short dates), Name takes the rest of the pane. */
+export const PHONE_DATE_WIDTH = 76
+export const PHONE_NAME_MIN = 96
+export function phoneColumnWidths(pane: number): { name: number; start: number; finish: number } {
+  return { name: Math.max(PHONE_NAME_MIN, Math.floor(pane) - 2 * PHONE_DATE_WIDTH), start: PHONE_DATE_WIDTH, finish: PHONE_DATE_WIDTH }
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** `2026-03-12` → `12 Mar 26` (the phone's date columns); anything else → `—`. */
+export function shortDate(iso: string | null | undefined): string {
+  const m = iso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(iso) : null
+  if (!m) return '—'
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1].slice(2)}`
+}
+
 export const columnsStorageKey = (userId?: string | null) => `esite:programme-grid:hidden-columns:${userId || 'browser'}`
 
 function readHidden(key: string): ColumnId[] {
@@ -123,11 +137,16 @@ export interface GanttGridProps {
   onUi?: (ui: GridUi) => void
   /** Selection owned by the screen (the timeline selects bars too); the grid keeps its own without it. */
   selection?: GridSelection
+  /**
+   * Phone: the shown columns are sized from the pane's measured width (Name flexes, short dates),
+   * so the grid never scrolls sideways; no resize handles.
+   */
+  fitColumns?: boolean
   onSelection?: Dispatch<SetStateAction<GridSelection>>
 }
 
 export function GanttGrid({
-  store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, rows: rowsProp, hiddenColumns, commandsRef, onUi, structureLocked = false, selection, onSelection,
+  store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, rows: rowsProp, hiddenColumns, commandsRef, onUi, structureLocked = false, selection, onSelection, fitColumns = false,
 }: GanttGridProps) {
   const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
@@ -143,10 +162,11 @@ export function GanttGrid({
   // ── scroll + viewport ──
   const scroller = useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = useState(0)
+  const [paneWidth, setPaneWidth] = useState(0)
   useLayoutEffect(() => {
     const el = scroller.current
     if (!el) return
-    const measure = () => setViewport(el.clientHeight)
+    const measure = () => { setViewport(el.clientHeight); setPaneWidth(el.clientWidth) }
     measure()
     if (typeof ResizeObserver !== 'undefined') {
       const ro = new ResizeObserver(measure)
@@ -168,7 +188,10 @@ export function GanttGrid({
     () => Object.fromEntries(GRID_COLUMNS.map((c) => [c.id, c.width])) as Record<ColumnId, number>,
   )
   const columns = GRID_COLUMNS.filter((c) => !hidden.includes(c.id))
-  const totalWidth = columns.reduce((s, c) => s + widths[c.id], 0)
+  const phoneWidths = fitColumns ? phoneColumnWidths(paneWidth > 0 ? paneWidth : 320) : null
+  const widthOf = (id: ColumnId): number =>
+    phoneWidths && (id === 'name' || id === 'start' || id === 'finish') ? phoneWidths[id] : widths[id]
+  const totalWidth = columns.reduce((s, c) => s + widthOf(c.id), 0)
   const resizing = useRef<{ id: ColumnId; x: number; w: number } | null>(null)
   const onResizeDown = (id: ColumnId) => (e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
@@ -393,7 +416,7 @@ export function GanttGrid({
 
   // ── render ──
   const cellStyle = (c: ColumnDef): CSSProperties => ({
-    width: widths[c.id], flex: `0 0 ${widths[c.id]}px`, padding: '0 6px', overflow: 'hidden', whiteSpace: 'nowrap',
+    width: widthOf(c.id), flex: `0 0 ${widthOf(c.id)}px`, padding: '0 6px', overflow: 'hidden', whiteSpace: 'nowrap',
     textOverflow: 'ellipsis', textAlign: c.align ?? 'left', boxSizing: 'border-box',
   })
 
@@ -405,7 +428,7 @@ export function GanttGrid({
       <div ref={scroller} data-testid="programme-grid-scroll" role="grid" aria-label="Activities"
         aria-rowcount={rows.length + 1} aria-multiselectable tabIndex={0}
         onScroll={(e) => onScrollTop(e.currentTarget.scrollTop)} onKeyDown={onGridKey}
-        style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'scroll', position: 'relative', outline: 'none', fontSize: 13 }}>
+        style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: fitColumns ? 'auto' : 'scroll', position: 'relative', outline: 'none', fontSize: 13 }}>
         <div role="row" style={{
           position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', height: HEADER_HEIGHT,
           width: totalWidth, minWidth: '100%', background: 'var(--c-panel)', borderBottom: '1px solid var(--c-border)',
@@ -414,9 +437,9 @@ export function GanttGrid({
           {columns.map((c) => (
             <div key={c.id} role="columnheader" aria-label={c.label} style={{ ...cellStyle(c), position: 'relative', height: '100%', display: 'flex', alignItems: 'center', justifyContent: c.align === 'right' ? 'flex-end' : 'flex-start' }}>
               {c.label}
-              <div role="separator" aria-orientation="vertical" aria-label={`Resize ${c.label}`} tabIndex={-1}
+              {!fitColumns && <div role="separator" aria-orientation="vertical" aria-label={`Resize ${c.label}`} tabIndex={-1}
                 onPointerDown={onResizeDown(c.id)} onPointerMove={onResizeMove} onPointerUp={onResizeUp} onPointerCancel={onResizeUp}
-                style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'col-resize', touchAction: 'none' }} />
+                style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'col-resize', touchAction: 'none' }} />}
             </div>
           ))}
         </div>
@@ -483,7 +506,7 @@ export function GanttGrid({
                               else setEditing({ ...ed, invalid: true })
                               return closed || how === 'blur'
                             }} />
-                        : <CellText col={c.id} a={a} wbs={r.wbs} s={s} />}
+                        : <CellText col={c.id} a={a} wbs={r.wbs} s={s} short={fitColumns} />}
                     </div>
                   )
                 })}
@@ -497,21 +520,24 @@ export function GanttGrid({
   )
 }
 
-function CellText({ col, a, wbs, s }: {
+function CellText({ col, a, wbs, s, short = false }: {
   col: ColumnId; a: ActivityRow; wbs: string
   s: { earlyStart: string; earlyFinish: string; totalFloat: number } | undefined
+  /** Phone: `12 Mar 26` instead of `2026-03-12` (the full date stays in the title). */
+  short?: boolean
 }) {
   let text: string
   switch (col) {
     case 'wbs': text = wbs; break
     case 'name': text = a.name; break
     case 'duration': text = isSummary(a) ? '—' : `${a.original_duration}d`; break
-    case 'start': text = s?.earlyStart ?? '—'; break
-    case 'finish': text = s?.earlyFinish ?? '—'; break
+    case 'start': text = short ? shortDate(s?.earlyStart) : s?.earlyStart ?? '—'; break
+    case 'finish': text = short ? shortDate(s?.earlyFinish) : s?.earlyFinish ?? '—'; break
     case 'float': text = s ? `${s.totalFloat}d` : '—'; break
     case 'percent': text = `${a.percent_complete}%`; break
   }
-  if (col === 'name') return <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
+  if (col === 'name') return <span title={short ? a.name : undefined} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</span>
+  if (short && (col === 'start' || col === 'finish')) return <span title={(col === 'start' ? s?.earlyStart : s?.earlyFinish) ?? undefined}>{text}</span>
   return <>{text}</>
 }
 

@@ -530,6 +530,21 @@ describe('ProgrammeClient: a baseline change refreshes the view, not the store',
       expect(screen.getByRole('grid', { name: 'Activities' })).not.toBeNull()
     })
 
+    it('the phone grid sizes its three columns to the pane, so nothing scrolls sideways', () => {
+      phoneMedia()
+      const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return 356 } })
+      try {
+        renderClient(api())
+        const g = screen.getByRole('grid', { name: 'Activities' })
+        const sum = within(g).getAllByRole('columnheader').reduce((t, c) => t + parseFloat(c.style.width), 0)
+        expect(sum).toBeLessThanOrEqual(356)
+        expect(g.style.overflowX).not.toBe('scroll')
+      } finally {
+        if (desc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', desc)
+      }
+    })
+
     it('on a wide screen there is no toggle and both panes show all columns', () => {
       vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
       renderClient(api())
