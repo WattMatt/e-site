@@ -30,9 +30,9 @@
 --      grants: SELECT to authenticated, nothing to anon, no client writes.
 --   6. Write functions (SECURITY DEFINER, EXECUTE to authenticated only):
 --      create_programme (seeds Site + Office calendars), save_changes (ops +
---      computed cache, optimistic version), save_baseline /
---      set_active_baseline / delete_baseline, submit_field_update /
---      decide_field_updates. Each locks the programme and writes audit; the
+--      computed cache + field-update decisions, optimistic version),
+--      save_baseline / set_active_baseline / delete_baseline,
+--      submit_field_update. Each locks the programme and writes audit; the
 --      internals write_audit and resolve_ref are granted to nobody.
 --   7. module_summary: the module bar's start / finish / duration-weighted %.
 --
@@ -266,26 +266,29 @@
 -- function: programme.write_audit(uuid, text, jsonb)
 -- function: programme.resolve_ref(text, jsonb, text, uuid, text)
 -- function: programme.create_programme(uuid, text, text, date, text, text)
--- function: programme.save_changes(uuid, timestamptz, jsonb, jsonb)
+-- function: programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)
 -- function: programme.save_baseline(uuid, text, boolean)
 -- function: programme.set_active_baseline(uuid)
 -- function: programme.delete_baseline(uuid)
 -- function: programme.submit_field_update(uuid, date, date, numeric, numeric, text)
--- function: programme.decide_field_updates(uuid, jsonb)
 -- function: programme.module_summary(uuid, text)
+-- function: programme.weekdays_distinct(smallint[])
+-- constraint: calendars_work_weekdays_distinct ON programme.calendars
+-- constraint: calendars_coverage_order ON programme.calendars
 -- grant_present: authenticated EXECUTE ON programme.create_programme(uuid, text, text, date, text, text)
--- grant_present: authenticated EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb)
+-- grant_present: authenticated EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)
 -- grant_present: authenticated EXECUTE ON programme.save_baseline(uuid, text, boolean)
 -- grant_present: authenticated EXECUTE ON programme.set_active_baseline(uuid)
 -- grant_present: authenticated EXECUTE ON programme.delete_baseline(uuid)
 -- grant_present: authenticated EXECUTE ON programme.submit_field_update(uuid, date, date, numeric, numeric, text)
--- grant_present: authenticated EXECUTE ON programme.decide_field_updates(uuid, jsonb)
 -- grant_present: authenticated EXECUTE ON programme.module_summary(uuid, text)
 -- grant_absent: authenticated EXECUTE ON programme.write_audit(uuid, text, jsonb)
 -- grant_absent: authenticated EXECUTE ON programme.resolve_ref(text, jsonb, text, uuid, text)
--- grant_absent: anon EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb)
--- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' AND p.prosrc LIKE '%''40001''%' FROM pg_proc p WHERE p.oid = 'programme.save_changes(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
--- sql: (SELECT count(*) = 10 AND bool_and(p.prosecdef AND p.proconfig @> ARRAY['search_path=""']) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND p.proname IN ('write_audit', 'resolve_ref', 'create_programme', 'save_changes', 'save_baseline', 'set_active_baseline', 'delete_baseline', 'submit_field_update', 'decide_field_updates', 'module_summary'))
+-- grant_absent: anon EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)
+-- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' AND p.prosrc LIKE '%''40001''%' AND p.prosrc LIKE '%field_updates.decided%' FROM pg_proc p WHERE p.oid = 'programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)'::regprocedure)
+-- sql: (SELECT NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND (p.proname = 'decide_field_updates' OR (p.proname = 'save_changes' AND p.pronargs <> 5))))
+-- grant_absent: anon EXECUTE ON programme.weekdays_distinct(smallint[])
+-- sql: (SELECT count(*) = 9 AND bool_and(p.prosecdef AND p.proconfig @> ARRAY['search_path=""']) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND p.proname IN ('write_audit', 'resolve_ref', 'create_programme', 'save_changes', 'save_baseline', 'set_active_baseline', 'delete_baseline', 'submit_field_update', 'module_summary'))
 -- behaviour: scripts/db/assert-programme-roles.sql — every row ok
 -- @verify:end
 
@@ -321,6 +324,16 @@ CREATE UNIQUE INDEX programmes_one_project_idx ON programme.programmes (project_
 CREATE UNIQUE INDEX programmes_one_module_idx ON programme.programmes (project_id, module_key) WHERE kind = 'module';
 CREATE UNIQUE INDEX programmes_one_contractor_idx ON programme.programmes (project_id, lower(contractor_label)) WHERE kind = 'contractor';
 
+-- A CHECK cannot hold a subquery, so "no weekday twice" is this IMMUTABLE
+-- helper. {1,1,1} would otherwise be a calendar with three Mondays: a silent
+-- wrong schedule rather than a refusal.
+CREATE OR REPLACE FUNCTION programme.weekdays_distinct(p_days smallint[])
+RETURNS boolean LANGUAGE sql IMMUTABLE STRICT SET search_path = '' AS $$
+    SELECT pg_catalog.cardinality(p_days) = (SELECT pg_catalog.count(DISTINCT d) FROM pg_catalog.unnest(p_days) AS d)
+$$;
+REVOKE ALL ON FUNCTION programme.weekdays_distinct(smallint[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION programme.weekdays_distinct(smallint[]) TO authenticated, service_role;
+
 CREATE TABLE programme.calendars (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     programme_id    UUID NOT NULL REFERENCES programme.programmes(id) ON DELETE CASCADE,
@@ -333,7 +346,9 @@ CREATE TABLE programme.calendars (
     coverage_from   DATE,
     coverage_to     DATE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT calendars_work_weekdays_distinct CHECK (programme.weekdays_distinct(work_weekdays)),
+    CONSTRAINT calendars_coverage_order CHECK (coverage_from IS NULL OR coverage_to IS NULL OR coverage_from <= coverage_to)
 );
 CREATE INDEX calendars_programme_idx ON programme.calendars (programme_id);
 
@@ -1541,8 +1556,16 @@ END $$;
 -- engine run in the same request. An editor calling this RPC directly can only
 -- falsify a cache that the next recalculation overwrites, and every read path
 -- treats these columns as a cache, never as a source of truth.
+-- p_decisions = [{id, status:'applied'|'adjusted'|'rejected', note?}] decides
+-- reported field updates of THIS programme. They are decided after the lock
+-- and the version check, in the same transaction as the ops, so a decision
+-- and the activity actuals it agrees to commit together or not at all (a
+-- stale version refuses both). Deciding does not itself change an activity:
+-- the agreed values travel as upsert_activity ops in p_ops, so activity
+-- fields keep exactly one write path. The result adds `decided` (a count).
 CREATE OR REPLACE FUNCTION programme.save_changes(
-    p_programme_id uuid, p_expected_version timestamptz, p_ops jsonb, p_computed jsonb)
+    p_programme_id uuid, p_expected_version timestamptz, p_ops jsonb, p_computed jsonb,
+    p_decisions jsonb DEFAULT '[]'::jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security = off AS $$
 DECLARE
     c_act_fields CONSTANT text[] := ARRAY['parent_id','wbs_code','code','name','type','original_duration',
@@ -1563,6 +1586,8 @@ DECLARE
     v_counts jsonb := '{}'::jsonb; v_created jsonb := '[]'::jsonb; v_deleted jsonb := '[]'::jsonb;
     v_tombstoned jsonb := '[]'::jsonb;
     v_c jsonb; v_n_computed int := 0;
+    v_d jsonb; v_status text; v_note text; v_fu_prog uuid; v_fu_status text;
+    v_n_decided int := 0; v_decided_ids jsonb := '[]'::jsonb; v_by jsonb := '{}'::jsonb;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('programme:' || p_programme_id::text, 0));
     IF NOT coalesce(programme.can_edit(p_programme_id), false) THEN
@@ -1579,6 +1604,44 @@ BEGIN
     IF p_computed IS NOT NULL AND jsonb_typeof(p_computed) <> 'object' THEN
         RAISE EXCEPTION 'The computed schedule must be sent as an object.' USING ERRCODE = '22023';
     END IF;
+    p_decisions := coalesce(p_decisions, '[]'::jsonb);
+    IF jsonb_typeof(p_decisions) <> 'array' THEN
+        RAISE EXCEPTION 'The field update decisions must be sent as a list.' USING ERRCODE = '22023';
+    END IF;
+
+    -- Field-update decisions: under the lock and the version check above, in
+    -- this transaction. Any refusal here (or in the ops below) undoes them all.
+    FOR v_d IN SELECT e.value FROM jsonb_array_elements(p_decisions) AS e(value) LOOP
+        IF coalesce(v_d ->> 'id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            RAISE EXCEPTION 'That field update no longer exists.' USING ERRCODE = 'P0002';
+        END IF;
+        v_id := (v_d ->> 'id')::uuid;
+        v_status := v_d ->> 'status';
+        v_note := nullif(btrim(v_d ->> 'note'), '');
+        v_fu_prog := NULL; v_fu_status := NULL;
+        SELECT f.programme_id, f.status INTO v_fu_prog, v_fu_status FROM programme.field_updates f WHERE f.id = v_id FOR UPDATE;
+        IF v_fu_prog IS NULL THEN
+            RAISE EXCEPTION 'That field update no longer exists.' USING ERRCODE = 'P0002';
+        END IF;
+        IF v_fu_prog <> p_programme_id THEN
+            RAISE EXCEPTION 'That field update belongs to a different programme.' USING ERRCODE = '22023';
+        END IF;
+        IF v_status IS NULL OR v_status NOT IN ('applied', 'adjusted', 'rejected') THEN
+            RAISE EXCEPTION 'A field update is applied, adjusted or rejected.' USING ERRCODE = '22023';
+        END IF;
+        IF v_fu_status <> 'reported' THEN
+            RAISE EXCEPTION 'That field update has already been decided.' USING ERRCODE = '22023';
+        END IF;
+        IF v_note IS NOT NULL AND char_length(v_note) > 2000 THEN
+            RAISE EXCEPTION 'Keep the note to 2000 characters.' USING ERRCODE = '22023';
+        END IF;
+        UPDATE programme.field_updates SET status = v_status, decided_by = auth.uid(), decided_at = now(), decision_note = v_note
+         WHERE id = v_id;
+        v_n_decided := v_n_decided + 1;
+        v_decided_ids := v_decided_ids || to_jsonb(v_id);
+        v_by := jsonb_set(v_by, ARRAY[v_status], to_jsonb(coalesce((v_by ->> v_status)::int, 0) + 1));
+    END LOOP;
+    v_id := NULL;
 
     BEGIN
     FOR v_op IN SELECT e.value FROM jsonb_array_elements(p_ops) AS e(value) LOOP
@@ -1899,8 +1962,13 @@ BEGIN
     RETURNING updated_at INTO v_version;
     PERFORM programme.write_audit(p_programme_id, 'programme.saved', jsonb_build_object(
         'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
-        'computed', v_n_computed));
-    RETURN jsonb_build_object('version', v_version, 'ids', v_keys, 'deleted', v_deleted, 'tombstoned', v_tombstoned);
+        'computed', v_n_computed, 'decided', v_n_decided));
+    IF v_n_decided > 0 THEN
+        PERFORM programme.write_audit(p_programme_id, 'field_updates.decided', jsonb_build_object(
+            'field_update_ids', v_decided_ids, 'by_status', v_by));
+    END IF;
+    RETURN jsonb_build_object('version', v_version, 'ids', v_keys, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
+        'decided', v_n_decided);
 END $$;
 
 -- 3. save_baseline: a full snapshot of the live (non-tombstoned) activities,
@@ -2051,55 +2119,9 @@ BEGIN
     RETURN v_id;
 END $$;
 
--- 6. decide_field_updates (editor only): marks each reported update applied,
--- adjusted or rejected. RULING: it does NOT change activity actuals. The
--- server action applies the agreed values through save_changes in the same
--- request, so activity fields have exactly one write path.
-CREATE OR REPLACE FUNCTION programme.decide_field_updates(p_programme_id uuid, p_decisions jsonb)
-RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security = off AS $$
-DECLARE v_d jsonb; v_id uuid; v_status text; v_cur_prog uuid; v_cur_status text; v_note text;
-        v_n int := 0; v_ids jsonb := '[]'::jsonb; v_by jsonb := '{}'::jsonb;
-BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('programme:' || p_programme_id::text, 0));
-    IF NOT coalesce(programme.can_edit(p_programme_id), false) THEN
-        RAISE EXCEPTION 'You do not have permission to edit this programme.' USING ERRCODE = '42501';
-    END IF;
-    IF p_decisions IS NULL OR jsonb_typeof(p_decisions) <> 'array' OR jsonb_array_length(p_decisions) = 0 THEN
-        RAISE EXCEPTION 'Choose at least one field update to decide.' USING ERRCODE = '22023';
-    END IF;
-    FOR v_d IN SELECT e.value FROM jsonb_array_elements(p_decisions) AS e(value) LOOP
-        IF coalesce(v_d ->> 'id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-            RAISE EXCEPTION 'That field update no longer exists.' USING ERRCODE = 'P0002';
-        END IF;
-        v_id := (v_d ->> 'id')::uuid;
-        v_status := v_d ->> 'status';
-        v_note := nullif(btrim(v_d ->> 'note'), '');
-        SELECT f.programme_id, f.status INTO v_cur_prog, v_cur_status FROM programme.field_updates f WHERE f.id = v_id FOR UPDATE;
-        IF v_cur_prog IS NULL THEN
-            RAISE EXCEPTION 'That field update no longer exists.' USING ERRCODE = 'P0002';
-        END IF;
-        IF v_cur_prog <> p_programme_id THEN
-            RAISE EXCEPTION 'That field update belongs to a different programme.' USING ERRCODE = '22023';
-        END IF;
-        IF v_status IS NULL OR v_status NOT IN ('applied', 'adjusted', 'rejected') THEN
-            RAISE EXCEPTION 'A field update is applied, adjusted or rejected.' USING ERRCODE = '22023';
-        END IF;
-        IF v_cur_status <> 'reported' THEN
-            RAISE EXCEPTION 'That field update has already been decided.' USING ERRCODE = '22023';
-        END IF;
-        IF v_note IS NOT NULL AND char_length(v_note) > 2000 THEN
-            RAISE EXCEPTION 'Keep the note to 2000 characters.' USING ERRCODE = '22023';
-        END IF;
-        UPDATE programme.field_updates SET status = v_status, decided_by = auth.uid(), decided_at = now(), decision_note = v_note
-         WHERE id = v_id;
-        v_n := v_n + 1;
-        v_ids := v_ids || to_jsonb(v_id);
-        v_by := jsonb_set(v_by, ARRAY[v_status], to_jsonb(coalesce((v_by ->> v_status)::int, 0) + 1));
-    END LOOP;
-    PERFORM programme.write_audit(p_programme_id, 'field_updates.decided', jsonb_build_object(
-        'field_update_ids', v_ids, 'by_status', v_by));
-    RETURN v_n;
-END $$;
+-- 6. Deciding field updates (editor only) is NOT a separate function: it is
+-- save_changes' p_decisions, so a decision and the activity actuals it agrees
+-- to are one transaction under one version check.
 
 -- ── 7. Module rollup ────────────────────────────────────────────────────────
 -- The project programme's module_summary bar. Any project reader (project
@@ -2132,18 +2154,16 @@ END $$;
 REVOKE ALL ON FUNCTION programme.write_audit(uuid, text, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION programme.resolve_ref(text, jsonb, text, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION programme.create_programme(uuid, text, text, date, text, text) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION programme.save_changes(uuid, timestamptz, jsonb, jsonb) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION programme.save_baseline(uuid, text, boolean) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION programme.set_active_baseline(uuid) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION programme.delete_baseline(uuid) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION programme.submit_field_update(uuid, date, date, numeric, numeric, text) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION programme.decide_field_updates(uuid, jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION programme.module_summary(uuid, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION programme.create_programme(uuid, text, text, date, text, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION programme.save_changes(uuid, timestamptz, jsonb, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION programme.save_baseline(uuid, text, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION programme.set_active_baseline(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION programme.delete_baseline(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION programme.submit_field_update(uuid, date, date, numeric, numeric, text) TO authenticated;
-GRANT EXECUTE ON FUNCTION programme.decide_field_updates(uuid, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION programme.module_summary(uuid, text) TO authenticated;

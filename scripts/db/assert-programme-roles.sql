@@ -111,6 +111,7 @@ DECLARE
   v_ids uuid[];
   v_tb uuid; v_tf uuid; v_tc uuid; v_tw uuid; v_tp uuid; v_tpc uuid; v_wi uuid; v_mr uuid; v_masg uuid;
   v_fu3 uuid; v_fu4 uuid; v_fu5 uuid;
+  v_tables text[]; v_org_tables text[]; v_tbl text;
 BEGIN
   -- ── 0. Fixtures (as postgres) ─────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES
@@ -613,30 +614,102 @@ BEGIN
     PERFORM pg_temp.r(v_labels[i] || '_field_update_REFUSED_42501', v_st = '42501', v_st);
   END LOOP;
 
+  -- Deciding is save_changes' p_decisions: the decision and the actuals it
+  -- agrees to are one transaction under one version check.
+  v_ver := pg_temp.ver(v_prog);
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   v_st := NULL;
   BEGIN
-    PERFORM programme.decide_field_updates(v_prog, jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied')));
+    PERFORM programme.save_changes(v_prog, v_ver, '[]'::jsonb, NULL,
+      jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied')));
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
   END;
   RESET ROLE;
   PERFORM pg_temp.r('contractor_decide_REFUSED_42501', v_st = '42501', v_st);
 
+  -- A stale version refuses the decision AND the ops: the report stays reported.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   v_st := NULL;
   BEGIN
-    v_int := programme.decide_field_updates(v_prog, jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied')));
+    PERFORM programme.save_changes(v_prog, v_ver - interval '1 second', jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'id', v_a2, 'fields', jsonb_build_object('actual_start', '2026-03-09', 'percent_complete', 40))),
+      NULL, jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied')));
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('stale_version_with_decisions_REFUSED_40001', v_st = '40001', v_st);
+  PERFORM pg_temp.r('stale_decision_left_report_reported_and_activity_untouched',
+    pg_temp.b(format($q$SELECT status = 'reported' AND decided_by IS NULL FROM programme.field_updates WHERE id = %L$q$, v_fu))
+    AND pg_temp.b(format('SELECT actual_start IS NULL AND percent_complete = 0 FROM programme.activities WHERE id = %L', v_a2)));
+
+  -- A refused op in the same call undoes the decision too.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, v_ver, jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'id', v_a2, 'fields', jsonb_build_object('percent_complete', 40, 'nmae', 'typo'))),
+      NULL, jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied')));
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('refused_op_undoes_decision_22023',
+    v_st = '22023'
+    AND pg_temp.b(format($q$SELECT status = 'reported' AND decided_by IS NULL FROM programme.field_updates WHERE id = %L$q$, v_fu)), v_st);
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL; v_ret := NULL;
+  BEGIN
+    v_ret := programme.save_changes(v_prog, v_ver, jsonb_build_array(
+      jsonb_build_object('op', 'upsert_activity', 'id', v_a2, 'fields', jsonb_build_object(
+        'actual_start', '2026-03-09', 'percent_complete', 40, 'remaining_duration', 2))),
+      NULL, jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'applied', 'note', '  Agreed on site  ')));
+    v_saves := v_saves + 1;
   EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
   END;
   RESET ROLE;
-  PERFORM pg_temp.r('editor_decides_applied',
-    v_int = 1 AND pg_temp.b(format($q$SELECT status = 'applied' AND decided_by = %L AND decided_at IS NOT NULL
-                                     FROM programme.field_updates WHERE id = %L$q$, v_owner, v_fu)), v_st);
-  PERFORM pg_temp.r('decided_update_moves_no_activity_field',
-    pg_temp.b(format('SELECT actual_start IS NULL AND percent_complete = 0 FROM programme.activities WHERE id = %L', v_a2)));
+  PERFORM pg_temp.r('editor_decides_applied_and_actuals_land_together',
+    (v_ret ->> 'decided')::int = 1
+    AND pg_temp.b(format($q$SELECT status = 'applied' AND decided_by = %L AND decided_at IS NOT NULL AND decision_note = 'Agreed on site'
+                           FROM programme.field_updates WHERE id = %L$q$, v_owner, v_fu))
+    AND pg_temp.b(format($q$SELECT actual_start = DATE '2026-03-09' AND percent_complete = 40 AND remaining_duration = 2
+                           FROM programme.activities WHERE id = %L$q$, v_a2)), coalesce(v_st, v_ret::text));
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, pg_temp.ver(v_prog), '[]'::jsonb, NULL,
+      jsonb_build_array(jsonb_build_object('id', v_fu, 'status', 'rejected')));
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('already_decided_REFUSED_22023', v_st = '22023', v_st);
+
+  -- Calendar CHECKs: a weekday twice, and coverage that ends before it starts.
+  FOR i IN 1..2 LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    v_st := NULL;
+    BEGIN
+      PERFORM programme.save_changes(v_prog, pg_temp.ver(v_prog), jsonb_build_array(jsonb_build_object(
+        'op', 'upsert_calendar', 'key', 'badcal', 'fields', CASE i
+          WHEN 1 THEN jsonb_build_object('name', 'Three Mondays', 'work_weekdays', jsonb_build_array(1, 1, 1))
+          ELSE jsonb_build_object('name', 'Backwards', 'coverage_from', '2027-01-01', 'coverage_to', '2026-12-31') END)), NULL);
+      RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+    EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+    END;
+    RESET ROLE;
+    PERFORM pg_temp.r(CASE i WHEN 1 THEN 'calendar_duplicate_weekday_REFUSED_22023' ELSE 'calendar_coverage_backwards_REFUSED_22023' END,
+      v_st = '22023', v_st);
+  END LOOP;
 
   -- ── 5a. Editor arm: an editor reports on an UNTAGGED activity (A1) ──────
   v_users := ARRAY[v_owner, v_pm];
@@ -919,19 +992,85 @@ BEGIN
       v_txt = v_n || '/' || v_m AND v_n > 0 AND v_m > 0, v_txt);
   END LOOP;
 
+  -- EVERY table in the schema, from the catalog, so a table added later is
+  -- covered without editing this file. Project-keyed tables (a project_id
+  -- column) must read 0 rows for the four outsiders; the org library
+  -- (resources, resource_rates: no project_id) follows its own org rule below.
+  -- Seed the tables no P2 write path fills (as postgres, claim cleared), so
+  -- the positive control can prove every table holds a row the zero check
+  -- could leak.
+  PERFORM set_config('request.jwt.claims', '', true);
+  BEGIN
+    INSERT INTO programme.imports (programme_id, format, file_name)
+      VALUES (v_prog, 'csv', 'programme-roles-probe.csv');
+    INSERT INTO programme.calendar_exceptions (calendar_id, programme_id, day, kind, label)
+      SELECT c.id, v_prog, DATE '2026-07-15', 'non_work', 'probe' FROM programme.calendars c
+       WHERE c.programme_id = v_prog ORDER BY c.name LIMIT 1
+      ON CONFLICT (calendar_id, day) DO NOTHING;
+  EXCEPTION WHEN OTHERS THEN NULL;
+  END;
+  SELECT array_agg(t.tablename::text ORDER BY t.tablename) INTO v_tables
+    FROM pg_tables t
+   WHERE t.schemaname = 'programme'
+     AND EXISTS (SELECT 1 FROM information_schema.columns c
+                  WHERE c.table_schema = 'programme' AND c.table_name = t.tablename AND c.column_name = 'project_id');
+  SELECT array_agg(t.tablename::text ORDER BY t.tablename) INTO v_org_tables
+    FROM pg_tables t
+   WHERE t.schemaname = 'programme'
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                      WHERE c.table_schema = 'programme' AND c.table_name = t.tablename AND c.column_name = 'project_id');
+  -- 19 project-keyed + exactly the two org-library tables. A new org-level
+  -- table turns this red instead of being silently skipped below.
+  PERFORM pg_temp.r('every_programme_table_is_covered',
+    coalesce(cardinality(v_tables), 0) = 19 AND v_org_tables = ARRAY['resource_rates', 'resources'],
+    coalesce(cardinality(v_tables), 0) || ' ' || coalesce(v_org_tables::text, 'NULL'));
+
+  -- Positive control: the owner reads >= 1 row of P in every project table,
+  -- and the org's resource and rate, so each zero below could have failed.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_txt := '';
+  FOREACH v_tbl IN ARRAY coalesce(v_tables, ARRAY[]::text[]) LOOP
+    v_n := pg_temp.n(format('SELECT count(*) FROM programme.%I WHERE project_id = %L', v_tbl, v_p));
+    IF v_n < 1 THEN v_txt := v_txt || v_tbl || '=' || v_n || ' '; END IF;
+  END LOOP;
+  FOREACH v_tbl IN ARRAY coalesce(v_org_tables, ARRAY[]::text[]) LOOP
+    v_n := pg_temp.n(format('SELECT count(*) FROM programme.%I WHERE organisation_id = %L', v_tbl, v_org));
+    IF v_n < 1 THEN v_txt := v_txt || v_tbl || '=' || v_n || ' '; END IF;
+  END LOOP;
+  RESET ROLE;
+  PERFORM pg_temp.r('owner_reads_a_row_in_every_programme_table',
+    v_txt = '' AND coalesce(cardinality(v_tables), 0) = 19 AND coalesce(cardinality(v_org_tables), 0) = 2, v_txt);
+
   v_users := ARRAY[v_client, v_offpm, v_stranger, v_lapsed];
   v_labels := ARRAY['client_viewer', 'offsite_org_pm', 'stranger', 'lapsed_member'];
   FOR i IN 1..array_length(v_users, 1) LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
     SET LOCAL ROLE authenticated;
-    v_txt := pg_temp.n(format('SELECT count(*) FROM programme.programmes WHERE project_id = %L', v_p)) || '/'
-          || pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE project_id = %L', v_p)) || '/'
-          || pg_temp.n(format('SELECT count(*) FROM programme.dependencies WHERE project_id = %L', v_p)) || '/'
-          || pg_temp.n(format('SELECT count(*) FROM programme.audit WHERE project_id = %L', v_p)) || '/'
-          || pg_temp.n(format('SELECT count(*) FROM programme.field_updates WHERE project_id = %L', v_p)) || '/'
-          || pg_temp.n(format('SELECT count(*) FROM programme.baselines WHERE project_id = %L', v_p));
+    v_txt := '';
+    FOREACH v_tbl IN ARRAY coalesce(v_tables, ARRAY[]::text[]) LOOP
+      v_n := pg_temp.n(format('SELECT count(*) FROM programme.%I WHERE project_id = %L', v_tbl, v_p));
+      IF v_n <> 0 THEN v_txt := v_txt || v_tbl || '=' || v_n || ' '; END IF;
+    END LOOP;
     RESET ROLE;
-    PERFORM pg_temp.r(v_labels[i] || '_reads_nothing', v_txt = '0/0/0/0/0/0', v_txt);
+    PERFORM pg_temp.r(v_labels[i] || '_reads_nothing_on_every_project_table',
+      v_txt = '' AND coalesce(cardinality(v_tables), 0) = 19, v_txt);
+  END LOOP;
+
+  -- The org library is org-level by design: an active org member who is not a
+  -- client viewer reads the resource; only an org owner/admin/PM reads the
+  -- rate. So the off-site org PM reads both (no project needed); the client
+  -- viewer, the stranger and the lapsed member read neither.
+  v_users := ARRAY[v_client, v_offpm, v_stranger, v_lapsed];
+  v_labels := ARRAY['client_viewer', 'offsite_org_pm', 'stranger', 'lapsed_member'];
+  FOR i IN 1..array_length(v_users, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
+    SET LOCAL ROLE authenticated;
+    v_txt := pg_temp.n(format('SELECT count(*) FROM programme.resources WHERE organisation_id = %L', v_org)) || '/'
+          || pg_temp.n(format('SELECT count(*) FROM programme.resource_rates WHERE organisation_id = %L', v_org));
+    RESET ROLE;
+    PERFORM pg_temp.r(v_labels[i] || '_org_library_by_org_rule',
+      v_txt = CASE WHEN v_users[i] = v_offpm THEN '1/1' ELSE '0/0' END, v_txt);
   END LOOP;
 
   -- The org PM who is a member of P only sees nothing of P2.
@@ -991,7 +1130,7 @@ BEGIN
   PERFORM pg_temp.r('org_contractor_reads_resource_not_rate', v_txt = '1/0', v_txt);
 
   -- ── 9. Audit: one row per successful write, attributed to the caller ──────
-  PERFORM pg_temp.r('fixture_save_counters', v_saves = 12 AND v_mod_saves = 3, v_saves || '/' || v_mod_saves);
+  PERFORM pg_temp.r('fixture_save_counters', v_saves = 13 AND v_mod_saves = 3, v_saves || '/' || v_mod_saves);
   v_txt := pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.created' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved'$q$, v_prog)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'baseline.saved' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
