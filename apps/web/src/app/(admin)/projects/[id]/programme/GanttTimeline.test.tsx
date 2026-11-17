@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import {
   applyOps, barX, rowsToProgrammeInput, scheduleProgramme, timescale,
@@ -7,7 +7,10 @@ import {
 } from '@esite/shared/programme'
 import { activityRow, calendarRow, dependencyRow, programmeRow } from '@/lib/programme/test-fixtures'
 import type { ActiveBaselineView } from '@/lib/programme/view-types'
-import { GanttTimeline, type GanttTimelineStore } from './GanttTimeline'
+import { GanttTimeline, LOE_LOCK, STARTED_LOCK, type GanttTimelineStore } from './GanttTimeline'
+import { buildDisplayRows, NO_FILTERS, type DisplayRow } from './display-rows'
+import { TimelineControls } from './GanttToolbar'
+import type { TimelineCommands } from './bridge'
 
 vi.mock('@/actions/programme.actions', () => ({ saveProgrammeChangesAction: vi.fn(), programmeVersionAction: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
@@ -34,16 +37,21 @@ function storeOf(activities: Row[], dependencies: Row[] = [], opts: { schedule?:
   } satisfies GanttTimelineStore
 }
 
-function Harness({ store, canEdit = true, baseline = null, today = null, onSelect = () => {}, onZoom, initialZoom = 'day' }: {
-  store: GanttTimelineStore; canEdit?: boolean; baseline?: ActiveBaselineView | null; today?: string | null
+function Harness({ store, canEdit = true, baseline = null, today = null, onSelect = () => {}, onZoom, initialZoom = 'day', rows }: {
+  store: GanttTimelineStore; canEdit?: boolean; baseline?: ActiveBaselineView | null; today?: string | null; rows?: DisplayRow[]
   onSelect?: (id: string, mode: 'only' | 'toggle') => void; onZoom?: (z: Zoom) => void; initialZoom?: Zoom
 }) {
   const [scrollTop, setScrollTop] = useState(0)
   const [zoom, setZoom] = useState<Zoom>(initialZoom)
+  const commandsRef = useRef<TimelineCommands | null>(null)
+  const onZ = (z: Zoom) => { onZoom?.(z); setZoom(z) }
   return (
-    <GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop} collapsed={new Set()}
-      selected={new Set()} onSelect={onSelect} activeBaseline={baseline} today={today}
-      zoom={zoom} onZoom={(z) => { onZoom?.(z); setZoom(z) }} />
+    <>
+      <TimelineControls commandsRef={commandsRef} zoom={zoom} onZoom={onZ} />
+      <GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop} collapsed={new Set()}
+        selected={new Set()} onSelect={onSelect} activeBaseline={baseline} today={today}
+        zoom={zoom} onZoom={onZ} commandsRef={commandsRef} rows={rows} />
+    </>
   )
 }
 
@@ -289,10 +297,10 @@ describe('GanttTimeline: drag', () => {
     const store = storeOf(two(), linked())
     render(<Harness store={store} onSelect={onSelect} />)
     const hit = document.querySelector('[data-link-id="D1"] [data-part="link-hit"]') as Element
-    // A ends at x 324; its handle (radius 5) is centred at 332 on y 14, where the link's first stub runs.
-    // x 326 is on the stub, outside the drawn handle.
-    fireEvent.pointerDown(hit, { clientX: 326, clientY: 14, pointerId: 1, button: 0 })
-    fireEvent.pointerUp(hit, { clientX: 326, clientY: 14, pointerId: 1 })
+    // A ends at x 324; its handle (press reach 7, as hover) is centred at 332 on y 14, where the link's first stub runs.
+    // x 324 is on the stub's first pixel, 8 from the centre: outside the handle.
+    fireEvent.pointerDown(hit, { clientX: 324, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerUp(hit, { clientX: 324, clientY: 14, pointerId: 1 })
     fireEvent.click(hit)
     expect(onSelect).not.toHaveBeenCalled()
     expect(store.apply).not.toHaveBeenCalled()
@@ -465,5 +473,99 @@ describe('GanttTimeline: zoom and navigation', () => {
     again.scrollLeft = 700
     fireEvent.click(screen.getByRole('button', { name: 'Scroll to today' }))
     expect(again.scrollLeft).toBe(0)
+  })
+})
+
+describe('GanttTimeline: progress locks the dates', () => {
+  // A started Mon 2026-03-02, 5 days, 50 % done; data date Wed 03-04; 3 days left, so it finishes Fri 03-06 (x 252..432).
+  const started = () => storeOf(
+    [activityRow('A', { sort_order: 1, original_duration: 5, actual_start: '2026-03-02', percent_complete: 50, remaining_duration: 3 })],
+    [], { programme: { data_date: '2026-03-04' } },
+  )
+
+  it('a started activity is not moved by dragging its body, and its title says why', () => {
+    const store = started()
+    render(<Harness store={store} />)
+    drag([300, 14], [300 + 3 * 36, 14])
+    expect(store.apply).not.toHaveBeenCalled()
+    expect(bar('A')!.querySelector('title')!.textContent).toBe(`A\n${STARTED_LOCK}`)
+    expect(STARTED_LOCK).toBe('Started activities follow their progress; change dates by reporting progress.')
+  })
+
+  it('resizing a started activity edits remaining_duration, not original_duration', () => {
+    const store = started()
+    render(<Harness store={store} />)
+    // The edge is at x 432; three days right is Mon 03-09: one more working day left.
+    drag([429, 14], [429 + 3 * 36, 14])
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    expect(opsOf(store)).toEqual([{ op: 'upsert_activity', id: 'A', fields: { remaining_duration: 4 } }])
+    expect(store.apply.mock.calls[0][1]).toBe('Change remaining duration')
+  })
+
+  it('the resize preview of a started activity ends on the day the remaining duration will finish', () => {
+    const store = started()
+    render(<Harness store={store} />)
+    fireEvent.pointerDown(body(), { clientX: 429, clientY: 14, pointerId: 1, button: 0 })
+    fireEvent.pointerMove(body(), { clientX: 429 + 3 * 36, clientY: 14, pointerId: 1 })
+    const p = screen.getByTestId('timeline-preview')
+    // Start Mon 02 (252) to the end of Mon 09 (252 + 8 * 36).
+    expect(Number(p.getAttribute('x')) + Number(p.getAttribute('width'))).toBe(252 + 8 * 36)
+  })
+
+  it('a not-started activity still moves and resizes as before', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} />)
+    drag([280, 14], [280 + 36, 14])
+    expect(store.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it('a finished activity cannot be moved or resized, but can still start a link', () => {
+    const store = storeOf([
+      activityRow('A', { sort_order: 1, actual_start: '2026-03-02', actual_finish: '2026-03-03', percent_complete: 100 }),
+      activityRow('B', { sort_order: 2 }),
+    ])
+    render(<Harness store={store} />)
+    drag([280, 14], [280 + 2 * 36, 14])
+    drag([321, 14], [321 + 2 * 36, 14])
+    expect(store.apply).not.toHaveBeenCalled()
+    drag([332, 14], [290, 42])
+    expect(opsOf(store)).toEqual([{ op: 'upsert_dependency', key: 'n1-x', pred: 'A', succ: 'B', type: 'FS', lag: 0 }])
+  })
+
+  it('a level-of-effort activity is not draggable and says why', () => {
+    const store = storeOf([
+      activityRow('A', { sort_order: 1 }),
+      activityRow('L', { sort_order: 2, type: 'level_of_effort', original_duration: 0 }),
+    ])
+    render(<Harness store={store} />)
+    expect(bar('L')).not.toBeNull()
+    drag([280, 42], [280 + 2 * 36, 42])
+    drag([321, 42], [321 + 2 * 36, 42])
+    expect(store.apply).not.toHaveBeenCalled()
+    expect(bar('L')!.querySelector('title')!.textContent).toBe(`L\n${LOE_LOCK}`)
+  })
+
+  it('read-only shows no lock note (nothing can be dragged anyway)', () => {
+    render(<Harness store={started()} canEdit={false} />)
+    expect(bar('A')!.querySelector('title')!.textContent).toBe('A')
+  })
+})
+
+describe('GanttTimeline: grouped rows', () => {
+  it('a group header row draws a bracket over its members and no draggable bar; its members keep their rows', () => {
+    const state = {
+      ...stateOf([activityRow('A', { sort_order: 1 }), activityRow('B', { sort_order: 2 })]),
+      codeTypes: [{ id: 'T1', name: 'Trade', programme_id: 'P', sort_order: 1 }],
+      codeValues: [{ id: 'V1', code_type_id: 'T1', value: 'Civil' }],
+      activityCodes: [{ activity_id: 'A', code_type_id: 'T1', code_value_id: 'V1' }, { activity_id: 'B', code_type_id: 'T1', code_value_id: 'V1' }],
+    } as unknown as ProgrammeState
+    const store = { ...storeOf([]), state, schedule: scheduleProgramme(rowsToProgrammeInput(state)) }
+    const rows = buildDisplayRows(state, store.schedule, { collapsed: new Set(), filters: NO_FILTERS, groupBy: 'T1' })
+    render(<Harness store={store} rows={rows} />)
+    expect(document.querySelector('[data-group-id="group:V1"] [data-part="group"]')).not.toBeNull()
+    expect(bar('group:V1')).toBeNull()
+    // Row 0 is the header; A is row 1 (centre y 42): dragging it still moves it.
+    drag([280, 42], [280 + 36, 42])
+    expect(opsOf(store)).toEqual([{ op: 'upsert_activity', id: 'A', fields: { constraint_type: 'snet', constraint_date: '2026-03-03' } }])
   })
 })

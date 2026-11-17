@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { DAY_WIDTH, ROW_HEIGHT, timescale, type ProgrammeState } from '@esite/shared/programme'
 import { calendarRow, programmeRow } from '@/lib/programme/test-fixtures'
 import {
-  BAR_HEIGHT, barGeometry, EDGE_ZONE, fitZoom, HANDLE_OFFSET, hitTest, linkPoints, MILESTONE_HALF, movedStart,
-  resizedDuration, scrollLeftAround, snapForward, timelineCalendars, workingDaysInclusive, zoomStep,
+  BAR_HEIGHT, barGeometry, EDGE_ZONE, fitZoom, HANDLE_OFFSET, HANDLE_RADIUS, hitTest, linkPoints, MILESTONE_HALF, movedStart,
+  onDrawnHandle, resizedDuration, resizedRemaining, scrollLeftAround, snapForward, timelineCalendars, workingDaysInclusive, zoomStep,
 } from './timeline-geometry'
 
 // Day zoom: 36 px a day; the origin is 7 days before 2026-03-02, so 2026-03-02 is at x = 252.
@@ -170,5 +170,41 @@ describe('zoom', () => {
     expect(fitZoom(20, 1000)).toBe('day')
     expect(fitZoom(200, 1000)).toBe('month')
     expect(fitZoom(100000, 1000)).toBe('year')
+  })
+})
+
+describe('onDrawnHandle (R2-M1: a press reaches as far as hover shows the handle)', () => {
+  const task = barGeometry(scale, 'A', 'task', 0, { earlyStart: '2026-03-02', earlyFinish: '2026-03-04' })
+  const cx = task.x + task.width + HANDLE_OFFSET
+  it('HANDLE_RADIUS + 2 from the centre is on the handle, one pixel further is not', () => {
+    expect(onDrawnHandle(task, cx + HANDLE_RADIUS + 2, task.midY)).toBe(true)
+    expect(onDrawnHandle(task, cx + HANDLE_RADIUS + 3, task.midY)).toBe(false)
+  })
+  it('agrees with hitTest: wherever hover says handle, a press is on the drawn handle', () => {
+    for (let dx = -10; dx <= 10; dx++) {
+      const hit = hitTest([task], cx + dx, task.midY, true)?.part === 'handle'
+      expect(onDrawnHandle(task, cx + dx, task.midY)).toBe(hit)
+    }
+  })
+})
+
+describe('resizedRemaining: a started task resizes its remaining duration', () => {
+  const cal = cals().forActivity('SITE')
+  // Started Mon 2026-03-02, finishing Fri 2026-03-06 (5 days; remaining 3 after the data date).
+  const o = { remaining: 3, original: 5, start: '2026-03-02', finish: '2026-03-06', dataDate: '2026-03-04' }
+  it('a drag two working days right adds two to the remaining duration and moves the finish two working days', () => {
+    // Mon 03-09 is a holiday, so +2 working days from Fri 03-06 lands Wed 03-11.
+    expect(resizedRemaining(scale, cal, o, 5 * 36)).toEqual({ remaining: 5, finish: '2026-03-11' })
+  })
+  it('a drag left shortens it, never below one working day', () => {
+    expect(resizedRemaining(scale, cal, o, -2 * 36)).toEqual({ remaining: 1, finish: '2026-03-04' })
+    expect(resizedRemaining(scale, cal, o, -30 * 36).remaining).toBe(1)
+  })
+  it('no movement leaves the remaining duration as it was', () => {
+    expect(resizedRemaining(scale, cal, o, 0)).toEqual({ remaining: 3, finish: '2026-03-06' })
+  })
+  it('with no stored remaining it starts from the engine default: original less the work done to the data date', () => {
+    // Worked Mon, Tue (to the data date Wed): 5 - 2 = 3.
+    expect(resizedRemaining(scale, cal, { ...o, remaining: null }, 0).remaining).toBe(3)
   })
 })

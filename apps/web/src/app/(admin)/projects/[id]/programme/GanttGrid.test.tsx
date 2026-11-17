@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import {
   rowsToProgrammeInput, scheduleProgramme, type ProgrammeOp, type ProgrammeState, type ScheduleResult,
@@ -7,7 +7,10 @@ import {
 import { activityRow, calendarRow, programmeRow, VERSION } from '@/lib/programme/test-fixtures'
 import type { ProgrammeViewData } from '@/lib/programme/view-types'
 import type { SaveProgrammeChangesInput, SaveProgrammeResult } from '@/lib/programme/action-types'
-import { GanttGrid, columnsStorageKey, type GanttGridStore } from './GanttGrid'
+import { GanttGrid, columnsStorageKey, useHiddenColumns, type GanttGridStore } from './GanttGrid'
+import { GridControls } from './GanttToolbar'
+import { buildDisplayRows, NO_FILTERS } from './display-rows'
+import { NO_GRID_UI, type GridCommands, type GridUi } from './bridge'
 import { createProgrammeStore, scheduleFor, type ProgrammeStore } from './use-programme-store'
 
 vi.mock('@/actions/programme.actions', () => ({ saveProgrammeChangesAction: vi.fn(), programmeVersionAction: vi.fn() }))
@@ -37,14 +40,24 @@ function storeOf(activities: Row[], schedule?: ScheduleResult) {
   } satisfies GanttGridStore
 }
 
-function Harness({ store, canEdit = true, userId }: { store: GanttGridStore; canEdit?: boolean; userId?: string }) {
+/** The grid with its toolbar buttons (the toolbar owns Add / Indent / Outdent / Delete / Columns). */
+function Workspace({ store, canEdit, userId }: { store: GanttGridStore; canEdit: boolean; userId?: string }) {
   const [scrollTop, setScrollTop] = useState(0)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const columns = useHiddenColumns(userId)
+  const commandsRef = useRef<GridCommands | null>(null)
+  const [ui, setUi] = useState<GridUi>(NO_GRID_UI)
   return (
-    <GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop} userId={userId}
-      collapsed={collapsed}
-      onToggleCollapsed={(id) => setCollapsed((c) => { const s = new Set(c); if (s.has(id)) s.delete(id); else s.add(id); return s })} />
+    <>
+      <GridControls canEdit={canEdit} commandsRef={commandsRef} ui={ui} columns={columns} />
+      <GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
+        collapsed={collapsed} hiddenColumns={columns.hidden} commandsRef={commandsRef} onUi={setUi}
+        onToggleCollapsed={(id) => setCollapsed((c) => { const s = new Set(c); if (s.has(id)) s.delete(id); else s.add(id); return s })} />
+    </>
   )
+}
+function Harness({ store, canEdit = true, userId }: { store: GanttGridStore; canEdit?: boolean; userId?: string }) {
+  return <Workspace store={store} canEdit={canEdit} userId={userId} />
 }
 
 const grid = () => screen.getByRole('grid', { name: 'Activities' })
@@ -474,8 +487,7 @@ describe('GanttGrid: display', () => {
 function LiveHarness({ store }: { store: ProgrammeStore }) {
   const snap = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const api: GanttGridStore = { state: snap.state, schedule: scheduleFor(snap.state), apply: store.apply, newKey: store.newKey, keyIds: snap.keyIds }
-  const [scrollTop, setScrollTop] = useState(0)
-  return <GanttGrid store={api} canEdit scrollTop={scrollTop} onScrollTop={setScrollTop} collapsed={new Set()} onToggleCollapsed={() => {}} />
+  return <Workspace store={api} canEdit />
 }
 
 describe('GanttGrid: a new row re-keyed by its save', () => {
@@ -505,5 +517,67 @@ describe('GanttGrid: a new row re-keyed by its save', () => {
     fireEvent.keyDown(same, { key: 'Enter' })
     expect(save).toHaveBeenCalledTimes(2)
     expect(save.mock.calls[1][0].ops).toEqual([{ op: 'upsert_activity', id: 'U1', fields: { name: 'Pour slab' } }])
+  })
+})
+
+describe('GanttGrid: grouped rows', () => {
+  function grouped(onToggle = vi.fn()) {
+    const base = stateOf(abc())
+    const state = {
+      ...base,
+      codeTypes: [{ id: 'T1', name: 'Trade', programme_id: 'P', sort_order: 1 }],
+      codeValues: [{ id: 'V1', code_type_id: 'T1', value: 'Civil' }, { id: 'V2', code_type_id: 'T1', value: 'Electrical' }],
+      activityCodes: [
+        { activity_id: 'A', code_type_id: 'T1', code_value_id: 'V1' }, { activity_id: 'B', code_type_id: 'T1', code_value_id: 'V2' },
+        { activity_id: 'C', code_type_id: 'T1', code_value_id: 'V2' },
+      ],
+    } as unknown as ProgrammeState
+    const store = { ...storeOf([]), state, schedule: scheduleProgramme(rowsToProgrammeInput(state)) }
+    const rows = buildDisplayRows(state, store.schedule, { collapsed: new Set(), filters: NO_FILTERS, groupBy: 'T1' })
+    const apply = store.apply
+    render(<GanttGrid store={store} canEdit scrollTop={0} onScrollTop={() => {}} collapsed={new Set()} onToggleCollapsed={onToggle} rows={rows} />)
+    return { apply, rows }
+  }
+
+  it('shows a header row per group, with its count, and the members under it', () => {
+    grouped()
+    const headers = [...document.querySelectorAll('[data-group-id]')]
+    expect(headers.map((h) => h.getAttribute('data-group-id'))).toEqual(['group:V1', 'group:V2'])
+    expect(headers[1].textContent).toContain('Electrical')
+    expect(headers[1].textContent).toContain('2 activities')
+    expect([...renderedRows()].map((r) => r.getAttribute('data-row-id'))).toEqual(['A', 'B', 'C'])
+  })
+
+  it('a click on a header toggles its group and selects nothing', () => {
+    const onToggle = vi.fn()
+    grouped(onToggle)
+    fireEvent.click(document.querySelector('[data-group-id="group:V1"]')!)
+    expect(onToggle).toHaveBeenCalledWith('group:V1')
+    expect(document.querySelectorAll('[aria-selected="true"]')).toHaveLength(0)
+  })
+
+  it('the arrow keys step over a header onto the next activity', () => {
+    grouped()
+    fireEvent.click(cell('A', 'name'))
+    fireEvent.keyDown(grid(), { key: 'ArrowDown' })
+    expect(row('B').getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('a shift-range across a header selects activities only', () => {
+    const { apply } = grouped()
+    fireEvent.click(cell('A', 'name'))
+    fireEvent.click(cell('B', 'name'), { shiftKey: true })
+    expect(row('A').getAttribute('aria-selected')).toBe('true')
+    expect(row('B').getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(grid(), { key: 'Delete' })
+    expect(apply).not.toHaveBeenCalled()
+  })
+})
+
+describe('GanttGrid: no footer', () => {
+  it('ends in its rows: no footer, no column picker of its own', () => {
+    render(<Harness store={storeOf(abc())} />)
+    expect(screen.queryByTestId('programme-grid-footer')).toBeNull()
+    expect(within(grid().parentElement!).queryByRole('button', { name: 'Columns' })).toBeNull()
   })
 })

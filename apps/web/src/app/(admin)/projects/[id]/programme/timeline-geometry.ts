@@ -118,11 +118,11 @@ export function pathD(points: Array<{ x: number; y: number }>): string {
 }
 const round = (n: number) => Math.round(n * 100) / 100
 
-/** True when (x, y) is on the drawn link handle of a task or milestone (radius HANDLE_RADIUS). */
+/** True when (x, y) is on the drawn link handle of a task or milestone: the same reach as `hitTest` (HANDLE_RADIUS + 2). */
 export function onDrawnHandle(b: BarGeometry, x: number, y: number): boolean {
   if (b.kind === 'summary') return false
   const end = b.kind === 'milestone' ? b.x + MILESTONE_HALF : b.x + b.width
-  return Math.hypot(x - (end + HANDLE_OFFSET), y - b.midY) <= HANDLE_RADIUS
+  return Math.hypot(x - (end + HANDLE_OFFSET), y - b.midY) <= HANDLE_RADIUS + 2
 }
 
 export type Hit = { part: 'handle' | 'edge' | 'body'; id: string }
@@ -205,6 +205,42 @@ export function finishAfter(cal: EngineCalendar | null, start: CalendarDate, dur
 export function resizedDuration(scale: Scale, cal: EngineCalendar | null, start: CalendarDate, finish: CalendarDate, dx: number): number {
   const newFinish = addDays(finish, Math.round(dx / scale.dayWidth))
   return workingDaysInclusive(cal, start, newFinish)
+}
+
+/** `n` working days from `d` (backwards when negative); calendar days without a calendar. */
+export function shiftWorkingDays(cal: EngineCalendar | null, d: CalendarDate, n: number): CalendarDate {
+  if (!cal) return addDays(d, n)
+  const step = n < 0 ? -1 : 1
+  let day = startOf(d)
+  for (let left = Math.abs(n); left > 0; ) {
+    day += step
+    if (cal.isWorkingDay(day)) left -= 1
+  }
+  return displayStart(day)
+}
+
+/**
+ * A right-edge drag on a started task changes what is LEFT of it: the remaining duration moves
+ * by the working days the edge moved, never below one working day. With no stored remaining the
+ * engine's default is the starting value (original less the work done up to the data date).
+ * `finish` is where the edge lands (the early finish moved by the same working days).
+ */
+export function resizedRemaining(
+  scale: Scale, cal: EngineCalendar | null,
+  o: { remaining: number | null; original: number; start: CalendarDate; finish: CalendarDate; dataDate: CalendarDate | null },
+  dx: number,
+): { remaining: number; finish: CalendarDate } {
+  const cur = o.remaining ?? Math.max(0, o.original - Math.max(0, !cal
+    ? (o.dataDate ? daysFrom(o.start, o.dataDate) : 0)
+    : o.dataDate ? cal.workBetween(startOf(o.start), cal.snapStart(startOf(o.dataDate))) : 0))
+  const steps = Math.round(dx / scale.dayWidth)
+  const to = addDays(o.finish, steps)
+  const moved = !cal ? steps
+    : steps >= 0 ? cal.workBetween(startOf(o.finish) + 1, startOf(to) + 1) : -cal.workBetween(startOf(to) + 1, startOf(o.finish) + 1)
+  const delta = Math.round(moved)
+  if (delta === 0) return { remaining: cur, finish: o.finish }
+  const remaining = Math.max(1, cur + delta)
+  return { remaining, finish: shiftWorkingDays(cal, o.finish, Math.round(remaining - cur)) }
 }
 
 // ── zoom ────────────────────────────────────────────────────────────────────

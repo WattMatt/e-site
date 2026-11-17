@@ -13,16 +13,23 @@
  *   Without `canEdit` no input, add, delete or keyboard edit exists at all.
  * - Column visibility is remembered in localStorage per user (per browser when the user is
  *   unknown); every access is wrapped, so a blocked store only means it is not remembered.
+ *   The toolbar owns the picker (`useHiddenColumns`) and hands the grid `hiddenColumns`.
+ * - The grid ends in no footer: Add / Indent / Outdent / Delete (and its inline confirm) live in
+ *   the toolbar, which calls the commands the grid registers in `commandsRef` and reads
+ *   `GridUi` from `onUi`.
+ * - Rows come from `display-rows` (filters, grouping). A group header row toggles its group;
+ *   it is never selected, edited or deleted.
  */
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
   type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction,
 } from 'react'
-import { HEADER_HEIGHT, outlineRows, ROW_HEIGHT, visibleRange, type ActivityRow, type ProgrammeOp } from '@esite/shared/programme'
+import { HEADER_HEIGHT, ROW_HEIGHT, visibleRange, type ActivityRow, type ProgrammeOp } from '@esite/shared/programme'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import { addOps, deleteOps, deletionSet, indentOps, moveOps, outdentOps, type NewRowKind } from './grid-ops'
-import { PANE_FOOTER_HEIGHT } from './pane'
+import { buildDisplayRows, NO_FILTERS, type DisplayRow } from './display-rows'
+import type { CommandsRef, GridCommands, GridUi } from './bridge'
 
 export type GanttGridStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey' | 'keyIds'>
 
@@ -37,6 +44,7 @@ export const GRID_COLUMNS: readonly ColumnDef[] = [
   { id: 'float', label: 'Total float', width: 84, hideable: true, align: 'right' },
   { id: 'percent', label: '% complete', width: 88, hideable: true, align: 'right' },
 ]
+const NO_HIDDEN: ColumnId[] = []
 const MIN_WIDTH = 40
 const INDENT = 16
 const OVERSCAN = 10
@@ -58,6 +66,21 @@ function writeHidden(key: string, hidden: ColumnId[]): void {
   try { window.localStorage.setItem(key, JSON.stringify(hidden)) } catch { /* not remembered */ }
 }
 
+/** The hidden columns (remembered per user) and how to flip one; the toolbar's Columns picker uses it. */
+export function useHiddenColumns(userId?: string | null): { hidden: ColumnId[]; toggle: (id: ColumnId) => void } {
+  const storageKey = columnsStorageKey(userId)
+  const [hidden, setHidden] = useState<ColumnId[]>([])
+  useEffect(() => { setHidden(readHidden(storageKey)) }, [storageKey])
+  const toggle = useCallback((id: ColumnId) => {
+    setHidden((h) => {
+      const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]
+      writeHidden(storageKey, next)
+      return next
+    })
+  }, [storageKey])
+  return { hidden, toggle }
+}
+
 type EditCol = 'name' | 'duration' | 'start'
 interface Editing { id: string; col: EditCol; value: string; invalid: boolean }
 
@@ -76,11 +99,6 @@ function typingInField(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable
 }
 
-const plural = (n: number) => (n === 1 ? '1 activity' : `${n} activities`)
-const button: CSSProperties = {
-  padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-panel)',
-  color: 'var(--c-text)', fontSize: 12, cursor: 'pointer',
-}
 
 /** Selected row ids (as given: a new row's `key:<k>` until its save) and the range anchor. */
 export interface GridSelection { ids: ReadonlySet<string>; anchor: string | null }
@@ -93,21 +111,30 @@ export interface GanttGridProps {
   onScrollTop: (top: number) => void
   collapsed: ReadonlySet<string>
   onToggleCollapsed: (id: string) => void
-  userId?: string | null
+  /** The rows to show (filters, grouping); without it, the plain outline. */
+  rows?: DisplayRow[]
+  /** Columns the toolbar has hidden. */
+  hiddenColumns?: ColumnId[]
+  /** The toolbar's Add / Indent / Outdent / Delete call these. */
+  commandsRef?: CommandsRef<GridCommands>
+  /** What those buttons need to show: the selection size, a delete awaiting its confirm, a refusal sentence. */
+  onUi?: (ui: GridUi) => void
   /** Selection owned by the screen (the timeline selects bars too); the grid keeps its own without it. */
   selection?: GridSelection
   onSelection?: Dispatch<SetStateAction<GridSelection>>
 }
 
-export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, userId, selection, onSelection }: GanttGridProps) {
+export function GanttGrid({
+  store, canEdit, scrollTop, onScrollTop, collapsed, onToggleCollapsed, rows: rowsProp, hiddenColumns, commandsRef, onUi, selection, onSelection,
+}: GanttGridProps) {
   const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
 
   // ── rows ──
   const byId = useMemo(() => new Map(activities.map((a) => [a.id, a])), [activities])
   const rows = useMemo(
-    () => outlineRows(activities, collapsed).flatMap((r) => { const a = byId.get(r.id); return a ? [{ ...r, activity: a }] : [] }),
-    [activities, collapsed, byId],
+    () => rowsProp ?? buildDisplayRows(state, schedule, { collapsed, filters: NO_FILTERS, groupBy: 'wbs' }),
+    [rowsProp, state, schedule, collapsed],
   )
   const indexOf = useMemo(() => new Map(rows.map((r, i) => [r.id, i])), [rows])
 
@@ -134,20 +161,12 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
   const { first, last } = visibleRange(scrollTop, viewport - HEADER_HEIGHT, rows.length, ROW_HEIGHT, OVERSCAN)
 
   // ── columns ──
-  const storageKey = columnsStorageKey(userId)
-  const [hidden, setHidden] = useState<ColumnId[]>([])
-  useEffect(() => { setHidden(readHidden(storageKey)) }, [storageKey])
+  const hidden = hiddenColumns ?? NO_HIDDEN
   const [widths, setWidths] = useState<Record<ColumnId, number>>(
     () => Object.fromEntries(GRID_COLUMNS.map((c) => [c.id, c.width])) as Record<ColumnId, number>,
   )
   const columns = GRID_COLUMNS.filter((c) => !hidden.includes(c.id))
   const totalWidth = columns.reduce((s, c) => s + widths[c.id], 0)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const toggleColumn = (id: ColumnId) => {
-    const next = hidden.includes(id) ? hidden.filter((h) => h !== id) : [...hidden, id]
-    setHidden(next)
-    writeHidden(storageKey, next)
-  }
   const resizing = useRef<{ id: ColumnId; x: number; w: number } | null>(null)
   const onResizeDown = (id: ColumnId) => (e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
@@ -199,7 +218,7 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
     setNotice(null)
     if (e.shiftKey && anchor !== null && indexOf.has(anchor)) {
       const [a, b] = [indexOf.get(anchor)!, indexOf.get(id)!].sort((x, y) => x - y)
-      setSelected(new Set(rows.slice(a, b + 1).map((r) => r.id)))
+      setSelected(new Set(rows.slice(a, b + 1).filter((r) => r.kind === 'activity').map((r) => r.id)))
     } else if (e.metaKey || e.ctrlKey) {
       const next = new Set(selected)
       if (next.has(id)) next.delete(id)
@@ -300,6 +319,22 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
     setArmed(null)
   }
 
+  const cancelDelete = () => setArmed(null)
+  const commands = useRef<GridCommands>({ add: () => {}, structure: () => {}, arm: () => {}, confirmDelete: () => {}, cancelDelete: () => {} })
+  commands.current = { add, structure, arm, confirmDelete, cancelDelete }
+  useEffect(() => {
+    if (!commandsRef) return
+    const stable: GridCommands = {
+      add: (k) => commands.current.add(k), structure: (d) => commands.current.structure(d), arm: () => commands.current.arm(),
+      confirmDelete: () => commands.current.confirmDelete(), cancelDelete: () => commands.current.cancelDelete(),
+    }
+    commandsRef.current = stable
+    return () => { if (commandsRef.current === stable) commandsRef.current = null }
+  }, [commandsRef])
+  const selectedCount = selected.size
+  const armedCount = armed === null ? null : armed.length
+  useEffect(() => { onUi?.({ selectedCount, armedCount, notice }) }, [onUi, selectedCount, armedCount, notice])
+
   const onGridKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (typingInField(e.target)) return
     // ⌥⇧→ / ⌥⇧← indent and outdent (MS Project). Tab is never taken, so focus can leave.
@@ -317,7 +352,11 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
       }
       if (rows.length === 0) return
       const at = primary !== null ? indexOf.get(primary) ?? -1 : -1
-      const next = Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowUp' ? -1 : 1)))
+      const dir = e.key === 'ArrowUp' ? -1 : 1
+      // Step over group headers: only activities are selected.
+      let next = Math.max(0, Math.min(rows.length - 1, at + dir))
+      while (rows[next].kind !== 'activity' && next + dir >= 0 && next + dir < rows.length) next += dir
+      if (rows[next].kind !== 'activity') return
       selectOnly(rows[next].id)
       ensureVisible(next)
       return
@@ -373,6 +412,27 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
         <div data-testid="programme-grid-spacer" style={{ position: 'relative', height: rows.length * ROW_HEIGHT, width: totalWidth, minWidth: '100%' }}>
           {visible.map((r, k) => {
             const i = first + k
+            if (r.kind === 'group') {
+              return (
+                <div key={r.id} role="row" data-group-id={r.id} aria-rowindex={i + 2}
+                  onClick={() => onToggleCollapsed(r.id)}
+                  style={{
+                    position: 'absolute', top: i * ROW_HEIGHT, left: 0, height: ROW_HEIGHT, width: totalWidth, minWidth: '100%',
+                    display: 'flex', alignItems: 'center', boxSizing: 'border-box', cursor: 'pointer', gap: 6, padding: '0 6px',
+                    borderBottom: '1px solid var(--c-border-soft)', background: 'var(--c-border-soft)', fontWeight: 600, color: 'var(--c-text)',
+                  }}>
+                  <button type="button" aria-label={`${r.collapsed ? 'Expand' : 'Collapse'} ${r.label}`} aria-expanded={!r.collapsed}
+                    onClick={(e) => { e.stopPropagation(); onToggleCollapsed(r.id) }}
+                    style={{ width: 16, flex: '0 0 16px', padding: 0, border: 'none', background: 'transparent', color: 'var(--c-text-dim)', cursor: 'pointer' }}>
+                    {r.collapsed ? '▸' : '▾'}
+                  </button>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                  <span data-testid="programme-group-summary" style={{ color: 'var(--c-text-dim)', fontWeight: 400, whiteSpace: 'nowrap' }}>
+                    {r.count === 1 ? '1 activity' : `${r.count} activities`}{r.start && r.finish ? ` · ${r.start} – ${r.finish}` : ''}
+                  </span>
+                </div>
+              )
+            }
             const a = r.activity
             const s = schedule.activities.get(a.id)
             const isSel = selected.has(a.id)
@@ -422,46 +482,6 @@ export function GanttGrid({ store, canEdit, scrollTop, onScrollTop, collapsed, o
         </div>
       </div>
 
-      <div data-testid="programme-grid-footer" style={{
-        position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', borderTop: '1px solid var(--c-border)',
-        flex: `0 0 ${PANE_FOOTER_HEIGHT}px`, height: PANE_FOOTER_HEIGHT, boxSizing: 'border-box', whiteSpace: 'nowrap',
-      }}>
-        {canEdit && armed === null && (
-          <>
-            <button type="button" style={button} onClick={() => add('task')}>Add task</button>
-            <button type="button" style={button} onClick={() => add('milestone')}>Add milestone</button>
-            <button type="button" style={button} onClick={() => structure('indent')} disabled={selected.size === 0}
-              title="Indent under the row above (⌥⇧→)">Indent</button>
-            <button type="button" style={button} onClick={() => structure('outdent')} disabled={selected.size === 0}
-              title="Outdent; the rows below it become its sub-activities (⌥⇧←)">Outdent</button>
-            <button type="button" style={button} onClick={arm} disabled={selected.size === 0}>Delete</button>
-          </>
-        )}
-        {canEdit && armed !== null && (
-          <div data-testid="programme-grid-confirm" role="alert" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <span>Delete {plural(armed.length)}?{armed.length > selected.size ? ' Sub-activities go too.' : ''}</span>
-            <button type="button" style={{ ...button, borderColor: 'var(--c-red)', color: 'var(--c-red)' }} onClick={confirmDelete}>Confirm delete</button>
-            <button type="button" style={button} onClick={() => setArmed(null)}>Cancel</button>
-          </div>
-        )}
-        {notice && <span data-testid="programme-grid-notice" role="status" title={notice}
-          style={{ fontSize: 12, color: 'var(--c-red)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{notice}</span>}
-        <span style={{ flex: '1 1 auto' }} />
-        <button type="button" style={button} aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)}>Columns</button>
-        {pickerOpen && (
-          <div role="group" aria-label="Columns shown" style={{
-            position: 'absolute', right: 8, bottom: '100%', zIndex: 3, padding: 8, borderRadius: 8,
-            border: '1px solid var(--c-border)', background: 'var(--c-elevated)', display: 'grid', gap: 4, fontSize: 12,
-          }}>
-            {GRID_COLUMNS.filter((c) => c.hideable).map((c) => (
-              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-                <input type="checkbox" checked={!hidden.includes(c.id)} onChange={() => toggleColumn(c.id)} />
-                {c.label}
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

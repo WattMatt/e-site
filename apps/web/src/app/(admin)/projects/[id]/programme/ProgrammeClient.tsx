@@ -4,16 +4,20 @@
  * The programme screen: toolbar, then a split view (grid left, resizable 30–70 %, timeline
  * right) sharing one vertical scroll. State, saves and undo/redo live in `useProgrammeStore`;
  * the grid, timeline and toolbar receive the store as a prop. The grid and the timeline each
- * scroll themselves and share one `scrollTop`, one collapse set and one selection (a bar
- * click selects its grid row), so their rows line up. Task 6 replaces the toolbar placeholder.
+ * scroll themselves and share one `scrollTop`, one collapse set, one selection (a bar
+ * click selects its grid row) and one list of rows (filters and grouping), so their rows line
+ * up. The toolbar owns every button; the panes register the commands those buttons call.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Zoom } from '@esite/shared/programme'
 import type { ProgrammeSummary, ProgrammeViewData } from '@/lib/programme/view-types'
 import { PROGRAMME_STALE } from '@/lib/programme/action-types'
-import { useProgrammeStore, type ProgrammeStoreApi } from './use-programme-store'
-import { GanttGrid, type GridSelection } from './GanttGrid'
+import { useProgrammeStore } from './use-programme-store'
+import { GanttGrid, useHiddenColumns, type GridSelection } from './GanttGrid'
 import { GanttTimeline } from './GanttTimeline'
+import { GanttToolbar } from './GanttToolbar'
+import { buildDisplayRows, GROUP_BY_WBS, NO_FILTERS, type Filters, type GroupBy } from './display-rows'
+import { NO_GRID_UI, type GridCommands, type GridUi, type TimelineCommands } from './bridge'
 
 export const SPLIT_MIN = 30
 export const SPLIT_MAX = 70
@@ -35,7 +39,7 @@ const banner = (tone: 'red' | 'amber'): CSSProperties => ({
   border: `1px solid var(--c-${tone})`, color: 'var(--c-text)', fontSize: 14,
 })
 
-export function ProgrammeClient({ view, canEdit, userId }: {
+export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }: {
   projectId: string
   view: ProgrammeViewData
   canEdit: boolean
@@ -62,6 +66,17 @@ export function ProgrammeClient({ view, canEdit, userId }: {
     return { ids, anchor: id }
   }), [])
   const [zoom, setZoom] = useState<Zoom>('week')
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+  const [groupBy, setGroupBy] = useState<GroupBy>(GROUP_BY_WBS)
+  const columns = useHiddenColumns(userId)
+  const gridCommands = useRef<GridCommands | null>(null)
+  const timelineCommands = useRef<TimelineCommands | null>(null)
+  const [gridUi, setGridUi] = useState<GridUi>(NO_GRID_UI)
+
+  const rows = useMemo(
+    () => buildDisplayRows(store.state, store.schedule, { collapsed, filters, groupBy }),
+    [store.state, store.schedule, collapsed, filters, groupBy],
+  )
 
   // ⌘/Ctrl+Z undo, ⇧⌘/Ctrl+Z redo; ignored while a field has focus.
   const { undo, redo } = store
@@ -80,7 +95,9 @@ export function ProgrammeClient({ view, canEdit, userId }: {
   return (
     <div className="page">
       <div className="page-header"><h1 className="page-title">{store.state.programme.name}</h1></div>
-      <ToolbarPlaceholder store={store} canEdit={canEdit} />
+      <GanttToolbar projectId={projectId} store={store} canEdit={canEdit} programmes={programmes} baselines={view.baselines}
+        zoom={zoom} onZoom={setZoom} gridCommands={gridCommands} gridUi={gridUi} timelineCommands={timelineCommands}
+        columns={columns} filters={filters} onFilters={setFilters} groupBy={groupBy} onGroupBy={setGroupBy} />
       {store.stale && (
         <div role="alert" style={banner('amber')} data-testid="programme-stale">
           <span>{PROGRAMME_STALE}{store.unsaved ? ' Your unsaved changes are still shown here; they were not saved.' : ''}</span>
@@ -97,31 +114,11 @@ export function ProgrammeClient({ view, canEdit, userId }: {
       )}
       <SplitView split={split} onSplit={setSplit}
         left={<GanttGrid store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
-          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} userId={userId}
-          selection={selection} onSelection={setSelection} />}
+          collapsed={collapsed} onToggleCollapsed={toggleCollapsed} rows={rows} hiddenColumns={columns.hidden}
+          commandsRef={gridCommands} onUi={setGridUi} selection={selection} onSelection={setSelection} />}
         right={<GanttTimeline store={store} canEdit={canEdit} scrollTop={scrollTop} onScrollTop={setScrollTop}
           collapsed={collapsed} selected={selection.ids} onSelect={selectFromTimeline}
-          activeBaseline={view.activeBaseline} zoom={zoom} onZoom={setZoom} />} />
-    </div>
-  )
-}
-
-function ToolbarPlaceholder({ store, canEdit }: { store: ProgrammeStoreApi; canEdit: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-      {canEdit && (
-        <>
-          <button type="button" style={button} onClick={store.undo} disabled={!store.canUndo}
-            title={store.undoLabel ? `Undo ${store.undoLabel}` : undefined}>Undo</button>
-          <button type="button" style={button} onClick={store.redo} disabled={!store.canRedo}
-            title={store.redoLabel ? `Redo ${store.redoLabel}` : undefined}>Redo</button>
-        </>
-      )}
-      <span style={{ color: 'var(--c-text-dim)', fontSize: 13 }}>
-        Finish: <span data-testid="programme-finish">{store.schedule.projectFinish ?? '—'}</span>
-      </span>
-      {store.pending && <span style={{ color: 'var(--c-text-dim)', fontSize: 13 }}>Saving…</span>}
-      {!store.pending && store.unsaved && <span style={{ color: 'var(--c-text-dim)', fontSize: 13 }}>Not saved</span>}
+          activeBaseline={view.activeBaseline} zoom={zoom} onZoom={setZoom} rows={rows} commandsRef={timelineCommands} />} />
     </div>
   )
 }

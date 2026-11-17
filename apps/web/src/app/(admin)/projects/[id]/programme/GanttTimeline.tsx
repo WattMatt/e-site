@@ -19,21 +19,34 @@
  */
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
-  type CSSProperties, type PointerEvent as ReactPointerEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
-  barX, DAY_WIDTH, HEADER_HEIGHT, outlineRows, ROW_HEIGHT, timescale, visibleRange, xOfDate,
+  barX, DAY_WIDTH, HEADER_HEIGHT, ROW_HEIGHT, timescale, visibleRange, xOfDate,
   type ActivityRow, type CalendarDate, type ProgrammeOp, type Zoom,
 } from '@esite/shared/programme'
 import type { ActiveBaselineView } from '@/lib/programme/view-types'
 import type { ProgrammeStoreApi } from './use-programme-store'
 import {
   BAR_HEIGHT, BASELINE_HEIGHT, BASELINE_TOP, barGeometry, finishAfter, fitZoom, HANDLE_OFFSET, HANDLE_RADIUS, hitTest,
-  linkPoints, MILESTONE_HALF, movedStart, onDrawnHandle, pathD, resizedDuration, scrollLeftAround, timelineCalendars, workingDaysInclusive, ZOOMS, zoomStep,
+  linkPoints, MILESTONE_HALF, movedStart, onDrawnHandle, pathD, resizedDuration, resizedRemaining, scrollLeftAround, timelineCalendars,
+  workingDaysInclusive, zoomStep,
   type BarGeometry, type Hit,
 } from './timeline-geometry'
 import { LinkDialog } from './LinkDialog'
-import { PANE_FOOTER_HEIGHT } from './pane'
+import { buildDisplayRows, NO_FILTERS, type DisplayRow } from './display-rows'
+import type { CommandsRef, TimelineCommands } from './bridge'
+
+export const STARTED_LOCK = 'Started activities follow their progress; change dates by reporting progress.'
+export const LOE_LOCK = "Level-of-effort activities follow the work they span; their dates can't be dragged."
+
+/** What a drag may do to an activity. Summaries are handled by the bar kind; this is progress and type. */
+export function dragRules(a: ActivityRow): { move: boolean; resize: boolean; link: boolean; note: string | null } {
+  if (a.type === 'level_of_effort') return { move: false, resize: false, link: false, note: LOE_LOCK }
+  if (a.actual_finish !== null) return { move: false, resize: false, link: true, note: STARTED_LOCK }
+  if (a.actual_start !== null) return { move: false, resize: true, link: true, note: STARTED_LOCK }
+  return { move: true, resize: true, link: true, note: null }
+}
 
 export type GanttTimelineStore = Pick<ProgrammeStoreApi, 'state' | 'schedule' | 'apply' | 'newKey' | 'keyIds'>
 
@@ -49,6 +62,10 @@ export interface GanttTimelineProps {
   activeBaseline: ActiveBaselineView | null
   zoom: Zoom
   onZoom: (zoom: Zoom) => void
+  /** The rows to show (filters, grouping); without it, the plain outline. */
+  rows?: DisplayRow[]
+  /** The toolbar's zoom picker, Scroll to today and Fit programme call these. */
+  commandsRef?: CommandsRef<TimelineCommands>
   /** Today's date; omitted = the browser's local date (set after mount), null = no today line. */
   today?: CalendarDate | null
 }
@@ -58,12 +75,6 @@ const DRAG_SLOP = 3
 /** Accumulated wheel delta per zoom step (a mouse notch is 100–120), and the least time between steps. */
 const WHEEL_STEP = 100
 const WHEEL_GAP_MS = 150
-const ZOOM_LABEL: Record<Zoom, string> = { day: 'Days', week: 'Weeks', month: 'Months', quarter: 'Quarters', year: 'Years' }
-const button: CSSProperties = {
-  padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-panel)',
-  color: 'var(--c-text)', fontSize: 12, cursor: 'pointer',
-}
-
 function localToday(): CalendarDate {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -81,6 +92,7 @@ interface Drag {
 
 export function GanttTimeline({
   store, canEdit, scrollTop, onScrollTop, collapsed, selected: selectedRaw, onSelect, activeBaseline, zoom, onZoom, today: todayProp,
+  rows: rowsProp, commandsRef,
 }: GanttTimelineProps) {
   const { state, schedule, apply, newKey, keyIds } = store
   const activities = state.activities
@@ -90,8 +102,8 @@ export function GanttTimeline({
   // ── rows ──
   const byId = useMemo(() => new Map(activities.map((a) => [a.id, a])), [activities])
   const rows = useMemo(
-    () => outlineRows(activities, collapsed).flatMap((r) => { const a = byId.get(r.id); return a ? [{ id: r.id, activity: a }] : [] }),
-    [activities, collapsed, byId],
+    () => rowsProp ?? buildDisplayRows(state, schedule, { collapsed, filters: NO_FILTERS, groupBy: 'wbs' }),
+    [rowsProp, state, schedule, collapsed],
   )
   const indexOf = useMemo(() => new Map(rows.map((r, i) => [r.id, i])), [rows])
 
@@ -200,11 +212,29 @@ export function GanttTimeline({
     zoomTo(next, 0)
   }
 
+  const commands = useRef<TimelineCommands>({ setZoom: () => {}, scrollToToday: () => {}, fit: () => {} })
+  commands.current = {
+    setZoom: (next) => {
+      const el = scroller.current
+      zoomTo(next, el ? scrollLeftAround(el.scrollLeft, el.clientWidth / 2, DAY_WIDTH[zoom], DAY_WIDTH[next]) : null)
+    },
+    scrollToToday,
+    fit,
+  }
+  useEffect(() => {
+    if (!commandsRef) return
+    const stable: TimelineCommands = {
+      setZoom: (z) => commands.current.setZoom(z), scrollToToday: () => commands.current.scrollToToday(), fit: () => commands.current.fit(),
+    }
+    commandsRef.current = stable
+    return () => { if (commandsRef.current === stable) commandsRef.current = null }
+  }, [commandsRef])
+
   // ── geometry ──
   const geomAt = useCallback((i: number): BarGeometry | null => {
     const r = rows[i]
-    const s = r ? schedule.activities.get(r.id) : undefined
-    if (!r || !s) return null
+    const s = r && r.kind === 'activity' ? schedule.activities.get(r.id) : undefined
+    if (!r || r.kind !== 'activity' || !s) return null
     return barGeometry(scale, r.id, r.activity.type, i, s)
   }, [rows, schedule, scale])
   const bars = useMemo(() => {
@@ -249,7 +279,11 @@ export function GanttTimeline({
     if (!a) return
     const kind = bars.find((b) => b.id === hit.id)?.kind
     let mode: Drag['mode'] = 'click'
-    if (canEdit && kind !== 'summary') mode = hit.part === 'handle' ? 'link' : hit.part === 'edge' ? 'resize' : 'move'
+    if (canEdit && kind !== 'summary') {
+      const rule = dragRules(a)
+      const want: Drag['mode'] = hit.part === 'handle' ? 'link' : hit.part === 'edge' ? 'resize' : 'move'
+      if (rule[want]) mode = want
+    }
     e.preventDefault()
     e.currentTarget.setPointerCapture?.(e.pointerId)
     setDragBoth({ mode, id: hit.id, pointerId: e.pointerId, x0: x, y0: y, x, y, moved: false, toggle: e.metaKey || e.ctrlKey })
@@ -277,6 +311,10 @@ export function GanttTimeline({
     commit(done)
   }
 
+  const startedArgs = (a: ActivityRow, s: { earlyStart: string; earlyFinish: string }) => ({
+    remaining: a.remaining_duration, original: a.original_duration, start: s.earlyStart, finish: s.earlyFinish,
+    dataDate: state.programme.data_date,
+  })
   const commit = (d: Drag) => {
     if (!canEdit || d.mode === 'click') return
     const id = resolve(d.id)
@@ -294,10 +332,19 @@ export function GanttTimeline({
         label = 'Move'
       }
     } else if (d.mode === 'resize') {
-      const duration = resizedDuration(scale, cal, s.earlyStart, s.earlyFinish, dx)
-      if (duration !== a.original_duration) {
-        op = { op: 'upsert_activity', id, fields: { original_duration: duration } }
-        label = 'Change duration'
+      if (a.actual_start !== null) {
+        // Started: the bar's start is history, so the edge changes what is left.
+        const r = resizedRemaining(scale, cal, startedArgs(a, s), dx)
+        if (r.finish !== s.earlyFinish) {
+          op = { op: 'upsert_activity', id, fields: { remaining_duration: r.remaining } }
+          label = 'Change remaining duration'
+        }
+      } else {
+        const duration = resizedDuration(scale, cal, s.earlyStart, s.earlyFinish, dx)
+        if (duration !== a.original_duration) {
+          op = { op: 'upsert_activity', id, fields: { original_duration: duration } }
+          label = 'Change duration'
+        }
       }
     } else {
       const target = hitTest(bars, d.x, d.y, false)
@@ -374,6 +421,10 @@ export function GanttTimeline({
       const span = barX(scale, start, finishAfter(cal, start, workingDaysInclusive(cal, s.earlyStart, s.earlyFinish)))
       return outline(span.x, span.width)
     }
+    if (a.actual_start !== null) {
+      const span = barX(scale, s.earlyStart, resizedRemaining(scale, cal, startedArgs(a, s), dx).finish)
+      return outline(span.x, span.width)
+    }
     const duration = resizedDuration(scale, cal, s.earlyStart, s.earlyFinish, dx)
     const span = barX(scale, s.earlyStart, finishAfter(cal, s.earlyStart, duration))
     return outline(span.x, span.width)
@@ -383,9 +434,12 @@ export function GanttTimeline({
   const xMax = viewport.width > 0 ? scrollLeft + viewport.width + 200 : Infinity
   const inView = (b: { x: number; width: number }) => b.x + b.width >= xMin && b.x <= xMax
   const dataDate = state.programme.data_date
+  const hoverRule = hover ? (byId.get(hover.id) ? dragRules(byId.get(hover.id)!) : null) : null
   const cursor = drag
     ? (drag.mode === 'resize' ? 'ew-resize' : drag.mode === 'link' ? 'crosshair' : drag.mode === 'move' ? 'grabbing' : 'default')
-    : hover?.part === 'edge' ? 'ew-resize' : hover?.part === 'handle' ? 'crosshair' : hover && canEdit ? 'grab' : 'default'
+    : hover?.part === 'edge' ? (hoverRule?.resize === false ? 'default' : 'ew-resize')
+    : hover?.part === 'handle' ? (hoverRule?.link === false ? 'default' : 'crosshair')
+    : hover && canEdit && hoverRule?.move !== false ? 'grab' : 'default'
   const showHandleFor = (id: string) => canEdit && (hover?.id === id || selected.has(id) || (drag?.mode === 'link' && resolve(drag.id) === id))
 
   return (
@@ -429,6 +483,18 @@ export function GanttTimeline({
                 {rows.slice(first, last).map((r, k) => selected.has(r.id) && (
                   <rect key={`sel-${r.id}`} x={0} y={(first + k) * ROW_HEIGHT} width={scale.width} height={ROW_HEIGHT} fill="var(--c-amber-dim)" />
                 ))}
+                {rows.slice(first, last).map((r, k) => {
+                  if (r.kind !== 'group' || r.start === null || r.finish === null) return null
+                  const span = barX(scale, r.start, r.finish)
+                  const y = (first + k) * ROW_HEIGHT + 8
+                  return (
+                    <g key={`grp-${r.id}`} data-group-id={r.id} pointerEvents="none">
+                      <rect x={0} y={(first + k) * ROW_HEIGHT} width={scale.width} height={ROW_HEIGHT} fill="var(--c-border-soft)" fillOpacity={0.5} />
+                      <path data-part="group" fill="var(--c-text)"
+                        d={`M${span.x} ${y} H${span.x + span.width} V${y + 7} L${span.x + span.width - 5} ${y + 3} H${span.x + 5} L${span.x} ${y + 7} Z`} />
+                    </g>
+                  )
+                })}
                 {dataDate && (
                   <line data-testid="timeline-data-date" x1={xOfDate(scale, dataDate)} x2={xOfDate(scale, dataDate)} y1={top} y2={bottom}
                     stroke="var(--c-text-dim)" strokeWidth={1} strokeDasharray="4 4" />
@@ -446,32 +512,14 @@ export function GanttTimeline({
                 ))}
                 {bars.map((g) => (
                   <Bar key={g.id} g={g} a={byId.get(g.id)!} critical={schedule.activities.get(g.id)?.isCritical === true}
-                    baseline={activeBaseline?.activities[g.id] ?? null} scale={scale} handle={showHandleFor(g.id)} draggable={canEdit} />
+                    baseline={activeBaseline?.activities[g.id] ?? null} scale={scale} handle={showHandleFor(g.id) && dragRules(byId.get(g.id)!).link}
+                    draggable={canEdit} note={canEdit && g.kind !== 'summary' ? dragRules(byId.get(g.id)!).note : null} />
                 ))}
                 {preview}
               </g>
             </svg>
           </div>
         </div>
-      </div>
-
-      <div data-testid="programme-timeline-footer" style={{
-        flex: `0 0 ${PANE_FOOTER_HEIGHT}px`, height: PANE_FOOTER_HEIGHT, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
-        gap: 6, padding: '0 8px', borderTop: '1px solid var(--c-border)', whiteSpace: 'nowrap', overflow: 'hidden',
-      }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--c-text-dim)' }}>
-          Zoom
-          <select aria-label="Zoom" value={zoom} onChange={(e) => {
-              const next = e.target.value as Zoom
-              const el = scroller.current
-              zoomTo(next, el ? scrollLeftAround(el.scrollLeft, el.clientWidth / 2, DAY_WIDTH[zoom], DAY_WIDTH[next]) : null)
-            }}
-            style={{ ...button, padding: '3px 6px' }}>
-            {ZOOMS.map((z) => <option key={z} value={z}>{ZOOM_LABEL[z]}</option>)}
-          </select>
-        </label>
-        <button type="button" style={button} onClick={scrollToToday} disabled={!today}>Scroll to today</button>
-        <button type="button" style={button} onClick={fit}>Fit programme</button>
       </div>
 
       {openDep && (
@@ -483,12 +531,14 @@ export function GanttTimeline({
   )
 }
 
-function Bar({ g, a, critical, baseline, scale, handle, draggable }: {
+function Bar({ g, a, critical, baseline, scale, handle, draggable, note }: {
   g: BarGeometry; a: ActivityRow; critical: boolean
   baseline: { early_start: string | null; early_finish: string | null } | null
   scale: { origin: CalendarDate; dayWidth: number }; handle: boolean
   /** Touch on an editable bar drags it instead of scrolling the pane. */
   draggable: boolean
+  /** Why the bar's dates cannot be dragged, when they cannot. */
+  note: string | null
 }) {
   const colour = g.kind === 'summary' ? 'var(--c-text)' : critical ? 'var(--c-red)' : 'var(--c-amber)'
   const rowTop = g.index * ROW_HEIGHT
@@ -500,7 +550,7 @@ function Bar({ g, a, critical, baseline, scale, handle, draggable }: {
   const end = g.kind === 'milestone' ? g.x + MILESTONE_HALF : g.x + g.width
   return (
     <g data-bar-id={g.id} data-critical={critical} style={draggable && g.kind !== 'summary' ? { touchAction: 'none' } : undefined}>
-      <title>{a.name}</title>
+      <title>{note ? `${a.name}\n${note}` : a.name}</title>
       {base && <rect data-part="baseline" x={base.x} y={rowTop + BASELINE_TOP} width={base.width} height={BASELINE_HEIGHT} fill="var(--c-text-dim)" />}
       {g.floatTo !== null && (
         <line data-part="float" x1={g.x + g.width} x2={g.floatTo} y1={g.midY} y2={g.midY} stroke="var(--c-text-dim)" strokeWidth={1.5} />
