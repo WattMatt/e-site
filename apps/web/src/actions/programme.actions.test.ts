@@ -10,6 +10,7 @@ import {
 import { fakeSupabase, type FakeOptions, type FakeResult } from '@/test/fake-supabase'
 import { activityRow, PRJ, PROG, programmeRow, programmeTables, VERSION } from '@/lib/programme/test-fixtures'
 
+const OTHER_PRJ = '44444444-4444-4444-8444-444444444444'
 const OFF = 'The programme module is not switched on yet.'
 const STALE = 'Someone else changed this programme. Reload to see their version.'
 const SAVED: FakeResult = { data: { version: 'v2', ids: { n1: 'uuid-n1' }, deleted: [], tombstoned: [] }, error: null }
@@ -19,8 +20,9 @@ function setup(opts: { role?: string | null; solar?: string | null; tables?: Fak
     userId: opts.userId === undefined ? 'u1' : opts.userId,
     tables: opts.tables ?? programmeTables(),
     rpc: {
-      user_effective_project_role: { data: opts.role === undefined ? 'project_manager' : opts.role, error: null },
-      solar_access_level: { data: opts.solar === undefined ? 'edit' : opts.solar, error: null },
+      // Answered for the fixture's project ONLY: a gate that asks about any other project is refused.
+      user_effective_project_role: (args) => ({ data: args.p_project_id === PRJ ? (opts.role === undefined ? 'project_manager' : opts.role) : null, error: null }),
+      solar_access_level: (args) => ({ data: args.p_project_id === PRJ ? (opts.solar === undefined ? 'edit' : opts.solar) : null, error: null }),
       'programme.save_changes': SAVED,
       ...opts.rpc,
     },
@@ -131,6 +133,29 @@ describe('saveProgrammeChangesAction', () => {
     expect(res).toEqual({ ok: false, error: 'Give each new activity a key so its schedule can be saved.' })
     expect(calls).toHaveLength(0)
     expect(rpcCalls).toHaveLength(0)
+  })
+  it('a blank key counts as no key', async () => {
+    const { calls } = setup()
+    for (const key of ['', '   ']) {
+      await expect(saveProgrammeChangesAction({ programmeId: PROG, expectedVersion: VERSION, ops: [{ op: 'upsert_activity', key, fields: { name: 'X', type: 'task' } }] }))
+        .resolves.toEqual({ ok: false, error: 'Give each new activity a key so its schedule can be saved.' })
+    }
+    expect(calls).toHaveLength(0)
+  })
+  it('the gate asks about the programme\'s OWN project (read from the database), not any other', async () => {
+    const elsewhere = programmeTables({ 'programme.programmes': [programmeRow({ project_id: OTHER_PRJ })] })
+    const { rpcCalls } = setup({ role: 'owner', tables: elsewhere })
+    await expect(saveProgrammeChangesAction({ programmeId: PROG, expectedVersion: VERSION, ops: [] }))
+      .resolves.toEqual({ ok: false, error: 'You do not have permission to edit programmes on this project.' })
+    await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'rejected' }] }))
+      .resolves.toEqual({ ok: false, error: 'You do not have permission to edit programmes on this project.' })
+    await expect(saveBaselineAction({ programmeId: PROG, name: 'B' }))
+      .resolves.toEqual({ ok: false, error: 'You do not have permission to edit programmes on this project.' })
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
+    const moduleElsewhere = programmeTables({ 'programme.programmes': [programmeRow({ project_id: OTHER_PRJ, kind: 'module', module_key: 'solar' })] })
+    setup({ role: 'owner', solar: 'edit', tables: moduleElsewhere })
+    await expect(saveProgrammeChangesAction({ programmeId: PROG, expectedVersion: VERSION, ops: [] }))
+      .resolves.toEqual({ ok: false, error: 'You do not have permission to edit this module programme.' })
   })
   it('an engine error (a loop made by the ops) is refused with its message and the issues; save_changes is never called', async () => {
     const { rpcCalls } = setup()
@@ -254,7 +279,7 @@ describe('submitFieldUpdateAction', () => {
 describe('decideFieldUpdatesAction', () => {
   const fu = (id: string, activity_id: string, over: Record<string, unknown> = {}) => ({
     id, programme_id: PROG, activity_id, status: 'reported', reported_start: null, reported_finish: null,
-    reported_percent: null, reported_remaining: null, ...over,
+    reported_percent: null, reported_remaining: null, created_at: '2026-03-03T08:00:00+00:00', ...over,
   })
   const withUpdates = (rows: Array<Record<string, unknown>>, extra: Record<string, Array<Record<string, unknown>>> = {}) =>
     programmeTables({ 'programme.field_updates': rows, ...extra })
@@ -296,6 +321,38 @@ describe('decideFieldUpdatesAction', () => {
       .resolves.toEqual({ ok: false, error: 'That activity was removed. Restore it first.' })
     expect(programmeCalls(rpcCalls)).toHaveLength(0)
   })
+  it('the version is compared as an instant: the same moment in another form is accepted; nonsense is refused', async () => {
+    const ok = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]), rpc: { 'programme.decide_field_updates': { data: 1, error: null } } })
+    await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: '2026-11-17T08:00:00.123Z', decisions: [{ id: 'F1', status: 'rejected' }] }))
+      .resolves.toMatchObject({ ok: true })
+    expect(programmeCalls(ok.rpcCalls)).toHaveLength(1)
+    const bad = setup({ tables: withUpdates([fu('F1', 'A')]) })
+    await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: 'not a time', decisions: [{ id: 'F1', status: 'rejected' }] }))
+      .resolves.toEqual({ ok: false, error: STALE })
+    expect(programmeCalls(bad.rpcCalls)).toHaveLength(0)
+  })
+  it('adjusted: a null value counts as left out (the reported value is used)', async () => {
+    const { rpcCalls } = setup({
+      tables: withUpdates([fu('F1', 'A', { reported_start: '2026-03-02', reported_percent: 50 })]),
+      rpc: { 'programme.decide_field_updates': { data: 1, error: null } },
+    })
+    await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'adjusted', percent: null, start: '2026-03-03' }] })
+    expect(programmeCalls(rpcCalls)[1].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-03', percent_complete: 50 } }])
+  })
+  it('several reports on one activity apply oldest first, whatever order the decisions arrive in', async () => {
+    const { rpcCalls } = setup({
+      tables: withUpdates([
+        fu('F1', 'A', { reported_percent: 20, created_at: '2026-03-03T08:00:00+00:00' }),
+        fu('F2', 'A', { reported_percent: 70, created_at: '2026-03-05T08:00:00+00:00' }),
+      ]),
+      rpc: { 'programme.decide_field_updates': { data: 2, error: null } },
+    })
+    await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F2', status: 'applied' }, { id: 'F1', status: 'applied' }] })
+    expect(programmeCalls(rpcCalls)[1].args.p_ops).toEqual([
+      { op: 'upsert_activity', id: 'A', fields: { percent_complete: 20 } },
+      { op: 'upsert_activity', id: 'A', fields: { percent_complete: 70 } },
+    ])
+  })
   it('a stale version is refused before deciding', async () => {
     const { rpcCalls } = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]) })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: '2026-01-01T00:00:00+00:00', decisions: [{ id: 'F1', status: 'applied' }] }))
@@ -308,7 +365,7 @@ describe('decideFieldUpdatesAction', () => {
       .resolves.toEqual({ ok: false, error: 'You do not have permission to edit programmes on this project.' })
     expect(programmeCalls(rpcCalls)).toHaveLength(0)
   })
-  it('a save failure after the decision is one refusal with the save\'s sentence (the decisions stand)', async () => {
+  it('a save failure after the decision says the reports ARE decided and names the activities to enter by hand', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]),
       rpc: {
@@ -317,7 +374,12 @@ describe('decideFieldUpdatesAction', () => {
       },
     })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'applied' }] }))
-      .resolves.toEqual({ ok: false, error: STALE })
+      .resolves.toEqual({
+        ok: false,
+        error: 'The progress reports were marked as decided, but the programme could not be updated: Someone else changed this programme. '
+          + 'Reload to see their version. Enter the progress on A by hand.',
+        unsavedActivityIds: ['A'],
+      })
     expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.decide_field_updates', 'programme.save_changes'])
   })
   it('a decide refusal is its sentence and nothing is saved', async () => {

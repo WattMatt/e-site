@@ -38,7 +38,8 @@ export interface FieldUpdateInput {
 
 /**
  * One planner decision. `adjusted` takes the planner's values given here; a
- * value left out falls back to what was reported. `applied` uses the reported
+ * value left out or null falls back to what was reported (P2 never clears an
+ * actual). `applied` uses the reported
  * values only; `rejected` changes nothing on the programme.
  */
 export interface FieldUpdateDecision {
@@ -53,6 +54,10 @@ export interface FieldUpdateDecision {
 
 export type DecideFieldUpdatesResult =
   | { ok: true; decided: number; version: string; ids: Record<string, string>; issues: ScheduleIssue[] }
-  | { ok: false; error: string; issues?: ScheduleIssue[] }
+  /**
+   * `unsavedActivityIds`: set only when the decisions WERE recorded but the
+   * programme save after them failed; their progress must be entered by hand.
+   */
+  | { ok: false; error: string; issues?: ScheduleIssue[]; unsavedActivityIds?: string[] }
 
 export interface ModuleSummary { start: string | null; finish: string | null; percentComplete: number | null }

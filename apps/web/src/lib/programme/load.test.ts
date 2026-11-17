@@ -57,6 +57,10 @@ describe('loadProgramme', () => {
     expect(res.state.dependencies).toHaveLength(6)
     const actReads = calls.filter((c) => c.table === 'programme.activities')
     expect(actReads.map((c) => c.range)).toEqual([[0, 2], [3, 5], [6, 8]])
+    // A stable, unique order on every page, or the pages can skip and repeat rows.
+    for (const c of calls.filter((x) => x.table !== 'programme.programmes')) {
+      expect(c.order).toEqual(c.table === 'programme.activity_codes' ? [['activity_id', true], ['code_type_id', true]] : [['id', true]])
+    }
     // 6 rows = two full pages, then an empty one to be sure.
     expect(calls.filter((c) => c.table === 'programme.dependencies').map((c) => c.range)).toEqual([[0, 2], [3, 5], [6, 8]])
   })

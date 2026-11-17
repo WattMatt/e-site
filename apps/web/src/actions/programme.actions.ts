@@ -97,7 +97,9 @@ async function programmeHeader(supabase: AnyClient, programmeId: string): Promis
 const isKeylessNewActivity = (o: unknown): boolean => {
   if (!o || typeof o !== 'object') return false
   const op = o as Record<string, unknown>
-  return op.op === 'upsert_activity' && (op.id === undefined || op.id === null) && typeof op.key !== 'string'
+  // A blank key cannot address the row's cache either, so it counts as no key.
+  return op.op === 'upsert_activity' && (op.id === undefined || op.id === null)
+    && (typeof op.key !== 'string' || op.key.trim() === '')
 }
 
 type Prepared =
@@ -239,7 +241,7 @@ export async function submitFieldUpdateAction(input: FieldUpdateInput): Promise<
 }
 
 interface FieldUpdateRow {
-  id: string; activity_id: string; status: string
+  id: string; activity_id: string; status: string; created_at: string
   reported_start: string | null; reported_finish: string | null
   reported_percent: number | null; reported_remaining: number | null
 }
@@ -247,8 +249,9 @@ interface FieldUpdateRow {
 /** The activity upsert an applied/adjusted decision makes: the agreed actuals, only those that have a value. */
 function decisionOp(d: FieldUpdateDecision, row: FieldUpdateRow): ProgrammeOp | null {
   if (d.status === 'rejected') return null
+  // A planner value that is left out OR null falls back to the reported one (nothing is cleared).
   const pick = <T>(planner: T | null | undefined, reported: T | null): T | null =>
-    d.status === 'adjusted' && planner !== undefined ? planner : reported
+    d.status === 'adjusted' && planner !== undefined && planner !== null ? planner : reported
   const values: Record<string, string | number | null> = {
     actual_start: pick(d.start, row.reported_start),
     actual_finish: pick(d.finish, row.reported_finish),
@@ -281,21 +284,32 @@ export async function decideFieldUpdatesAction(input: {
   const refusal = await editRefusal(supabase, loaded.state.programme)
   if (refusal) return refuse(refusal)
   // decide_field_updates takes no version, so check it before deciding anything.
-  if (loaded.state.programme.updated_at !== input.expectedVersion) return refuse(STALE)
+  // Compared as instants (save_changes compares timestamptz), to the millisecond
+  // JS can hold; an unparseable version is refused as stale.
+  const have = Date.parse(String(loaded.state.programme.updated_at ?? ''))
+  const want = Date.parse(input.expectedVersion)
+  if (Number.isNaN(have) || Number.isNaN(want) || have !== want) return refuse(STALE)
 
   const { data: rows, error: readErr } = await programmeSchema(supabase)
     .from('field_updates')
-    .select('id, activity_id, status, reported_start, reported_finish, reported_percent, reported_remaining')
+    .select('id, activity_id, status, created_at, reported_start, reported_finish, reported_percent, reported_remaining')
     .eq('programme_id', input.programmeId)
     .in('id', decisions.map((d) => d.id))
   if (readErr) return refuse('The field updates could not be read. Reload and try again.')
   const byId = new Map(((rows ?? []) as FieldUpdateRow[]).map((r) => [r.id, r]))
   // An id that is missing here is left to decide_field_updates, which refuses it with its own sentence.
-  const ops = decisions.flatMap((d) => {
-    const row = byId.get(d.id)
-    const op = row ? decisionOp(d, row) : null
-    return op ? [op] : []
-  })
+  // Ops go in the order the reports were MADE (oldest first, then id), so with
+  // several reports on one activity the newest one wins whatever the client's order.
+  const ops = decisions
+    .flatMap((d) => {
+      const row = byId.get(d.id)
+      return row ? [{ d, row }] : []
+    })
+    .sort((a, b) => Date.parse(a.row.created_at) - Date.parse(b.row.created_at) || a.row.id.localeCompare(b.row.id))
+    .flatMap(({ d, row }) => {
+      const op = decisionOp(d, row)
+      return op ? [op] : []
+    })
 
   // Check the agreed values BEFORE deciding: a refusal here leaves every update undecided.
   const prepared = ops.length > 0 ? prepareSave(loaded.state, ops) : null
@@ -310,12 +324,24 @@ export async function decideFieldUpdatesAction(input: {
 
   if (!prepared) return { ok: true, decided: n, version: input.expectedVersion, ids: {}, issues: [] }
 
-  // The decisions are committed by now. If this save fails (someone saved in
-  // between: 40001), they STAND and the activities keep their old actuals;
-  // the planner re-runs the update (or edits the activity) after a reload. No
-  // compensation is attempted: un-deciding would rewrite the audit trail.
+  // The decisions are committed by now. If this save fails (e.g. someone saved
+  // in between: 40001), they STAND and the activities keep their old actuals.
+  // They cannot be re-run: decide_field_updates refuses a decided update. So
+  // the refusal says so and names the activities whose progress must be
+  // entered by hand. No compensation is attempted: un-deciding would rewrite
+  // the audit trail.
   const saved = await callSave(supabase, input.programmeId, input.expectedVersion, ops, prepared)
-  if (!saved.ok) return saved
+  if (!saved.ok) {
+    const ids = [...new Set(ops.map((o) => (o as { id: string }).id))]
+    const names = ids.map((id) => loaded.state.activities.find((a) => a.id === id)?.name ?? id)
+    const reason = saved.error.replace(/\.\s*$/, '')
+    return {
+      ok: false,
+      error: `The progress reports were marked as decided, but the programme could not be updated: ${reason}. `
+        + `Enter the progress on ${names.join(', ')} by hand.`,
+      unsavedActivityIds: ids,
+    }
+  }
   return { ok: true, decided: n, version: saved.version, ids: saved.ids, issues: saved.issues }
 }
 
