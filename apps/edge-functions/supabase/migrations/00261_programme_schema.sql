@@ -107,6 +107,13 @@
 -- trigger: field_updates_refs ON programme.field_updates
 -- trigger: imports_bind ON programme.imports
 -- trigger: audit_bind ON programme.audit
+-- function: programme.imports_refs()
+-- function: programme.attrib()
+-- trigger: imports_refs ON programme.imports
+-- trigger: baselines_attrib ON programme.baselines
+-- trigger: progress_periods_attrib ON programme.progress_periods
+-- trigger: imports_attrib ON programme.imports
+-- trigger: field_updates_attrib ON programme.field_updates
 -- sql: (SELECT count(*) = 21 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'programme' AND c.relkind = 'r')
 -- @verify:end
 
@@ -525,6 +532,12 @@ BEGIN
         END IF;
         NEW.organisation_id := v_org;
     END IF;
+    -- The default calendar must be one of THIS programme's own calendars (so on
+    -- INSERT it must be NULL: it is set after the calendars are seeded).
+    IF NEW.default_calendar_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM programme.calendars c WHERE c.id = NEW.default_calendar_id AND c.programme_id = NEW.id) THEN
+        RAISE EXCEPTION 'The default calendar must be a calendar of this programme' USING ERRCODE = '22023';
+    END IF;
     RETURN NEW;
 END $$;
 CREATE TRIGGER programmes_bind BEFORE INSERT OR UPDATE ON programme.programmes
@@ -619,6 +632,10 @@ BEGIN
         SELECT 1 FROM programme.calendars c WHERE c.id = NEW.calendar_id AND c.programme_id = NEW.programme_id) THEN
         RAISE EXCEPTION 'The calendar belongs to a different programme' USING ERRCODE = '22023';
     END IF;
+    IF NEW.work_item_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM projects.work_items w WHERE w.id = NEW.work_item_id AND w.project_id = NEW.project_id) THEN
+        RAISE EXCEPTION 'The work item belongs to a different project' USING ERRCODE = '22023';
+    END IF;
     RETURN NEW;
 END $$;
 
@@ -664,6 +681,34 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM programme.activities a WHERE a.id = NEW.activity_id AND a.programme_id = NEW.programme_id) THEN
         RAISE EXCEPTION 'The activity belongs to a different programme' USING ERRCODE = '22023';
     END IF;
+    RETURN NEW;
+END $$;
+
+-- imports_refs: a baseline link must name a baseline of the same programme.
+CREATE OR REPLACE FUNCTION programme.imports_refs()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF NEW.baseline_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM programme.baselines b WHERE b.id = NEW.baseline_id AND b.programme_id = NEW.programme_id) THEN
+        RAISE EXCEPTION 'The baseline belongs to a different programme' USING ERRCODE = '22023';
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- attrib(column): a person column is stamped from auth.uid() on INSERT when
+-- there is a session (the service path may supply it) and is immutable on UPDATE.
+CREATE OR REPLACE FUNCTION programme.attrib()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_col TEXT := TG_ARGV[0]; v_val TEXT;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        v_val := to_jsonb(OLD) ->> v_col;
+    ELSIF auth.uid() IS NOT NULL THEN
+        v_val := auth.uid()::text;
+    ELSE
+        RETURN NEW;
+    END IF;
+    NEW := jsonb_populate_record(NEW, jsonb_build_object(v_col, v_val));
     RETURN NEW;
 END $$;
 
@@ -795,6 +840,17 @@ CREATE TRIGGER imports_bind BEFORE INSERT OR UPDATE ON programme.imports
 CREATE TRIGGER imports_touch BEFORE INSERT OR UPDATE ON programme.imports
     FOR EACH ROW EXECUTE FUNCTION programme.touch();
 
+CREATE TRIGGER imports_refs BEFORE INSERT OR UPDATE ON programme.imports
+    FOR EACH ROW EXECUTE FUNCTION programme.imports_refs();
+CREATE TRIGGER baselines_attrib BEFORE INSERT OR UPDATE ON programme.baselines
+    FOR EACH ROW EXECUTE FUNCTION programme.attrib('created_by');
+CREATE TRIGGER progress_periods_attrib BEFORE INSERT OR UPDATE ON programme.progress_periods
+    FOR EACH ROW EXECUTE FUNCTION programme.attrib('created_by');
+CREATE TRIGGER imports_attrib BEFORE INSERT OR UPDATE ON programme.imports
+    FOR EACH ROW EXECUTE FUNCTION programme.attrib('imported_by');
+CREATE TRIGGER field_updates_attrib BEFORE INSERT OR UPDATE ON programme.field_updates
+    FOR EACH ROW EXECUTE FUNCTION programme.attrib('author_id');
+
 CREATE TRIGGER audit_bind BEFORE INSERT OR UPDATE ON programme.audit
     FOR EACH ROW EXECUTE FUNCTION programme.audit_bind();
 
@@ -841,3 +897,18 @@ ALTER TABLE programme.imports                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE programme.imports                FORCE  ROW LEVEL SECURITY;
 ALTER TABLE programme.audit                  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE programme.audit                  FORCE  ROW LEVEL SECURITY;
+
+-- Trigger functions are never called directly: no caller needs EXECUTE.
+REVOKE ALL ON FUNCTION programme.programmes_bind() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.child_bind() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.org_child_bind() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.touch() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.stamp() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.activities_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.dependencies_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.activity_codes_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.resource_assignments_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.field_updates_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.imports_refs() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.attrib() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION programme.audit_bind() FROM PUBLIC, anon, authenticated;
