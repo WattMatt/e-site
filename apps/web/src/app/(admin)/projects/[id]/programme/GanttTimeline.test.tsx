@@ -345,6 +345,52 @@ describe('GanttTimeline: link dialog', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('keyboard: each visible link is focusable and named; Enter opens its dialog, which takes focus', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} />)
+    const link = document.querySelector('[data-link-id="D1"]') as HTMLElement
+    expect(link.getAttribute('tabindex')).toBe('0')
+    expect(link.getAttribute('role')).toBe('button')
+    expect(link.getAttribute('aria-label')).toBe('Link A → B, Finish to start')
+    link.focus()
+    fireEvent.keyDown(link, { key: 'Enter' })
+    const dialog = screen.getByRole('dialog', { name: 'Link A → B' })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).toBe(within(dialog).getByLabelText('Type'))
+  })
+
+  it('keyboard: Tab stays inside the dialog, and Escape closes it and returns focus to the link', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} />)
+    const link = document.querySelector('[data-link-id="D1"]') as HTMLElement
+    link.focus()
+    fireEvent.keyDown(link, { key: ' ' })
+    const dialog = screen.getByRole('dialog')
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+    const type = within(dialog).getByLabelText('Type')
+    save.focus()
+    fireEvent.keyDown(save, { key: 'Tab' })
+    expect(document.activeElement).toBe(type)
+    fireEvent.keyDown(type, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(save)
+    fireEvent.keyDown(save, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(document.querySelector('[data-link-id="D1"]'))
+  })
+
+  it('keyboard, read-only: the dialog focuses Close, and Close returns focus to the link', () => {
+    const store = storeOf(two(), linked())
+    render(<Harness store={store} canEdit={false} />)
+    const link = document.querySelector('[data-link-id="D1"]') as HTMLElement
+    link.focus()
+    fireEvent.keyDown(link, { key: 'Enter' })
+    const close = within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.click(close)
+    expect(document.activeElement).toBe(document.querySelector('[data-link-id="D1"]'))
+  })
+
   it('a lag that is not a number is refused in place', () => {
     const store = storeOf(two(), linked())
     render(<Harness store={store} />)

@@ -4,8 +4,12 @@
  * One link's details: its type, lag and lag unit, editable with `canEdit`, plus a two-step
  * delete (the first press arms, the second deletes). Read-only shows the same facts with
  * nothing to change. The dialog only builds ops; the timeline sends them through `apply`.
+ *
+ * It is modal for the keyboard: it takes focus when it opens (Type, or Close when read-only),
+ * Tab and Shift+Tab cycle inside it, and on close focus goes back to whatever opened it (the
+ * link, when it was opened from the keyboard) if that is still on the page.
  */
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { DependencyRow, ProgrammeOp } from '@esite/shared/programme'
 
 export const LINK_TYPE_LABEL: Record<DependencyRow['type'], string> = {
@@ -42,6 +46,28 @@ export function LinkDialog({ dep, predName, succName, canEdit, onApply, onClose 
   const [invalid, setInvalid] = useState(false)
   const [armed, setArmed] = useState(false)
 
+  const box = useRef<HTMLDivElement>(null)
+  // What had focus when the dialog rendered: it gets focus back when the dialog goes.
+  const [opener] = useState<Element | null>(() => (typeof document === 'undefined' ? null : document.activeElement))
+  useEffect(() => {
+    const first = box.current?.querySelector<HTMLElement>('select, input, button')
+    first?.focus()
+    return () => {
+      if (opener instanceof HTMLElement || opener instanceof SVGElement) {
+        if (opener.isConnected && opener !== document.body) opener.focus()
+      }
+    }
+  }, [opener])
+  const trap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return
+    const items = [...(box.current?.querySelectorAll<HTMLElement>('select, input, button') ?? [])].filter((el) => !el.hasAttribute('disabled'))
+    if (items.length === 0) return
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const next = e.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : (at === -1 || at === items.length - 1 ? 0 : at + 1)
+    e.preventDefault()
+    items[next].focus()
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -66,7 +92,7 @@ export function LinkDialog({ dep, predName, succName, canEdit, onApply, onClose 
 
   const title = `Link ${predName} → ${succName}`
   return (
-    <div role="dialog" aria-label={title} data-testid="programme-link-dialog" style={{
+    <div ref={box} role="dialog" aria-modal="true" aria-label={title} data-testid="programme-link-dialog" onKeyDown={trap} style={{
       position: 'absolute', top: 52, right: 12, zIndex: 5, width: 280, padding: 12, borderRadius: 8,
       border: '1px solid var(--c-border)', background: 'var(--c-elevated)', color: 'var(--c-text)',
       boxShadow: '0 6px 24px rgba(0,0,0,0.25)', display: 'grid', gap: 8, fontSize: 13,

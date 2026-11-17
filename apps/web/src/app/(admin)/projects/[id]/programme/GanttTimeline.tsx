@@ -10,7 +10,8 @@
  * - Bars: tasks from earlyStart to earlyFinish with % complete as an inner fill and a float
  *   tail to lateFinish; milestones as diamonds; summaries as bracket bars; critical in red;
  *   the active baseline as a thin line under the bar. Links are drawn when either end is
- *   visible; a click opens `LinkDialog`.
+ *   visible; a click opens `LinkDialog`. Each drawn link is also a focusable button (Tab to it,
+ *   Enter or Space opens the dialog, which takes focus and gives it back on close).
  * - With `canEdit`: drag a body to move (one SNET op at the snapped working day), drag the
  *   right edge to resize (`original_duration` in working days), drag from the end handle to
  *   another bar for an FS link. Pointer capture throughout; Escape cancels; the commit is one
@@ -33,7 +34,7 @@ import {
   workingDaysInclusive, zoomStep,
   type BarGeometry, type Hit,
 } from './timeline-geometry'
-import { LinkDialog } from './LinkDialog'
+import { LINK_TYPE_LABEL, LinkDialog } from './LinkDialog'
 import { buildDisplayRows, NO_FILTERS, type DisplayRow } from './display-rows'
 import type { CommandsRef, TimelineCommands } from './bridge'
 
@@ -361,12 +362,13 @@ export function GanttTimeline({
   const [openLink, setOpenLink] = useState<string | null>(null)
   const openDep = openLink === null ? undefined : state.dependencies.find((d) => d.id === resolve(openLink))
   const closeLink = useCallback(() => setOpenLink(null), [])
+  const [focusedLink, setFocusedLink] = useState<string | null>(null)
 
   // ── render data ──
   const top = first * ROW_HEIGHT
   const bottom = last * ROW_HEIGHT
   const linkEls = useMemo(() => {
-    const out: Array<{ id: string; d: string; arrow: string; colour: string; width: number }> = []
+    const out: Array<{ id: string; d: string; arrow: string; colour: string; width: number; label: string }> = []
     if (last <= first) return out
     for (const dep of state.dependencies) {
       const i = indexOf.get(dep.pred_id)
@@ -388,10 +390,11 @@ export function GanttTimeline({
         id: dep.id, d: pathD(pts), arrow,
         colour: critical ? 'var(--c-red)' : driving ? 'var(--c-text)' : 'var(--c-text-dim)',
         width: driving ? 1.5 : 1,
+        label: `Link ${byId.get(dep.pred_id)?.name ?? '—'} → ${byId.get(dep.succ_id)?.name ?? '—'}, ${LINK_TYPE_LABEL[dep.type]}`,
       })
     }
     return out
-  }, [state.dependencies, indexOf, first, last, geomAt, schedule])
+  }, [state.dependencies, indexOf, first, last, geomAt, schedule, byId])
 
   const preview = (() => {
     if (!drag || !drag.moved || drag.mode === 'click') return null
@@ -503,7 +506,16 @@ export function GanttTimeline({
                   <line data-testid="timeline-today" x1={todayX} x2={todayX} y1={top} y2={bottom} stroke="var(--c-text)" strokeWidth={1} />
                 )}
                 {linkEls.map((l) => (
-                  <g key={l.id} data-link-id={l.id}>
+                  <g key={l.id} data-link-id={l.id} role="button" tabIndex={0} aria-label={l.label}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setOpenLink(l.id)
+                    }}
+                    onFocus={() => setFocusedLink(l.id)} onBlur={() => setFocusedLink((f) => (f === l.id ? null : f))}
+                    style={{ outline: 'none' }}>
+                    {focusedLink === l.id && <path data-part="link-focus" d={l.d} fill="none" stroke="var(--c-amber)" strokeWidth={4} strokeOpacity={0.6} />}
                     <path d={l.d} fill="none" stroke={l.colour} strokeWidth={l.width} />
                     <path d={l.arrow} fill={l.colour} />
                     <path data-part="link-hit" d={l.d} fill="none" stroke="transparent" strokeWidth={10}
