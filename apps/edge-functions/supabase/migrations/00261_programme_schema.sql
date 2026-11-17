@@ -1531,6 +1531,11 @@ END $$;
 -- p_computed = {project_finish, activities:[{id|key, early_start, early_finish,
 -- late_start, late_finish, total_float, free_float, is_critical, is_driving}]}
 -- writes the cache columns only; activities not listed keep their cache.
+-- delete_activity TOMBSTONES an activity that carries history (see the op)
+-- and hard-deletes a bare one; the result and the audit list both:
+-- {version, ids, deleted:[...], tombstoned:[...]}. A tombstoned activity
+-- cannot be upserted, linked or deleted again ("Restore it first"; P2 has
+-- no restore op).
 -- RULING (the cache): the caller's server action writes the cache after an
 -- engine run in the same request. An editor calling this RPC directly can only
 -- falsify a cache that the next recalculation overwrites, and every read path
@@ -1555,6 +1560,7 @@ DECLARE
     v_act programme.activities; v_cal programme.calendars; v_prog programme.programmes;
     v_dep programme.dependencies; v_cv programme.code_values;
     v_counts jsonb := '{}'::jsonb; v_created jsonb := '[]'::jsonb; v_deleted jsonb := '[]'::jsonb;
+    v_tombstoned jsonb := '[]'::jsonb;
     v_c jsonb; v_n_computed int := 0;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('programme:' || p_programme_id::text, 0));
@@ -1612,6 +1618,9 @@ BEGIN
             IF v_op ->> 'id' IS NOT NULL THEN
                 v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'activities', p_programme_id, 'activity');
                 SELECT * INTO v_act FROM programme.activities a WHERE a.id = v_id FOR UPDATE;
+                IF v_act.is_tombstoned THEN
+                    RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
+                END IF;
                 v_act := jsonb_populate_record(v_act, v_f);
                 UPDATE programme.activities SET
                     parent_id = v_act.parent_id, wbs_code = v_act.wbs_code, code = v_act.code, name = v_act.name,
@@ -1651,11 +1660,35 @@ BEGIN
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Say which activity to delete.' USING ERRCODE = '22023';
             END IF;
-            IF EXISTS (SELECT 1 FROM programme.activities a WHERE a.parent_id = v_id) THEN
+            SELECT * INTO v_act FROM programme.activities a WHERE a.id = v_id FOR UPDATE;
+            IF v_act.is_tombstoned THEN
+                RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
+            END IF;
+            IF EXISTS (SELECT 1 FROM programme.activities a WHERE a.parent_id = v_id AND NOT a.is_tombstoned) THEN
                 RAISE EXCEPTION 'Delete or move its sub-activities first.' USING ERRCODE = '22023';
             END IF;
-            DELETE FROM programme.activities WHERE id = v_id;
-            v_deleted := v_deleted || to_jsonb(v_id);
+            -- Spec 4.2 / 4.7: history on an activity is never deleted silently.
+            -- An activity carrying a field update, a resource assignment (and its
+            -- rand cost), a code, a work item, an import identity, a baseline
+            -- snapshot or a (tombstoned) sub-activity is TOMBSTONED: the row and
+            -- every child row stay. Only its links go, because a tombstoned
+            -- activity is out of the schedule and the links would dangle. This
+            -- also means an editor who cannot see costs (a Solar-edit contractor)
+            -- can never destroy cost rows through a delete.
+            IF v_act.work_item_id IS NOT NULL OR v_act.external_uid IS NOT NULL
+               OR EXISTS (SELECT 1 FROM programme.activities a WHERE a.parent_id = v_id)
+               OR EXISTS (SELECT 1 FROM programme.field_updates f WHERE f.activity_id = v_id)
+               OR EXISTS (SELECT 1 FROM programme.resource_assignments r WHERE r.activity_id = v_id)
+               OR EXISTS (SELECT 1 FROM programme.activity_codes c WHERE c.activity_id = v_id)
+               OR EXISTS (SELECT 1 FROM programme.baseline_activities b
+                           WHERE b.programme_id = p_programme_id AND b.activity_id = v_id) THEN
+                DELETE FROM programme.dependencies WHERE v_id IN (pred_id, succ_id);
+                UPDATE programme.activities SET is_tombstoned = true WHERE id = v_id;
+                v_tombstoned := v_tombstoned || to_jsonb(v_id);
+            ELSE
+                DELETE FROM programme.activities WHERE id = v_id;
+                v_deleted := v_deleted || to_jsonb(v_id);
+            END IF;
 
         ELSIF v_kind = 'upsert_dependency' THEN
             v_pred := programme.resolve_ref(v_op ->> 'pred', v_keys, 'activities', p_programme_id, 'activity');
@@ -1670,6 +1703,9 @@ BEGIN
             END IF;
             IF v_pred = v_succ THEN
                 RAISE EXCEPTION 'An activity cannot be linked to itself.' USING ERRCODE = '22023';
+            END IF;
+            IF EXISTS (SELECT 1 FROM programme.activities a WHERE a.id IN (v_pred, v_succ) AND a.is_tombstoned) THEN
+                RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
             END IF;
             IF v_op ->> 'id' IS NOT NULL THEN
                 UPDATE programme.dependencies SET
@@ -1857,8 +1893,9 @@ BEGIN
     UPDATE programme.programmes SET updated_at = clock_timestamp() WHERE id = p_programme_id
     RETURNING updated_at INTO v_version;
     PERFORM programme.write_audit(p_programme_id, 'programme.saved', jsonb_build_object(
-        'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'computed', v_n_computed));
-    RETURN jsonb_build_object('version', v_version, 'ids', v_keys);
+        'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
+        'computed', v_n_computed));
+    RETURN jsonb_build_object('version', v_version, 'ids', v_keys, 'deleted', v_deleted, 'tombstoned', v_tombstoned);
 END $$;
 
 -- 3. save_baseline: a full snapshot of the live (non-tombstoned) activities,
