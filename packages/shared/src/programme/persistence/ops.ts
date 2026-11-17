@@ -87,12 +87,14 @@ export type ProgrammeOp =
   | { op: 'set_activity_code'; activity: string; code_type: string; code_value?: string | null }
   | { op: 'set_programme'; fields: ProgrammeFields }
 
-const ACT_FIELDS = ['parent_id', 'wbs_code', 'code', 'name', 'type', 'original_duration', 'remaining_duration', 'calendar_id',
+/** The activity columns an op may write (cache columns excluded). Shared with the view diff. */
+export const ACT_FIELDS = ['parent_id', 'wbs_code', 'code', 'name', 'type', 'original_duration', 'remaining_duration', 'calendar_id',
   'constraint_type', 'constraint_date', 'deadline', 'actual_start', 'actual_finish', 'percent_complete', 'percent_complete_type',
   'fixed_start', 'fixed_finish', 'sort_order', 'external_uid', 'anchor'] as const
 const ACT_CACHE = ['early_start', 'early_finish', 'late_start', 'late_finish', 'total_float', 'free_float', 'is_critical', 'is_driving', 'work_item_id']
 const CAL_FIELDS = ['name', 'variant', 'work_weekdays', 'hours_per_day', 'coverage_from', 'coverage_to'] as const
-const PROG_FIELDS = ['name', 'data_date', 'project_start', 'options', 'default_calendar_id'] as const
+/** The programme columns an op may write (project_finish is cache). */
+export const PROG_FIELDS = ['name', 'data_date', 'project_start', 'options', 'default_calendar_id'] as const
 const PROG_CACHE = ['project_finish']
 
 const BAD = 'One of the values in this change is missing or not allowed.'
