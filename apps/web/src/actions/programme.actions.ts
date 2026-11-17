@@ -122,18 +122,28 @@ function prepareSave(state: ProgrammeState, ops: ProgrammeOp[]): Prepared {
   }
 }
 
+type SaveDecision = { id: string; status: FieldUpdateDecision['status']; note: string | null }
+
+/**
+ * ONE save_changes call. Field-update `decisions` are recorded in the same
+ * transaction as the ops, under the same version check, so a decision never
+ * stands without the actuals it agreed to. `prepared` null = no ops and no
+ * engine run: the cache is left as it is.
+ */
 async function callSave(
-  supabase: AnyClient, programmeId: string, expectedVersion: string, ops: ProgrammeOp[], prepared: Extract<Prepared, { ok: true }>,
-): Promise<SaveProgrammeResult> {
+  supabase: AnyClient, programmeId: string, expectedVersion: string, ops: ProgrammeOp[],
+  prepared: Extract<Prepared, { ok: true }> | null, decisions: SaveDecision[] = [], fallback = SAVE_FAILED,
+): Promise<SaveProgrammeResult & { decided?: number }> {
   const { data, error } = await programmeSchema(supabase).rpc('save_changes', {
     p_programme_id: programmeId,
     p_expected_version: expectedVersion,
     p_ops: ops,
-    p_computed: prepared.computed,
+    p_computed: prepared ? prepared.computed : null,
+    ...(decisions.length > 0 ? { p_decisions: decisions } : {}),
   })
-  if (error) return refuse(dbSentence(error))
-  const out = (data ?? {}) as { version?: string; ids?: Record<string, string> }
-  return { ok: true, version: String(out.version ?? ''), ids: out.ids ?? {}, issues: prepared.issues }
+  if (error) return refuse(dbSentence(error, fallback))
+  const out = (data ?? {}) as { version?: string; ids?: Record<string, string>; decided?: number }
+  return { ok: true, version: String(out.version ?? ''), ids: out.ids ?? {}, issues: prepared?.issues ?? [], decided: Number(out.decided ?? 0) }
 }
 
 export async function createProgrammeAction(input: CreateProgrammeInput): Promise<{ ok: true; programmeId: string } | ProgrammeRefusal> {
@@ -283,9 +293,9 @@ export async function decideFieldUpdatesAction(input: {
   if (!loaded.ok) return refuse(loaded.error)
   const refusal = await editRefusal(supabase, loaded.state.programme)
   if (refusal) return refuse(refusal)
-  // decide_field_updates takes no version, so check it before deciding anything.
-  // Compared as instants (save_changes compares timestamptz), to the millisecond
-  // JS can hold; an unparseable version is refused as stale.
+  // An early refusal only (save_changes re-checks the exact version under its
+  // lock): compared as instants, to the millisecond JS can hold; an
+  // unparseable version is refused as stale before any read.
   const have = Date.parse(String(loaded.state.programme.updated_at ?? ''))
   const want = Date.parse(input.expectedVersion)
   if (Number.isNaN(have) || Number.isNaN(want) || have !== want) return refuse(STALE)
@@ -297,7 +307,7 @@ export async function decideFieldUpdatesAction(input: {
     .in('id', decisions.map((d) => d.id))
   if (readErr) return refuse('The field updates could not be read. Reload and try again.')
   const byId = new Map(((rows ?? []) as FieldUpdateRow[]).map((r) => [r.id, r]))
-  // An id that is missing here is left to decide_field_updates, which refuses it with its own sentence.
+  // An id that is missing here is left to save_changes, which refuses it with its own sentence.
   // Ops go in the order the reports were MADE (oldest first, then id), so with
   // several reports on one activity the newest one wins whatever the client's order.
   const ops = decisions
@@ -311,38 +321,20 @@ export async function decideFieldUpdatesAction(input: {
       return op ? [op] : []
     })
 
-  // Check the agreed values BEFORE deciding: a refusal here leaves every update undecided.
+  // Check the agreed values before sending: a refusal here writes nothing.
   const prepared = ops.length > 0 ? prepareSave(loaded.state, ops) : null
   if (prepared && !prepared.ok) return prepared
 
-  const { data: decided, error: decideErr } = await programmeSchema(supabase).rpc('decide_field_updates', {
-    p_programme_id: input.programmeId,
-    p_decisions: decisions.map((d) => ({ id: d.id, status: d.status, note: d.note ?? null })),
-  })
-  if (decideErr) return refuse(dbSentence(decideErr, 'The field updates could not be decided. Try again.'))
-  const n = Number(decided ?? 0)
-
-  if (!prepared) return { ok: true, decided: n, version: input.expectedVersion, ids: {}, issues: [] }
-
-  // The decisions are committed by now. If this save fails (e.g. someone saved
-  // in between: 40001), they STAND and the activities keep their old actuals.
-  // They cannot be re-run: decide_field_updates refuses a decided update. So
-  // the refusal says so and names the activities whose progress must be
-  // entered by hand. No compensation is attempted: un-deciding would rewrite
-  // the audit trail.
-  const saved = await callSave(supabase, input.programmeId, input.expectedVersion, ops, prepared)
-  if (!saved.ok) {
-    const ids = [...new Set(ops.map((o) => (o as { id: string }).id))]
-    const names = ids.map((id) => loaded.state.activities.find((a) => a.id === id)?.name ?? id)
-    const reason = saved.error.replace(/\.\s*$/, '')
-    return {
-      ok: false,
-      error: `The progress reports were marked as decided, but the programme could not be updated: ${reason}. `
-        + `Enter the progress on ${names.join(', ')} by hand.`,
-      unsavedActivityIds: ids,
-    }
-  }
-  return { ok: true, decided: n, version: saved.version, ids: saved.ids, issues: saved.issues }
+  // ONE save_changes call: the decisions and the agreed actuals commit
+  // together under the version check, or neither does (a stale version
+  // leaves every report 'reported').
+  const saved = await callSave(
+    supabase, input.programmeId, input.expectedVersion, ops, prepared,
+    decisions.map((d) => ({ id: d.id, status: d.status, note: d.note ?? null })),
+    'The field updates could not be decided. Try again.',
+  )
+  if (!saved.ok) return saved
+  return { ok: true, decided: saved.decided ?? 0, version: saved.version, ids: saved.ids, issues: saved.issues }
 }
 
 export async function moduleSummaryAction(input: { projectId: string; moduleKey: 'solar' }): Promise<{ ok: true; summary: ModuleSummary | null } | ProgrammeRefusal> {

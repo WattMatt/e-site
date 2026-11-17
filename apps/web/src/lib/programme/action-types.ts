@@ -54,10 +54,7 @@ export interface FieldUpdateDecision {
 
 export type DecideFieldUpdatesResult =
   | { ok: true; decided: number; version: string; ids: Record<string, string>; issues: ScheduleIssue[] }
-  /**
-   * `unsavedActivityIds`: set only when the decisions WERE recorded but the
-   * programme save after them failed; their progress must be entered by hand.
-   */
-  | { ok: false; error: string; issues?: ScheduleIssue[]; unsavedActivityIds?: string[] }
+  /** A refusal decided nothing and wrote nothing: decisions and actuals are one transaction. */
+  | { ok: false; error: string; issues?: ScheduleIssue[] }
 
 export interface ModuleSummary { start: string | null; finish: string | null; percentComplete: number | null }

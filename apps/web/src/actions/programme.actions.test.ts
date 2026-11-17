@@ -284,36 +284,44 @@ describe('decideFieldUpdatesAction', () => {
   const withUpdates = (rows: Array<Record<string, unknown>>, extra: Record<string, Array<Record<string, unknown>>> = {}) =>
     programmeTables({ 'programme.field_updates': rows, ...extra })
 
-  it('applied: decide first, then ONE save carrying the reported values as an activity upsert', async () => {
+  const DECIDED = (n: number): FakeResult => ({ data: { version: 'v2', ids: {}, deleted: [], tombstoned: [], decided: n }, error: null })
+
+  it('applied: ONE save_changes call carrying the decision AND the reported values as an activity upsert', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_start: '2026-03-02', reported_percent: 50 })]),
-      rpc: { 'programme.decide_field_updates': { data: 1, error: null } },
+      rpc: { 'programme.save_changes': DECIDED(1) },
     })
     const res = await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'applied' }] })
     expect(res).toMatchObject({ ok: true, decided: 1, version: 'v2' })
     const pc = programmeCalls(rpcCalls)
-    expect(pc.map((c) => c.name)).toEqual(['programme.decide_field_updates', 'programme.save_changes'])
-    expect(pc[0].args).toEqual({ p_programme_id: PROG, p_decisions: [{ id: 'F1', status: 'applied', note: null }] })
-    expect(pc[1].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-02', percent_complete: 50 } }])
-    expect(pc[1].args.p_expected_version).toBe(VERSION)
+    expect(pc.map((c) => c.name)).toEqual(['programme.save_changes'])
+    expect(pc[0].args.p_decisions).toEqual([{ id: 'F1', status: 'applied', note: null }])
+    expect(pc[0].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-02', percent_complete: 50 } }])
+    expect(pc[0].args.p_expected_version).toBe(VERSION)
+    expect(pc[0].args.p_computed).not.toBeNull()
   })
   it('adjusted: the planner\'s values win over the reported ones', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_start: '2026-03-02', reported_percent: 50 })]),
-      rpc: { 'programme.decide_field_updates': { data: 1, error: null } },
+      rpc: { 'programme.save_changes': DECIDED(1) },
     })
     await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'adjusted', percent: 30, note: 'Site walk' }] })
     const pc = programmeCalls(rpcCalls)
     expect(pc[0].args.p_decisions).toEqual([{ id: 'F1', status: 'adjusted', note: 'Site walk' }])
-    expect(pc[1].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-02', percent_complete: 30 } }])
+    expect(pc[0].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-02', percent_complete: 30 } }])
   })
-  it('rejected only: decide, and no save (nothing changes on the programme)', async () => {
-    const { rpcCalls } = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]), rpc: { 'programme.decide_field_updates': { data: 1, error: null } } })
+  it('rejected only: one save_changes call with the decision, no ops and no cache (nothing changes on the programme)', async () => {
+    const { rpcCalls } = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]), rpc: { 'programme.save_changes': DECIDED(1) } })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'rejected' }] }))
-      .resolves.toEqual({ ok: true, decided: 1, version: VERSION, ids: {}, issues: [] })
-    expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.decide_field_updates'])
+      .resolves.toEqual({ ok: true, decided: 1, version: 'v2', ids: {}, issues: [] })
+    const pc = programmeCalls(rpcCalls)
+    expect(pc.map((c) => c.name)).toEqual(['programme.save_changes'])
+    expect(pc[0].args).toEqual({
+      p_programme_id: PROG, p_expected_version: VERSION, p_ops: [], p_computed: null,
+      p_decisions: [{ id: 'F1', status: 'rejected', note: null }],
+    })
   })
-  it('the agreed values are checked BEFORE deciding: a removed activity refuses and nothing is decided', async () => {
+  it('the agreed values are checked before sending: a removed activity refuses and nothing is sent', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })], { 'programme.activities': [activityRow('A', { is_tombstoned: true }), activityRow('B')] }),
     })
@@ -322,7 +330,7 @@ describe('decideFieldUpdatesAction', () => {
     expect(programmeCalls(rpcCalls)).toHaveLength(0)
   })
   it('the version is compared as an instant: the same moment in another form is accepted; nonsense is refused', async () => {
-    const ok = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]), rpc: { 'programme.decide_field_updates': { data: 1, error: null } } })
+    const ok = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]), rpc: { 'programme.save_changes': DECIDED(1) } })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: '2026-11-17T08:00:00.123Z', decisions: [{ id: 'F1', status: 'rejected' }] }))
       .resolves.toMatchObject({ ok: true })
     expect(programmeCalls(ok.rpcCalls)).toHaveLength(1)
@@ -334,10 +342,10 @@ describe('decideFieldUpdatesAction', () => {
   it('adjusted: a null value counts as left out (the reported value is used)', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_start: '2026-03-02', reported_percent: 50 })]),
-      rpc: { 'programme.decide_field_updates': { data: 1, error: null } },
+      rpc: { 'programme.save_changes': DECIDED(1) },
     })
     await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'adjusted', percent: null, start: '2026-03-03' }] })
-    expect(programmeCalls(rpcCalls)[1].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-03', percent_complete: 50 } }])
+    expect(programmeCalls(rpcCalls)[0].args.p_ops).toEqual([{ op: 'upsert_activity', id: 'A', fields: { actual_start: '2026-03-03', percent_complete: 50 } }])
   })
   it('several reports on one activity apply oldest first, whatever order the decisions arrive in', async () => {
     const { rpcCalls } = setup({
@@ -345,15 +353,15 @@ describe('decideFieldUpdatesAction', () => {
         fu('F1', 'A', { reported_percent: 20, created_at: '2026-03-03T08:00:00+00:00' }),
         fu('F2', 'A', { reported_percent: 70, created_at: '2026-03-05T08:00:00+00:00' }),
       ]),
-      rpc: { 'programme.decide_field_updates': { data: 2, error: null } },
+      rpc: { 'programme.save_changes': DECIDED(2) },
     })
     await decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F2', status: 'applied' }, { id: 'F1', status: 'applied' }] })
-    expect(programmeCalls(rpcCalls)[1].args.p_ops).toEqual([
+    expect(programmeCalls(rpcCalls)[0].args.p_ops).toEqual([
       { op: 'upsert_activity', id: 'A', fields: { percent_complete: 20 } },
       { op: 'upsert_activity', id: 'A', fields: { percent_complete: 70 } },
     ])
   })
-  it('a stale version is refused before deciding', async () => {
+  it('a stale version is refused before sending (early, to the millisecond)', async () => {
     const { rpcCalls } = setup({ tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]) })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: '2026-01-01T00:00:00+00:00', decisions: [{ id: 'F1', status: 'applied' }] }))
       .resolves.toEqual({ ok: false, error: STALE })
@@ -365,31 +373,31 @@ describe('decideFieldUpdatesAction', () => {
       .resolves.toEqual({ ok: false, error: 'You do not have permission to edit programmes on this project.' })
     expect(programmeCalls(rpcCalls)).toHaveLength(0)
   })
-  it('a save failure after the decision says the reports ARE decided and names the activities to enter by hand', async () => {
+  it('a stale version at the database (someone saved in between) is the plain reload sentence: nothing was decided', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]),
-      rpc: {
-        'programme.decide_field_updates': { data: 1, error: null },
-        'programme.save_changes': { data: null, error: { code: '40001', message: 'x' } },
-      },
+      rpc: { 'programme.save_changes': { data: null, error: { code: '40001', message: 'x' } } },
     })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'applied' }] }))
-      .resolves.toEqual({
-        ok: false,
-        error: 'The progress reports were marked as decided, but the programme could not be updated: Someone else changed this programme. '
-          + 'Reload to see their version. Enter the progress on A by hand.',
-        unsavedActivityIds: ['A'],
-      })
-    expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.decide_field_updates', 'programme.save_changes'])
+      .resolves.toEqual({ ok: false, error: STALE })
+    expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.save_changes'])
   })
-  it('a decide refusal is its sentence and nothing is saved', async () => {
+  it('a decision refusal is its sentence (one call, so nothing is saved either)', async () => {
     const { rpcCalls } = setup({
       tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]),
-      rpc: { 'programme.decide_field_updates': { data: null, error: { code: '22023', message: 'That field update has already been decided.' } } },
+      rpc: { 'programme.save_changes': { data: null, error: { code: '22023', message: 'That field update has already been decided.' } } },
     })
     await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'applied' }] }))
       .resolves.toEqual({ ok: false, error: 'That field update has already been decided.' })
-    expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.decide_field_updates'])
+    expect(programmeCalls(rpcCalls).map((c) => c.name)).toEqual(['programme.save_changes'])
+  })
+  it('a transport failure is the decide fallback sentence', async () => {
+    setup({
+      tables: withUpdates([fu('F1', 'A', { reported_percent: 50 })]),
+      rpc: { 'programme.save_changes': { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } } },
+    })
+    await expect(decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'rejected' }] }))
+      .resolves.toEqual({ ok: false, error: 'The field updates could not be decided. Try again.' })
   })
   it('refuses an empty decision list', async () => {
     const { rpcCalls, calls } = setup()
