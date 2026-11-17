@@ -119,23 +119,41 @@ export function TimelineControls({ commandsRef, zoom, onZoom }: {
 
 // ── the data date ───────────────────────────────────────────────────────────
 
-/** The data date: edited in a draft, applied on Enter or when the field loses focus; empty clears it. */
+/** A whole, real calendar date: `YYYY-MM-DD` whose day exists. */
+function isCompleteDate(v: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v)
+  if (!m) return false
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3])
+}
+
+/**
+ * The data date: edited in a draft and applied on Enter or when the field loses focus, but only
+ * as a complete date. A date input reports '' while a date is half typed, so '' never clears:
+ * anything that is not a whole date goes back to the stored one, unsaved. Clear is its own button.
+ */
 function DataDateControl({ store }: { store: ToolbarStore }) {
   const current = store.state.programme.data_date ?? ''
   const [draft, setDraft] = useState(current)
   useEffect(() => { setDraft(current) }, [current])
   const commit = () => {
     if (draft === current) return
-    if (draft !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(draft)) { setDraft(current); return }
-    if (!store.apply([{ op: 'set_programme', fields: { data_date: draft === '' ? null : draft } }], 'Set data date')) setDraft(current)
+    if (!isCompleteDate(draft)) { setDraft(current); return }
+    if (!store.apply([{ op: 'set_programme', fields: { data_date: draft } }], 'Set data date')) setDraft(current)
+  }
+  const clear = () => {
+    if (store.apply([{ op: 'set_programme', fields: { data_date: null } }], 'Clear data date')) setDraft('')
   }
   return (
-    <label style={{ ...group, ...dim }}>
-      Data date
-      <input type="date" aria-label="Data date" value={draft} style={field}
-        onChange={(e) => setDraft(e.target.value)} onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />
-    </label>
+    <span style={group}>
+      <label style={{ ...group, ...dim }}>
+        Data date
+        <input type="date" aria-label="Data date" value={draft} style={field}
+          onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />
+      </label>
+      {current !== '' && <button type="button" style={button} aria-label="Clear data date" title="Clear data date" onClick={clear}>×</button>}
+    </span>
   )
 }
 

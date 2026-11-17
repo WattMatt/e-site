@@ -256,16 +256,47 @@ describe('ProgrammeClient: toolbar editing', () => {
     expect(a.apply).toHaveBeenCalledWith([{ op: 'set_programme', fields: { data_date: '2026-03-04' } }], 'Set data date')
   })
 
-  it('Enter applies the data date too; clearing it sends null', () => {
+  it('Enter applies the data date too', () => {
+    const a = api()
+    renderClient(a)
+    const input = within(toolbar()).getByLabelText('Data date') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '2026-03-05' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(a.apply).toHaveBeenCalledWith([{ op: 'set_programme', fields: { data_date: '2026-03-05' } }], 'Set data date')
+  })
+
+  it('a partly typed date (the input reports empty) goes back to the stored one and saves nothing', () => {
     const base = api()
     const state = { ...base.state, programme: { ...base.state.programme, data_date: '2026-03-04' } } as ProgrammeState
     const a = api({ state, schedule: scheduleFor(state) })
     renderClient(a)
     const input = within(toolbar()).getByLabelText('Data date') as HTMLInputElement
     expect(input.value).toBe('2026-03-04')
-    fireEvent.change(input, { target: { value: '' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(a.apply).toHaveBeenCalledWith([{ op: 'set_programme', fields: { data_date: null } }], 'Set data date')
+    for (const leave of [() => fireEvent.blur(input), () => fireEvent.keyDown(input, { key: 'Enter' })]) {
+      fireEvent.change(input, { target: { value: '' } })
+      leave()
+      expect(a.apply).not.toHaveBeenCalled()
+      expect(input.value).toBe('2026-03-04')
+    }
+    // an impossible day is not a date either
+    fireEvent.change(input, { target: { value: '2026-02-30' } })
+    fireEvent.blur(input)
+    expect(a.apply).not.toHaveBeenCalled()
+    expect(input.value).toBe('2026-03-04')
+  })
+
+  it('the data date is cleared only by its Clear button, which sends null', () => {
+    const base = api()
+    const state = { ...base.state, programme: { ...base.state.programme, data_date: '2026-03-04' } } as ProgrammeState
+    const a = api({ state, schedule: scheduleFor(state) })
+    renderClient(a)
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Clear data date' }))
+    expect(a.apply).toHaveBeenCalledWith([{ op: 'set_programme', fields: { data_date: null } }], 'Clear data date')
+  })
+
+  it('no Clear button without a data date, nor for a reader', () => {
+    renderClient(api())
+    expect(within(toolbar()).queryByRole('button', { name: 'Clear data date' })).toBeNull()
   })
 
   it('a data date the store refuses goes back to the saved one', () => {
