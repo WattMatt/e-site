@@ -18,6 +18,10 @@
  *  - delete_activity tombstones an activity that carries history and
  *    hard-deletes a bare one (see `deleteActivity`).
  *  - upsert/delete/link on a tombstoned activity is refused.
+ *  - restore_activity clears the tombstone on the SAME row (its field updates,
+ *    costs and codes stay attached); a live activity, or one whose parent is
+ *    still tombstoned, is refused. Links are not recreated: an undo re-adds
+ *    them with upsert_dependency ops.
  *
  * What the SQL checks that this cannot, and the optional ProgrammeState
  * arrays that stand in for it:
@@ -73,6 +77,7 @@ export type ProgrammeFields = Partial<Pick<ProgrammeRow, 'name' | 'data_date' | 
 export type ProgrammeOp =
   | { op: 'upsert_activity'; key?: string; id?: string; fields: ActivityFields }
   | { op: 'delete_activity'; id: string }
+  | { op: 'restore_activity'; id: string }
   | { op: 'upsert_dependency'; key?: string; id?: string; pred?: string; succ?: string; type?: DependencyRow['type']; lag?: number; lag_unit?: DependencyRow['lag_unit']; lag_calendar?: DependencyRow['lag_calendar'] }
   | { op: 'delete_dependency'; id: string }
   | { op: 'upsert_calendar'; key?: string; id?: string; fields: CalendarFields }
@@ -225,6 +230,18 @@ export function applyOps(input: ProgrammeState, ops: ProgrammeOp[]): ProgrammeSt
         if (hasHistory) a.is_tombstoned = true
         else s.activities = s.activities.filter((x) => x.id !== gone)
         // like the SQL, the key (if any) is registered against the deleted id, so it cannot be reused
+        break
+      }
+
+      case 'restore_activity': {
+        id = ref(op.id, 'activities', 'activity')
+        if (id === null) throw fail('Say which activity to restore.')
+        const a = findAct(id)
+        if (!a.is_tombstoned) throw fail('That activity is not removed.')
+        if (a.parent_id !== null && s.activities.find((x) => x.id === a.parent_id)?.is_tombstoned) {
+          throw fail('Restore its parent first.')
+        }
+        a.is_tombstoned = false
         break
       }
 

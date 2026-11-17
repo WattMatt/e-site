@@ -42,7 +42,7 @@ If the head is `00261` or higher, renumber the file above it. Re-run the `@verif
 - Clients read only. Every write is a `SECURITY DEFINER` function that locks the programme, refuses a stale version, and audits in the same transaction.
 - Rands are masked by RLS on the cost tables and on the resource rates. Nothing else is masked.
 - The audit log holds ids, counts and verbs. It never holds a rand figure.
-- Delete tombstones an activity that carries history (field updates, assignments, codes, a work item, an external uid, baselines). A bare activity is hard-deleted. P2 has no restore.
+- Delete tombstones an activity that carries history (field updates, assignments, codes, a work item, an external uid, baselines). A bare activity is hard-deleted. `restore_activity` (editor only) brings back the SAME tombstoned row, which is what the Gantt's undo of such a delete sends; it refuses a live activity ("That activity is not removed.") and one whose parent is still tombstoned ("Restore its parent first."), and does not recreate links (the undo re-adds them as `upsert_dependency` ops).
 - The Site calendar is working days plus Saturday. The builders' shutdown is on Site only (00196 A(h)). The owner may override.
 - Resources are readable by any non-client-viewer member of the organisation. Their rates are masked to owner, admin and project manager.
 - Field updates are reported progress. They move no date. An editor decides them through `save_changes` (`p_decisions`): the decision and the agreed actuals (sent as activity ops in the same call) commit in one transaction under one version check. A stale version refuses both, so a report is never "applied" without its values.

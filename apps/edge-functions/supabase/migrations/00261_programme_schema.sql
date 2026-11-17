@@ -285,7 +285,7 @@
 -- grant_absent: authenticated EXECUTE ON programme.write_audit(uuid, text, jsonb)
 -- grant_absent: authenticated EXECUTE ON programme.resolve_ref(text, jsonb, text, uuid, text)
 -- grant_absent: anon EXECUTE ON programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)
--- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' AND p.prosrc LIKE '%''40001''%' AND p.prosrc LIKE '%field_updates.decided%' FROM pg_proc p WHERE p.oid = 'programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)'::regprocedure)
+-- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' AND p.prosrc LIKE '%''40001''%' AND p.prosrc LIKE '%field_updates.decided%' AND p.prosrc LIKE '%restore_activity%' FROM pg_proc p WHERE p.oid = 'programme.save_changes(uuid, timestamptz, jsonb, jsonb, jsonb)'::regprocedure)
 -- sql: (SELECT NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND (p.proname = 'decide_field_updates' OR (p.proname = 'save_changes' AND p.pronargs <> 5))))
 -- grant_absent: anon EXECUTE ON programme.weekdays_distinct(smallint[])
 -- sql: (SELECT count(*) = 9 AND bool_and(p.prosecdef AND p.proconfig @> ARRAY['search_path=""']) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'programme' AND p.proname IN ('write_audit', 'resolve_ref', 'create_programme', 'save_changes', 'save_baseline', 'set_active_baseline', 'delete_baseline', 'submit_field_update', 'module_summary'))
@@ -1530,6 +1530,7 @@ END $$;
 -- 2. save_changes: the one write path for programme content.
 -- p_ops is applied in order (shapes mirror the TS ProgrammeOp of Task 5):
 --   {op:'upsert_activity', key, id?, fields:{...}}     {op:'delete_activity', id}
+--   {op:'restore_activity', id}
 --   {op:'upsert_dependency', key, id?, pred, succ, type, lag, lag_unit, lag_calendar}
 --   {op:'delete_dependency', id}                       {op:'upsert_calendar', key, id?, fields}
 --   {op:'set_calendar_exceptions', calendar, exceptions:[{day, kind, label}]}
@@ -1549,9 +1550,12 @@ END $$;
 -- writes the cache columns only; activities not listed keep their cache.
 -- delete_activity TOMBSTONES an activity that carries history (see the op)
 -- and hard-deletes a bare one; the result and the audit list both:
--- {version, ids, deleted:[...], tombstoned:[...]}. A tombstoned activity
--- cannot be upserted, linked or deleted again ("Restore it first"; P2 has
--- no restore op).
+-- {version, ids, deleted:[...], tombstoned:[...], restored:[...]}. A
+-- tombstoned activity cannot be upserted, linked or deleted again ("Restore
+-- it first"). restore_activity clears the tombstone on the SAME row, so its
+-- field updates, costs and codes stay attached (the Gantt's undo of a delete);
+-- it refuses a live activity and one whose parent is still tombstoned, and it
+-- does not recreate links (the undo re-adds them as upsert_dependency ops).
 -- RULING (the cache): the caller's server action writes the cache after an
 -- engine run in the same request. An editor calling this RPC directly can only
 -- falsify a cache that the next recalculation overwrites, and every read path
@@ -1584,7 +1588,7 @@ DECLARE
     v_act programme.activities; v_cal programme.calendars; v_prog programme.programmes;
     v_dep programme.dependencies; v_cv programme.code_values;
     v_counts jsonb := '{}'::jsonb; v_created jsonb := '[]'::jsonb; v_deleted jsonb := '[]'::jsonb;
-    v_tombstoned jsonb := '[]'::jsonb;
+    v_tombstoned jsonb := '[]'::jsonb; v_restored jsonb := '[]'::jsonb;
     v_c jsonb; v_n_computed int := 0;
     v_d jsonb; v_status text; v_note text; v_fu_prog uuid; v_fu_status text;
     v_n_decided int := 0; v_decided_ids jsonb := '[]'::jsonb; v_by jsonb := '{}'::jsonb;
@@ -1757,6 +1761,22 @@ BEGIN
                 DELETE FROM programme.activities WHERE id = v_id;
                 v_deleted := v_deleted || to_jsonb(v_id);
             END IF;
+
+        ELSIF v_kind = 'restore_activity' THEN
+            v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'activities', p_programme_id, 'activity');
+            IF v_id IS NULL THEN
+                RAISE EXCEPTION 'Say which activity to restore.' USING ERRCODE = '22023';
+            END IF;
+            SELECT * INTO v_act FROM programme.activities a WHERE a.id = v_id FOR UPDATE;
+            IF NOT v_act.is_tombstoned THEN
+                RAISE EXCEPTION 'That activity is not removed.' USING ERRCODE = '22023';
+            END IF;
+            IF v_act.parent_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM programme.activities a WHERE a.id = v_act.parent_id AND a.is_tombstoned) THEN
+                RAISE EXCEPTION 'Restore its parent first.' USING ERRCODE = '22023';
+            END IF;
+            UPDATE programme.activities SET is_tombstoned = false WHERE id = v_id;
+            v_restored := v_restored || to_jsonb(v_id);
 
         ELSIF v_kind = 'upsert_dependency' THEN
             v_pred := programme.resolve_ref(v_op ->> 'pred', v_keys, 'activities', p_programme_id, 'activity');
@@ -1961,13 +1981,14 @@ BEGIN
     UPDATE programme.programmes SET updated_at = clock_timestamp() WHERE id = p_programme_id
     RETURNING updated_at INTO v_version;
     PERFORM programme.write_audit(p_programme_id, 'programme.saved', jsonb_build_object(
-        'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
+        'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'tombstoned', v_tombstoned, 'restored', v_restored,
         'computed', v_n_computed, 'decided', v_n_decided));
     IF v_n_decided > 0 THEN
         PERFORM programme.write_audit(p_programme_id, 'field_updates.decided', jsonb_build_object(
             'field_update_ids', v_decided_ids, 'by_status', v_by));
     END IF;
     RETURN jsonb_build_object('version', v_version, 'ids', v_keys, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
+        'restored', v_restored,
         'decided', v_n_decided);
 END $$;
 

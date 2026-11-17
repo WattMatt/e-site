@@ -113,6 +113,41 @@ describe('applyOps: tombstone vs hard delete', () => {
   })
 })
 
+describe('applyOps: restore_activity', () => {
+  it('undoes a tombstoning delete: the SAME row comes back, links are not recreated', () => {
+    const s = state({ fieldUpdateActivityIds: ['B'] })
+    const deleted = applyOps(s, [{ op: 'delete_activity', id: 'B' }])
+    expect(deleted.activities.find((a) => a.id === 'B')?.is_tombstoned).toBe(true)
+    const out = applyOps(deleted, [op({ op: 'restore_activity', id: 'B' })])
+    expect(out.activities.filter((a) => a.id === 'B')).toHaveLength(1)
+    expect(out.activities.find((a) => a.id === 'B')?.is_tombstoned).toBe(false)
+    expect(out.dependencies).toEqual([])
+  })
+  it('a restored activity can then be edited and re-linked in the same save', () => {
+    const s = state({ activities: [activityRow('A'), activityRow('B', { is_tombstoned: true })], dependencies: [] })
+    const out = applyOps(s, [
+      op({ op: 'restore_activity', id: 'B' }),
+      { op: 'upsert_activity', id: 'B', fields: { name: 'Back' } },
+      { op: 'upsert_dependency', key: 'l', pred: 'A', succ: 'B' },
+    ])
+    expect(out.activities.find((a) => a.id === 'B')).toMatchObject({ name: 'Back', is_tombstoned: false })
+    expect(out.dependencies).toHaveLength(1)
+  })
+  it('refuses a live activity', () => {
+    refuses(state(), [{ op: 'restore_activity', id: 'A' }], 'That activity is not removed.', '22023')
+  })
+  it('refuses while its parent is tombstoned, and works once the parent is restored first', () => {
+    const s = state({ activities: [activityRow('T', { type: 'summary', is_tombstoned: true }), activityRow('C', { parent_id: 'T', is_tombstoned: true })], dependencies: [] })
+    refuses(s, [{ op: 'restore_activity', id: 'C' }], 'Restore its parent first.', '22023')
+    const out = applyOps(s, [op({ op: 'restore_activity', id: 'T' }), op({ op: 'restore_activity', id: 'C' })])
+    expect(out.activities.every((a) => !a.is_tombstoned)).toBe(true)
+  })
+  it('refuses an unknown id (P0002) and a missing id', () => {
+    refuses(state(), [{ op: 'restore_activity', id: 'GONE' }], 'That activity no longer exists. Reload to see the current programme.', 'P0002')
+    refuses(state(), [{ op: 'restore_activity' }], 'Say which activity to restore.', '22023')
+  })
+})
+
 describe('applyOps: references', () => {
   it('refuses an unknown activity id', () => {
     refuses(state(), [{ op: 'upsert_activity', id: 'nope', fields: { name: 'x' } }], 'That activity no longer exists. Reload to see the current programme.', 'P0002')

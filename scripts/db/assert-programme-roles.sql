@@ -793,6 +793,61 @@ BEGIN
     AND pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE id = %L AND work_item_id = %L', v_tw, v_wi)) = 1
     AND pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE id = %L AND parent_id = %L', v_tpc, v_tp)) = 1);
 
+  -- ── 5c. restore_activity: undo of a tombstoning delete brings back the SAME row
+  -- A contractor (not an editor) cannot restore.
+  v_ver := pg_temp.ver(v_prog);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, v_ver, jsonb_build_array(jsonb_build_object('op', 'restore_activity', 'id', v_tf)), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('contractor_restore_REFUSED_42501',
+    v_st = '42501' AND pg_temp.b(format('SELECT is_tombstoned FROM programme.activities WHERE id = %L', v_tf)), v_st);
+  -- A live activity is not removed.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, v_ver, jsonb_build_array(jsonb_build_object('op', 'restore_activity', 'id', v_a2)), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('restore_live_activity_REFUSED_22023', v_st = '22023 That activity is not removed.', v_st);
+  -- TPC sits under TP, which is itself tombstoned.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.save_changes(v_prog, v_ver, jsonb_build_array(jsonb_build_object('op', 'restore_activity', 'id', v_tpc)), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('restore_under_tombstoned_parent_REFUSED_22023',
+    v_st = '22023 Restore its parent first.' AND pg_temp.b(format('SELECT is_tombstoned FROM programme.activities WHERE id = %L', v_tpc)), v_st);
+  -- The owner restores TF: the same row comes back with its field update attached.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL; v_ret := NULL;
+  BEGIN
+    v_ret := programme.save_changes(v_prog, v_ver, jsonb_build_array(jsonb_build_object('op', 'restore_activity', 'id', v_tf)), NULL);
+    v_saves := v_saves + 1;
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE || ' ' || SQLERRM;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('owner_restores_tombstoned_activity_with_its_field_update',
+    v_tf IS NOT NULL AND coalesce(v_ret -> 'restored' @> to_jsonb(ARRAY[v_tf]), false)
+    AND pg_temp.b(format('SELECT NOT is_tombstoned FROM programme.activities WHERE id = %L', v_tf))
+    AND pg_temp.n(format('SELECT count(*) FROM programme.field_updates WHERE id = %L AND activity_id = %L', v_fu5, v_tf)) = 1
+    AND pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved'
+                           AND object_ref -> 'restored' @> to_jsonb(ARRAY[%L::uuid])$q$, v_prog, v_tf)) = 1,
+    coalesce(v_st, v_ret::text));
+
   -- ── 6. The Solar module programme ─────────────────────────────────────────
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_solcon::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
@@ -1130,7 +1185,7 @@ BEGIN
   PERFORM pg_temp.r('org_contractor_reads_resource_not_rate', v_txt = '1/0', v_txt);
 
   -- ── 9. Audit: one row per successful write, attributed to the caller ──────
-  PERFORM pg_temp.r('fixture_save_counters', v_saves = 13 AND v_mod_saves = 3, v_saves || '/' || v_mod_saves);
+  PERFORM pg_temp.r('fixture_save_counters', v_saves = 14 AND v_mod_saves = 3, v_saves || '/' || v_mod_saves);
   v_txt := pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.created' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'programme.saved'$q$, v_prog)) || '/'
         || pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'baseline.saved' AND actor_id = %L$q$, v_prog, v_owner)) || '/'
