@@ -1523,8 +1523,11 @@ END $$;
 --   {op:'set_programme', fields:{name?, data_date?, project_start?, options?, default_calendar_id?}}
 -- A reference (id, pred, succ, activity, calendar, code_type, code_value,
 -- parent_id, calendar_id, default_calendar_id) is an existing uuid OR a key
--- created earlier in this call. Activity fields outside the writable list
--- (the computed cache, work_item_id, is_tombstoned, ids) are IGNORED.
+-- created earlier in this call. In a `fields` object, a cache name
+-- (early_*, late_*, total_float, free_float, is_critical, is_driving,
+-- work_item_id; project_finish on set_programme) is silently IGNORED; any
+-- other name outside the writable list (is_tombstoned, ids, typos) is refused
+-- with 22023 "That change names a field the programme does not have: <name>".
 -- p_computed = {project_finish, activities:[{id|key, early_start, early_finish,
 -- late_start, late_finish, total_float, free_float, is_critical, is_driving}]}
 -- writes the cache columns only; activities not listed keep their cache.
@@ -1542,6 +1545,11 @@ DECLARE
         'external_uid','anchor'];
     c_cal_fields CONSTANT text[] := ARRAY['name','variant','work_weekdays','hours_per_day','coverage_from','coverage_to'];
     c_prog_fields CONSTANT text[] := ARRAY['name','data_date','project_start','options','default_calendar_id'];
+    -- Known but never written from ops (silently ignored): the computed cache.
+    c_act_cache CONSTANT text[] := ARRAY['early_start','early_finish','late_start','late_finish','total_float',
+        'free_float','is_critical','is_driving','work_item_id'];
+    c_prog_cache CONSTANT text[] := ARRAY['project_finish'];
+    v_bad text;
     v_version timestamptz; v_keys jsonb := '{}'::jsonb; v_op jsonb; v_kind text; v_key text; v_f jsonb;
     v_id uuid; v_pred uuid; v_succ uuid; v_type uuid; v_val uuid; v_cur uuid; v_hops int;
     v_act programme.activities; v_cal programme.calendars; v_prog programme.programmes;
@@ -1574,6 +1582,22 @@ BEGIN
         END IF;
         v_counts := jsonb_set(v_counts, ARRAY[coalesce(v_kind, 'unknown')],
                               to_jsonb(coalesce((v_counts ->> coalesce(v_kind, 'unknown'))::int, 0) + 1));
+
+        -- A field name the op does not know is refused (a typo must not be a
+        -- silent no-op); the computed-cache names are known and ignored.
+        IF jsonb_typeof(v_op -> 'fields') = 'object' THEN
+            v_bad := NULL;
+            SELECT e.k INTO v_bad FROM jsonb_object_keys(v_op -> 'fields') AS e(k)
+             WHERE NOT (e.k = ANY (CASE v_kind
+                    WHEN 'upsert_activity' THEN c_act_fields || c_act_cache
+                    WHEN 'upsert_calendar' THEN c_cal_fields
+                    WHEN 'set_programme' THEN c_prog_fields || c_prog_cache
+                    ELSE ARRAY[]::text[] END))
+             ORDER BY e.k LIMIT 1;
+            IF v_bad IS NOT NULL THEN
+                RAISE EXCEPTION 'That change names a field the programme does not have: %', v_bad USING ERRCODE = '22023';
+            END IF;
+        END IF;
 
         IF v_kind = 'upsert_activity' THEN
             SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb) INTO v_f
@@ -1930,22 +1954,25 @@ BEGIN
 END $$;
 
 -- 5. submit_field_update: progress reported from site. Recorded as
--- 'reported'; it moves no date. The caller must read the programme AND be an
--- editor, or the activity must carry a code value tagged to the caller
--- (user_tag) or to an organisation the caller is an active member of.
+-- 'reported'; it moves no date. The caller must read the programme AND be
+-- either (a) an editor (can_edit), or (b) a SITE role (effective project role
+-- contractor or inspector, spec 4.6) on an activity carrying a code value
+-- tagged to the caller (user_tag) or to an organisation the caller is an
+-- active member of. A tagged supplier, a PM without edit, anyone else: 42501.
 CREATE OR REPLACE FUNCTION programme.submit_field_update(
     p_activity_id uuid, p_start date, p_finish date, p_percent numeric, p_remaining numeric, p_note text)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security = off AS $$
-DECLARE v_prog uuid; v_tomb boolean; v_id uuid; v_note text := nullif(btrim(p_note), '');
+DECLARE v_prog uuid; v_project uuid; v_tomb boolean; v_id uuid; v_note text := nullif(btrim(p_note), '');
 BEGIN
-    SELECT a.programme_id, a.is_tombstoned INTO v_prog, v_tomb FROM programme.activities a WHERE a.id = p_activity_id;
+    SELECT a.programme_id, a.project_id, a.is_tombstoned INTO v_prog, v_project, v_tomb
+      FROM programme.activities a WHERE a.id = p_activity_id;
     IF v_prog IS NULL THEN
         RAISE EXCEPTION 'That activity no longer exists.' USING ERRCODE = 'P0002';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtextextended('programme:' || v_prog::text, 0));
     IF NOT (coalesce(programme.can_read(v_prog), false) AND (
             coalesce(programme.can_edit(v_prog), false)
-            OR EXISTS (
+            OR coalesce(public.user_effective_project_role(v_project), '') IN ('contractor', 'inspector') AND EXISTS (
                 SELECT 1 FROM programme.activity_codes ac
                   JOIN programme.code_values v ON v.id = ac.code_value_id
                  WHERE ac.activity_id = p_activity_id
