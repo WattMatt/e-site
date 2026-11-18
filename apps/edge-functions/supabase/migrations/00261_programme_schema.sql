@@ -738,9 +738,10 @@ CREATE TRIGGER programmes_bind BEFORE INSERT OR UPDATE ON programme.programmes
 --   the programme, never from the caller.
 CREATE OR REPLACE FUNCTION programme.child_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_prog UUID; v_project UUID; v_org UUID; v_parent_val UUID; v_new JSONB := to_jsonb(NEW);
+DECLARE v_prog UUID; v_project UUID; v_org UUID; v_parent_val UUID; v_new JSONB;
 BEGIN
     IF TG_NARGS = 2 THEN
+        v_new := to_jsonb(NEW);   -- only the parent-column form reads it (not per activity / link row)
         v_parent_val := (v_new ->> TG_ARGV[1])::uuid;
         EXECUTE format('SELECT programme_id FROM programme.%I WHERE id = $1', TG_ARGV[0]) INTO v_prog USING v_parent_val;
         IF v_prog IS NULL THEN
@@ -796,31 +797,37 @@ END $$;
 -- updated_at plus attribution bound to auth.uid(); created_by is immutable.
 CREATE OR REPLACE FUNCTION programme.stamp()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_uid UUID := auth.uid();
 BEGIN
     IF TG_OP = 'UPDATE' THEN
         NEW.created_by := OLD.created_by;
     ELSE
-        NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
+        NEW.created_by := COALESCE(v_uid, NEW.created_by);
     END IF;
-    NEW.updated_by := COALESCE(auth.uid(), NEW.updated_by);
+    NEW.updated_by := COALESCE(v_uid, NEW.updated_by);
     NEW.updated_at := clock_timestamp();
     RETURN NEW;
 END $$;
 
 -- Cross-row checks. Each refuses another programme with 22023.
+-- Each looks the referenced row up by its primary key ALONE and compares the
+-- programme / project afterwards. Written as one `id = $1 AND programme_id =
+-- $2` probe, the plan cached while the table was small used the
+-- (programme_id, sort_order) index and scanned the whole programme per row:
+-- measured 0.67 ms a row and growing, quadratic over a 5,000-activity import.
 CREATE OR REPLACE FUNCTION programme.activities_refs()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF NEW.parent_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM programme.activities a WHERE a.id = NEW.parent_id AND a.programme_id = NEW.programme_id) THEN
+    IF NEW.parent_id IS NOT NULL AND (SELECT a.programme_id FROM programme.activities a WHERE a.id = NEW.parent_id)
+                                     IS DISTINCT FROM NEW.programme_id THEN
         RAISE EXCEPTION 'The parent activity belongs to a different programme' USING ERRCODE = '22023';
     END IF;
-    IF NEW.calendar_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM programme.calendars c WHERE c.id = NEW.calendar_id AND c.programme_id = NEW.programme_id) THEN
+    IF NEW.calendar_id IS NOT NULL AND (SELECT c.programme_id FROM programme.calendars c WHERE c.id = NEW.calendar_id)
+                                       IS DISTINCT FROM NEW.programme_id THEN
         RAISE EXCEPTION 'The calendar belongs to a different programme' USING ERRCODE = '22023';
     END IF;
-    IF NEW.work_item_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM projects.work_items w WHERE w.id = NEW.work_item_id AND w.project_id = NEW.project_id) THEN
+    IF NEW.work_item_id IS NOT NULL AND (SELECT w.project_id FROM projects.work_items w WHERE w.id = NEW.work_item_id)
+                                        IS DISTINCT FROM NEW.project_id THEN
         RAISE EXCEPTION 'The work item belongs to a different project' USING ERRCODE = '22023';
     END IF;
     RETURN NEW;
@@ -829,9 +836,8 @@ END $$;
 CREATE OR REPLACE FUNCTION programme.dependencies_refs()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF (SELECT count(*) FROM programme.activities a
-         WHERE a.id IN (NEW.pred_id, NEW.succ_id) AND a.programme_id = NEW.programme_id)
-       <> (CASE WHEN NEW.pred_id = NEW.succ_id THEN 1 ELSE 2 END) THEN
+    IF (SELECT a.programme_id FROM programme.activities a WHERE a.id = NEW.pred_id) IS DISTINCT FROM NEW.programme_id
+       OR (SELECT a.programme_id FROM programme.activities a WHERE a.id = NEW.succ_id) IS DISTINCT FROM NEW.programme_id THEN
         RAISE EXCEPTION 'A link can only join two activities of the same programme' USING ERRCODE = '22023';
     END IF;
     RETURN NEW;
@@ -1352,6 +1358,7 @@ END $$;
 -- Internal: resolve a reference inside save_changes. p_ref is either a key
 -- created earlier in the same call (looked up in p_keys first) or an existing
 -- uuid. The row must exist (else P0002) and belong to p_programme (else 22023).
+-- save_changes passes only the key bucket the reference hashes to (see there).
 -- p_table is one of this file's table names, never caller text.
 CREATE OR REPLACE FUNCTION programme.resolve_ref(p_ref text, p_keys jsonb, p_table text, p_programme uuid, p_what text)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' SET row_security = off AS $$
@@ -1367,10 +1374,17 @@ BEGIN
     ELSE
         RAISE EXCEPTION 'That % no longer exists. Reload to see the current programme.', p_what USING ERRCODE = 'P0002';
     END IF;
-    IF p_table NOT IN ('activities', 'dependencies', 'calendars', 'code_types', 'code_values') THEN
-        RAISE EXCEPTION 'programme.resolve_ref: unsupported table %', p_table USING ERRCODE = '22023';
-    END IF;
-    EXECUTE format('SELECT programme_id FROM programme.%I WHERE id = $1', p_table) INTO v_prog USING v_id;
+    -- Static statements, one per table: their plans are cached for the session
+    -- (a dynamic EXECUTE was parsed and planned on every one of the ~25,000
+    -- references a 5,000-activity import makes).
+    CASE p_table
+        WHEN 'activities' THEN SELECT t.programme_id INTO v_prog FROM programme.activities t WHERE t.id = v_id;
+        WHEN 'dependencies' THEN SELECT t.programme_id INTO v_prog FROM programme.dependencies t WHERE t.id = v_id;
+        WHEN 'calendars' THEN SELECT t.programme_id INTO v_prog FROM programme.calendars t WHERE t.id = v_id;
+        WHEN 'code_types' THEN SELECT t.programme_id INTO v_prog FROM programme.code_types t WHERE t.id = v_id;
+        WHEN 'code_values' THEN SELECT t.programme_id INTO v_prog FROM programme.code_values t WHERE t.id = v_id;
+        ELSE RAISE EXCEPTION 'programme.resolve_ref: unsupported table %', p_table USING ERRCODE = '22023';
+    END CASE;
     IF v_prog IS NULL THEN
         RAISE EXCEPTION 'That % no longer exists. Reload to see the current programme.', p_what USING ERRCODE = 'P0002';
     END IF;
@@ -1583,13 +1597,27 @@ DECLARE
         'free_float','is_critical','is_driving','work_item_id'];
     c_prog_cache CONSTANT text[] := ARRAY['project_finish'];
     v_bad text;
-    v_version timestamptz; v_keys jsonb := '{}'::jsonb; v_op jsonb; v_kind text; v_key text; v_f jsonb;
+    -- PERFORMANCE (a 5,000-activity import is one call). A jsonb value is
+    -- copied whole on every change, so growing one object or array per op is
+    -- quadratic: measured 7.7 s for a 12,500-key map and 4.0 s for a
+    -- 12,500-id list. So the key -> id map is 1,024 small jsonb objects in an
+    -- array, bucketed by hashtext(key) (an array element is replaced in place),
+    -- the id lists are uuid[] (array_append in place), and both become the
+    -- same jsonb as before only once, at the end.
+    v_version timestamptz; v_kb jsonb[] := array_fill('{}'::jsonb, ARRAY[1024]); v_h int;
+    v_op jsonb; v_kind text; v_key text; v_f jsonb;
     v_id uuid; v_pred uuid; v_succ uuid; v_type uuid; v_val uuid; v_cur uuid; v_hops int;
     v_act programme.activities; v_cal programme.calendars; v_prog programme.programmes;
     v_dep programme.dependencies; v_cv programme.code_values;
-    v_counts jsonb := '{}'::jsonb; v_created jsonb := '[]'::jsonb; v_deleted jsonb := '[]'::jsonb;
-    v_tombstoned jsonb := '[]'::jsonb; v_restored jsonb := '[]'::jsonb;
+    v_counts jsonb := '{}'::jsonb; v_created uuid[] := '{}'; v_deleted uuid[] := '{}';
+    v_tombstoned uuid[] := '{}'; v_restored uuid[] := '{}';
     v_c jsonb; v_n_computed int := 0;
+    v_c_ids uuid[] := '{}'; v_c_es date[] := '{}'; v_c_ef date[] := '{}'; v_c_ls date[] := '{}'; v_c_lf date[] := '{}';
+    -- (no typmod on an array variable: assigning to one re-coerces the WHOLE array)
+    v_c_tf numeric[] := '{}'; v_c_ff numeric[] := '{}'; v_c_cr boolean[] := '{}'; v_c_dr boolean[] := '{}';
+    v_ops jsonb[]; v_n int := 0; v_i int := 0; v_j int; v_k int; v_pass int;
+    v_b_bad boolean; v_state text; v_b_keys text[]; v_b_ids uuid[]; v_b_fields jsonb[];
+    v_b_pids uuid[]; v_b_sids uuid[]; v_b_ops jsonb[]; v_map jsonb;
     v_d jsonb; v_status text; v_note text; v_fu_prog uuid; v_fu_status text;
     v_n_decided int := 0; v_decided_ids jsonb := '[]'::jsonb; v_by jsonb := '{}'::jsonb;
 BEGIN
@@ -1647,11 +1675,171 @@ BEGIN
     END LOOP;
     v_id := NULL;
 
+    v_ops := ARRAY(SELECT e.value FROM jsonb_array_elements(p_ops) WITH ORDINALITY AS e(value, ord) ORDER BY e.ord);
+    v_n := coalesce(array_length(v_ops, 1), 0);
+
+    -- TWO PASSES. Pass 1 writes each run of consecutive NEW activities, and
+    -- each run of consecutive NEW links, as one set-based statement (an import
+    -- is two such runs). A batch checks what the per-op code checks and, on
+    -- ANY doubt or error, raises; pass 1 then rolls back as a whole (its own
+    -- subtransaction) and pass 2 applies the SAME ops one by one with the
+    -- per-op code only, which raises exactly the refusal it always did. So the
+    -- result is either the state the per-op code produces, or its refusal.
+    -- (One subtransaction for the whole pass, not one per batch: the computed
+    -- cache UPDATE of a row key-share-locked by a different subtransaction's
+    -- link insert needs a MultiXact per row, measured 0.85 ms a row.)
+    FOR v_pass IN 1 .. 2 LOOP
+    v_kb := array_fill('{}'::jsonb, ARRAY[1024]);
+    v_counts := '{}'::jsonb; v_created := '{}'; v_deleted := '{}'; v_tombstoned := '{}'; v_restored := '{}';
+    v_n_computed := 0; v_c_ids := '{}'; v_c_es := '{}'; v_c_ef := '{}'; v_c_ls := '{}'; v_c_lf := '{}';
+    v_c_tf := '{}'; v_c_ff := '{}'; v_c_cr := '{}'; v_c_dr := '{}';
+    v_i := 0; v_id := NULL; v_kind := NULL;
     BEGIN
-    FOR v_op IN SELECT e.value FROM jsonb_array_elements(p_ops) AS e(value) LOOP
+    BEGIN
+    WHILE v_i < v_n LOOP
+        v_i := v_i + 1;
+        v_op := v_ops[v_i];
+
+        IF v_pass = 1 AND v_op ->> 'id' IS NULL AND v_op ->> 'op' IN ('upsert_activity', 'upsert_dependency') THEN
+            v_kind := v_op ->> 'op';
+            v_j := v_i;
+            WHILE v_j < v_n AND v_ops[v_j + 1] ->> 'op' = v_kind AND v_ops[v_j + 1] ->> 'id' IS NULL LOOP
+                v_j := v_j + 1;
+            END LOOP;
+            -- The key map as one object for the set-based lookups (once per run).
+            v_map := (SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb) FROM unnest(v_kb) AS b(o), jsonb_each(b.o) AS e(k, v));
+            -- Keys: unique within the run and not already made. Field
+            -- names: only those the per-op check admits (none on a link).
+            IF EXISTS (SELECT 1 FROM unnest(v_ops[v_i:v_j]) AS o(op) WHERE o.op ->> 'key' IS NOT NULL
+                        GROUP BY o.op ->> 'key' HAVING count(*) > 1)
+               OR EXISTS (SELECT 1 FROM unnest(v_ops[v_i:v_j]) AS o(op)
+                           WHERE o.op ->> 'key' IS NOT NULL AND v_map ? (o.op ->> 'key'))
+               OR EXISTS (SELECT 1 FROM unnest(v_ops[v_i:v_j]) AS o(op),
+                               jsonb_object_keys(CASE WHEN jsonb_typeof(o.op -> 'fields') = 'object' THEN o.op -> 'fields' ELSE '{}'::jsonb END) AS e(k)
+                           WHERE NOT (e.k = ANY (CASE WHEN v_kind = 'upsert_activity' THEN c_act_fields || c_act_cache ELSE ARRAY[]::text[] END))) THEN
+                RAISE EXCEPTION 'batch refused' USING ERRCODE = 'P0001';
+            END IF;
+
+            IF v_kind = 'upsert_activity' THEN
+                -- Each new row's id is decided up front, so a child names a
+                -- parent made EARLIER in the run. parent_id / calendar_id
+                -- given as text resolve as resolve_ref would at that op (an
+                -- earlier key, else the map, else a uuid) and must name a
+                -- live activity / a calendar of this programme. A
+                -- calendar_id naming a key of this run is left to the
+                -- per-op code (it would resolve to an activity and refuse).
+                WITH g AS MATERIALIZED (
+                    SELECT o.ord, o.op ->> 'key' AS key, gen_random_uuid() AS nid,
+                           (SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb)
+                              FROM jsonb_each(CASE WHEN jsonb_typeof(o.op -> 'fields') = 'object' THEN o.op -> 'fields' ELSE '{}'::jsonb END) AS e(k, v)
+                             WHERE e.k = ANY (c_act_fields)) AS vf
+                      FROM unnest(v_ops[v_i:v_j]) WITH ORDINALITY AS o(op, ord)),
+                h AS MATERIALIZED (
+                    SELECT g.ord, g.key, g.nid, g.vf,
+                           CASE WHEN jsonb_typeof(g.vf -> 'parent_id') = 'string' THEN g.vf ->> 'parent_id' END AS pref,
+                           CASE WHEN jsonb_typeof(g.vf -> 'calendar_id') = 'string' THEN g.vf ->> 'calendar_id' END AS cref
+                      FROM g),
+                x AS (
+                    SELECT h.ord, h.key, h.nid, h.vf, h.pref, h.cref, kp.nid AS p_run, kc.ord AS c_run,
+                           coalesce(kp.nid,
+                               (v_map ->> h.pref)::uuid,
+                               CASE WHEN h.pref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN h.pref::uuid END) AS pid,
+                           coalesce((v_map ->> h.cref)::uuid,
+                               CASE WHEN h.cref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN h.cref::uuid END) AS cid
+                      FROM h
+                      LEFT JOIN h kp ON kp.key = h.pref AND kp.ord < h.ord
+                      LEFT JOIN h kc ON kc.key = h.cref AND kc.ord < h.ord)
+                SELECT array_agg(x.key ORDER BY x.ord), array_agg(x.nid ORDER BY x.ord),
+                       array_agg(x.vf || CASE WHEN x.pref IS NOT NULL THEN jsonb_build_object('parent_id', x.pid) ELSE '{}'::jsonb END
+                                      || CASE WHEN x.cref IS NOT NULL THEN jsonb_build_object('calendar_id', x.cid) ELSE '{}'::jsonb END
+                                 ORDER BY x.ord),
+                       bool_or(coalesce(
+                           (x.pref IS NOT NULL AND (x.pid IS NULL OR (x.p_run IS NULL AND NOT coalesce((
+                                SELECT a.programme_id = p_programme_id AND NOT a.is_tombstoned
+                                  FROM programme.activities a WHERE a.id = x.pid), false))))
+                           OR (x.cref IS NOT NULL AND (x.c_run IS NOT NULL OR x.cid IS NULL
+                                OR (SELECT c.programme_id FROM programme.calendars c WHERE c.id = x.cid) IS DISTINCT FROM p_programme_id)),
+                           true))
+                  INTO v_b_keys, v_b_ids, v_b_fields, v_b_bad
+                  FROM x;
+                IF v_b_bad THEN
+                    RAISE EXCEPTION 'batch refused' USING ERRCODE = 'P0001';
+                END IF;
+                INSERT INTO programme.activities (id, programme_id, parent_id, wbs_code, code, name, type, original_duration,
+                    remaining_duration, calendar_id, constraint_type, constraint_date, deadline, actual_start, actual_finish,
+                    percent_complete, percent_complete_type, fixed_start, fixed_finish, sort_order, external_uid, anchor)
+                SELECT u.nid, p_programme_id, a.parent_id, a.wbs_code, a.code, a.name, a.type,
+                    coalesce(a.original_duration, 0), a.remaining_duration, a.calendar_id, a.constraint_type,
+                    a.constraint_date, a.deadline, a.actual_start, a.actual_finish,
+                    coalesce(a.percent_complete, 0), coalesce(a.percent_complete_type, 'duration'),
+                    a.fixed_start, a.fixed_finish, a.sort_order, a.external_uid, a.anchor
+                  FROM unnest(v_b_ids, v_b_fields) WITH ORDINALITY AS u(nid, vf, ord)
+                  CROSS JOIN LATERAL jsonb_populate_record(NULL::programme.activities, u.vf) AS a
+                 ORDER BY u.ord;
+                -- The per-op tree walk refuses a chain of more than 10,000
+                -- ancestors; any chain near that is left to it.
+                IF EXISTS (WITH RECURSIVE up(cur, hops) AS (
+                               SELECT a.parent_id, 0 FROM programme.activities a WHERE a.id = ANY (v_b_ids) AND a.parent_id IS NOT NULL
+                               UNION ALL
+                               SELECT a.parent_id, up.hops + 1 FROM up JOIN programme.activities a ON a.id = up.cur
+                                WHERE a.parent_id IS NOT NULL AND up.hops < 9999)
+                           SELECT 1 FROM up WHERE up.hops >= 9999) THEN
+                    RAISE EXCEPTION 'batch refused' USING ERRCODE = 'P0001';
+                END IF;
+            ELSE
+                -- Links: pred and succ resolve through the map or as uuids
+                -- (a key of this run is a LINK, which the per-op code
+                -- refuses), name two different live activities of this
+                -- programme, and the op carries no fields.
+                WITH g AS MATERIALIZED (
+                    SELECT o.ord, o.op, o.op ->> 'key' AS key, gen_random_uuid() AS nid,
+                           o.op ->> 'pred' AS pref, o.op ->> 'succ' AS sref
+                      FROM unnest(v_ops[v_i:v_j]) WITH ORDINALITY AS o(op, ord)),
+                x AS (
+                    SELECT g.*,
+                           coalesce((v_map ->> g.pref)::uuid,
+                               CASE WHEN g.pref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN g.pref::uuid END) AS pid,
+                           coalesce((v_map ->> g.sref)::uuid,
+                               CASE WHEN g.sref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN g.sref::uuid END) AS sid,
+                           (kp.ord IS NOT NULL OR ks.ord IS NOT NULL) AS in_run
+                      FROM g
+                      LEFT JOIN g kp ON kp.key = g.pref
+                      LEFT JOIN g ks ON ks.key = g.sref)
+                SELECT array_agg(x.key ORDER BY x.ord), array_agg(x.nid ORDER BY x.ord), array_agg(x.pid ORDER BY x.ord),
+                       array_agg(x.sid ORDER BY x.ord), array_agg(x.op ORDER BY x.ord),
+                       bool_or(coalesce(x.in_run OR x.pid IS NULL OR x.sid IS NULL OR x.pid = x.sid
+                           OR NOT coalesce((SELECT a.programme_id = p_programme_id AND NOT a.is_tombstoned
+                                              FROM programme.activities a WHERE a.id = x.pid), false)
+                           OR NOT coalesce((SELECT a.programme_id = p_programme_id AND NOT a.is_tombstoned
+                                              FROM programme.activities a WHERE a.id = x.sid), false),
+                           true))
+                  INTO v_b_keys, v_b_ids, v_b_pids, v_b_sids, v_b_ops, v_b_bad
+                  FROM x;
+                IF v_b_bad THEN
+                    RAISE EXCEPTION 'batch refused' USING ERRCODE = 'P0001';
+                END IF;
+                INSERT INTO programme.dependencies (id, programme_id, pred_id, succ_id, type, lag, lag_unit, lag_calendar)
+                SELECT u.nid, p_programme_id, u.pid, u.sid, coalesce(u.op ->> 'type', 'FS'), coalesce((u.op ->> 'lag')::numeric, 0),
+                       coalesce(u.op ->> 'lag_unit', 'working_days'), coalesce(u.op ->> 'lag_calendar', 'pred')
+                  FROM unnest(v_b_ids, v_b_pids, v_b_sids, v_b_ops) WITH ORDINALITY AS u(nid, pid, sid, op, ord)
+                 ORDER BY u.ord;
+            END IF;
+            FOR v_k IN 1 .. array_length(v_b_ids, 1) LOOP
+                IF v_b_keys[v_k] IS NOT NULL THEN
+                    v_h := (hashtext(v_b_keys[v_k]) & 1023) + 1;
+                    v_kb[v_h] := v_kb[v_h] || jsonb_build_object(v_b_keys[v_k], v_b_ids[v_k]);
+                END IF;
+            END LOOP;
+            v_created := v_created || v_b_ids;
+            v_counts := jsonb_set(v_counts, ARRAY[v_kind], to_jsonb(coalesce((v_counts ->> v_kind)::int, 0) + (v_j - v_i + 1)));
+            v_i := v_j;
+            v_id := NULL;
+            CONTINUE;
+        END IF;
+
         v_kind := v_op ->> 'op';
         v_key := v_op ->> 'key';
-        IF v_key IS NOT NULL AND v_keys ? v_key THEN
+        IF v_key IS NOT NULL AND v_kb[(hashtext(v_key) & 1023) + 1] ? v_key THEN
             RAISE EXCEPTION 'Each new row in one save needs its own key.' USING ERRCODE = '22023';
         END IF;
         v_counts := jsonb_set(v_counts, ARRAY[coalesce(v_kind, 'unknown')],
@@ -1678,17 +1866,17 @@ BEGIN
               FROM jsonb_each(CASE WHEN jsonb_typeof(v_op -> 'fields') = 'object' THEN v_op -> 'fields' ELSE '{}'::jsonb END) AS e(k, v)
              WHERE e.k = ANY (c_act_fields);
             IF jsonb_typeof(v_f -> 'parent_id') = 'string' THEN
-                v_f := jsonb_set(v_f, '{parent_id}', to_jsonb(programme.resolve_ref(v_f ->> 'parent_id', v_keys, 'activities', p_programme_id, 'parent activity')));
+                v_f := jsonb_set(v_f, '{parent_id}', to_jsonb(programme.resolve_ref(v_f ->> 'parent_id', v_kb[(hashtext(v_f ->> 'parent_id') & 1023) + 1], 'activities', p_programme_id, 'parent activity')));
                 -- A removed (tombstoned) activity is out of the schedule: nothing may be placed under it.
                 IF EXISTS (SELECT 1 FROM programme.activities a WHERE a.id = (v_f ->> 'parent_id')::uuid AND a.is_tombstoned) THEN
                     RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
                 END IF;
             END IF;
             IF jsonb_typeof(v_f -> 'calendar_id') = 'string' THEN
-                v_f := jsonb_set(v_f, '{calendar_id}', to_jsonb(programme.resolve_ref(v_f ->> 'calendar_id', v_keys, 'calendars', p_programme_id, 'calendar')));
+                v_f := jsonb_set(v_f, '{calendar_id}', to_jsonb(programme.resolve_ref(v_f ->> 'calendar_id', v_kb[(hashtext(v_f ->> 'calendar_id') & 1023) + 1], 'calendars', p_programme_id, 'calendar')));
             END IF;
             IF v_op ->> 'id' IS NOT NULL THEN
-                v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'activities', p_programme_id, 'activity');
+                v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'activities', p_programme_id, 'activity');
                 SELECT * INTO v_act FROM programme.activities a WHERE a.id = v_id FOR UPDATE;
                 IF v_act.is_tombstoned THEN
                     RAISE EXCEPTION 'That activity was removed. Restore it first.' USING ERRCODE = '22023';
@@ -1715,7 +1903,7 @@ BEGIN
                     coalesce(v_act.percent_complete, 0), coalesce(v_act.percent_complete_type, 'duration'),
                     v_act.fixed_start, v_act.fixed_finish, v_act.sort_order, v_act.external_uid, v_act.anchor)
                 RETURNING id INTO v_id;
-                v_created := v_created || to_jsonb(v_id);
+                v_created := array_append(v_created, v_id);
             END IF;
             -- The WBS tree must stay a tree.
             v_cur := v_act.parent_id; v_hops := 0;
@@ -1728,7 +1916,7 @@ BEGIN
             END LOOP;
 
         ELSIF v_kind = 'delete_activity' THEN
-            v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'activities', p_programme_id, 'activity');
+            v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'activities', p_programme_id, 'activity');
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Say which activity to delete.' USING ERRCODE = '22023';
             END IF;
@@ -1756,14 +1944,14 @@ BEGIN
                            WHERE b.programme_id = p_programme_id AND b.activity_id = v_id) THEN
                 DELETE FROM programme.dependencies WHERE v_id IN (pred_id, succ_id);
                 UPDATE programme.activities SET is_tombstoned = true WHERE id = v_id;
-                v_tombstoned := v_tombstoned || to_jsonb(v_id);
+                v_tombstoned := array_append(v_tombstoned, v_id);
             ELSE
                 DELETE FROM programme.activities WHERE id = v_id;
-                v_deleted := v_deleted || to_jsonb(v_id);
+                v_deleted := array_append(v_deleted, v_id);
             END IF;
 
         ELSIF v_kind = 'restore_activity' THEN
-            v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'activities', p_programme_id, 'activity');
+            v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'activities', p_programme_id, 'activity');
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Say which activity to restore.' USING ERRCODE = '22023';
             END IF;
@@ -1776,13 +1964,13 @@ BEGIN
                 RAISE EXCEPTION 'Restore its parent first.' USING ERRCODE = '22023';
             END IF;
             UPDATE programme.activities SET is_tombstoned = false WHERE id = v_id;
-            v_restored := v_restored || to_jsonb(v_id);
+            v_restored := array_append(v_restored, v_id);
 
         ELSIF v_kind = 'upsert_dependency' THEN
-            v_pred := programme.resolve_ref(v_op ->> 'pred', v_keys, 'activities', p_programme_id, 'activity');
-            v_succ := programme.resolve_ref(v_op ->> 'succ', v_keys, 'activities', p_programme_id, 'activity');
+            v_pred := programme.resolve_ref(v_op ->> 'pred', v_kb[(hashtext(v_op ->> 'pred') & 1023) + 1], 'activities', p_programme_id, 'activity');
+            v_succ := programme.resolve_ref(v_op ->> 'succ', v_kb[(hashtext(v_op ->> 'succ') & 1023) + 1], 'activities', p_programme_id, 'activity');
             IF v_op ->> 'id' IS NOT NULL THEN
-                v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'dependencies', p_programme_id, 'link');
+                v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'dependencies', p_programme_id, 'link');
                 SELECT * INTO v_dep FROM programme.dependencies d WHERE d.id = v_id FOR UPDATE;
                 v_pred := coalesce(v_pred, v_dep.pred_id);
                 v_succ := coalesce(v_succ, v_dep.succ_id);
@@ -1808,23 +1996,23 @@ BEGIN
                 VALUES (p_programme_id, v_pred, v_succ, coalesce(v_op ->> 'type', 'FS'), coalesce((v_op ->> 'lag')::numeric, 0),
                         coalesce(v_op ->> 'lag_unit', 'working_days'), coalesce(v_op ->> 'lag_calendar', 'pred'))
                 RETURNING id INTO v_id;
-                v_created := v_created || to_jsonb(v_id);
+                v_created := array_append(v_created, v_id);
             END IF;
 
         ELSIF v_kind = 'delete_dependency' THEN
-            v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'dependencies', p_programme_id, 'link');
+            v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'dependencies', p_programme_id, 'link');
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Say which link to delete.' USING ERRCODE = '22023';
             END IF;
             DELETE FROM programme.dependencies WHERE id = v_id;
-            v_deleted := v_deleted || to_jsonb(v_id);
+            v_deleted := array_append(v_deleted, v_id);
 
         ELSIF v_kind = 'upsert_calendar' THEN
             SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb) INTO v_f
               FROM jsonb_each(CASE WHEN jsonb_typeof(v_op -> 'fields') = 'object' THEN v_op -> 'fields' ELSE '{}'::jsonb END) AS e(k, v)
              WHERE e.k = ANY (c_cal_fields);
             IF v_op ->> 'id' IS NOT NULL THEN
-                v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'calendars', p_programme_id, 'calendar');
+                v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'calendars', p_programme_id, 'calendar');
                 SELECT * INTO v_cal FROM programme.calendars c WHERE c.id = v_id FOR UPDATE;
                 v_cal := jsonb_populate_record(v_cal, v_f);
                 UPDATE programme.calendars SET name = v_cal.name, variant = v_cal.variant, work_weekdays = v_cal.work_weekdays,
@@ -1837,11 +2025,11 @@ BEGIN
                         coalesce(v_cal.work_weekdays, ARRAY[1,2,3,4,5]::smallint[]), coalesce(v_cal.hours_per_day, 8),
                         v_cal.coverage_from, v_cal.coverage_to)
                 RETURNING id INTO v_id;
-                v_created := v_created || to_jsonb(v_id);
+                v_created := array_append(v_created, v_id);
             END IF;
 
         ELSIF v_kind = 'set_calendar_exceptions' THEN
-            v_id := programme.resolve_ref(v_op ->> 'calendar', v_keys, 'calendars', p_programme_id, 'calendar');
+            v_id := programme.resolve_ref(v_op ->> 'calendar', v_kb[(hashtext(v_op ->> 'calendar') & 1023) + 1], 'calendars', p_programme_id, 'calendar');
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Say which calendar the exceptions belong to.' USING ERRCODE = '22023';
             END IF;
@@ -1856,18 +2044,18 @@ BEGIN
 
         ELSIF v_kind = 'upsert_code_type' THEN
             IF v_op ->> 'id' IS NOT NULL THEN
-                v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'code_types', p_programme_id, 'code type');
+                v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'code_types', p_programme_id, 'code type');
                 UPDATE programme.code_types SET name = coalesce(v_op ->> 'name', name) WHERE id = v_id;
             ELSE
                 INSERT INTO programme.code_types (programme_id, name) VALUES (p_programme_id, v_op ->> 'name')
                 RETURNING id INTO v_id;
-                v_created := v_created || to_jsonb(v_id);
+                v_created := array_append(v_created, v_id);
             END IF;
 
         ELSIF v_kind = 'upsert_code_value' THEN
-            v_type := programme.resolve_ref(v_op ->> 'code_type', v_keys, 'code_types', p_programme_id, 'code type');
+            v_type := programme.resolve_ref(v_op ->> 'code_type', v_kb[(hashtext(v_op ->> 'code_type') & 1023) + 1], 'code_types', p_programme_id, 'code type');
             IF v_op ->> 'id' IS NOT NULL THEN
-                v_id := programme.resolve_ref(v_op ->> 'id', v_keys, 'code_values', p_programme_id, 'code value');
+                v_id := programme.resolve_ref(v_op ->> 'id', v_kb[(hashtext(v_op ->> 'id') & 1023) + 1], 'code_values', p_programme_id, 'code value');
                 SELECT * INTO v_cv FROM programme.code_values v WHERE v.id = v_id FOR UPDATE;
                 IF v_type IS NOT NULL AND v_type <> v_cv.code_type_id THEN
                     RAISE EXCEPTION 'A code value cannot move to another code type.' USING ERRCODE = '22023';
@@ -1886,19 +2074,19 @@ BEGIN
                 VALUES (v_type, p_programme_id, v_op ->> 'value', v_op ->> 'colour',
                         (v_op ->> 'organisation_tag')::uuid, (v_op ->> 'user_tag')::uuid)
                 RETURNING id INTO v_id;
-                v_created := v_created || to_jsonb(v_id);
+                v_created := array_append(v_created, v_id);
             END IF;
 
         ELSIF v_kind = 'set_activity_code' THEN
-            v_id := programme.resolve_ref(v_op ->> 'activity', v_keys, 'activities', p_programme_id, 'activity');
-            v_type := programme.resolve_ref(v_op ->> 'code_type', v_keys, 'code_types', p_programme_id, 'code type');
+            v_id := programme.resolve_ref(v_op ->> 'activity', v_kb[(hashtext(v_op ->> 'activity') & 1023) + 1], 'activities', p_programme_id, 'activity');
+            v_type := programme.resolve_ref(v_op ->> 'code_type', v_kb[(hashtext(v_op ->> 'code_type') & 1023) + 1], 'code_types', p_programme_id, 'code type');
             IF v_id IS NULL OR v_type IS NULL THEN
                 RAISE EXCEPTION 'Say which activity and which code type.' USING ERRCODE = '22023';
             END IF;
             IF v_op ->> 'code_value' IS NULL THEN
                 DELETE FROM programme.activity_codes WHERE activity_id = v_id AND code_type_id = v_type;
             ELSE
-                v_val := programme.resolve_ref(v_op ->> 'code_value', v_keys, 'code_values', p_programme_id, 'code value');
+                v_val := programme.resolve_ref(v_op ->> 'code_value', v_kb[(hashtext(v_op ->> 'code_value') & 1023) + 1], 'code_values', p_programme_id, 'code value');
                 INSERT INTO programme.activity_codes (activity_id, code_type_id, code_value_id, programme_id)
                 VALUES (v_id, v_type, v_val, p_programme_id)
                 ON CONFLICT (activity_id, code_type_id) DO UPDATE SET code_value_id = EXCLUDED.code_value_id;
@@ -1910,7 +2098,7 @@ BEGIN
               FROM jsonb_each(CASE WHEN jsonb_typeof(v_op -> 'fields') = 'object' THEN v_op -> 'fields' ELSE '{}'::jsonb END) AS e(k, v)
              WHERE e.k = ANY (c_prog_fields);
             IF jsonb_typeof(v_f -> 'default_calendar_id') = 'string' THEN
-                v_f := jsonb_set(v_f, '{default_calendar_id}', to_jsonb(programme.resolve_ref(v_f ->> 'default_calendar_id', v_keys, 'calendars', p_programme_id, 'calendar')));
+                v_f := jsonb_set(v_f, '{default_calendar_id}', to_jsonb(programme.resolve_ref(v_f ->> 'default_calendar_id', v_kb[(hashtext(v_f ->> 'default_calendar_id') & 1023) + 1], 'calendars', p_programme_id, 'calendar')));
             END IF;
             IF v_f ? 'options' AND jsonb_typeof(v_f -> 'options') <> 'object' THEN
                 RAISE EXCEPTION 'The programme options must be an object.' USING ERRCODE = '22023';
@@ -1927,7 +2115,8 @@ BEGIN
         END IF;
 
         IF v_key IS NOT NULL AND v_id IS NOT NULL THEN
-            v_keys := v_keys || jsonb_build_object(v_key, v_id);
+            v_h := (hashtext(v_key) & 1023) + 1;
+            v_kb[v_h] := v_kb[v_h] || jsonb_build_object(v_key, v_id);
         END IF;
         v_id := NULL;
     END LOOP;
@@ -1941,20 +2130,35 @@ BEGIN
         IF jsonb_typeof(coalesce(p_computed -> 'activities', '[]'::jsonb)) <> 'array' THEN
             RAISE EXCEPTION 'The computed activities must be sent as a list.' USING ERRCODE = '22023';
         END IF;
+        -- Each entry is resolved and converted IN ORDER (to the column types,
+        -- so a value the columns refuse is refused at the same entry as a
+        -- per-row UPDATE would), then every row is written by ONE UPDATE. An
+        -- activity listed twice keeps its LAST entry, as sequential updates did.
         FOR v_c IN SELECT e.value FROM jsonb_array_elements(coalesce(p_computed -> 'activities', '[]'::jsonb)) AS e(value) LOOP
-            v_id := programme.resolve_ref(coalesce(v_c ->> 'id', v_c ->> 'key'), v_keys, 'activities', p_programme_id, 'activity');
+            v_id := programme.resolve_ref(coalesce(v_c ->> 'id', v_c ->> 'key'),
+                        v_kb[(hashtext(coalesce(v_c ->> 'id', v_c ->> 'key')) & 1023) + 1], 'activities', p_programme_id, 'activity');
             IF v_id IS NULL THEN
                 RAISE EXCEPTION 'Each computed activity needs an id or a key.' USING ERRCODE = '22023';
             END IF;
-            UPDATE programme.activities SET
-                early_start = (v_c ->> 'early_start')::date, early_finish = (v_c ->> 'early_finish')::date,
-                late_start = (v_c ->> 'late_start')::date, late_finish = (v_c ->> 'late_finish')::date,
-                total_float = (v_c ->> 'total_float')::numeric, free_float = (v_c ->> 'free_float')::numeric,
-                is_critical = coalesce((v_c ->> 'is_critical')::boolean, false),
-                is_driving = coalesce((v_c ->> 'is_driving')::boolean, false)
-             WHERE id = v_id;
+            v_c_ids := array_append(v_c_ids, v_id);
+            v_c_es := array_append(v_c_es, (v_c ->> 'early_start')::date);
+            v_c_ef := array_append(v_c_ef, (v_c ->> 'early_finish')::date);
+            v_c_ls := array_append(v_c_ls, (v_c ->> 'late_start')::date);
+            v_c_lf := array_append(v_c_lf, (v_c ->> 'late_finish')::date);
+            v_c_tf := array_append(v_c_tf, (v_c ->> 'total_float')::numeric::numeric(10,2));
+            v_c_ff := array_append(v_c_ff, (v_c ->> 'free_float')::numeric::numeric(10,2));
+            v_c_cr := array_append(v_c_cr, coalesce((v_c ->> 'is_critical')::boolean, false));
+            v_c_dr := array_append(v_c_dr, coalesce((v_c ->> 'is_driving')::boolean, false));
             v_n_computed := v_n_computed + 1;
         END LOOP;
+        UPDATE programme.activities a SET
+            early_start = c.es, early_finish = c.ef, late_start = c.ls, late_finish = c.lf,
+            total_float = c.tf, free_float = c.ff, is_critical = c.cr, is_driving = c.dr
+          FROM (SELECT DISTINCT ON (u.id) u.id, u.es, u.ef, u.ls, u.lf, u.tf, u.ff, u.cr, u.dr
+                  FROM unnest(v_c_ids, v_c_es, v_c_ef, v_c_ls, v_c_lf, v_c_tf, v_c_ff, v_c_cr, v_c_dr)
+                       WITH ORDINALITY AS u(id, es, ef, ls, lf, tf, ff, cr, dr, ord)
+                 ORDER BY u.id, u.ord DESC) c
+         WHERE a.id = c.id;
     END IF;
     -- Database refusals become plain sentences; the constraint stays in DETAIL.
     EXCEPTION
@@ -1977,18 +2181,42 @@ BEGIN
              OR numeric_value_out_of_range THEN
             RAISE EXCEPTION 'One of the values in this change is not in the expected form.' USING ERRCODE = '22023', DETAIL = SQLERRM;
     END;
+    EXIT;   -- this pass succeeded
+    EXCEPTION WHEN OTHERS THEN
+        -- Pass 1 is undone and pass 2 gives the answer ONLY for a refusal of
+        -- the data, i.e. an error pass 2 would raise again at the same op:
+        --   class 22 (data exception: this function's 22023 sentences, casts,
+        --            22003 overflow, 22007/22008 dates, 22P02 text);
+        --   class 23 (integrity: 23505 unique, 23514 check, 23502 not null,
+        --            23503 foreign key, the triggers' 23503);
+        --   42501 (a trigger refusing a row move);
+        --   P0001 (a batch's doubt: 'batch refused');
+        --   P0002 (this function's "no longer exists" sentences).
+        -- Everything else is raised at once, unchanged, never retried: 40P01
+        -- deadlock, 40001 serialization, 55P03 lock not available, 53xxx
+        -- insufficient resources, internal errors. (57014 query_canceled is
+        -- never caught by WHEN OTHERS.) Pass 2's errors all go out as they are.
+        GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE;
+        IF v_pass = 2 OR NOT (left(v_state, 2) IN ('22', '23') OR v_state IN ('42501', 'P0001', 'P0002')) THEN
+            RAISE;
+        END IF;
+    END;
+    END LOOP;
 
     UPDATE programme.programmes SET updated_at = clock_timestamp() WHERE id = p_programme_id
     RETURNING updated_at INTO v_version;
     PERFORM programme.write_audit(p_programme_id, 'programme.saved', jsonb_build_object(
-        'ops', v_counts, 'created', v_created, 'deleted', v_deleted, 'tombstoned', v_tombstoned, 'restored', v_restored,
+        'ops', v_counts, 'created', to_jsonb(v_created), 'deleted', to_jsonb(v_deleted),
+        'tombstoned', to_jsonb(v_tombstoned), 'restored', to_jsonb(v_restored),
         'computed', v_n_computed, 'decided', v_n_decided));
     IF v_n_decided > 0 THEN
         PERFORM programme.write_audit(p_programme_id, 'field_updates.decided', jsonb_build_object(
             'field_update_ids', v_decided_ids, 'by_status', v_by));
     END IF;
-    RETURN jsonb_build_object('version', v_version, 'ids', v_keys, 'deleted', v_deleted, 'tombstoned', v_tombstoned,
-        'restored', v_restored,
+    RETURN jsonb_build_object('version', v_version,
+        'ids', (SELECT coalesce(jsonb_object_agg(e.k, e.v), '{}'::jsonb) FROM unnest(v_kb) AS b(o), jsonb_each(b.o) AS e(k, v)),
+        'deleted', to_jsonb(v_deleted), 'tombstoned', to_jsonb(v_tombstoned),
+        'restored', to_jsonb(v_restored),
         'decided', v_n_decided);
 END $$;
 
