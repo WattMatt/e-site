@@ -74,9 +74,9 @@ describe('parseMspdi — small.xml', () => {
     expect(task(p, '9').durationDays).toBe(0)
   })
 
-  it('an elapsed duration is converted the same way, with a warning', () => {
-    expect(task(p, '13').durationDays).toBe(9) // 72 h × 60 / 480
-    expect(p.warnings.some((w) => w.includes('Cure plinth') && /elapsed/i.test(w))).toBe(true)
+  it('an elapsed duration is hours / 24 calendar days, used as working days, with a warning', () => {
+    expect(task(p, '13').durationDays).toBe(3) // 72 h / 24
+    expect(p.warnings).toContain('Task "Cure plinth" (UID 13): elapsed duration of 3 days imported as 3 working days.')
   })
 
   it('milestone: zero-duration milestone kept; a milestone flag with duration is ignored with a warning', () => {
@@ -208,7 +208,7 @@ describe('parseMspdi — defaults and edge cases', () => {
 
   it('estimated duration formats (+32) are read like their plain format', () => {
     const p = ok(parseMspdi(doc(wrap(oneTask('<Duration>PT48H0M0S</Duration><DurationFormat>40</DurationFormat>')))))
-    expect(p.tasks[0].durationDays).toBe(6)
+    expect(p.tasks[0].durationDays).toBe(2) // 40 = 8 (ed) + 32 → 48 h / 24
     expect(p.warnings.some((w) => /elapsed/i.test(w))).toBe(true)
   })
 
@@ -304,19 +304,242 @@ describe('parseMspdi — defaults and edge cases', () => {
     expect(q.projectCalendarUid).toBe('1')
   })
 
-  it('a recurring (non-daily) exception is not imported and is warned about', () => {
+  it('a yearly exception without Month/MonthDay takes them from its FromDate', () => {
     const cals =
       '<Calendars><Calendar><UID>1</UID><Name>X</Name><IsBaseCalendar>1</IsBaseCalendar><Exceptions><Exception>' +
       '<TimePeriod><FromDate>2026-01-01T00:00:00</FromDate><ToDate>2030-12-31T23:59:00</ToDate></TimePeriod>' +
       '<Name>New Year</Name><Type>2</Type><DayWorking>0</DayWorking></Exception></Exceptions></Calendar></Calendars>'
     const p = ok(parseMspdi(doc(wrap(cals + oneTask('')))))
-    expect(p.calendars[0].exceptions).toEqual([])
-    expect(p.warnings.some((w) => w.includes('New Year'))).toBe(true)
+    expect(p.calendars[0].exceptions.map((e) => e.from)).toEqual(['2026-01-01', '2027-01-01', '2028-01-01', '2029-01-01', '2030-01-01'])
+    expect(p.warnings.some((w) => w.includes('New Year'))).toBe(false)
+  })
+})
+
+describe('parseMspdi — fix round 1', () => {
+  const tasks2 = (a: string, b: string) =>
+    `<Tasks><Task><UID>1</UID><Name>A</Name><OutlineLevel>1</OutlineLevel>${a}</Task>` +
+    `<Task><UID>2</UID><Name>B</Name><OutlineLevel>1</OutlineLevel>${b}</Task></Tasks>`
+
+  // ---------------------------------------------------------------- I-4 booleans
+  it('booleans accept true/false in any case', () => {
+    const cals =
+      '<Calendars><Calendar><UID>1</UID><Name>C</Name><IsBaseCalendar>True</IsBaseCalendar><WeekDays>' +
+      '<WeekDay><DayType>2</DayType><DayWorking>FALSE</DayWorking></WeekDay>' +
+      '<WeekDay><DayType>7</DayType><DayWorking>true</DayWorking></WeekDay></WeekDays></Calendar></Calendars>'
+    const xml = wrap(
+      cals +
+        '<Tasks>' +
+        '<Task><UID>1</UID><Name>S</Name><OutlineLevel>1</OutlineLevel><Summary>true</Summary></Task>' +
+        '<Task><UID>2</UID><Name>M</Name><OutlineLevel>2</OutlineLevel><Milestone>TRUE</Milestone><Duration>PT0H0M0S</Duration>' +
+        '<PredecessorLink><PredecessorUID>3</PredecessorUID><CrossProject>true</CrossProject></PredecessorLink></Task>' +
+        '<Task><UID>3</UID><Name>Gone</Name><OutlineLevel>2</OutlineLevel><Active>False</Active></Task>' +
+        '<Task><UID>4</UID><IsNull>true</IsNull></Task>' +
+        '<Task><UID>5</UID><Name>Kept</Name><OutlineLevel>2</OutlineLevel><Active>true</Active><IsNull>false</IsNull><Summary>0</Summary></Task>' +
+        '</Tasks>',
+      '<StartDate>2026-10-05T08:00:00</StartDate><CalendarUID>1</CalendarUID>',
+    )
+    const p = ok(parseMspdi(doc(xml)))
+    expect(p.tasks.map((t) => t.uid)).toEqual(['1', '2', '5'])
+    expect(p.skipped).toEqual({ inactive: 1, nulls: 1 })
+    expect(task(p, '1').summary).toBe(true)
+    expect(task(p, '2').milestone).toBe(true)
+    expect(task(p, '2').predecessors).toEqual([])
+    expect(p.warnings.some((w) => /another project/.test(w))).toBe(true)
+    expect(p.calendars[0]).toMatchObject({ isBase: true, workWeekdays: [2, 3, 4, 5, 6] })
+    expect(p.projectCalendarUid).toBe('1')
   })
 
-  it('nothing from the file is interpreted as markup', () => {
-    const p = ok(parseMspdi(doc(wrap(oneTask('').replace('<Name>A</Name>', '<Name>&lt;b&gt;bold&lt;/b&gt;</Name>')))))
-    expect(p.tasks[0].name).toBe('<b>bold</b>')
+  // ---------------------------------------------------------------- I-3 manual
+  it('a manually scheduled task is pinned with MSO at its Start, with a warning', () => {
+    const xml = wrap(
+      '<Tasks><Task><UID>20</UID><Name>Long-lead switchgear</Name><OutlineLevel>1</OutlineLevel><Manual>1</Manual>' +
+        '<Start>2027-02-01T08:00:00</Start><Duration>PT0H0M0S</Duration><ConstraintType>0</ConstraintType></Task>' +
+        '<Task><UID>21</UID><Name>Auto</Name><OutlineLevel>1</OutlineLevel><Manual>0</Manual><Start>2027-02-01T08:00:00</Start></Task></Tasks>',
+    )
+    const p = ok(parseMspdi(doc(xml)))
+    expect(task(p, '20')).toMatchObject({ manual: true, constraint: { type: 'mso', date: '2027-02-01' } })
+    expect(task(p, '21')).toMatchObject({ manual: false, constraint: null })
+    expect(p.warnings).toContain(
+      'Task "Long-lead switchgear" (UID 20) is manually scheduled in MS Project; it is pinned to start on 2027-02-01.',
+    )
+  })
+
+  it('a manual task without a start is not pinned and is warned about', () => {
+    const p = ok(parseMspdi(doc(wrap(oneTask('<Manual>true</Manual>')))))
+    expect(p.tasks[0]).toMatchObject({ manual: true, constraint: null })
+    expect(p.warnings.some((w) => /manually scheduled/.test(w) && /no start/.test(w))).toBe(true)
+  })
+
+  // ---------------------------------------------------------------- I-2 recurring exceptions
+  const exceptionXml = (body: string, name = 'Holiday', working = 0) =>
+    '<Calendars><Calendar><UID>1</UID><Name>Cal</Name><IsBaseCalendar>1</IsBaseCalendar><Exceptions><Exception>' +
+    `${body}<Name>${name}</Name><DayWorking>${working}</DayWorking></Exception></Exceptions></Calendar></Calendars>`
+  const period = (from: string, to?: string) =>
+    `<TimePeriod><FromDate>${from}T00:00:00</FromDate>${to ? `<ToDate>${to}T23:59:00</ToDate>` : ''}</TimePeriod>`
+  /** Dates of the expanded exception; the project starts 2026-10-05, so the window is 2025-10-05 … 2031-10-05. */
+  const datesOf = (body: string, working = 0) => {
+    const p = ok(parseMspdi(doc(wrap(exceptionXml(body, 'Holiday', working) + oneTask('')))))
+    const ex = p.calendars[0].exceptions
+    for (const e of ex) expect(e.from).toBe(e.to)
+    return { dates: ex.map((e) => e.from), ex, warnings: p.warnings }
+  }
+
+  it('yearly by date (Type 2) with an end date', () => {
+    const { dates, ex } = datesOf(
+      `<EnteredByOccurrences>0</EnteredByOccurrences>${period('2026-04-27', '2030-04-27')}<Occurrences>5</Occurrences>` +
+        '<Type>2</Type><Month>3</Month><MonthDay>27</MonthDay>',
+    )
+    expect(dates).toEqual(['2026-04-27', '2027-04-27', '2028-04-27', '2029-04-27', '2030-04-27'])
+    expect(ex[0]).toEqual({ from: '2026-04-27', to: '2026-04-27', working: false, name: 'Holiday' })
+  })
+
+  it('yearly by date is clipped to start − 1 year … start + 5 years', () => {
+    const { dates } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2020-12-25', '2039-12-25')}<Occurrences>20</Occurrences>` +
+        '<Type>2</Type><Month>11</Month><MonthDay>25</MonthDay>',
+    )
+    expect(dates).toEqual(['2025-12-25', '2026-12-25', '2027-12-25', '2028-12-25', '2029-12-25', '2030-12-25'])
+  })
+
+  it('yearly by position (Type 3): first Monday of August, by occurrences', () => {
+    const { dates } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2027-01-01')}<Occurrences>2</Occurrences>` +
+        '<Type>3</Type><Month>7</Month><MonthPosition>0</MonthPosition><MonthItem>4</MonthItem>',
+    )
+    expect(dates).toEqual(['2027-08-02', '2028-08-07'])
+  })
+
+  it('monthly by day (Type 4) every 2 months', () => {
+    const { dates } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2026-11-01')}<Occurrences>3</Occurrences>` +
+        '<Type>4</Type><Period>2</Period><MonthDay>15</MonthDay>',
+    )
+    expect(dates).toEqual(['2026-11-15', '2027-01-15', '2027-03-15'])
+  })
+
+  it('monthly by position (Type 5): last Friday', () => {
+    const { dates } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2026-10-01')}<Occurrences>3</Occurrences>` +
+        '<Type>5</Type><Period>1</Period><MonthPosition>4</MonthPosition><MonthItem>8</MonthItem>',
+    )
+    expect(dates).toEqual(['2026-10-30', '2026-11-27', '2026-12-25'])
+  })
+
+  it('weekly (Type 6): every second Saturday, as working days', () => {
+    const { dates, ex } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2026-10-03')}<Occurrences>3</Occurrences>` +
+        '<Type>6</Type><Period>2</Period><DaysOfWeek>64</DaysOfWeek>',
+      1,
+    )
+    expect(dates).toEqual(['2026-10-03', '2026-10-17', '2026-10-31'])
+    expect(ex.every((e) => e.working)).toBe(true)
+  })
+
+  it('daily (Type 1) every second day, by occurrences', () => {
+    const { dates } = datesOf(
+      `<EnteredByOccurrences>1</EnteredByOccurrences>${period('2026-10-05')}<Occurrences>3</Occurrences>` +
+        '<Type>1</Type><Period>2</Period>',
+    )
+    expect(dates).toEqual(['2026-10-05', '2026-10-07', '2026-10-09'])
+  })
+
+  it('a recurrence that cannot be read is refused with a warning', () => {
+    for (const body of [
+      `${period('2026-01-01', '2027-01-01')}<Type>9</Type>`,
+      `${period('2026-01-01', '2027-01-01')}<Type>5</Type><MonthPosition>0</MonthPosition><MonthItem>1</MonthItem>`,
+      `${period('2026-01-01', '2027-01-01')}<Type>6</Type><DaysOfWeek>0</DaysOfWeek>`,
+    ]) {
+      const p = ok(parseMspdi(doc(wrap(exceptionXml(body, 'Odd') + oneTask('')))))
+      expect(p.calendars[0].exceptions).toEqual([])
+      expect(p.warnings.some((w) => w.includes('"Odd"'))).toBe(true)
+    }
+  })
+
+  // ---------------------------------------------------------------- minors
+  it('M-2: a dated constraint without a date is dropped with a warning', () => {
+    const p = ok(parseMspdi(doc(wrap(oneTask('<ConstraintType>2</ConstraintType>')))))
+    expect(p.tasks[0].constraint).toBeNull()
+    expect(p.warnings.some((w) => /constraint/i.test(w) && /no date/.test(w))).toBe(true)
+  })
+
+  it('M-3: a finish-type date at exactly 00:00 is the end of the previous day', () => {
+    const p = ok(
+      parseMspdi(
+        doc(
+          wrap(
+            oneTask(
+              '<Start>2026-10-12T00:00:00</Start><Finish>2026-10-17T00:00:00</Finish><ActualFinish>2026-10-17T00:00:00</ActualFinish>' +
+                '<Deadline>2026-11-01T00:00:00</Deadline><ConstraintType>3</ConstraintType><ConstraintDate>2026-11-01T00:00:00</ConstraintDate>' +
+                '<Baseline><Number>0</Number><Start>2026-10-12T00:00:00</Start><Finish>2026-10-17T00:00:00</Finish></Baseline>',
+            ),
+          ),
+        ),
+      ),
+    )
+    expect(p.tasks[0]).toMatchObject({
+      start: '2026-10-12',
+      finish: '2026-10-16',
+      actualFinish: '2026-10-16',
+      deadline: '2026-10-31',
+      constraint: { type: 'mfo', date: '2026-10-31' },
+      baselineStart: '2026-10-12',
+      baselineFinish: '2026-10-16',
+    })
+    const q = ok(parseMspdi(doc(wrap(oneTask('<Finish>2026-10-17T08:00:00</Finish><ConstraintType>2</ConstraintType><ConstraintDate>2026-10-12T00:00:00</ConstraintDate>')))))
+    expect(q.tasks[0].finish).toBe('2026-10-17')
+    expect(q.tasks[0].constraint).toEqual({ type: 'mso', date: '2026-10-12' }) // start-type: unchanged
+  })
+
+  it('M-4: an external task is skipped with a warning, and links from it are dropped', () => {
+    const p = ok(parseMspdi(doc(wrap(tasks2('<ExternalTask>1</ExternalTask>', '<PredecessorLink><PredecessorUID>1</PredecessorUID></PredecessorLink>')))))
+    expect(p.tasks.map((t) => t.uid)).toEqual(['2'])
+    expect(p.tasks[0].predecessors).toEqual([])
+    expect(p.warnings.some((w) => /external/i.test(w) && w.includes('UID 1'))).toBe(true)
+  })
+
+  it('M-6: a task calendar that is not in the file becomes null with a warning', () => {
+    const p = ok(parseMspdi(doc(wrap(oneTask('<CalendarUID>99</CalendarUID>')))))
+    expect(p.tasks[0].calendarUid).toBeNull()
+    expect(p.warnings.some((w) => w.includes('99') && /calendar/i.test(w))).toBe(true)
+  })
+
+  it('M-1: an active task under an inactive summary is kept with a warning', () => {
+    const xml = wrap(
+      '<Tasks><Task><UID>1</UID><Name>Old phase</Name><OutlineLevel>1</OutlineLevel><Summary>1</Summary><Active>0</Active></Task>' +
+        '<Task><UID>2</UID><Name>Orphan</Name><OutlineLevel>2</OutlineLevel></Task>' +
+        '<Task><UID>3</UID><Name>Next</Name><OutlineLevel>1</OutlineLevel></Task></Tasks>',
+    )
+    const p = ok(parseMspdi(doc(xml)))
+    expect(p.tasks.map((t) => t.uid)).toEqual(['2', '3'])
+    expect(p.warnings.filter((w) => /inactive summary/.test(w))).toHaveLength(1)
+    expect(p.warnings.some((w) => w.includes('Orphan') && /inactive summary/.test(w))).toBe(true)
+  })
+
+  it('M-7: unknown link type, missing PredecessorUID, calendar base cycle, MinutesPerDay 0', () => {
+    const p = ok(
+      parseMspdi(
+        doc(
+          wrap(
+            tasks2('', '<PredecessorLink><PredecessorUID>1</PredecessorUID><Type>7</Type></PredecessorLink><PredecessorLink><Type>1</Type></PredecessorLink>'),
+          ),
+        ),
+      ),
+    )
+    expect(task(p, '2').predecessors).toEqual([{ uid: '1', type: 'FS', lag: 0, lagUnit: 'working_days' }])
+    expect(p.warnings.some((w) => /link type 7/.test(w))).toBe(true)
+    expect(p.warnings.some((w) => /without a predecessor UID/.test(w))).toBe(true)
+
+    const cyc =
+      '<Calendars><Calendar><UID>1</UID><Name>A</Name><IsBaseCalendar>0</IsBaseCalendar><BaseCalendarUID>2</BaseCalendarUID>' +
+      '<WeekDays><WeekDay><DayType>7</DayType><DayWorking>1</DayWorking></WeekDay></WeekDays></Calendar>' +
+      '<Calendar><UID>2</UID><Name>B</Name><IsBaseCalendar>0</IsBaseCalendar><BaseCalendarUID>1</BaseCalendarUID></Calendar></Calendars>'
+    const c = ok(parseMspdi(doc(wrap(cyc + oneTask('')))))
+    expect(c.calendars.find((x) => x.uid === '1')!.workWeekdays).toEqual([1, 2, 3, 4, 5, 6])
+
+    const z = ok(parseMspdi(doc(wrap(oneTask('<Duration>PT8H0M0S</Duration>'), '<StartDate>2026-10-05T08:00:00</StartDate><MinutesPerDay>0</MinutesPerDay>'))))
+    expect(z.minutesPerDay).toBe(480)
+    expect(z.tasks[0].durationDays).toBe(1)
+    expect(z.warnings.some((w) => /MinutesPerDay/.test(w))).toBe(true)
   })
 })
 

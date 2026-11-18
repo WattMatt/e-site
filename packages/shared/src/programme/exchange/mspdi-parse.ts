@@ -5,15 +5,23 @@
  *
  * Units (plan P4a Global Constraints):
  * - `Duration` is ISO-8601 (`PT40H0M0S`, working hours) ÷ the file's
- *   `MinutesPerDay` (default 480) → working days, 2 dp.
+ *   `MinutesPerDay` (default 480) → working days, 2 dp. An elapsed duration
+ *   is hours ÷ 24 → calendar days, used as the working-day count (the engine
+ *   has no elapsed durations), with a warning.
  * - `LinkLag` is tenths of a minute. Working formats (m/h/d/w/mo) ÷
  *   MinutesPerDay → working days; elapsed formats ÷ 1440 → elapsed days;
  *   percent formats ÷ 10 → percent.
  *
  * Element lookup is by local name, so a default namespace, a prefix or no
- * namespace all read the same.
+ * namespace all read the same. Booleans accept 0/1 and true/false.
  */
-import { isCalendarDate, type CalendarDate } from '../../lib/dates/calendar-date'
+import {
+  addCalendarDays,
+  daysBetween,
+  isCalendarDate,
+  weekdayOf,
+  type CalendarDate,
+} from '../../lib/dates/calendar-date'
 import type { ConstraintType, LagUnit, LinkType } from '../types'
 
 export const MSPDI_NAMESPACE = 'http://schemas.microsoft.com/project'
@@ -33,6 +41,7 @@ export interface MspdiCalendar {
   isBase: boolean
   /** ISO weekdays, 1 = Mon … 7 = Sun, ascending. */
   workWeekdays: number[]
+  /** Ranges; a recurring exception is expanded into one single-day entry per occurrence. */
   exceptions: MspdiException[]
 }
 export interface MspdiLink {
@@ -50,6 +59,8 @@ export interface MspdiTask {
   summary: boolean
   /** True only for a milestone flag on a zero-duration task. */
   milestone: boolean
+  /** Manually scheduled in MS Project; a manual non-summary task is pinned with MSO at its start. */
+  manual: boolean
   durationDays: number
   constraint: { type: ConstraintType; date: CalendarDate | null } | null
   deadline: CalendarDate | null
@@ -82,11 +93,13 @@ const DEFAULT_MINUTES_PER_WEEK = 2400
 const DEFAULT_DAYS_PER_MONTH = 20
 const MINUTES_PER_ELAPSED_DAY = 1440
 const MON_TO_FRI = [1, 2, 3, 4, 5]
+const BOM = String.fromCharCode(0xfeff)
 
 const LINK_TYPES: Record<string, LinkType> = { '0': 'FF', '1': 'FS', '2': 'SF', '3': 'SS' }
 const CONSTRAINTS: Record<string, ConstraintType | null> = {
   '0': null, '1': 'alap', '2': 'mso', '3': 'mfo', '4': 'snet', '5': 'snlt', '6': 'fnet', '7': 'fnlt',
 }
+const FINISH_CONSTRAINTS = new Set<ConstraintType>(['mfo', 'fnet', 'fnlt'])
 /** MSPDI duration/lag formats: 3 m, 4 em, 5 h, 6 eh, 7 d, 8 ed, 9 w, 10 ew, 11 mo, 12 emo, 19 %, 20 e%. */
 const WORKING_FORMATS = new Set([3, 5, 7, 9, 11])
 const ELAPSED_FORMATS = new Set([4, 6, 8, 10, 12])
@@ -120,7 +133,14 @@ function childNumber(el: Element, name: string): number | null {
   const n = Number(t)
   return Number.isFinite(n) ? n : null
 }
-const flag = (el: Element, name: string) => childText(el, name) === '1'
+/** xsd:boolean: 1/true → true, 0/false → false (any case), anything else → null. */
+function childBool(el: Element, name: string): boolean | null {
+  const t = childText(el, name)?.toLowerCase()
+  if (t === '1' || t === 'true') return true
+  if (t === '0' || t === 'false') return false
+  return null
+}
+const flag = (el: Element, name: string) => childBool(el, name) === true
 
 // ---------------------------------------------------------------- value helpers
 
@@ -131,6 +151,12 @@ function datePart(raw: string | null): CalendarDate | null {
   if (raw === null) return null
   const d = raw.slice(0, 10)
   return isCalendarDate(d) ? d : null
+}
+/** A finish-type datetime: exactly 00:00 is the end of the previous day. */
+function finishDatePart(raw: string | null): CalendarDate | null {
+  const d = datePart(raw)
+  if (d === null || raw === null) return d
+  return /^T00:00(:00(\.0+)?)?$/.test(raw.slice(10)) ? addCalendarDays(d, -1) : d
 }
 
 const ISO_DURATION =
@@ -151,6 +177,137 @@ function plainFormat(n: number): number {
   return n >= 35 && n <= 52 ? n - 32 : n
 }
 
+// ---------------------------------------------------------------- calendar arithmetic
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const daysInMonth = (y: number, m0: number) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate()
+const ymd = (y: number, m0: number, d: number): CalendarDate => `${y}-${pad2(m0 + 1)}-${pad2(d)}`
+
+function addYears(d: CalendarDate, n: number): CalendarDate {
+  const y = Number(d.slice(0, 4)) + n
+  const m0 = Number(d.slice(5, 7)) - 1
+  return ymd(y, m0, Math.min(Number(d.slice(8, 10)), daysInMonth(y, m0)))
+}
+
+/**
+ * The `position`-th `weekday` (0 = Sun) of a month; position 0–3 = first–fourth,
+ * 4 = last.
+ */
+function nthWeekdayOfMonth(y: number, m0: number, position: number, weekday: number): CalendarDate {
+  if (position === 4) {
+    const last = ymd(y, m0, daysInMonth(y, m0))
+    return addCalendarDays(last, -((weekdayOf(last) - weekday + 7) % 7))
+  }
+  const first = ymd(y, m0, 1)
+  return addCalendarDays(first, ((weekday - weekdayOf(first) + 7) % 7) + 7 * position)
+}
+
+// ---------------------------------------------------------------- recurring exceptions
+
+interface Window {
+  from: CalendarDate
+  to: CalendarDate
+}
+
+/**
+ * Expand a 2007+ `<Exception>` recurrence into dates.
+ * Types: 1 daily, 2 yearly by date, 3 yearly by position, 4 monthly by day,
+ * 5 monthly by position, 6 weekly. `Month` is 0-based, `MonthPosition` 0–3 =
+ * first–fourth and 4 = last, `MonthItem` 3–9 = Sunday–Saturday, `DaysOfWeek`
+ * is a mask with 1 = Sunday … 64 = Saturday.
+ * Returns the dates, or a reason string when the recurrence cannot be read.
+ */
+function expandRecurrence(ex: Element, type: number, from: CalendarDate, win: Window): CalendarDate[] | string {
+  const period = Math.max(1, Math.trunc(childNumber(ex, 'Period') ?? 1))
+  const occurrences = Math.trunc(childNumber(ex, 'Occurrences') ?? 0)
+  const byOccurrences = flag(ex, 'EnteredByOccurrences') && occurrences > 0
+  const period_ = childElement(ex, 'TimePeriod')
+  const toBound = period_ ? datePart(childText(period_, 'ToDate')) : null
+  if (!byOccurrences && toBound === null) return 'it has neither an end date nor a number of occurrences'
+  const end = toBound !== null && toBound < win.to ? toBound : win.to
+  const limit = byOccurrences ? occurrences : Number.POSITIVE_INFINITY
+
+  const y0 = Number(from.slice(0, 4))
+  const m00 = Number(from.slice(5, 7)) - 1
+  let next: (i: number) => CalendarDate | null // i-th candidate in ascending order, null = past the end of time
+
+  const monthRaw = childNumber(ex, 'Month')
+  const monthDay = childNumber(ex, 'MonthDay')
+  const position = childNumber(ex, 'MonthPosition')
+  const item = childNumber(ex, 'MonthItem')
+  const weekdayFromItem = () => (item !== null && item >= 3 && item <= 9 ? item - 3 : null)
+
+  switch (type) {
+    case 1:
+      next = (i) => addCalendarDays(from, i * period)
+      break
+    case 6: {
+      const mask = Math.trunc(childNumber(ex, 'DaysOfWeek') ?? 0)
+      if (mask <= 0 || mask > 127) return 'it names no weekday'
+      const weekStart = addCalendarDays(from, -weekdayOf(from))
+      // Pre-compute the dates once; `next` walks the list.
+      const dates: CalendarDate[] = []
+      for (let d = from; d <= end; d = addCalendarDays(d, 1)) {
+        const week = Math.floor(daysBetween(weekStart, d) / 7)
+        if (week % period === 0 && (mask & (1 << weekdayOf(d))) !== 0) dates.push(d)
+      }
+      next = (i) => dates[i] ?? null
+      break
+    }
+    case 4:
+    case 5: {
+      const weekday = weekdayFromItem()
+      if (type === 4 && (monthDay === null || monthDay < 1 || monthDay > 31)) return 'its day of the month is missing'
+      if (type === 5 && (weekday === null || position === null || position < 0 || position > 4)) {
+        return 'its position in the month is not a specific weekday'
+      }
+      const dates: CalendarDate[] = []
+      for (let k = 0; ; k++) {
+        const total = m00 + k * period
+        const y = y0 + Math.floor(total / 12)
+        const m0 = total % 12
+        if (ymd(y, m0, 1) > end) break
+        const d =
+          type === 4
+            ? ymd(y, m0, Math.min(monthDay as number, daysInMonth(y, m0)))
+            : nthWeekdayOfMonth(y, m0, position as number, weekday as number)
+        if (d >= from) dates.push(d)
+      }
+      next = (i) => dates[i] ?? null
+      break
+    }
+    case 2:
+    case 3: {
+      const m0 = monthRaw !== null && monthRaw >= 0 && monthRaw <= 11 ? monthRaw : m00
+      const weekday = weekdayFromItem()
+      if (type === 3 && (weekday === null || position === null || position < 0 || position > 4)) {
+        return 'its position in the month is not a specific weekday'
+      }
+      const day = monthDay !== null && monthDay >= 1 && monthDay <= 31 ? monthDay : Number(from.slice(8, 10))
+      const dates: CalendarDate[] = []
+      for (let y = y0; ymd(y, m0, 1) <= end; y++) {
+        const d =
+          type === 2
+            ? ymd(y, m0, Math.min(day, daysInMonth(y, m0)))
+            : nthWeekdayOfMonth(y, m0, position as number, weekday as number)
+        if (d >= from) dates.push(d)
+      }
+      next = (i) => dates[i] ?? null
+      break
+    }
+    default:
+      return `its recurrence type ${type} is not supported`
+  }
+
+  const out: CalendarDate[] = []
+  for (let i = 0; i < limit; i++) {
+    const d = next(i)
+    if (d === null || d > end) break
+    if (d >= win.from) out.push(d)
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- calendars
 
 interface RawCalendar {
@@ -162,7 +319,7 @@ interface RawCalendar {
   exceptions: MspdiException[]
 }
 
-function readCalendar(el: Element, warnings: string[]): RawCalendar | null {
+function readCalendar(el: Element, win: Window, warnings: string[]): RawCalendar | null {
   const uid = childText(el, 'UID')
   if (uid === null) {
     warnings.push('A calendar without a UID was ignored.')
@@ -197,19 +354,33 @@ function readCalendar(el: Element, warnings: string[]): RawCalendar | null {
     exceptions = []
     for (const ex of childElements(exceptionsEl, 'Exception')) {
       const exName = childText(ex, 'Name') ?? ''
-      const type = childText(ex, 'Type')
-      const period = childElement(ex, 'TimePeriod')
-      const from = period ? datePart(childText(period, 'FromDate')) : null
-      const to = period ? datePart(childText(period, 'ToDate')) : null
-      if (type !== null && type !== '1') {
-        warnings.push(`${label}: the recurring exception "${exName}" was not imported. Add those dates by hand.`)
-        continue
-      }
-      if (!from || !to || from > to) {
+      const working = flag(ex, 'DayWorking')
+      const type = childNumber(ex, 'Type') ?? 1
+      const period = Math.max(1, Math.trunc(childNumber(ex, 'Period') ?? 1))
+      const tp = childElement(ex, 'TimePeriod')
+      const from = tp ? datePart(childText(tp, 'FromDate')) : null
+      let to = tp ? datePart(childText(tp, 'ToDate')) : null
+      if (!from) {
         warnings.push(`${label}: the exception "${exName}" has unreadable dates and was not imported.`)
         continue
       }
-      exceptions.push({ from, to, working: flag(ex, 'DayWorking'), name: exName })
+      if (type === 1 && period === 1) {
+        // A plain range: kept as one entry.
+        const occ = Math.trunc(childNumber(ex, 'Occurrences') ?? 0)
+        if (to === null && occ > 0) to = addCalendarDays(from, occ - 1)
+        if (to === null || from > to) {
+          warnings.push(`${label}: the exception "${exName}" has unreadable dates and was not imported.`)
+          continue
+        }
+        exceptions.push({ from, to, working, name: exName })
+        continue
+      }
+      const dates = expandRecurrence(ex, type, from, win)
+      if (typeof dates === 'string') {
+        warnings.push(`${label}: the recurring exception "${exName}" was not imported because ${dates}. Add those dates by hand.`)
+        continue
+      }
+      for (const d of dates) exceptions.push({ from: d, to: d, working, name: exName })
     }
   }
   if (childElement(el, 'WorkWeeks')) {
@@ -310,7 +481,7 @@ function baselineZero(el: Element): Element | null {
 /** Parse MSPDI text (a leading BOM is stripped) with the global DOMParser. */
 export function parseMspdiText(text: string): MspdiParseResult {
   if (typeof DOMParser === 'undefined') return { error: 'XML parsing is not available here.' }
-  const clean = text.replace(/^\uFEFF/, '')
+  const clean = text.startsWith(BOM) ? text.slice(1) : text
   return parseMspdi(new DOMParser().parseFromString(clean, 'application/xml'))
 }
 
@@ -337,26 +508,6 @@ export function parseMspdi(doc: Document): MspdiParseResult {
   let daysPerMonth = childNumber(root, 'DaysPerMonth') ?? DEFAULT_DAYS_PER_MONTH
   if (daysPerMonth <= 0) daysPerMonth = DEFAULT_DAYS_PER_MONTH
 
-  // Calendars.
-  const calendarsEl = childElement(root, 'Calendars')
-  const rawCalendars: RawCalendar[] = []
-  for (const c of calendarsEl ? childElements(calendarsEl, 'Calendar') : []) {
-    const read = readCalendar(c, warnings)
-    if (read) rawCalendars.push(read)
-  }
-  const calendars = resolveCalendars(rawCalendars)
-  const projectCalRaw = childText(root, 'CalendarUID')
-  const firstBase = calendars.find((c) => c.isBase) ?? null
-  let projectCalendarUid: string | null = null
-  if (projectCalRaw !== null && calendars.some((c) => c.uid === projectCalRaw && c.isBase)) {
-    projectCalendarUid = projectCalRaw
-  } else if (firstBase) {
-    projectCalendarUid = firstBase.uid
-    if (projectCalRaw !== null && projectCalRaw !== '-1') {
-      warnings.push(`The project calendar UID ${projectCalRaw} is not a base calendar; "${firstBase.name}" was used instead.`)
-    }
-  }
-
   // Tasks: first pass reads every row and applies the skip rules.
   const tasksEl = childElement(root, 'Tasks')
   const taskEls = tasksEl ? childElements(tasksEl, 'Task') : []
@@ -364,6 +515,7 @@ export function parseMspdi(doc: Document): MspdiParseResult {
   const skippedUids = new Set<string>()
   const skipped = { inactive: 0, nulls: 0 }
   let summaryName: string | null = null
+  let inactiveLevel: number | null = null // outline level of the nearest inactive ancestor
   const kept: Array<{ task: MspdiTask; links: Element[] }> = []
 
   for (const el of taskEls) {
@@ -380,32 +532,43 @@ export function parseMspdi(doc: Document): MspdiParseResult {
     seen.add(uid)
 
     const name = childText(el, 'Name') ?? ''
+    const label = `Task "${name}" (UID ${uid})`
     const outlineLevel = childNumber(el, 'OutlineLevel') ?? 1
     if (outlineLevel === 0) {
       summaryName = name || summaryName
       skippedUids.add(uid)
       continue
     }
-    const active = childText(el, 'Active')
-    if (active === '0') {
+    if (inactiveLevel !== null && outlineLevel <= inactiveLevel) inactiveLevel = null
+    if (childBool(el, 'Active') === false) {
       skipped.inactive++
+      skippedUids.add(uid)
+      if (inactiveLevel === null) inactiveLevel = outlineLevel
+      continue
+    }
+    if (flag(el, 'ExternalTask')) {
+      warnings.push(`${label} is an external task from another project and was not imported.`)
       skippedUids.add(uid)
       continue
     }
+    if (inactiveLevel !== null) {
+      warnings.push(`${label} is active but sits under an inactive summary; it was imported.`)
+    }
 
-    const label = `Task "${name}" (UID ${uid})`
     const durationRaw = childText(el, 'Duration')
+    const durationFormat = childNumber(el, 'DurationFormat')
+    const elapsed = durationFormat !== null && ELAPSED_DURATION_FORMATS.has(plainFormat(durationFormat))
     let durationDays = 0
     if (durationRaw !== null) {
       const minutes = isoDurationMinutes(durationRaw)
       if (minutes === null) warnings.push(`${label}: the duration "${durationRaw}" could not be read and was set to 0.`)
-      else durationDays = round2(minutes / minutesPerDay)
+      else durationDays = round2(minutes / (elapsed ? MINUTES_PER_ELAPSED_DAY : minutesPerDay))
     }
-    const durationFormat = childNumber(el, 'DurationFormat')
-    if (durationFormat !== null && ELAPSED_DURATION_FORMATS.has(plainFormat(durationFormat))) {
-      warnings.push(`${label}: an elapsed duration was converted to ${durationDays} working days.`)
+    if (elapsed) {
+      warnings.push(`${label}: elapsed duration of ${durationDays} days imported as ${durationDays} working days.`)
     }
 
+    const summary = flag(el, 'Summary')
     let milestone = false
     if (flag(el, 'Milestone')) {
       if (durationDays === 0) milestone = true
@@ -419,7 +582,27 @@ export function parseMspdi(doc: Document): MspdiParseResult {
         warnings.push(`${label}: constraint type ${constraintRaw} is unknown and was ignored.`)
       } else {
         const type = CONSTRAINTS[constraintRaw]
-        if (type) constraint = { type, date: type === 'alap' ? null : datePart(childText(el, 'ConstraintDate')) }
+        if (type === 'alap') constraint = { type, date: null }
+        else if (type) {
+          const rawDate = childText(el, 'ConstraintDate')
+          const date = FINISH_CONSTRAINTS.has(type) ? finishDatePart(rawDate) : datePart(rawDate)
+          if (date) constraint = { type, date }
+          else warnings.push(`${label}: the ${type.toUpperCase()} constraint has no date and was ignored.`)
+        }
+      }
+    }
+
+    const start = datePart(childText(el, 'Start'))
+    const manual = flag(el, 'Manual')
+    if (manual) {
+      const pin = start ?? datePart(childText(el, 'ManualStart'))
+      if (summary) {
+        warnings.push(`${label} is a manually scheduled summary in MS Project; its dates come from its tasks.`)
+      } else if (pin) {
+        constraint = { type: 'mso', date: pin }
+        warnings.push(`${label} is manually scheduled in MS Project; it is pinned to start on ${pin}.`)
+      } else {
+        warnings.push(`${label} is manually scheduled in MS Project but has no start date; it is scheduled automatically.`)
       }
     }
 
@@ -435,19 +618,20 @@ export function parseMspdi(doc: Document): MspdiParseResult {
         outlineLevel,
         wbs: childText(el, 'WBS'),
         outlineNumber: childText(el, 'OutlineNumber'),
-        summary: flag(el, 'Summary'),
+        summary,
         milestone,
+        manual,
         durationDays,
         constraint,
-        deadline: datePart(childText(el, 'Deadline')),
+        deadline: finishDatePart(childText(el, 'Deadline')),
         actualStart: datePart(childText(el, 'ActualStart')),
-        actualFinish: datePart(childText(el, 'ActualFinish')),
+        actualFinish: finishDatePart(childText(el, 'ActualFinish')),
         percentComplete: Math.min(100, Math.max(0, percent)),
         calendarUid: calendarRaw === null || calendarRaw === '-1' ? null : calendarRaw,
-        start: datePart(childText(el, 'Start')),
-        finish: datePart(childText(el, 'Finish')),
+        start,
+        finish: finishDatePart(childText(el, 'Finish')),
         baselineStart: baseline ? datePart(childText(baseline, 'Start')) : null,
-        baselineFinish: baseline ? datePart(childText(baseline, 'Finish')) : null,
+        baselineFinish: baseline ? finishDatePart(childText(baseline, 'Finish')) : null,
         predecessors: [],
       },
     })
@@ -483,6 +667,34 @@ export function parseMspdi(doc: Document): MspdiParseResult {
     if (starts.length === 0) return { error: 'The file has no project start date.' }
     startDate = starts[0]
     warnings.push(`The file has no project start date; the earliest task start, ${startDate}, was used.`)
+  }
+
+  // Calendars: recurring exceptions are expanded over start − 1 year … start + 5 years.
+  const window: Window = { from: addYears(startDate, -1), to: addYears(startDate, 5) }
+  const calendarsEl = childElement(root, 'Calendars')
+  const rawCalendars: RawCalendar[] = []
+  for (const c of calendarsEl ? childElements(calendarsEl, 'Calendar') : []) {
+    const read = readCalendar(c, window, warnings)
+    if (read) rawCalendars.push(read)
+  }
+  const calendars = resolveCalendars(rawCalendars)
+  const calendarUids = new Set(calendars.map((c) => c.uid))
+  const projectCalRaw = childText(root, 'CalendarUID')
+  const firstBase = calendars.find((c) => c.isBase) ?? null
+  let projectCalendarUid: string | null = null
+  if (projectCalRaw !== null && calendars.some((c) => c.uid === projectCalRaw && c.isBase)) {
+    projectCalendarUid = projectCalRaw
+  } else if (firstBase) {
+    projectCalendarUid = firstBase.uid
+    if (projectCalRaw !== null && projectCalRaw !== '-1') {
+      warnings.push(`The project calendar UID ${projectCalRaw} is not a base calendar; "${firstBase.name}" was used instead.`)
+    }
+  }
+  for (const t of tasks) {
+    if (t.calendarUid !== null && !calendarUids.has(t.calendarUid)) {
+      warnings.push(`Task "${t.name}" (UID ${t.uid}): calendar UID ${t.calendarUid} is not in the file; the project calendar applies.`)
+      t.calendarUid = null
+    }
   }
 
   const fileName = childText(root, 'Name')
