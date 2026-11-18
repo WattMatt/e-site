@@ -38,24 +38,24 @@ export default async function ProgrammePage({ params, searchParams }: {
   params: Promise<{ id: string }>
   searchParams: Promise<{ programme?: string; module?: string }>
 }) {
-  if (!programmeEnabled()) return card('Programme', 'The programme module is not switched on yet.')
+  if (!programmeEnabled()) return card('Project Programme', 'The programme module is not switched on yet.')
 
   const id = (await params).id.toLowerCase()
   const sp = await searchParams
   const supabase = (await createClient()) as unknown as AnyClient
   const gate = await requireEffectiveRole(supabase, id, PROGRAMME_READ_ROLES)
-  if (!gate.ok) return card('Programme', "You do not have access to this project's programme.")
+  if (!gate.ok) return card('Project Programme', "You do not have access to this project's programme.")
 
   const programmeId = sp.programme ? sp.programme.toLowerCase() : undefined
   const module = sp.module === 'solar' ? ('solar' as const) : undefined
   const loaded = await loadProgrammeView(supabase, id, { programmeId, module })
-  if (!loaded.ok) return card('Programme', loaded.error, true)
+  if (!loaded.ok) return card('Project Programme', loaded.error, true)
 
   const roleCanEdit = PROGRAMME_WRITE_ROLES.includes(gate.role)
   if (!loaded.view) {
     // Module programmes are created elsewhere (P9): never offer the project form for them.
     if (module === 'solar') return card('Programme', 'No Solar programme yet.')
-    if (!roleCanEdit) return card('Programme', 'No programme yet.')
+    if (!roleCanEdit) return card('Project Programme', 'No programme yet.')
     return <CreateProgrammeForm projectId={id} defaultStart={await defaultStart(supabase, id)} />
   }
 

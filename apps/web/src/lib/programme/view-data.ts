@@ -51,7 +51,9 @@ export async function loadProgrammeView(
     } else if (selector.module === 'solar') {
       chosen = programmes.find((p) => p.kind === 'module' && p.module_key === 'solar')
     } else {
-      chosen = programmes.find((p) => p.kind === 'project')
+      // The project programme; without one, the first contractor programme (a module programme
+      // opens only through its own selector).
+      chosen = programmes.find((p) => p.kind === 'project') ?? programmes.find((p) => p.kind === 'contractor')
     }
     if (!chosen) return { ok: true, view: null, programmes }
 

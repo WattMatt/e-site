@@ -92,11 +92,11 @@ describe('Sidebar — Programme entry (dark behind the flag)', () => {
   it('is hidden by default and when the flag is off', () => {
     pathname = '/projects/p1/snags'
     render(<Sidebar role="owner" />)
-    expect(screen.queryByRole('link', { name: 'Programme' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Project Programme' })).toBeNull()
   })
   it('shows inside a project when programmeEnabled', () => {
     pathname = '/projects/p1/snags'
     render(<Sidebar role="owner" programmeEnabled />)
-    expect(screen.getByRole('link', { name: 'Programme' }).getAttribute('href')).toBe('/projects/p1/programme')
+    expect(screen.getByRole('link', { name: 'Project Programme' }).getAttribute('href')).toBe('/projects/p1/programme')
   })
 })

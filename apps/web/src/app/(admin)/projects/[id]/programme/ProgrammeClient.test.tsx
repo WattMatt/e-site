@@ -36,7 +36,8 @@ function api(over: Partial<ProgrammeStoreApi> = {}): ProgrammeStoreApi {
   return {
     state: v.state, version: VERSION, pending: false, stale: false, unsaved: false, error: null, offerReload: false,
     canUndo: true, canRedo: true, undoLabel: 'Add', redoLabel: null, schedule: scheduleFor(v.state),
-    newKey: vi.fn(() => 'n1-x'), keyIds: {}, recalculate: vi.fn(() => true), apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(), ...over,
+    newKey: vi.fn(() => 'n1-x'), keyIds: {}, recalculate: vi.fn(() => true), apply: vi.fn(() => true), undo: vi.fn(), redo: vi.fn(), reload: vi.fn(), clearError: vi.fn(),
+    settle: vi.fn(async () => ({ ok: true, error: null })), ...over,
   }
 }
 const renderClient = (a: ProgrammeStoreApi, canEdit = true, over: Partial<{ view: ProgrammeViewData; programmes: ProgrammeSummary[] }> = {}) => {
@@ -467,6 +468,11 @@ describe('ProgrammeClient: programme switcher', () => {
     fireEvent.change(within(toolbar()).getByRole('combobox', { name: 'Programme' }), { target: { value: 'other' } })
     expect(nav.push).toHaveBeenCalledWith('/projects/p/programme?programme=other')
   })
+  it('lists a contractor programme by its contractor label', () => {
+    renderClient(api(), true, { programmes: two })
+    const options = within(within(toolbar()).getByRole('combobox', { name: 'Programme' })).getAllByRole('option').map((o) => o.textContent)
+    expect(options).toEqual(['Main programme', 'X (contractor programme)'])
+  })
   it('is not offered with one', () => {
     renderClient(api(), true, { programmes: two.slice(0, 1) })
     expect(within(toolbar()).queryByRole('combobox', { name: 'Programme' })).toBeNull()
@@ -552,5 +558,44 @@ describe('ProgrammeClient: a baseline change refreshes the view, not the store',
       expect(screen.getByTestId('programme-timeline')).not.toBeNull()
       expect(within(screen.getByRole('grid', { name: 'Activities' })).getAllByRole('columnheader').length).toBe(7)
     })
+  })
+})
+
+describe('ProgrammeClient: MS Project import and new programmes', () => {
+  const emptyView = (): ProgrammeViewData => { const v = view(); return { ...v, state: { ...v.state, activities: [], dependencies: [] } as ProgrammeState } }
+  it('editors get "Import from MS Project" and "New programme…" in the toolbar; the import opens the dialog', () => {
+    renderClient(api())
+    expect(within(toolbar()).getByRole('button', { name: 'New programme…' })).toBeTruthy()
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'Import from MS Project' }))
+    expect(screen.getByRole('dialog', { name: 'Import from MS Project' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Import from MS Project' })).toBeNull()
+  })
+  it('an empty programme offers the import right away to an editor', () => {
+    const v = emptyView()
+    renderClient(api({ state: v.state, schedule: scheduleFor(v.state) }), true, { view: v })
+    fireEvent.click(within(screen.getByTestId('programme-empty')).getByRole('button', { name: 'Import from MS Project' }))
+    expect(screen.getByRole('dialog', { name: 'Import from MS Project' })).toBeTruthy()
+  })
+  it('read-only users see no import entry and no create form, even on an empty programme', () => {
+    const v = emptyView()
+    renderClient(api({ state: v.state, schedule: scheduleFor(v.state) }), false, { view: v })
+    expect(screen.queryByRole('button', { name: 'Import from MS Project' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New programme…' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /create programme/i })).toBeNull()
+  })
+  it('a Solar module programme offers no import', () => {
+    const v = view()
+    const state = { ...v.state, programme: { ...v.state.programme, kind: 'module', module_key: 'solar' } } as ProgrammeState
+    renderClient(api({ state, schedule: scheduleFor(state) }), true, { view: { ...v, state } })
+    expect(screen.queryByRole('button', { name: 'Import from MS Project' })).toBeNull()
+  })
+  it('"New programme…" opens the create form for a contractor programme', () => {
+    renderClient(api(), true, { programmes: [{ id: 'x', kind: 'project', name: 'Main programme', module_key: null, contractor_label: null }] })
+    fireEvent.click(within(toolbar()).getByRole('button', { name: 'New programme…' }))
+    const dialog = screen.getByRole('dialog', { name: 'New programme' })
+    // The project already has its own programme, so only a contractor programme can be made.
+    expect((within(dialog).getByLabelText('Our programme') as HTMLInputElement).disabled).toBe(true)
+    expect((within(dialog).getByLabelText('Contractor programme') as HTMLInputElement).checked).toBe(true)
   })
 })

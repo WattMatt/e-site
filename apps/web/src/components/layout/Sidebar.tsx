@@ -84,7 +84,7 @@ export function projectNav(id: string) {
     // Site capture is always about one project, so its single entry lives here
     // (E1, 2026-10-05) — never in the global footer.
     { href: `/projects/${id}/capture`,      label: 'Capture',     Icon: Camera,        exact: false },
-    { href: `/projects/${id}/programme`,    label: 'Programme',   Icon: ChartGantt,    exact: false },
+    { href: `/projects/${id}/programme`,    label: 'Project Programme', Icon: ChartGantt, exact: false },
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
     { href: `/projects/${id}/quality-control`, label: 'Quality Control', Icon: ShieldCheck, exact: false },
     { href: `/projects/${id}/diary`,        label: 'Site Diary',  Icon: BookOpen,      exact: false },

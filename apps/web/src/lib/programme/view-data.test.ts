@@ -42,6 +42,25 @@ describe('loadProgrammeView', () => {
     expect(JSON.parse(JSON.stringify(res.view))).toEqual(res.view)
   })
 
+  it('no project programme: a contractor programme opens by default (a module one never does)', async () => {
+    const tables = {
+      ...programmeTables({
+        'programme.programmes': [
+          programmeRow({ id: OTHER, kind: 'module', module_key: 'solar', name: 'Solar' }),
+          programmeRow({ kind: 'contractor', contractor_label: 'Saxby', name: 'Saxby programme' }),
+        ],
+      }),
+      'programme.baselines': [],
+    }
+    const { client } = fakeSupabase({ tables })
+    const res = await loadProgrammeView(client as never, PRJ, {})
+    if (!res.ok || !res.view) throw new Error('expected a view')
+    expect(res.view.state.programme.id).toBe(PROG)
+    const onlyModule = fakeSupabase({ tables: { ...tables, 'programme.programmes': [programmeRow({ id: OTHER, kind: 'module', module_key: 'solar', name: 'Solar' })] } })
+    const r2 = await loadProgrammeView(onlyModule.client as never, PRJ, {})
+    expect(r2.ok && r2.view).toBeNull()
+  })
+
   it('no active baseline: activeBaseline is null', async () => {
     const { client } = fakeSupabase({ tables: { ...programmeTables(), 'programme.baselines': [] } })
     const res = await loadProgrammeView(client as never, PRJ, {})

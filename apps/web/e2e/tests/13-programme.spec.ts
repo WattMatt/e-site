@@ -42,7 +42,7 @@ test.describe('programme (Gantt)', () => {
     await page.goto('/projects')
     await page.locator(`a[href="/projects/${PROJECT}"]`).first().click()
     await page.waitForURL(new RegExp(`/projects/${PROJECT}`))
-    await page.getByRole('link', { name: 'Programme', exact: true }).first().click()
+    await page.getByRole('link', { name: 'Project Programme', exact: true }).first().click()
     await page.waitForURL(/\/programme/)
 
     // Empty state → create.

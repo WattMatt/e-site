@@ -179,7 +179,15 @@ export interface GanttToolbarProps {
   onFilters: (f: Filters) => void
   groupBy: GroupBy
   onGroupBy: (g: GroupBy) => void
+  /** Opens the MS Project import (editors; not offered on a module programme). */
+  onImport?: () => void
+  /** Opens the create form for another programme (editors). */
+  onNewProgramme?: () => void
 }
+
+/** A contractor programme is listed by its contractor label. */
+export const programmeOptionLabel = (g: ProgrammeSummary) =>
+  g.kind === 'contractor' && g.contractor_label ? `${g.contractor_label} (contractor programme)` : g.name
 
 export function GanttToolbar(p: GanttToolbarProps) {
   const { store, canEdit } = p
@@ -209,6 +217,12 @@ export function GanttToolbar(p: GanttToolbarProps) {
               title="Re-run the schedule on the saved programme and store the result (after any save in progress)">Recalculate</button>
           </>
         )}
+        {canEdit && p.onImport && (
+          <button type="button" style={button} onClick={p.onImport} disabled={store.stale}>Import from MS Project</button>
+        )}
+        {canEdit && p.onNewProgramme && (
+          <button type="button" style={button} onClick={p.onNewProgramme}>New programme…</button>
+        )}
         {store.pending && <span style={dim}>Saving…</span>}
         {!store.pending && store.unsaved && <span style={dim}>Not saved</span>}
       </div>
@@ -219,7 +233,7 @@ export function GanttToolbar(p: GanttToolbarProps) {
             Programme
             <select aria-label="Programme" value={programmeId} style={field} disabled={store.pending || store.unsaved}
               onChange={(e) => router.push(`/projects/${p.projectId}/programme?programme=${e.target.value}`)}>
-              {p.programmes.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              {p.programmes.map((g) => <option key={g.id} value={g.id}>{programmeOptionLabel(g)}</option>)}
             </select>
           </label>
         )}

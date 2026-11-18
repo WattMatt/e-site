@@ -228,7 +228,15 @@ export interface ProgrammeStore {
   /** A view handed down by the page: taken when a reset was requested or it is newer. */
   offerView(view: ProgrammeViewData): boolean
   clearError(): void
+  /**
+   * Resolves once nothing is queued or sending. `ok` is false when the screen still holds
+   * changes the server has not confirmed (a refusal rolled them back, or the stale refusal
+   * kept them unsaved); `error` is the sentence shown.
+   */
+  settle(): Promise<SettleResult>
 }
+
+export interface SettleResult { ok: boolean; error: string | null }
 
 export function createProgrammeStore(
   view: ProgrammeViewData,
@@ -404,6 +412,22 @@ export function createProgrammeStore(
     clearError() {
       if (s.error !== null) set({ ...s, error: null, offerReload: false })
     },
+    settle() {
+      const result = (): SettleResult => {
+        if (s.stale) return { ok: false, error: PROGRAMME_STALE }
+        if (s.error !== null) return { ok: false, error: s.error }
+        return { ok: s.state === s.saved, error: s.state === s.saved ? null : SAVE_FAILED }
+      }
+      if (idle()) return Promise.resolve(result())
+      return new Promise<SettleResult>((resolve) => {
+        const listener = () => {
+          if (!idle()) return
+          listeners.delete(listener)
+          resolve(result())
+        }
+        listeners.add(listener)
+      })
+    },
   }
 }
 
@@ -418,6 +442,7 @@ export interface ProgrammeStoreApi extends ProgrammeStoreSnapshot {
   redo(): void
   reload(): void
   clearError(): void
+  settle(): Promise<SettleResult>
 }
 
 export function useProgrammeStore(initial: ProgrammeViewData, opts: { canEdit: boolean }): ProgrammeStoreApi {
@@ -444,7 +469,7 @@ export function useProgrammeStore(initial: ProgrammeViewData, opts: { canEdit: b
   const schedule = useMemo(() => scheduleFor(snap.state), [snap.state])
   return {
     ...snap, schedule, newKey: store.newKey,
-    apply: store.apply, recalculate: store.recalculate, undo: store.undo, redo: store.redo, clearError: store.clearError,
+    apply: store.apply, recalculate: store.recalculate, undo: store.undo, redo: store.redo, clearError: store.clearError, settle: store.settle,
     reload: () => { store.requestReset(); router.refresh() },
   }
 }

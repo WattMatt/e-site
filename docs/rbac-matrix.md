@@ -991,7 +991,8 @@ The screen is `/projects/[id]/programme` (P3); its nav entry shows only when `PR
 | Read any programme table | R | R | R | R | R | R | — |
 | **Programme screen** `/projects/[id]/programme` (`PROGRAMME_READ_ROLES`: every role except client_viewer; page gate `requireEffectiveRole`) | R | R | R | R | R | R | — |
 | Programme screen: editing controls (`canEdit` from the server: `ORG_WRITE_ROLES`; a solar module programme uses Solar Edit instead) | W | W | W | — | — | — | — |
-| Programme screen: create the project programme (empty state) | W | W | W | — | — | — | — |
+| Programme screen: create a programme: our programme or a contractor programme (empty state, and "New programme…" in the toolbar) | W | W | W | — | — | — | — |
+| Programme screen: **Import from MS Project** (MSPDI `.xml`, read and planned in the browser; saved through `saveProgrammeChangesAction` then `recordImportAction`; not offered on a module programme; the sidebar entry is "Project Programme") | W | W | W | — | — | — | — |
 | Read cost tables (`assignment_costs`, `baseline_costs`, `progress_period_costs`): by EFFECTIVE project role | R | R | R | — | — | — | — |
 | Read resource rates (`resource_rates`): by ORG role² | R | R | R | — | — | — | — |
 

@@ -12,13 +12,13 @@ import { MobileProjectBar } from './MobileProjectBar'
 describe('MobileProjectBar: Programme chip (dark behind the flag)', () => {
   it('is hidden when programmeEnabled is false or absent', () => {
     const { unmount } = render(<MobileProjectBar mvVisible={false} programmeEnabled={false} />)
-    expect(screen.queryByRole('link', { name: 'Programme' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Project Programme' })).toBeNull()
     unmount()
     render(<MobileProjectBar mvVisible={false} />)
-    expect(screen.queryByRole('link', { name: 'Programme' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Project Programme' })).toBeNull()
   })
   it('shows, pointing at the project programme, when programmeEnabled', () => {
     render(<MobileProjectBar mvVisible={false} programmeEnabled />)
-    expect(screen.getByRole('link', { name: 'Programme' }).getAttribute('href')).toBe('/projects/p1/programme')
+    expect(screen.getByRole('link', { name: 'Project Programme' }).getAttribute('href')).toBe('/projects/p1/programme')
   })
 })

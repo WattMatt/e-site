@@ -19,6 +19,8 @@ import { GanttTimeline } from './GanttTimeline'
 import { GanttToolbar } from './GanttToolbar'
 import { buildDisplayRows, filtersActive, GROUP_BY_WBS, NO_FILTERS, type Filters, type GroupBy } from './display-rows'
 import { NO_GRID_UI, type GridCommands, type GridUi, type TimelineCommands } from './bridge'
+import { ImportDialog } from './ImportDialog'
+import { CreateProgrammeForm } from './CreateProgrammeForm'
 
 export const SPLIT_MIN = 30
 export const SPLIT_MAX = 70
@@ -78,6 +80,11 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
   const gridCommands = useRef<GridCommands | null>(null)
   const timelineCommands = useRef<TimelineCommands | null>(null)
   const [gridUi, setGridUi] = useState<GridUi>(NO_GRID_UI)
+  const [importing, setImporting] = useState(false)
+  const [creating, setCreating] = useState(false)
+  // A module (Solar) programme is not filled from MS Project.
+  const canImport = canEdit && store.state.programme.kind !== 'module'
+  const empty = !store.state.activities.some((a) => !a.is_tombstoned)
 
   const structureLocked = filtersActive(filters) || groupBy !== GROUP_BY_WBS
   const rows = useMemo(
@@ -104,7 +111,23 @@ export function ProgrammeClient({ projectId, view, canEdit, programmes, userId }
       <div className="page-header"><h1 className="page-title">{store.state.programme.name}</h1></div>
       <GanttToolbar projectId={projectId} store={store} canEdit={canEdit} programmes={programmes} baselines={view.baselines}
         zoom={zoom} onZoom={setZoom} gridCommands={gridCommands} gridUi={gridUi} timelineCommands={timelineCommands}
-        columns={columns} filters={filters} onFilters={setFilters} groupBy={groupBy} onGroupBy={setGroupBy} />
+        columns={columns} filters={filters} onFilters={setFilters} groupBy={groupBy} onGroupBy={setGroupBy}
+        onImport={canImport ? () => setImporting(true) : undefined} onNewProgramme={canEdit ? () => setCreating(true) : undefined} />
+      {canImport && empty && (
+        <div className="card empty-state" data-testid="programme-empty" style={{ marginBottom: 12, padding: 16, display: 'grid', gap: 8 }}>
+          <p style={{ margin: 0 }}>This programme has no activities yet. Add them in the grid, or import a programme from MS Project.</p>
+          <div><button type="button" className="btn btn-primary" onClick={() => setImporting(true)}>Import from MS Project</button></div>
+        </div>
+      )}
+      {importing && canImport && <ImportDialog store={store} onClose={() => setImporting(false)} />}
+      {creating && canEdit && (
+        <div role="dialog" aria-modal="true" aria-label="New programme"
+          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.45)', padding: 16 }}>
+          <CreateProgrammeForm embedded projectId={projectId} defaultStart={store.state.programme.project_start}
+            hasProjectProgramme={store.state.programme.kind === 'project' || programmes.some((g) => g.kind === 'project')}
+            onCancel={() => setCreating(false)} />
+        </div>
+      )}
       {store.stale && (
         <div role="alert" style={banner('amber')} data-testid="programme-stale">
           <span>{PROGRAMME_STALE}{store.unsaved ? ' Your unsaved changes are still shown here; they were not saved.' : ''}</span>

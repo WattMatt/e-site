@@ -523,3 +523,39 @@ describe('a baseline change does not reset the store', () => {
     expect(store.getSnapshot().canUndo).toBe(true)
   })
 })
+
+describe('settle: waits for the saves in flight', () => {
+  it('resolves ok once the queued save answers', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([newActivity('n1', 'C')], 'Import x')
+    let done: { ok: boolean; error: string | null } | null = null
+    void store.settle().then((r) => { done = r })
+    await flush()
+    expect(done).toBeNull()
+    calls[0].resolve(ok(V(2), { n1: 'uuid-c' }))
+    await flush()
+    expect(done).toEqual({ ok: true, error: null })
+  })
+  it('resolves with the refusal when the save is refused (and the store rolled back)', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([newActivity('n1', 'C')], 'Import x')
+    const p = store.settle()
+    calls[0].resolve({ ok: false, error: 'No.' })
+    expect(await p).toEqual({ ok: false, error: 'No.' })
+    expect(names(store.getSnapshot().state)).toEqual(['A', 'B'])
+  })
+  it('reports the stale refusal as not saved', async () => {
+    const { save, calls } = deferredSave()
+    const store = createProgrammeStore(view(), { canEdit: true, save, newKey: keys() })
+    store.apply([newActivity('n1', 'C')], 'Import x')
+    const p = store.settle()
+    calls[0].resolve({ ok: false, error: STALE })
+    expect(await p).toEqual({ ok: false, error: STALE })
+  })
+  it('resolves at once when nothing is queued', async () => {
+    const store = createProgrammeStore(view(), { canEdit: true, save: vi.fn(), newKey: keys() })
+    expect(await store.settle()).toEqual({ ok: true, error: null })
+  })
+})

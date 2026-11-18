@@ -101,12 +101,12 @@ If the head is `00261` or higher, renumber the file above it. Re-run the `@verif
 
 1. Apply the P2 migration first and confirm it (section 1), then do the PostgREST `db_schema` PATCH. The screen reads through the programme tables and fails without both.
 2. In Vercel, add `PROGRAMME_ENABLED=true` for the **Preview** environment only (leave Production and Development unset). Redeploy the branch so the Preview build picks it up.
-3. Open the Preview URL, sign in as an owner/admin/project manager, and open the project. The sidebar now shows Programme.
+3. Open the Preview URL, sign in as an owner/admin/project manager, and open the project. The sidebar now shows Project Programme.
 4. Run the signed-in walk (below) against the Preview URL, then remove the Preview variable if the screen is not meant to stay on.
 
 ### The signed-in walk (`apps/web/e2e/tests/13-programme.spec.ts`)
 
-It starts at the projects list, opens the project, goes to Programme, creates a programme, adds three tasks, links them, checks the finish date moves, saves a baseline, drags the middle task, checks the baseline bar differs, undoes, then reloads and checks the changes persisted. It writes to the named project and removes nothing, so use a throwaway project that has **no programme yet**.
+It starts at the projects list, opens the project, goes to Project Programme, creates a programme, adds three tasks, links them, checks the finish date moves, saves a baseline, drags the middle task, checks the baseline bar differs, undoes, then reloads and checks the changes persisted. It writes to the named project and removes nothing, so use a throwaway project that has **no programme yet**.
 
 | Variable | Meaning |
 |---|---|
@@ -119,3 +119,45 @@ Run: `E2E_PROGRAMME_PROJECT_ID=<uuid> BASE_URL=<preview url> pnpm --filter web t
 On a phone (under 768 px) the grid shows Name, Start and Finish only and the timeline sits behind a Timeline toggle. The spec also resizes to 390 px and checks the page does not scroll sideways.
 
 The 5,000-activity store test only asserts its 2 s wall-clock limit when `PERF_STRICT` is set.
+
+## 5. Importing a main contractor's programme (P4a)
+
+A main contractor's MS Project programme is kept as its own **contractor programme** beside ours. Each new revision the contractor sends is imported over the last one, and E-Site shows what changed.
+
+### Exporting the XML from MS Project
+
+1. Open the contractor's `.mpp` in MS Project.
+2. **File → Save As**, choose **XML Format (\*.xml)**, and save. Accept the defaults if MS Project asks about the export map.
+3. E-Site reads only that `.xml` (the MSPDI format). An `.mpp` is refused with: "Open the programme in MS Project and use File → Save As → XML Format, then import the .xml file." The file is read in the browser; it is never uploaded.
+
+### The first import
+
+1. Project Programme → **New programme…** (or, on a project with no programme yet, the create form) → **Contractor programme**, with the contractor's name. One contractor programme per contractor name; the project's own programme stays separate.
+2. The empty programme offers **Import from MS Project**. Choose the `.xml`.
+3. The preview lists what will be added, the links, warnings grouped by kind, rows the file skipped (inactive tasks, blank rows), the data date the file's status date sets, and the file's own date range beside the finish E-Site works out with its own engine. A difference between the two is worth a look before you import: E-Site schedules the logic itself, it does not copy MS Project's dates.
+4. Give it a revision label (it defaults to the file name) and press **Import**.
+
+### Re-imports (each later revision)
+
+Open the contractor programme, **Import from MS Project**, choose the new `.xml`. A revision label is **required** on a re-import. Activities are matched by their MS Project task **UID**, never by name or row number, so renaming or moving a task in MS Project keeps its E-Site history.
+
+- **Matched UIDs** take the file's values for the fields an import owns (below). An identical file changes nothing and records the revision only.
+- **New UIDs** are added.
+- **UIDs missing from the file** are removed (tombstoned, never deleted silently) and listed under Removed. A removed task that still holds activities added in E-Site is kept, with a warning.
+- **A UID that comes back** is restored on its old row.
+- **Links between imported activities** are replaced to match the file. A link touching an activity added in E-Site is left alone (unless the contractor removed the other end).
+
+### What is kept, and what wins
+
+- **The file wins** for: the WBS outline (parent), WBS code, name, type (task, summary, milestone), duration, calendar, constraint and its date, deadline, and the file's actual start, actual finish and % complete when the file has them.
+- **E-Site keeps**: activity codes, anchors, everything on an activity added in E-Site, and progress recorded in E-Site when the file is silent (no actuals and 0 %). When the file reports different progress from E-Site's, the file's value is used and a warning says so. E-Site's remaining duration is cleared when the file changed the progress or duration, so a stale value cannot shorten a task.
+- **Calendars** from the file are stored as "MS Project: <name>" and never overwrite E-Site's own calendars; the file's project calendar becomes the programme's default.
+- **The data date** follows the file's status date when the file has one.
+- **The project start** is set from the file on the first import only.
+
+### History and undo
+
+- Every import writes a revision record (`programme.imports`) and an **active revision baseline** named after the revision label (or "Import <file> <date>" when a first import has none), so the bars show what moved since the last revision. If the import saves but the record fails, the screen says "The programme was imported, but the revision record was not saved." The import stands; only the history row is missing.
+- An import is one gesture: **Undo** takes it back (added rows removed, tombstoned rows restored). The revision baseline stays.
+
+Who may import: owner, admin and project manager (`docs/rbac-matrix.md`, "Import from MS Project"). Read-only roles see the imported programme but no import entry.
