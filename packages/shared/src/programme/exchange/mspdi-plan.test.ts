@@ -535,6 +535,19 @@ describe('planImport — progress recorded in E-Site (C1)', () => {
     expect(plan.warnings).toContain(
       'Task "A" (UID 1): E-Site\'s actual finish 2026-10-07 is before the file\'s actual start 2026-10-08, so it was cleared.',
     )
+    expect(plan.warnings.filter((w) => w.includes('finished in E-Site'))).toEqual([])
+  })
+
+  it('finished in E-Site but in progress in the file: E-Site\'s finish and 100 % are kept, with a warning (N2)', () => {
+    const before = progressedInEsite()
+    Object.assign(byUid(before, '1'), { actual_finish: '2026-10-07', percent_complete: 100, remaining_duration: null })
+    const plan = planImport(before, progressFile({ actualStart: '2026-10-05', percent: 50 }), keyMaker('p'))
+    const after = applyOps(before, plan.ops)
+    expect(byUid(after, '1')).toMatchObject({ actual_start: '2026-10-05', actual_finish: '2026-10-07', percent_complete: 100 })
+    expect(plan.ops).toEqual([])
+    expect(plan.warnings).toEqual([
+      'Task "A" (UID 1): finished in E-Site; the contractor\'s file shows it in progress (50 %). E-Site\'s finish was kept.',
+    ])
   })
 })
 

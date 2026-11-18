@@ -445,6 +445,17 @@ function mergeProgress(t: MspdiTask, existing: ActivityRow, desired: Desired, wa
     actual_finish: desired.actual_finish !== null,
     percent_complete: fileStarted || (desired.percent_complete as number) > 0,
   }
+  // Finished in E-Site, but the file shows the task started and not finished:
+  // E-Site's finish (and 100 %) is kept, never contradicted by the file's percent.
+  const filePercent = desired.percent_complete as number
+  // (A kept finish before the file's new start cannot stand; that case is cleared below.)
+  const keepFinish = existing.actual_finish !== null && desired.actual_start !== null && desired.actual_finish === null
+    && existing.actual_finish >= (desired.actual_start as string)
+  if (keepFinish) {
+    fileHas.actual_finish = false
+    fileHas.percent_complete = false
+    warnings.push(`${label(t)}: finished in E-Site; the contractor's file shows it in progress (${filePercent} %). E-Site's finish was kept.`)
+  }
   let progressChanged = false
   for (const f of ['actual_start', 'actual_finish', 'percent_complete'] as const) {
     const mine = existing[f]
@@ -458,6 +469,10 @@ function mergeProgress(t: MspdiTask, existing: ActivityRow, desired: Desired, wa
     if (esiteHad) {
       warnings.push(`${label(t)}: the contractor's file reports ${PROGRESS_LABEL[f]} ${desired[f]}; E-Site had ${mine}. The file's value was used.`)
     }
+  }
+  if (keepFinish && norm(existing.percent_complete) !== 100) {
+    desired.percent_complete = 100
+    progressChanged = true
   }
   // A kept E-Site actual that now contradicts the file's actual is cleared.
   const as = desired.actual_start as string | null
