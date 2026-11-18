@@ -23,6 +23,8 @@ import { filtersActive, GROUP_BY_WBS, NO_FILTERS, summaryOf, type Filters, type 
 import { BaselinesMenu } from './BaselinesMenu'
 import { STRUCTURE_LOCKED, type CommandsRef, type GridCommands, type GridUi, type TimelineCommands } from './bridge'
 
+export const NEW_PROGRAMME_WAIT = 'Wait for your changes to save before making a new programme.'
+
 const button: CSSProperties = {
   padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-panel)',
   color: 'var(--c-text)', fontSize: 12, cursor: 'pointer',
@@ -221,7 +223,8 @@ export function GanttToolbar(p: GanttToolbarProps) {
           <button type="button" style={button} onClick={p.onImport} disabled={store.stale}>Import from MS Project</button>
         )}
         {canEdit && p.onNewProgramme && (
-          <button type="button" style={button} onClick={p.onNewProgramme}>New programme…</button>
+          <button type="button" style={button} onClick={p.onNewProgramme} disabled={store.pending || store.unsaved}
+            title={store.pending || store.unsaved ? NEW_PROGRAMME_WAIT : undefined}>New programme…</button>
         )}
         {store.pending && <span style={dim}>Saving…</span>}
         {!store.pending && store.unsaved && <span style={dim}>Not saved</span>}

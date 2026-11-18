@@ -20,6 +20,7 @@ vi.mock('./use-programme-store', async (orig) => {
 import { ProgrammeClient } from './ProgrammeClient'
 import { saveBaselineAction } from '@/actions/programme.actions'
 import { STRUCTURE_LOCKED } from './bridge'
+import { NEW_PROGRAMME_WAIT } from './GanttToolbar'
 
 function view(): ProgrammeViewData {
   const t = programmeTables()
@@ -570,6 +571,16 @@ describe('ProgrammeClient: MS Project import and new programmes', () => {
     expect(screen.getByRole('dialog', { name: 'Import from MS Project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog', { name: 'Import from MS Project' })).toBeNull()
+  })
+  it('"New programme…" waits while a save is pending or changes are unsaved', () => {
+    renderClient(api({ unsaved: true }))
+    const b = within(toolbar()).getByRole('button', { name: 'New programme…' }) as HTMLButtonElement
+    expect(b.disabled).toBe(true)
+    expect(b.title).toBe(NEW_PROGRAMME_WAIT)
+  })
+  it('"New programme…" waits while a save is pending', () => {
+    renderClient(api({ pending: true }))
+    expect((within(toolbar()).getByRole('button', { name: 'New programme…' }) as HTMLButtonElement).disabled).toBe(true)
   })
   it('an empty programme offers the import right away to an editor', () => {
     const v = emptyView()
