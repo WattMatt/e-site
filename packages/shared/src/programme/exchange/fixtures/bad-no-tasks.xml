@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Project xmlns="http://schemas.microsoft.com/project">
+  <StartDate>2026-10-05T08:00:00</StartDate>
+  <Tasks>
+    <Task><UID>0</UID><ID>0</ID><Name>Empty</Name><OutlineLevel>0</OutlineLevel><Summary>1</Summary></Task>
+    <Task><UID>1</UID><ID>1</ID><IsNull>1</IsNull></Task>
+  </Tasks>
+</Project>
