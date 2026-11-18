@@ -19,21 +19,25 @@
  *   a link touching an E-Site activity is left alone.
  * - `project_start` is set only on a first import (no activity has ever
  *   carried an external_uid) or when it is empty.
- * - calendars: the project calendar and every calendar a task uses are
- *   reused by name (case-insensitive) or created; the project calendar
- *   becomes the programme default.
+ * - calendars: the project calendar and every calendar a task uses are named
+ *   "MS Project: <name>", so they never overwrite E-Site's seeded Site/Office
+ *   calendars; a re-import reuses them by that name (case-insensitive). The
+ *   project calendar becomes the programme default.
  * - parents are created before children (file order is outline order); a
  *   task kept under a skipped inactive summary goes under its nearest active
  *   ancestor, which the outline stack gives for free.
  * - an identical re-import produces no ops at all.
  *
  * Link lag calendar: `project`. MS Project computes link lag on the project
- * calendar by default (not the task calendar). Unverified against a real
- * file with mixed calendars.
+ * calendar by default (not the task calendar). OWED: confirm against a real
+ * contractor file with mixed calendars.
  *
- * Diff counting: a link whose (pred, succ, type) survives but whose lag
- * changes is updated in place, and counts once in `linksAdded` and once in
- * `linksRemoved` (the old link is gone, the new one is there).
+ * Diff counting:
+ * - a link whose (pred, succ, type) survives but whose lag, lag_unit or
+ *   lag_calendar differs is ONE in-place update, counted in `linksChanged`;
+ * - `sort_order` follows file order and is always written, but a move alone
+ *   is not a change: it is not listed in `changed[].fields`, and a row whose
+ *   only difference is its sort_order counts as unchanged.
  */
 import { dayNumber, fromDayNumber, type CalendarDate } from '../../lib/dates/calendar-date'
 import type { ActivityType, LagCalendar } from '../types'
@@ -47,6 +51,7 @@ export interface ImportDiff {
   removed: Array<{ uid: string; name: string }>
   linksAdded: number
   linksRemoved: number
+  linksChanged: number
   calendarChanged: boolean
   unchanged: number
 }
@@ -58,6 +63,7 @@ export interface ImportPlan {
 
 const NAME_MAX = 300
 const CALENDAR_NAME_MAX = 80
+const CALENDAR_PREFIX = 'MS Project: '
 const LAG_CALENDAR: LagCalendar = 'project'
 const MON_TO_FRI = [1, 2, 3, 4, 5]
 
@@ -89,7 +95,7 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   const warnings: string[] = []
   const ops: ProgrammeOp[] = []
   const diff: ImportDiff = {
-    added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, calendarChanged: false, unchanged: 0,
+    added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, unchanged: 0,
   }
 
   const byUid = new Map<string, ActivityRow>()
@@ -110,8 +116,9 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   for (const uid of usedUids) {
     const fc = fileCalendars.get(uid)
     if (!fc) continue
-    let name = cap(fc.name.trim() || `Calendar ${fc.uid}`, CALENDAR_NAME_MAX)
-    if (takenNames.has(name.toLowerCase())) name = cap(`${name} (UID ${fc.uid})`, CALENDAR_NAME_MAX)
+    const base = fc.name.trim() || `Calendar ${fc.uid}`
+    let name = cap(`${CALENDAR_PREFIX}${base}`, CALENDAR_NAME_MAX)
+    if (takenNames.has(name.toLowerCase())) name = cap(`${CALENDAR_PREFIX}${base} (UID ${fc.uid})`, CALENDAR_NAME_MAX)
     takenNames.add(name.toLowerCase())
     calendarRefs.set(uid, planCalendar(state, fc, name, existingByName.get(name.toLowerCase()) ?? null, m, newKey, calendarOps, warnings))
   }
@@ -200,10 +207,7 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
       matchedLinks.set(k, d)
       if (round2(d.lag) !== want.lag || d.lag_unit !== want.lag_unit || d.lag_calendar !== LAG_CALENDAR) {
         linkUpdates.push({ op: 'upsert_dependency', id: d.id, lag: want.lag, lag_unit: want.lag_unit, lag_calendar: LAG_CALENDAR })
-        if (round2(d.lag) !== want.lag || d.lag_unit !== want.lag_unit) {
-          diff.linksAdded++
-          diff.linksRemoved++
-        }
+        diff.linksChanged++
       }
       continue
     }
@@ -232,8 +236,8 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
     for (const f of IMPORT_FIELDS) {
       if (norm(existing[f]) !== norm(desired[f])) fields[f] = desired[f]
     }
-    const changedNames = Object.keys(fields)
-    if (changedNames.length > 0) ops.push({ op: 'upsert_activity', id: existing.id, fields: fields as ActivityFields })
+    if (Object.keys(fields).length > 0) ops.push({ op: 'upsert_activity', id: existing.id, fields: fields as ActivityFields })
+    const changedNames = Object.keys(fields).filter((f) => f !== 'sort_order')
     if (existing.is_tombstoned) diff.added.push({ uid: t.uid, name: desired.name as string })
     else if (changedNames.length > 0) diff.changed.push({ uid: t.uid, name: desired.name as string, fields: changedNames })
     else diff.unchanged++
@@ -296,6 +300,17 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   }
   for (const a of reDelete) {
     if (kept.has(a.id)) warnings.push(`"${a.name}" was restored so the activities under it could come back; it was kept because it still holds activities.`)
+  }
+  // delete_activity takes every link of the activity with it; say so for links to E-Site's own activities.
+  const deleting = new Set(deletions)
+  for (const d of state.dependencies) {
+    const pd = deleting.has(d.pred_id)
+    const sd = deleting.has(d.succ_id)
+    if (pd === sd) continue
+    const gone = byId.get(pd ? d.pred_id : d.succ_id) as ActivityRow
+    const other = byId.get(pd ? d.succ_id : d.pred_id)
+    if (!gone || !other || other.external_uid !== null || gone.external_uid === null) continue
+    warnings.push(`"${gone.name}" (UID ${gone.external_uid}) was removed by the contractor; its link to "${other.name}" was dropped.`)
   }
   for (const id of deletions) ops.push({ op: 'delete_activity', id })
 

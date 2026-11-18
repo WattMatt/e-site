@@ -74,7 +74,7 @@ describe('planImport — first import of small.xml', () => {
     expect(uids).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '12', '13', '14'])
     expect(plan.diff.added.map((a) => a.uid)).toEqual(uids)
     expect(plan.diff.added[5]).toEqual({ uid: '6', name: 'Install MB-1' })
-    expect(plan.diff).toMatchObject({ changed: [], removed: [], linksRemoved: 0, unchanged: 0, calendarChanged: true })
+    expect(plan.diff).toMatchObject({ changed: [], removed: [], linksRemoved: 0, linksChanged: 0, unchanged: 0, calendarChanged: true })
   })
 
   it('rebuilds the WBS outline, with sort_order in file order and wbs_code from WBS or OutlineNumber', () => {
@@ -119,16 +119,16 @@ describe('planImport — first import of small.xml', () => {
 
   it('maps the project calendar to the programme default and the task calendar to the task', () => {
     const def = state.calendars.find((c) => c.id === state.programme.default_calendar_id)
-    expect(def).toMatchObject({ name: 'Site 6-day', work_weekdays: [1, 2, 3, 4, 5, 6], hours_per_day: 8 })
+    expect(def).toMatchObject({ name: 'MS Project: Site 6-day', work_weekdays: [1, 2, 3, 4, 5, 6], hours_per_day: 8 })
     const ex = state.exceptions.filter((e) => e.calendar_id === def?.id)
     expect(ex.filter((e) => e.kind === 'non_work')).toHaveLength(20)
     expect(ex.find((e) => e.day === '2026-12-25')).toMatchObject({ kind: 'non_work', label: 'Year-end shutdown' })
     expect(ex.find((e) => e.day === '2026-11-01')).toMatchObject({ kind: 'work', label: 'Sunday catch-up' })
     const std = state.calendars.find((c) => c.id === byUid(state, '3').calendar_id)
-    expect(std).toMatchObject({ name: 'Standard', work_weekdays: [1, 2, 3, 4, 5] })
+    expect(std).toMatchObject({ name: 'MS Project: Standard', work_weekdays: [1, 2, 3, 4, 5] })
     expect(state.exceptions.filter((e) => e.calendar_id === std?.id).map((e) => e.day)).toEqual(['2026-09-24'])
     // The resource calendar is not used by any task, so it is not created.
-    expect(state.calendars.map((c) => c.name).sort()).toEqual(['Office', 'Site', 'Site 6-day', 'Standard'])
+    expect(state.calendars.map((c) => c.name).sort()).toEqual(['MS Project: Site 6-day', 'MS Project: Standard', 'Office', 'Site'])
   })
 
   it('sets project_start from the file on a first import; scheduling rules stay msp', () => {
@@ -195,6 +195,8 @@ function importedWithEsiteWork(): ProgrammeState {
   const distribution = byUid(s, '4').id
   s.activities.push(activityRow('ESITE', { parent_id: distribution, name: 'Client walk-through', sort_order: null }))
   s.dependencies.push(dependencyRow('ESITE-LINK', byUid(s, '12').id, 'ESITE'))
+  // E-Site's activity also waits on UID 13, which the revision removes.
+  s.dependencies.push(dependencyRow('ESITE-LINK-13', byUid(s, '13').id, 'ESITE'))
   s.fieldUpdateActivityIds = [byUid(s, '13').id]
   return s
 }
@@ -207,24 +209,24 @@ describe('planImport — re-import of a revised file', () => {
   it('gives the exact diff', () => {
     expect(plan.diff).toEqual({
       added: [{ uid: '15', name: 'Commission' }],
-      // Removing UID 13 moves Handover up one row in the file.
-      changed: [
-        { uid: '6', name: 'Install MB-1 and glands', fields: ['name'] },
-        { uid: '14', name: 'Handover', fields: ['sort_order'] },
-      ],
+      // Removing UID 13 moves Handover up one row; a sort_order move alone is not a change.
+      changed: [{ uid: '6', name: 'Install MB-1 and glands', fields: ['name'] }],
       removed: [{ uid: '13', name: 'Cure plinth' }],
-      // added: 12→14 and 14→15; changed lag 8→9 counts once each way.
-      linksAdded: 3,
-      // removed: 12→13 and 13→14; changed lag 8→9.
-      linksRemoved: 3,
+      linksAdded: 2, // 12→14, 14→15
+      linksRemoved: 2, // 12→13, 13→14
+      linksChanged: 1, // 8→9 lag 0 → 2
       calendarChanged: false,
-      unchanged: 9,
+      unchanged: 10,
     })
   })
 
   it('emits only the ops the change needs', () => {
     const kinds = plan.ops.map((o) => o.op)
     expect(kinds.filter((k) => k === 'upsert_activity')).toHaveLength(3)
+    // Handover still gets its new sort_order, even though the diff does not list it.
+    expect(plan.ops).toContainEqual({ op: 'upsert_activity', id: byUid(before, '14').id, fields: { sort_order: 11 } })
+    const lagChange = plan.ops.filter((o) => o.op === 'upsert_dependency' && o.id !== undefined)
+    expect(lagChange).toHaveLength(1)
     expect(kinds.filter((k) => k === 'delete_activity')).toHaveLength(1)
     expect(kinds).not.toContain('set_programme')
     expect(kinds).not.toContain('upsert_calendar')
@@ -241,7 +243,7 @@ describe('planImport — re-import of a revised file', () => {
   })
 
   it('replaces the links between imported activities to match the file', () => {
-    const live = after.dependencies.filter((d) => d.id !== 'ESITE-LINK')
+    const live = after.dependencies.filter((d) => !d.id.startsWith('ESITE'))
     const links = live.map((d) => `${uidOf(after, d.pred_id)}>${uidOf(after, d.succ_id)} ${d.type} ${d.lag}`)
     expect(links.sort()).toEqual([
       '12>14 FS 0', '14>15 FS 0', '2>3 FS 0', '3>6 SS 1', '6>7 FF 2', '6>8 FS -1', '7>8 SF 50', '8>9 FS 2', '9>12 FS 6',
@@ -252,6 +254,11 @@ describe('planImport — re-import of a revised file', () => {
     expect(JSON.stringify(plan.ops)).not.toContain('ESITE')
     expect(after.activities.find((a) => a.id === 'ESITE')).toEqual(before.activities.find((a) => a.id === 'ESITE'))
     expect(after.dependencies.find((d) => d.id === 'ESITE-LINK')).toBeDefined()
+  })
+
+  it('warns when a removed activity takes a link to an E-Site activity with it', () => {
+    expect(after.dependencies.find((d) => d.id === 'ESITE-LINK-13')).toBeUndefined()
+    expect(plan.warnings).toContain('"Cure plinth" (UID 13) was removed by the contractor; its link to "Client walk-through" was dropped.')
   })
 
   it('leaves project_start alone on a re-import', () => {
@@ -274,11 +281,12 @@ describe('planImport — re-import of a revised file', () => {
     expect(restored.activities.find((a) => a.id === gone.id)?.is_tombstoned).toBe(false)
     expect(schedule(restored).ok).toBe(true)
     // 12 → 14 joins two activities that are both still in the file; it goes with a delete_dependency.
-    const links = restored.dependencies.filter((d) => d.id !== 'ESITE-LINK')
+    const links = restored.dependencies.filter((d) => !d.id.startsWith('ESITE'))
       .map((d) => `${uidOf(restored, d.pred_id)}>${uidOf(restored, d.succ_id)}`)
     expect(links).not.toContain('12>14')
     expect(links.sort()).toEqual(['12>13', '13>14', '2>3', '3>6', '6>7', '6>8', '7>8', '8>9', '9>12'])
-    expect(back.diff.linksRemoved).toBe(3) // 12→14, 14→15, and the 8→9 lag change
+    expect(back.diff.linksRemoved).toBe(2) // 12→14, 14→15
+    expect(back.diff.linksChanged).toBe(1) // 8→9 lag back to 0
     expect(back.ops.filter((o) => o.op === 'delete_dependency')).toHaveLength(1)
   })
 })
@@ -301,13 +309,29 @@ describe('planImport — a removed summary that still holds an E-Site activity',
   })
 })
 
+describe('planImport — calendars never overwrite E-Site calendars', () => {
+  it('a file calendar called "Site" becomes "MS Project: Site" and is reused by that name', () => {
+    const xml = wrap(`<CalendarUID>1</CalendarUID><Calendars>${weekCal('1', 'Site', [2, 3, 4, 5, 6])}</Calendars><Tasks>
+      <Task><UID>1</UID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration></Task></Tasks>`)
+    const m = ok(parseMspdiText(xml))
+    const start = emptyState()
+    const { state } = importInto(start, m)
+    expect(state.calendars.find((c) => c.id === 'SITE')).toEqual(start.calendars.find((c) => c.id === 'SITE'))
+    const def = state.calendars.find((c) => c.id === state.programme.default_calendar_id)
+    expect(def).toMatchObject({ name: 'MS Project: Site', work_weekdays: [1, 2, 3, 4, 5] })
+    const again = planImport(state, m, keyMaker('c'))
+    expect(again.ops).toEqual([])
+    expect(again.diff.calendarChanged).toBe(false)
+  })
+})
+
 describe('planImport — identical re-import', () => {
   it('gives no ops and counts every task unchanged', () => {
     const first = importInto(emptyState(), small()).state
     const again = planImport(first, small(), keyMaker('z'))
     expect(again.ops).toEqual([])
     expect(again.diff).toEqual({
-      added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, calendarChanged: false, unchanged: 12,
+      added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, unchanged: 12,
     })
   })
 })
