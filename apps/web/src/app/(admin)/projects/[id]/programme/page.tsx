@@ -15,6 +15,8 @@ import { ProgrammeClient } from './ProgrammeClient'
 import { CreateProgrammeForm } from './CreateProgrammeForm'
 
 export const dynamic = 'force-dynamic'
+/** The programme's server actions (one save_changes per gesture, an MS Project import is one) run inside this page's function. */
+export const maxDuration = 60
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>

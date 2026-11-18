@@ -150,14 +150,27 @@ Open the contractor programme, **Import from MS Project**, choose the new `.xml`
 ### What is kept, and what wins
 
 - **The file wins** for: the WBS outline (parent), WBS code, name, type (task, summary, milestone), duration, calendar, constraint and its date, deadline, and the file's actual start, actual finish and % complete when the file has them.
-- **E-Site keeps**: activity codes, anchors, everything on an activity added in E-Site, and progress recorded in E-Site when the file is silent (no actuals and 0 %). When the file reports different progress from E-Site's, the file's value is used and a warning says so. E-Site's remaining duration is cleared when the file changed the progress or duration, so a stale value cannot shorten a task.
+- **E-Site keeps**: activity codes, anchors, everything on an activity added in E-Site, and progress recorded in E-Site when the file is silent (no actuals and 0 %). When the file reports different progress from E-Site's, the file's value is used and a warning says so. One exception: an activity **finished in E-Site** that the file shows started but not finished keeps E-Site's actual finish and 100 %, with the warning "<task>: finished in E-Site; the contractor's file shows it in progress (<n> %). E-Site's finish was kept." E-Site's remaining duration is cleared when the file changed the progress or duration, so a stale value cannot shorten a task.
 - **Calendars** from the file are stored as "MS Project: <name>" and never overwrite E-Site's own calendars; the file's project calendar becomes the programme's default.
 - **The data date** follows the file's status date when the file has one.
-- **The project start** is set from the file on the first import only.
+- **The project start** is set from the file on the first import only. The preview shows the move ("Project start: from → to"), and says so when the programme already has activities made in E-Site: they stay, and work without a constraint moves with the new start.
 
 ### History and undo
 
-- Every import writes a revision record (`programme.imports`) and an **active revision baseline** named after the revision label (or "Import <file> <date>" when a first import has none), so the bars show what moved since the last revision. If the import saves but the record fails, the screen says "The programme was imported, but the revision record was not saved." The import stands; only the history row is missing.
+- Every import writes a revision record (`programme.imports`) and an **active revision baseline** named after the revision label (or "Import <file> <date>" when a first import has none), so the bars show what moved since the last revision. If the import saves but the record fails, the screen says "The programme was imported, but the revision record was not saved." The import stands; only the history row is missing. The dialog then offers **Record the revision again**, which re-sends the same summary and label and never applies the file a second time.
 - An import is one gesture: **Undo** takes it back (added rows removed, tombstoned rows restored). The revision baseline stays.
+
+### How large a file one import can take (measured 2026-11-18)
+
+An import is ONE `programme.save_changes` call, and it runs under `authenticated`'s 8 s `statement_timeout`. Measured against production inside rolled-back transactions (scratch assertion: an org-owner fixture, a fresh contractor programme, generated ops: one summary per ten activities, FS links, the computed cache for every activity):
+
+| Activities | Links | `save_changes` |
+|---|---|---|
+| 1,000 | 1,500 | 3.3 s |
+| 1,500 | 2,250 | 6.2 s |
+| 2,000 | 3,000 | 7.9 s and 8.5 s on two runs; with an 8 s cap the first run was cancelled (57014) |
+| 2,000 | 3,000, no computed cache | 5.8 s |
+
+So **a programme of about 1,500 activities fits; 2,000 does not**. Time grows faster than the row count. A refused import is safe (the store rolls back and the screen shows the refusal), but the owner cannot import a file that large until the save is made faster or split. That is an owner decision, recorded in `.superpowers/sdd/2026-11-18-programme-p4a-mspdi-import/final-fix-report.md`. Count the tasks in the contractor's file before relying on it. The page sets `maxDuration = 60`, so the function limit is not the constraint; the database statement timeout is.
 
 Who may import: owner, admin and project manager (`docs/rbac-matrix.md`, "Import from MS Project"). Read-only roles see the imported programme but no import entry.
