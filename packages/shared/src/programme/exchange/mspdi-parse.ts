@@ -77,6 +77,13 @@ export interface MspdiTask {
 export interface MspdiProgramme {
   name: string
   startDate: CalendarDate
+  /**
+   * The first day of remaining work, from `<StatusDate>`: a status time in the
+   * afternoon (MS Project's default is the day's finish, 17:00) means that day
+   * is done, so the data date is the next day; a morning or midnight time means
+   * the day itself. Null when the file has no (readable) status date.
+   */
+  statusDate: CalendarDate | null
   minutesPerDay: number
   daysPerWeek: number
   daysPerMonth: number
@@ -157,6 +164,14 @@ function finishDatePart(raw: string | null): CalendarDate | null {
   const d = datePart(raw)
   if (d === null || raw === null) return d
   return /^T00:00(:00(\.0+)?)?$/.test(raw.slice(10)) ? addCalendarDays(d, -1) : d
+}
+
+/** `<StatusDate>` → the engine's data date (see `MspdiProgramme.statusDate`). */
+function statusDatePart(raw: string | null): CalendarDate | null {
+  const d = datePart(raw)
+  if (d === null || raw === null) return null
+  const hour = Number(raw.slice(11, 13))
+  return Number.isFinite(hour) && hour >= 12 ? addCalendarDays(d, 1) : d
 }
 
 const ISO_DURATION =
@@ -703,6 +718,7 @@ export function parseMspdi(doc: Document): MspdiParseResult {
   return {
     name,
     startDate,
+    statusDate: statusDatePart(childText(root, 'StatusDate')),
     minutesPerDay,
     daysPerWeek: round2(minutesPerWeek / minutesPerDay),
     daysPerMonth,

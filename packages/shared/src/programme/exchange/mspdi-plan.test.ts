@@ -197,7 +197,9 @@ function importedWithEsiteWork(): ProgrammeState {
   s.dependencies.push(dependencyRow('ESITE-LINK', byUid(s, '12').id, 'ESITE'))
   // E-Site's activity also waits on UID 13, which the revision removes.
   s.dependencies.push(dependencyRow('ESITE-LINK-13', byUid(s, '13').id, 'ESITE'))
+  // A field update reported on UID 13 in E-Site, and a code a planner gave it.
   s.fieldUpdateActivityIds = [byUid(s, '13').id]
+  byUid(s, '13').code = 'E-13'
   return s
 }
 
@@ -216,6 +218,7 @@ describe('planImport — re-import of a revised file', () => {
       linksRemoved: 2, // 12→13, 13→14
       linksChanged: 1, // 8→9 lag 0 → 2
       calendarChanged: false,
+      dataDate: null,
       unchanged: 10,
     })
   })
@@ -237,9 +240,12 @@ describe('planImport — re-import of a revised file', () => {
   })
 
   it('tombstones the removed task and keeps its field update', () => {
-    const gone = after.activities.find((a) => a.external_uid === '13')
-    expect(gone?.is_tombstoned).toBe(true)
-    expect(after.fieldUpdateActivityIds).toContain(gone?.id)
+    const id = byUid(before, '13').id
+    expect(plan.ops).toContainEqual({ op: 'delete_activity', id })
+    expect(plan.ops.some((o) => o.op === 'upsert_activity' && o.id === id)).toBe(false)
+    // Same row, still there, tombstoned, with its E-Site data on it.
+    const gone = after.activities.find((a) => a.id === id)
+    expect(gone).toMatchObject({ is_tombstoned: true, external_uid: '13', code: 'E-13' })
   })
 
   it('replaces the links between imported activities to match the file', () => {
@@ -294,6 +300,9 @@ describe('planImport — re-import of a revised file', () => {
 describe('planImport — a removed summary that still holds an E-Site activity', () => {
   it('is kept with a warning instead of being refused', () => {
     const before = importedWithEsiteWork()
+    // A file link from Distribution (UID 4) to Snag walk (UID 12), and one from E-Site's activity to Distribution.
+    before.dependencies.push(dependencyRow('L4-12', byUid(before, '4').id, byUid(before, '12').id))
+    before.dependencies.push(dependencyRow('ESITE-TO-4', 'ESITE', byUid(before, '4').id, { type: 'SS' }))
     // Drop "Distribution" (UID 4) and everything under it.
     let x = smallXml
     for (const uid of ['4', '5', '6', '7', '8', '9']) x = x.replace(new RegExp(`<Task>\\s*<UID>${uid}</UID>[\\s\\S]*?</Task>`), '')
@@ -306,6 +315,14 @@ describe('planImport — a removed summary that still holds an E-Site activity',
       'Task "Distribution" (UID 4) is no longer in the file, but it holds activities added in E-Site, so it was kept. Move them and delete it.',
     )
     expect(after.activities.find((a) => a.id === 'ESITE')?.parent_id).toBe(byUid(after, '4').id)
+    // The kept summary loses its link to another imported activity (the file no longer has it)…
+    expect(plan.ops).toContainEqual({ op: 'delete_dependency', id: 'L4-12' })
+    expect(after.dependencies.find((d) => d.id === 'L4-12')).toBeUndefined()
+    // …3>6, 6>7, 6>8, 7>8, 8>9, 9>12 go with the deleted activities, plus 4>12.
+    expect(plan.diff.linksRemoved).toBe(7)
+    // …but its link to the E-Site activity is E-Site's and stays.
+    expect(after.dependencies.find((d) => d.id === 'ESITE-TO-4')).toBeDefined()
+    expect(JSON.stringify(plan.ops)).not.toContain('ESITE')
   })
 })
 
@@ -331,7 +348,7 @@ describe('planImport — identical re-import', () => {
     const again = planImport(first, small(), keyMaker('z'))
     expect(again.ops).toEqual([])
     expect(again.diff).toEqual({
-      added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, unchanged: 12,
+      added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, dataDate: null, unchanged: 12,
     })
   })
 })
@@ -425,3 +442,239 @@ describe('planImport — 5,000 tasks', () => {
 // Type-level guard: the op list is the persistence op type.
 const _typed: (s: ProgrammeState, m: MspdiProgramme) => ProgrammeOp[] = (s, m) => planImport(s, m, keyMaker()).ops
 void _typed
+
+
+// ----------------------------------------------------------------- fix round 1
+
+/** A one-task file (5 days, Mon–Fri) plus a successor, with optional progress and status date. */
+function progressFile(o: { actualStart?: string; actualFinish?: string; percent?: number; duration?: string; status?: string } = {}) {
+  const head = `<StartDate>2026-10-05T08:00:00</StartDate>${o.status ? `<StatusDate>${o.status}</StatusDate>` : ''}`
+  return ok(parseMspdiText(wrap(`<CalendarUID>1</CalendarUID><Calendars>${MON_FRI_XML}</Calendars><Tasks>
+    <Task><UID>1</UID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>${o.duration ?? 'PT40H0M0S'}</Duration>
+      <Start>2026-10-05T08:00:00</Start><Finish>2026-10-09T17:00:00</Finish>
+      ${o.actualStart ? `<ActualStart>${o.actualStart}T08:00:00</ActualStart>` : ''}
+      ${o.actualFinish ? `<ActualFinish>${o.actualFinish}T17:00:00</ActualFinish>` : ''}
+      <PercentComplete>${o.percent ?? 0}</PercentComplete></Task>
+    <Task><UID>2</UID><Name>B</Name><OutlineLevel>1</OutlineLevel><Duration>PT24H0M0S</Duration>
+      <Start>2026-10-12T08:00:00</Start><Finish>2026-10-14T17:00:00</Finish>
+      <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink></Task>
+  </Tasks>`, head)))
+}
+/** First import, then the progress E-Site recorded on A through a field update: started 05-Oct, 40 %, 1 day left, data date 08-Oct. */
+function progressedInEsite(): ProgrammeState {
+  const s = importInto(emptyState(), progressFile()).state
+  Object.assign(byUid(s, '1'), { actual_start: '2026-10-05', percent_complete: 40, remaining_duration: 1 })
+  s.programme.data_date = '2026-10-08'
+  s.fieldUpdateActivityIds = [byUid(s, '1').id]
+  return s
+}
+
+describe('planImport — progress recorded in E-Site (C1)', () => {
+  it('a file with no progress never wipes E-Site progress (the reviewer\'s probe)', () => {
+    const before = progressedInEsite()
+    const plan = planImport(before, progressFile(), keyMaker('p'))
+    expect(plan.ops).toEqual([])
+    expect(plan.diff.unchanged).toBe(2)
+    expect(plan.warnings).toEqual([])
+    const after = applyOps(before, plan.ops)
+    expect(byUid(after, '1')).toMatchObject({ actual_start: '2026-10-05', percent_complete: 40, remaining_duration: 1 })
+    const r = schedule(after)
+    expect(r.ok).toBe(true)
+    // 1 day left from the data date: A finishes 08-Oct, B runs 09-Oct … 13-Oct.
+    expect(r.activities.get(byUid(after, '1').id)?.earlyFinish).toBe('2026-10-08')
+    expect(r.activities.get(byUid(after, '2').id)?.earlyStart).toBe('2026-10-09')
+  })
+
+  it('progress in the file wins, with a warning naming both values, and the stale remaining duration is cleared', () => {
+    const before = progressedInEsite()
+    const plan = planImport(before, progressFile({ actualStart: '2026-10-06', percent: 20 }), keyMaker('p'))
+    const a = byUid(before, '1')
+    expect(plan.ops).toEqual([{
+      op: 'upsert_activity', id: a.id, fields: { actual_start: '2026-10-06', percent_complete: 20, remaining_duration: null },
+    }])
+    expect(plan.warnings).toEqual([
+      'Task "A" (UID 1): the contractor\'s file reports actual start 2026-10-06; E-Site had 2026-10-05. The file\'s value was used.',
+      'Task "A" (UID 1): the contractor\'s file reports percent complete 20; E-Site had 40. The file\'s value was used.',
+      'Task "A" (UID 1): E-Site\'s remaining duration of 1 day was cleared because the file reports progress; it is now worked out from the actual dates.',
+    ])
+    expect(plan.diff.changed).toEqual([{ uid: '1', name: 'A', fields: ['actual_start', 'percent_complete', 'remaining_duration'] }])
+    expect(schedule(applyOps(before, plan.ops)).ok).toBe(true)
+  })
+
+  it('a file value equal to E-Site\'s gives no warning; an actual finish from the file completes the task', () => {
+    const before = progressedInEsite()
+    const plan = planImport(before, progressFile({ actualStart: '2026-10-05', actualFinish: '2026-10-07', percent: 100 }), keyMaker('p'))
+    expect(plan.ops).toEqual([{
+      op: 'upsert_activity', id: byUid(before, '1').id,
+      fields: { actual_finish: '2026-10-07', percent_complete: 100, remaining_duration: null },
+    }])
+    expect(plan.warnings.filter((w) => w.includes('actual start'))).toEqual([])
+  })
+
+  it('a duration change clears a stale remaining duration but keeps the E-Site actuals', () => {
+    const before = progressedInEsite()
+    const plan = planImport(before, progressFile({ duration: 'PT80H0M0S' }), keyMaker('p'))
+    expect(plan.ops).toEqual([{
+      op: 'upsert_activity', id: byUid(before, '1').id, fields: { original_duration: 10, remaining_duration: null },
+    }])
+    expect(plan.warnings).toEqual([
+      'Task "A" (UID 1): E-Site\'s remaining duration of 1 day was cleared because the file changed the duration; it is now worked out from the actual dates.',
+    ])
+    const after = applyOps(before, plan.ops)
+    expect(byUid(after, '1')).toMatchObject({ actual_start: '2026-10-05', percent_complete: 40, remaining_duration: null })
+    // 10 days from 05-Oct with 3 worked by the data date: 7 left from 08-Oct → finishes 16-Oct.
+    expect(schedule(after).activities.get(byUid(after, '1').id)?.earlyFinish).toBe('2026-10-16')
+  })
+
+  it('an actual finish kept from E-Site that would precede the file\'s new actual start is dropped, with a warning', () => {
+    const before = progressedInEsite()
+    Object.assign(byUid(before, '1'), { actual_finish: '2026-10-07', percent_complete: 100, remaining_duration: null })
+    const plan = planImport(before, progressFile({ actualStart: '2026-10-08', percent: 50 }), keyMaker('p'))
+    const after = applyOps(before, plan.ops)
+    expect(byUid(after, '1')).toMatchObject({ actual_start: '2026-10-08', actual_finish: null, percent_complete: 50 })
+    expect(plan.warnings).toContain(
+      'Task "A" (UID 1): E-Site\'s actual finish 2026-10-07 is before the file\'s actual start 2026-10-08, so it was cleared.',
+    )
+  })
+})
+
+describe('planImport — StatusDate becomes the data date (I2)', () => {
+  it('sets data_date and shows it in the diff; an identical re-import leaves it', () => {
+    const m = progressFile({ actualStart: '2026-10-05', percent: 40, status: '2026-10-07T17:00:00' })
+    const { plan, state } = importInto(emptyState(), m)
+    expect(state.programme.data_date).toBe('2026-10-08')
+    expect(plan.diff.dataDate).toEqual({ from: null, to: '2026-10-08' })
+    const again = planImport(state, m, keyMaker('s'))
+    expect(again.ops).toEqual([])
+    expect(again.diff.dataDate).toBeNull()
+  })
+
+  it('a progressed file schedules to its own dates (work not done by the status date moves after it)', () => {
+    // A finished 07-Oct; the status date is Mon 12-Oct (end of day), so B (3 days, not started) runs Tue 13 … Thu 15-Oct,
+    // as MS Project shows it. Without the data date B would start 08-Oct.
+    const m = progressFile({ actualStart: '2026-10-05', actualFinish: '2026-10-07', percent: 100, status: '2026-10-12T17:00:00' })
+    const { state } = importInto(emptyState(), m)
+    const r = schedule(state)
+    expect(r.ok).toBe(true)
+    expect(r.activities.get(byUid(state, '1').id)?.earlyFinish).toBe('2026-10-07')
+    expect(r.activities.get(byUid(state, '2').id)).toMatchObject({ earlyStart: '2026-10-13', earlyFinish: '2026-10-15' })
+  })
+
+  it('a later status date moves the data date and says so', () => {
+    const first = importInto(emptyState(), progressFile({ status: '2026-10-07T17:00:00' })).state
+    const p = planImport(first, progressFile({ status: '2026-10-14T17:00:00' }), keyMaker('s'))
+    expect(p.ops).toContainEqual({ op: 'set_programme', fields: { data_date: '2026-10-15' } })
+    expect(p.diff.dataDate).toEqual({ from: '2026-10-08', to: '2026-10-15' })
+  })
+})
+
+describe('planImport — planner edits on an imported activity before a re-import (I3)', () => {
+  it('imported fields follow the file and show in the diff; codes and progress survive', () => {
+    const before = importInto(emptyState(), small()).state
+    const six = byUid(before, '6')
+    Object.assign(six, {
+      name: 'Install MB-1 (WM wording)', original_duration: 7, code: 'WM-6',
+      actual_start: '2026-10-08', percent_complete: 30, remaining_duration: 4,
+    })
+    before.codeTypes.push({ id: 'CT', programme_id: 'P', name: 'Area', sort_order: null })
+    before.codeValues.push({ id: 'CV', code_type_id: 'CT', programme_id: 'P', value: 'North', description: null, colour: null, organisation_tag: null, user_tag: null })
+    before.activityCodes.push({ activity_id: six.id, code_type_id: 'CT', code_value_id: 'CV', programme_id: 'P' })
+    before.fieldUpdateActivityIds = [six.id]
+
+    const plan = planImport(before, small(), keyMaker('e'))
+    expect(plan.diff.changed).toEqual([
+      { uid: '6', name: 'Install MB-1', fields: ['name', 'original_duration', 'remaining_duration'] },
+    ])
+    const after = applyOps(before, plan.ops)
+    expect(byUid(after, '6')).toMatchObject({
+      name: 'Install MB-1', original_duration: 5, remaining_duration: null,
+      code: 'WM-6', actual_start: '2026-10-08', percent_complete: 30,
+    })
+    expect(after.activityCodes).toEqual(before.activityCodes)
+    expect(schedule(after).ok).toBe(true)
+  })
+})
+
+describe('planImport — a UID returning under a removed E-Site activity (I4)', () => {
+  it('never names the E-Site activity; the UID stays removed with a warning', () => {
+    const s = importInto(emptyState(), small()).state
+    // A planner moved Snag walk (UID 12) under an E-Site group, then removed both.
+    s.activities.push(activityRow('EGROUP', { name: 'WM snag group', type: 'summary', original_duration: 0, is_tombstoned: true }))
+    Object.assign(byUid(s, '12'), { parent_id: 'EGROUP', is_tombstoned: true })
+    s.dependencies = s.dependencies.filter((d) => d.pred_id !== byUid(s, '12').id && d.succ_id !== byUid(s, '12').id)
+    const plan = planImport(s, small(), keyMaker('g'))
+    expect(JSON.stringify(plan.ops)).not.toContain('EGROUP')
+    expect(plan.ops.some((o) => 'id' in o && o.id === byUid(s, '12').id)).toBe(false)
+    expect(plan.warnings).toContain(
+      'Task "Snag walk" (UID 12) returned under a removed E-Site activity ("WM snag group"), which an import cannot restore, so it was left removed. Restore "WM snag group" in E-Site and import again.',
+    )
+    const after = applyOps(s, plan.ops)
+    expect(after.activities.find((a) => a.id === 'EGROUP')).toEqual(s.activities.find((a) => a.id === 'EGROUP'))
+    expect(byUid(after, '12').is_tombstoned).toBe(true)
+    expect(schedule(after).ok).toBe(true)
+  })
+
+  it('a returning UID under a removed IMPORTED activity is placed under its file parent; the old parent goes back to removed', () => {
+    const s = importInto(emptyState(), small()).state
+    // UID 99 used to be a summary holding Snag walk (UID 12); both were removed by an earlier revision.
+    s.activities.push(activityRow('OLD99', { name: 'Old phase', type: 'summary', original_duration: 0, external_uid: '99', is_tombstoned: true }))
+    Object.assign(byUid(s, '12'), { parent_id: 'OLD99', is_tombstoned: true })
+    s.dependencies = s.dependencies.filter((d) => d.pred_id !== byUid(s, '12').id && d.succ_id !== byUid(s, '12').id)
+    const plan = planImport(s, small(), keyMaker('g'))
+    const after = applyOps(s, plan.ops)
+    expect(byUid(after, '12')).toMatchObject({ is_tombstoned: false, parent_id: null })
+    expect(after.activities.find((a) => a.id === 'OLD99')?.is_tombstoned).toBe(true)
+    expect(plan.diff.added).toEqual([{ uid: '12', name: 'Snag walk' }])
+    expect(plan.diff.removed).toEqual([])
+  })
+})
+
+describe('planImport — minor warnings', () => {
+  it('M1: a summary that becomes a task while holding an E-Site activity is flagged', () => {
+    const before = importedWithEsiteWork() // ESITE sits under Distribution (UID 4)
+    const x = smallXml.replace(
+      '<WBS>2</WBS><OutlineNumber>2</OutlineNumber><OutlineLevel>1</OutlineLevel><Summary>1</Summary>',
+      '<WBS>2</WBS><OutlineNumber>2</OutlineNumber><OutlineLevel>1</OutlineLevel><Summary>0</Summary>',
+    ).replace(/<OutlineLevel>(2|3)<\/OutlineLevel>/g, (_m, l) => `<OutlineLevel>${l}</OutlineLevel>`)
+    const m = ok(parseMspdiText(x))
+    m.tasks = m.tasks.filter((t) => !['5', '6', '7', '8', '9'].includes(t.uid))
+    for (const t of m.tasks) t.predecessors = t.predecessors.filter((l) => !['5', '6', '7', '8', '9'].includes(l.uid))
+    const plan = planImport(before, m, keyMaker('m'))
+    expect(plan.warnings).toContain(
+      'Task "Distribution" (UID 4) is no longer a summary in the file, but it holds activities added in E-Site. Move them to a summary.',
+    )
+  })
+
+  it('M3: E-Site days on an MS Project calendar that the file drops are named', () => {
+    const s = importInto(emptyState(), small()).state
+    const cal = s.calendars.find((c) => c.name === 'MS Project: Standard') as { id: string }
+    s.exceptions.push({ id: 'X', calendar_id: cal.id, day: '2026-10-20', kind: 'non_work', label: 'Strike' })
+    const plan = planImport(s, small(), keyMaker('m'))
+    expect(plan.warnings).toContain('Calendar "MS Project: Standard": the file does not have 2026-10-20 (Strike), which was added in E-Site; it was removed.')
+  })
+
+  it('M4: two file calendars with the same name are both suffixed by UID', () => {
+    const xml = wrap(`<CalendarUID>1</CalendarUID><Calendars>${weekCal('1', 'Shift', [2, 3, 4, 5, 6])}${weekCal('2', 'Shift', [2, 3, 4, 5, 6, 7])}</Calendars><Tasks>
+      <Task><UID>1</UID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration><CalendarUID>2</CalendarUID></Task></Tasks>`)
+    const { state } = importInto(emptyState(), ok(parseMspdiText(xml)))
+    expect(state.calendars.map((c) => c.name).filter((n) => n.startsWith('MS Project')).sort())
+      .toEqual(['MS Project: Shift (UID 1)', 'MS Project: Shift (UID 2)'])
+  })
+
+  it('M6: a start date moved earlier on a re-import is flagged', () => {
+    const first = importInto(emptyState(), small()).state
+    const earlier = smallXml.replace('<StartDate>2026-10-05T08:00:00</StartDate>', '<StartDate>2026-09-28T08:00:00</StartDate>')
+    const plan = planImport(first, ok(parseMspdiText(earlier)), keyMaker('m'))
+    expect(plan.warnings).toContain(
+      'The file starts on 2026-09-28, before the programme start 2026-10-05. The programme start was not moved; change it in the programme settings if the work really starts earlier.',
+    )
+  })
+
+  it('M7: a UID that comes back is named as restored', () => {
+    const s = importInto(emptyState(), small()).state
+    byUid(s, '14').is_tombstoned = true
+    s.dependencies = s.dependencies.filter((d) => d.succ_id !== byUid(s, '14').id)
+    const plan = planImport(s, small(), keyMaker('m'))
+    expect(plan.warnings).toContain('Task "Handover" (UID 14) was removed before and is back in the file; it was restored with its E-Site data.')
+  })
+})

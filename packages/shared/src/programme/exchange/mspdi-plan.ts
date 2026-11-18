@@ -27,6 +27,17 @@
  *   task kept under a skipped inactive summary goes under its nearest active
  *   ancestor, which the outline stack gives for free.
  * - an identical re-import produces no ops at all.
+ * - progress recorded in E-Site is never wiped (ruling C1): for actual_start,
+ *   actual_finish and percent_complete a silent file (null, or 0 % with no
+ *   actuals) keeps E-Site's value; a file value wins, with a warning when
+ *   E-Site had a different one. remaining_duration is never imported; E-Site's
+ *   is kept unless the file changed the progress or the duration, when it is
+ *   cleared (the engine then works it out from the actuals and data date) so a
+ *   stale remaining cannot shorten the task.
+ * - `<StatusDate>` sets the programme's data_date when present (diff.dataDate).
+ * - a UID that comes back under a removed E-Site activity cannot be restored
+ *   (restore_activity refuses while the parent is removed, and the import never
+ *   names an E-Site activity), so it is left removed with a warning.
  *
  * Link lag calendar: `project`. MS Project computes link lag on the project
  * calendar by default (not the task calendar). OWED: confirm against a real
@@ -53,6 +64,8 @@ export interface ImportDiff {
   linksRemoved: number
   linksChanged: number
   calendarChanged: boolean
+  /** The data date the import sets from the file's StatusDate, or null when it stays. */
+  dataDate: { from: string | null; to: string } | null
   unchanged: number
 }
 export interface ImportPlan {
@@ -70,8 +83,10 @@ const MON_TO_FRI = [1, 2, 3, 4, 5]
 /** The activity fields an import owns. Everything else (code, anchor, fixed dates, remaining duration) stays E-Site's. */
 const IMPORT_FIELDS = [
   'parent_id', 'wbs_code', 'name', 'type', 'original_duration', 'calendar_id', 'constraint_type', 'constraint_date',
-  'deadline', 'actual_start', 'actual_finish', 'percent_complete', 'sort_order', 'external_uid',
+  'deadline', 'actual_start', 'actual_finish', 'percent_complete', 'remaining_duration', 'sort_order', 'external_uid',
 ] as const
+const PROGRESS_LABEL = { actual_start: 'actual start', actual_finish: 'actual finish', percent_complete: 'percent complete' } as const
+const dayCount = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`
 type ImportField = (typeof IMPORT_FIELDS)[number]
 type Desired = Record<ImportField, string | number | null>
 
@@ -95,7 +110,7 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   const warnings: string[] = []
   const ops: ProgrammeOp[] = []
   const diff: ImportDiff = {
-    added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, unchanged: 0,
+    added: [], changed: [], removed: [], linksAdded: 0, linksRemoved: 0, linksChanged: 0, calendarChanged: false, dataDate: null, unchanged: 0,
   }
 
   const byUid = new Map<string, ActivityRow>()
@@ -112,14 +127,15 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
 
   const existingByName = new Map<string, CalendarRow>()
   for (const c of state.calendars) existingByName.set(c.name.trim().toLowerCase(), c)
-  const takenNames = new Set<string>()
+  // Two file calendars with one name are BOTH suffixed by UID, so a revision that reorders tasks cannot swap them.
+  const baseName = (fc: MspdiCalendar) => fc.name.trim() || `Calendar ${fc.uid}`
+  const nameCount = new Map<string, number>()
+  for (const fc of m.calendars) nameCount.set(baseName(fc).toLowerCase(), (nameCount.get(baseName(fc).toLowerCase()) ?? 0) + 1)
   for (const uid of usedUids) {
     const fc = fileCalendars.get(uid)
     if (!fc) continue
-    const base = fc.name.trim() || `Calendar ${fc.uid}`
-    let name = cap(`${CALENDAR_PREFIX}${base}`, CALENDAR_NAME_MAX)
-    if (takenNames.has(name.toLowerCase())) name = cap(`${CALENDAR_PREFIX}${base} (UID ${fc.uid})`, CALENDAR_NAME_MAX)
-    takenNames.add(name.toLowerCase())
+    const base = baseName(fc)
+    const name = cap(`${CALENDAR_PREFIX}${base}${(nameCount.get(base.toLowerCase()) ?? 0) > 1 ? ` (UID ${fc.uid})` : ''}`, CALENDAR_NAME_MAX)
     calendarRefs.set(uid, planCalendar(state, fc, name, existingByName.get(name.toLowerCase()) ?? null, m, newKey, calendarOps, warnings))
   }
   for (const p of calendarRefs.values()) if (p.changed) diff.calendarChanged = true
@@ -135,36 +151,38 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   }
   if ((firstImport || !state.programme.project_start) && m.startDate !== state.programme.project_start) {
     programmeFields.project_start = m.startDate
+  } else if (m.startDate < state.programme.project_start) {
+    warnings.push(`The file starts on ${m.startDate}, before the programme start ${state.programme.project_start}. The programme start was not moved; change it in the programme settings if the work really starts earlier.`)
+  }
+  if (m.statusDate !== null && m.statusDate !== state.programme.data_date) {
+    programmeFields.data_date = m.statusDate
+    diff.dataDate = { from: state.programme.data_date, to: m.statusDate }
+    if (state.programme.data_date !== null && m.statusDate < state.programme.data_date) {
+      warnings.push(`The file's status date moves the data date back from ${state.programme.data_date} to ${m.statusDate}.`)
+    }
   }
   ops.push(...calendarOps)
   if (Object.keys(programmeFields).length > 0) ops.push({ op: 'set_programme', fields: programmeFields })
 
-  // ------------------------------------------------------------ outline
-  const hasPred = new Set<string>()
-  const hasSucc = new Set<string>()
-  for (const t of m.tasks) {
-    if (t.predecessors.length > 0) hasPred.add(t.uid)
-    for (const l of t.predecessors) hasSucc.add(l.uid)
-  }
-  const fileUids = new Set(m.tasks.map((t) => t.uid))
-  const refOfUid = new Map<string, string>() // file uid → activity id (existing) or key (new)
-  const parentUid = new Map<string, string | null>()
-  const stack: Array<{ level: number; uid: string }> = []
-  for (const t of m.tasks) {
-    while (stack.length > 0 && stack[stack.length - 1].level >= t.outlineLevel) stack.pop()
-    parentUid.set(t.uid, stack.length > 0 ? stack[stack.length - 1].uid : null)
-    stack.push({ level: t.outlineLevel, uid: t.uid })
-  }
-
   // ------------------------------------------------------------ restores
   // A tombstoned UID that is back must be restored before it can be updated,
   // and restore_activity refuses while its (current) parent is tombstoned. So
-  // restore its tombstoned ancestors first; those not in the file are deleted
-  // again once their children have moved.
+  // its tombstoned IMPORTED ancestors are restored first and, when they are
+  // not in the file, deleted again once their children have moved. A removed
+  // E-Site ancestor blocks the restore: the import never names an E-Site row.
+  const fileUids = new Set(m.tasks.map((t) => t.uid))
   const byId = new Map(state.activities.map((a) => [a.id, a]))
   const restoreOrder: string[] = []
   const restoring = new Set<string>()
   const reDelete: ActivityRow[] = []
+  const blocked = new Set<string>() // file UIDs left removed
+  const removedEsiteAncestor = (a: ActivityRow): ActivityRow | null => {
+    for (let p = a.parent_id !== null ? byId.get(a.parent_id) : undefined, hops = 0; p && p.is_tombstoned && hops < 10000;
+      p = p.parent_id !== null ? byId.get(p.parent_id) : undefined, hops++) {
+      if (p.external_uid === null) return p
+    }
+    return null
+  }
   const restore = (a: ActivityRow) => {
     if (restoring.has(a.id)) return
     const parent = a.parent_id !== null ? byId.get(a.parent_id) : undefined
@@ -175,14 +193,43 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   }
   for (const t of m.tasks) {
     const a = byUid.get(t.uid)
-    if (a && a.is_tombstoned) restore(a)
+    if (!a || !a.is_tombstoned) continue
+    const esite = removedEsiteAncestor(a)
+    if (esite) {
+      blocked.add(t.uid)
+      warnings.push(`${label(t)} returned under a removed E-Site activity ("${esite.name}"), which an import cannot restore, so it was left removed. Restore "${esite.name}" in E-Site and import again.`)
+      continue
+    }
+    restore(a)
   }
   for (const id of restoreOrder) ops.push({ op: 'restore_activity', id })
 
+  // ------------------------------------------------------------ outline
+  const tasks = blocked.size === 0 ? m.tasks : m.tasks.filter((t) => !blocked.has(t.uid))
+  const linksOf = (t: MspdiTask) => (blocked.size === 0 ? t.predecessors : t.predecessors.filter((l) => !blocked.has(l.uid)))
+  const hasPred = new Set<string>()
+  const hasSucc = new Set<string>()
+  for (const t of tasks) {
+    const preds = linksOf(t)
+    if (preds.length > 0) hasPred.add(t.uid)
+    for (const l of preds) hasSucc.add(l.uid)
+  }
+  const refOfUid = new Map<string, string>() // file uid → activity id (existing) or key (new)
+  const parentUid = new Map<string, string | null>()
+  // A blocked UID still holds its place in the outline, so its children go under the nearest active ancestor.
+  const stack: Array<{ level: number; uid: string }> = []
+  for (const t of m.tasks) {
+    while (stack.length > 0 && stack[stack.length - 1].level >= t.outlineLevel) stack.pop()
+    let i = stack.length - 1
+    while (i >= 0 && blocked.has(stack[i].uid)) i--
+    parentUid.set(t.uid, i >= 0 ? stack[i].uid : null)
+    stack.push({ level: t.outlineLevel, uid: t.uid })
+  }
+
   // ------------------------------------------------------------ links (deletes first)
   const desiredLinks = new Map<string, { pred: string; succ: string; type: DependencyRow['type']; lag: number; lag_unit: DependencyRow['lag_unit'] }>()
-  for (const t of m.tasks) {
-    for (const l of t.predecessors) {
+  for (const t of tasks) {
+    for (const l of linksOf(t)) {
       if (l.uid === t.uid) continue
       const k = `${l.uid}|${t.uid}|${l.type}`
       if (desiredLinks.has(k)) {
@@ -197,6 +244,7 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   const matchedLinks = new Map<string, DependencyRow>()
   const linkUpdates: ProgrammeOp[] = []
   const linkDeletes: ProgrammeOp[] = []
+  const staleLinks: DependencyRow[] = [] // imported–imported links the file no longer has
   for (const d of state.dependencies) {
     const pu = uidOfId.get(d.pred_id)
     const su = uidOfId.get(d.succ_id)
@@ -212,14 +260,20 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
       continue
     }
     diff.linksRemoved++
+    staleLinks.push(d)
     // A link to an activity that is deleted below goes with it; naming it again would be refused.
     if (fileUids.has(pu) && fileUids.has(su)) linkDeletes.push({ op: 'delete_dependency', id: d.id })
   }
   ops.push(...linkDeletes)
 
   // ------------------------------------------------------------ activities
+  const esiteChildren = new Map<string, number>() // live E-Site activities per parent id
+  for (const a of state.activities) {
+    if (a.external_uid === null && !a.is_tombstoned && a.parent_id !== null) esiteChildren.set(a.parent_id, (esiteChildren.get(a.parent_id) ?? 0) + 1)
+  }
   for (let i = 0; i < m.tasks.length; i++) {
     const t = m.tasks[i]
+    if (blocked.has(t.uid)) continue
     const existing = byUid.get(t.uid)
     const pUid = parentUid.get(t.uid) ?? null
     const desired = desiredFields(t, i + 1, pUid === null ? null : (refOfUid.get(pUid) as string), hasPred, hasSucc, calendarRefs, warnings)
@@ -232,6 +286,13 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
       continue
     }
     refOfUid.set(t.uid, existing.id)
+    mergeProgress(t, existing, desired, warnings)
+    if (existing.is_tombstoned) {
+      warnings.push(`${label(t)} was removed before and is back in the file; it was restored with its E-Site data.`)
+    }
+    if (existing.type === 'summary' && desired.type !== 'summary' && (esiteChildren.get(existing.id) ?? 0) > 0) {
+      warnings.push(`${label(t)} is no longer a summary in the file, but it holds activities added in E-Site. Move them to a summary.`)
+    }
     const fields: Record<string, unknown> = {}
     for (const f of IMPORT_FIELDS) {
       if (norm(existing[f]) !== norm(desired[f])) fields[f] = desired[f]
@@ -260,7 +321,7 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
   // too or made in E-Site.
   const parentAfter = new Map<string, string | null>()
   for (const a of state.activities) parentAfter.set(a.id, a.parent_id)
-  for (const t of m.tasks) {
+  for (const t of tasks) {
     const a = byUid.get(t.uid)
     if (a) {
       const p = parentUid.get(t.uid) ?? null
@@ -312,6 +373,15 @@ export function planImport(state: ProgrammeState, m: MspdiProgramme, newKey: () 
     if (!gone || !other || other.external_uid !== null || gone.external_uid === null) continue
     warnings.push(`"${gone.name}" (UID ${gone.external_uid}) was removed by the contractor; its link to "${other.name}" was dropped.`)
   }
+  // A KEPT removed activity is not deleted, so its links to other imported
+  // activities (already counted as removed) must be deleted by name.
+  for (const d of staleLinks) {
+    if (deleting.has(d.pred_id) || deleting.has(d.succ_id)) continue
+    const pu = uidOfId.get(d.pred_id) as string
+    const su = uidOfId.get(d.succ_id) as string
+    if (fileUids.has(pu) && fileUids.has(su)) continue // already deleted above
+    ops.push({ op: 'delete_dependency', id: d.id })
+  }
   for (const id of deletions) ops.push({ op: 'delete_activity', id })
 
   return { ops, diff, warnings }
@@ -358,8 +428,60 @@ function desiredFields(
     actual_start: t.actualStart,
     actual_finish: actualFinish,
     percent_complete: round2(Math.min(100, Math.max(0, t.percentComplete))),
+    remaining_duration: null,
     sort_order: sortOrder,
     external_uid: t.uid,
+  }
+}
+
+/**
+ * Ruling C1: progress recorded in E-Site is never wiped by a silent file.
+ * Rewrites `desired`'s progress fields in place for an EXISTING activity.
+ */
+function mergeProgress(t: MspdiTask, existing: ActivityRow, desired: Desired, warnings: string[]): void {
+  const fileStarted = desired.actual_start !== null || desired.actual_finish !== null
+  const fileHas = {
+    actual_start: desired.actual_start !== null,
+    actual_finish: desired.actual_finish !== null,
+    percent_complete: fileStarted || (desired.percent_complete as number) > 0,
+  }
+  let progressChanged = false
+  for (const f of ['actual_start', 'actual_finish', 'percent_complete'] as const) {
+    const mine = existing[f]
+    if (!fileHas[f]) {
+      desired[f] = mine
+      continue
+    }
+    if (norm(mine) === norm(desired[f])) continue
+    progressChanged = true
+    const esiteHad = f === 'percent_complete' ? (mine as number) !== 0 : mine !== null
+    if (esiteHad) {
+      warnings.push(`${label(t)}: the contractor's file reports ${PROGRESS_LABEL[f]} ${desired[f]}; E-Site had ${mine}. The file's value was used.`)
+    }
+  }
+  // A kept E-Site actual that now contradicts the file's actual is cleared.
+  const as = desired.actual_start as string | null
+  const af = desired.actual_finish as string | null
+  if (as !== null && af !== null && af < as) {
+    if (!fileHas.actual_finish) {
+      warnings.push(`${label(t)}: E-Site's actual finish ${af} is before the file's actual start ${as}, so it was cleared.`)
+      desired.actual_finish = null
+    } else {
+      warnings.push(`${label(t)}: E-Site's actual start ${as} is after the file's actual finish ${af}, so it was cleared.`)
+      desired.actual_start = null
+    }
+    progressChanged = true
+  }
+  // remaining_duration is E-Site's; it is cleared only when it can no longer be right.
+  const remaining = existing.remaining_duration
+  desired.remaining_duration = remaining
+  if (remaining !== null) {
+    const durationChanged = norm(existing.original_duration) !== norm(desired.original_duration)
+    if (progressChanged || durationChanged) {
+      desired.remaining_duration = null
+      const why = progressChanged ? 'the file reports progress' : 'the file changed the duration'
+      warnings.push(`${label(t)}: E-Site's remaining duration of ${dayCount(remaining)} was cleared because ${why}; it is now worked out from the actual dates.`)
+    }
   }
 }
 
@@ -405,6 +527,15 @@ function planCalendar(
       .map((e) => `${e.day}|${e.kind}|${e.label ?? ''}`)
     const next = exceptions.map((e) => `${e.day}|${e.kind}|${e.label ?? ''}`)
     const sameEx = current.length === next.length && current.every((x, i) => x === next[i])
+    if (!sameEx) {
+      const dropped = state.exceptions
+        .filter((e) => e.calendar_id === existing.id && !days.has(e.day))
+        .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+        .map((e) => (e.label ? `${e.day} (${e.label})` : e.day))
+      if (dropped.length > 0) {
+        warnings.push(`Calendar "${name}": the file does not have ${dropped.join(', ')}, which ${dropped.length === 1 ? 'was' : 'were'} added in E-Site; ${dropped.length === 1 ? 'it was' : 'they were'} removed.`)
+      }
+    }
     if (!sameEx) out.push({ op: 'set_calendar_exceptions', calendar: existing.id, exceptions })
     const changed = Object.keys(calFields).length > 0 || !sameEx
     return { ref: existing.id, changed }

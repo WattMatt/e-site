@@ -570,3 +570,19 @@ describe('parseMspdi — errors', () => {
     expect(err('bad-duplicate-uid.xml')).toMatch(/UID 7/)
   })
 })
+
+describe('parseMspdi — StatusDate', () => {
+  const at = (status: string | null) => {
+    const head = `<StartDate>2026-10-05T08:00:00</StartDate>${status === null ? '' : `<StatusDate>${status}</StatusDate>`}`
+    return ok(parseMspdi(doc(wrap(oneTask('<Duration>PT8H0M0S</Duration>'), head)))).statusDate
+  }
+  it('is null when the file has none', () => expect(at(null)).toBeNull())
+  it('an end-of-day status date (afternoon) means remaining work starts the next day', () => {
+    expect(at('2026-10-07T17:00:00')).toBe('2026-10-08')
+  })
+  it('a start-of-day status date (morning or midnight) means remaining work starts that day', () => {
+    expect(at('2026-10-07T08:00:00')).toBe('2026-10-07')
+    expect(at('2026-10-07T00:00:00')).toBe('2026-10-07')
+  })
+  it('an unreadable status date is ignored', () => expect(at('NA')).toBeNull())
+})
