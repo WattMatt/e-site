@@ -28,6 +28,8 @@ export interface FakeCall {
   payload?: unknown
   filters: Filter[]
   range?: [number, number]
+  /** `.order(col, { ascending })` calls in order, recorded only when there are any. */
+  order?: Array<[string, boolean]>
 }
 
 export interface FakeOptions {
@@ -59,9 +61,9 @@ export function fakeSupabase(opts: FakeOptions = {}) {
             : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
-    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number; count?: boolean; head?: boolean; range?: [number, number] } = { op: 'select', filters: [] }
+    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number; count?: boolean; head?: boolean; range?: [number, number]; order: Array<[string, boolean]> } = { op: 'select', filters: [], order: [] }
     const run = (): Promise<FakeResult> => {
-      const call: FakeCall = { table, op: state.op, payload: state.payload, filters: [...state.filters], ...(state.range ? { range: state.range } : {}) }
+      const call: FakeCall = { table, op: state.op, payload: state.payload, filters: [...state.filters], ...(state.range ? { range: state.range } : {}), ...(state.order.length ? { order: [...state.order] } : {}) }
       calls.push(call)
       if (state.op === 'select') {
         const err = opts.selectErrors?.[table]
@@ -99,7 +101,7 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       ilike: () => b,
       overlaps: () => b,
       not: () => b,
-      order: () => b,
+      order: (c: string, o?: { ascending?: boolean }) => { state.order.push([c, o?.ascending !== false]); return b },
       limit: (n: number) => { state.limit = n; return b },
       range: (from: number, to: number) => { state.range = [from, to]; return b },
       maybeSingle: first,

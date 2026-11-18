@@ -1,0 +1,52 @@
+[
+  {
+    "name": "Out of sequence (Task 6), retained logic",
+    "source": "hand",
+    "notes": "Worked by hand in goldens/README.md. B started 03-03 before its FS predecessor A; data date Mon 2026-03-09. B's remaining 2 days wait for A.",
+    "input": {
+      "projectStart": "2026-03-02",
+      "dataDate": "2026-03-09",
+      "defaultCalendarId": "C",
+      "calendars": [
+        { "id": "C", "workWeekdays": [1, 2, 3, 4, 5], "hoursPerDay": 8, "nonWorkDates": [], "workDates": [], "coverage": { "from": "2026-01-01", "to": "2027-12-31" } }
+      ],
+      "activities": [
+        { "id": "A", "parentId": null, "type": "task", "originalDuration": 5, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+        { "id": "B", "parentId": null, "type": "task", "originalDuration": 5, "remainingDuration": 2, "calendarId": null, "constraint": null, "deadline": null, "actualStart": "2026-03-03", "actualFinish": null, "fixed": null }
+      ],
+      "dependencies": [
+        { "id": "AB", "predId": "A", "succId": "B", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" }
+      ],
+      "options": { "rules": "msp", "progress": "retained_logic", "critical": { "kind": "total_float", "threshold": 0 }, "floatOn": "smallest" }
+    },
+    "expected": {
+      "A": { "es": "2026-03-09", "ef": "2026-03-13", "ls": "2026-03-09", "lf": "2026-03-13", "tf": 0 },
+      "B": { "es": "2026-03-03", "ef": "2026-03-17", "ls": "2026-03-03", "lf": "2026-03-17", "tf": 0 }
+    }
+  },
+  {
+    "name": "Out of sequence (Task 6), progress override",
+    "source": "hand",
+    "notes": "Worked by hand in goldens/README.md. Same network; B's remaining 2 days continue from the data date and the A-B link no longer constrains either side.",
+    "input": {
+      "projectStart": "2026-03-02",
+      "dataDate": "2026-03-09",
+      "defaultCalendarId": "C",
+      "calendars": [
+        { "id": "C", "workWeekdays": [1, 2, 3, 4, 5], "hoursPerDay": 8, "nonWorkDates": [], "workDates": [], "coverage": { "from": "2026-01-01", "to": "2027-12-31" } }
+      ],
+      "activities": [
+        { "id": "A", "parentId": null, "type": "task", "originalDuration": 5, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+        { "id": "B", "parentId": null, "type": "task", "originalDuration": 5, "remainingDuration": 2, "calendarId": null, "constraint": null, "deadline": null, "actualStart": "2026-03-03", "actualFinish": null, "fixed": null }
+      ],
+      "dependencies": [
+        { "id": "AB", "predId": "A", "succId": "B", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" }
+      ],
+      "options": { "rules": "msp", "progress": "progress_override", "critical": { "kind": "total_float", "threshold": 0 }, "floatOn": "smallest" }
+    },
+    "expected": {
+      "A": { "es": "2026-03-09", "ef": "2026-03-13", "ls": "2026-03-09", "lf": "2026-03-13", "tf": 0 },
+      "B": { "es": "2026-03-03", "ef": "2026-03-10", "ls": "2026-03-03", "lf": "2026-03-13", "tf": 3 }
+    }
+  }
+]

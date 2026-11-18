@@ -5,7 +5,8 @@
 -- single-column FK (up to 3 hops) to such a table or to projects.projects.
 WITH RECURSIVE
 site_schemas(s) AS (VALUES ('public'),('projects'),('inspections'),('field'),('tenants'),
-                           ('structure'),('gcr'),('cable_schedule'),('marketplace'),('whatsapp')),
+                           ('structure'),('gcr'),('cable_schedule'),('marketplace'),('whatsapp'),
+                           ('programme')),
 exempt(t, reason) AS (VALUES
   ('projects.jbcc_letter_number_seqs','allocator table, no end-user access (definer only)'),
   ('inspections.coc_number_seqs','allocator table, no end-user access (definer only)'),
@@ -20,6 +21,8 @@ exempt(t, reason) AS (VALUES
   ('public.rate_observations','org rate library, not site data'),
   ('public.rate_source_lines','org rate library, not site data'),
   ('cable_schedule.rate_library','org rate library, not site data'),
+  ('programme.resources','org resource library, not site data'),
+  ('programme.resource_rates','org resource library, not site data'),
   ('whatsapp.inbound','service/definer only; wa_* functions act as the user under real RLS'),
   ('whatsapp.outbox','service/definer only'),
   ('whatsapp.phone_links','own-row policy; current_project_id is a menu pointer, not site data'),
