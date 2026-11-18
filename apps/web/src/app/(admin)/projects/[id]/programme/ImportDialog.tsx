@@ -13,11 +13,15 @@
  * 4. Import is ONE store gesture (`apply(ops, 'Import <label>')`), so it goes on the undo stack
  *    like any edit. Once the save has settled, `recordImportAction` writes the revision record
  *    (imports row + active revision baseline), then the page refreshes. A refusal is shown as the
- *    sentence; the store has already rolled back. A failed record leaves the import standing.
+ *    sentence; the store has already rolled back. A failed record leaves the import standing, and
+ *    the dialog then offers "Record the revision again": it re-sends the KEPT diff and label and
+ *    never applies the plan a second time (the activities already hold those UIDs).
+ * 5. After any finished or failed import the file input is cleared, so the same file can be
+ *    chosen again.
  *
  * Everything from the file reaches the DOM as text, never as HTML.
  */
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   applyOps, parseMspdiText, planImport, ProgrammeOpError, rowsToProgrammeInput, scheduleProgramme,
@@ -30,7 +34,10 @@ export const MPP_REFUSED = 'Open the programme in MS Project and use File → Sa
 export const LABEL_REQUIRED = 'Give this revision a label.'
 const READ_FAILED = 'The file could not be read. Try again.'
 const IMPORT_FAILED = 'The import was not applied.'
+const RECORD_FAILED = 'The programme was imported, but the revision record was not saved. Record it again.'
 const PREVIEW_FAILED = 'The programme could not be worked out with this file.'
+
+export const RECORD_AGAIN = 'Record the revision again'
 
 export type ImportStore = Pick<ProgrammeStoreApi, 'state' | 'apply' | 'newKey' | 'settle' | 'stale'>
 
@@ -42,7 +49,7 @@ const dim: CSSProperties = { color: 'var(--c-text-dim)', fontSize: 12 }
 
 /** The kinds warnings are grouped under, matched on the parser's and planner's own sentences. */
 const WARNING_KINDS: Array<{ kind: string; test: RegExp }> = [
-  { kind: 'Progress', test: /actual (start|finish)|percent complete|remaining duration/i },
+  { kind: 'Progress', test: /actual (start|finish)|percent complete|remaining duration|finished in E-Site/i },
   { kind: 'Links', test: /\blink\b|\blag\b/i },
   { kind: 'Calendars', test: /calendar|exception|work weeks/i },
   { kind: 'Manually scheduled tasks', test: /manually scheduled/i },
@@ -89,6 +96,8 @@ function fileRange(m: MspdiProgramme): { start: string; finish: string | null } 
   return { start, finish }
 }
 
+type RecordInput = Parameters<typeof recordImportAction>[0]
+
 interface Prepared {
   fileName: string
   m: MspdiProgramme
@@ -110,6 +119,20 @@ function prepare(state: ProgrammeState, fileName: string, m: MspdiProgramme, new
   }
   return { fileName, m, plan, finish }
 }
+
+/** The project start a first import sets, when it moves. */
+export function projectStartMove(state: ProgrammeState, plan: ImportPlan): { from: string; to: string } | null {
+  for (const op of plan.ops) {
+    if (op.op !== 'set_programme') continue
+    const to = (op.fields as Record<string, unknown>).project_start
+    if (typeof to === 'string' && to !== state.programme.project_start) return { from: state.programme.project_start, to }
+  }
+  return null
+}
+
+/** Live activities made in E-Site (not from a file). */
+export const nativeActivityCount = (state: ProgrammeState) =>
+  state.activities.filter((a) => a.external_uid === null && !a.is_tombstoned).length
 
 function CountList({ label, count, children }: { label: string; count: number; children?: ReactNode }) {
   if (count === 0 || !children) return <li data-testid={`import-count-${label}`}>{label}: {count}</li>
@@ -149,21 +172,59 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
   const [label, setLabel] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** Set once the save stood but the revision record failed: what the retry re-sends. */
+  const [pendingRecord, setPendingRecord] = useState<RecordInput | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const clearFile = () => { if (fileInput.current) fileInput.current.value = '' }
+
+  async function record(input: RecordInput): Promise<boolean> {
+    let r: Awaited<ReturnType<typeof recordImportAction>>
+    try {
+      r = await recordImportAction(input)
+    } catch {
+      r = { ok: false, error: RECORD_FAILED }
+    }
+    if (!r.ok) {
+      // The save stood; only the record is owed. Never re-apply the plan.
+      setPendingRecord(input)
+      setError(r.error)
+      router.refresh()
+      return false
+    }
+    setPendingRecord(null)
+    router.refresh()
+    onClose()
+    return true
+  }
+
+  async function recordAgain() {
+    if (!pendingRecord || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await record(pendingRecord)
+    } catch {
+      setError(IMPORT_FAILED)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function choose(file: File | undefined) {
     setPrepared(null)
     setError(null)
     if (!file) return
-    if (!/\.xml$/i.test(file.name)) { setError(MPP_REFUSED); return }
+    if (!/\.xml$/i.test(file.name)) { setError(MPP_REFUSED); clearFile(); return }
     let text: string
     try {
       text = await readText(file)
     } catch {
       setError(READ_FAILED)
+      clearFile()
       return
     }
     const m = parseMspdiText(text)
-    if ('error' in m) { setError(m.error); return }
+    if ('error' in m) { setError(m.error); clearFile(); return }
     setPrepared(prepare(store.state, file.name, m, store.newKey))
     setLabel(stem(file.name))
   }
@@ -182,15 +243,13 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
         const settled = await store.settle()
         if (!applied || !settled.ok) { setError(settled.error ?? IMPORT_FAILED); return }
       }
-      const r = await recordImportAction({
+      await record({
         programmeId: store.state.programme.id, fileName: prepared.fileName, revisionLabel: revision === '' ? null : revision, diff,
       })
-      if (!r.ok) { setError(r.error); router.refresh(); return }
-      router.refresh()
-      onClose()
     } catch {
       setError(IMPORT_FAILED)
     } finally {
+      clearFile()
       setBusy(false)
     }
   }
@@ -198,6 +257,8 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
   const range = prepared ? fileRange(prepared.m) : null
   const warnings = prepared ? groupWarnings([...prepared.m.warnings, ...prepared.plan.warnings]) : []
   const skipped = prepared?.m.skipped
+  const startMove = prepared ? projectStartMove(store.state, prepared.plan) : null
+  const natives = prepared ? nativeActivityCount(store.state) : 0
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Import from MS Project" data-testid="programme-import"
@@ -208,7 +269,8 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
           {reimport ? ' This programme has been imported before: activities are matched by their MS Project UID.' : ''}</p>
         <label className="field">
           <span>MS Project XML file</span>
-          <input type="file" accept=".xml,application/xml,text/xml" aria-label="MS Project XML file" disabled={busy}
+          <input ref={fileInput} type="file" accept=".xml,application/xml,text/xml" aria-label="MS Project XML file"
+            disabled={busy || pendingRecord !== null}
             onChange={(e) => { void choose(e.target.files?.[0]) }} />
         </label>
 
@@ -216,6 +278,15 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
           <div data-testid="import-preview" style={{ display: 'grid', gap: 10, fontSize: 13 }}>
             <div><strong>{prepared.m.name || prepared.fileName}</strong></div>
             <DiffView diff={prepared.plan.diff} />
+            {startMove && (
+              <div data-testid="import-project-start">Project start: {startMove.from} → {startMove.to}</div>
+            )}
+            {natives > 0 && !reimport && (
+              <div data-testid="import-native" role="note">
+                This programme already has {natives} E-Site {natives === 1 ? 'activity' : 'activities'}. They stay, and the
+                imported activities are added beside them{startMove ? '; work without a constraint moves with the project start' : ''}.
+              </div>
+            )}
             {range && (
               <div data-testid="import-dates">
                 File: {range.start} to {range.finish ?? '—'}
@@ -242,6 +313,7 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
             <label className="field">
               <span>Revision label{reimport ? '' : ' (optional)'}</span>
               <input className="input" aria-label="Revision label" value={label} maxLength={120} required={reimport}
+                disabled={busy || pendingRecord !== null}
                 onChange={(e) => setLabel(e.target.value)} />
             </label>
           </div>
@@ -250,10 +322,16 @@ export function ImportDialog({ store, onClose }: { store: ImportStore; onClose: 
         {error && <p role="alert" data-testid="import-error" style={{ color: 'var(--c-red)', margin: 0 }}>{error}</p>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" style={button} onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={() => void runImport()}
-            disabled={!prepared || busy || store.stale || (prepared && !prepared.finish.ok)}>
-            {busy ? 'Importing…' : 'Import'}
-          </button>
+          {pendingRecord ? (
+            <button type="button" className="btn btn-primary" onClick={() => void recordAgain()} disabled={busy}>
+              {busy ? 'Recording…' : RECORD_AGAIN}
+            </button>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={() => void runImport()}
+              disabled={!prepared || busy || store.stale || (prepared && !prepared.finish.ok)}>
+              {busy ? 'Importing…' : 'Import'}
+            </button>
+          )}
         </div>
       </div>
     </div>

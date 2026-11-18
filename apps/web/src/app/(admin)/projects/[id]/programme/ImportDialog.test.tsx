@@ -8,7 +8,7 @@ import { activityRow, PROG, programmeTables } from '@/lib/programme/test-fixture
 const h = vi.hoisted(() => ({ record: vi.fn(), refresh: vi.fn() }))
 vi.mock('@/actions/programme.actions', () => ({ recordImportAction: h.record }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push: vi.fn() }) }))
-import { groupWarnings, ImportDialog, LABEL_REQUIRED, MPP_REFUSED, type ImportStore } from './ImportDialog'
+import { groupWarnings, ImportDialog, LABEL_REQUIRED, MPP_REFUSED, RECORD_AGAIN, type ImportStore } from './ImportDialog'
 
 const SMALL = readFileSync(resolve(process.cwd(), '../../packages/shared/src/programme/exchange/fixtures/small.xml'), 'utf8')
 
@@ -114,6 +114,74 @@ describe('ImportDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     expect((await screen.findByRole('alert')).textContent).toBe('The programme was imported, but the revision record was not saved.')
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('after "save ok, record failed" offers Record the revision again, which re-sends the kept diff and label without re-applying', async () => {
+    h.record.mockResolvedValueOnce({ ok: false, error: 'The programme was imported, but the revision record was not saved.' })
+    h.record.mockResolvedValueOnce({ ok: true, importId: 'i', baselineId: 'b' })
+    const onClose = vi.fn()
+    const store = fakeStore()
+    render(<ImportDialog store={store} onClose={onClose} />)
+    await choose(xmlFile())
+    await screen.findByTestId('import-preview')
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await screen.findByRole('button', { name: RECORD_AGAIN })
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
+    expect((screen.getByLabelText('MS Project XML file') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText('Revision label') as HTMLInputElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: RECORD_AGAIN }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(store.apply).toHaveBeenCalledTimes(1)
+    expect(store.settle).toHaveBeenCalledTimes(1)
+    expect(h.record).toHaveBeenCalledTimes(2)
+    expect(h.record.mock.calls[1][0]).toEqual(h.record.mock.calls[0][0])
+    expect(h.record.mock.calls[1][0]).toMatchObject({ fileName: 'Saxby rev A.xml', revisionLabel: 'Saxby rev A' })
+  })
+
+  it('a record call that throws is also offered again', async () => {
+    h.record.mockRejectedValueOnce(new Error('network'))
+    render(<ImportDialog store={fakeStore()} onClose={vi.fn()} />)
+    await choose(xmlFile())
+    await screen.findByTestId('import-preview')
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    expect(await screen.findByRole('button', { name: RECORD_AGAIN })).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toMatch(/revision record was not saved/)
+  })
+
+  it('clears the file input after a failed import and after a refused file, so the same file can be chosen again', async () => {
+    const store = fakeStore({ settle: vi.fn(async () => ({ ok: false, error: 'Refused.' })) })
+    render(<ImportDialog store={store} onClose={vi.fn()} />)
+    const input = screen.getByLabelText('MS Project XML file') as HTMLInputElement
+    let value = 'C:\\fakepath\\Saxby rev A.xml'
+    Object.defineProperty(input, 'value', { configurable: true, get: () => value, set: (v: string) => { value = v } })
+    await choose(xmlFile())
+    await screen.findByTestId('import-preview')
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await screen.findByRole('alert')
+    expect(value).toBe('')
+    value = 'C:\\fakepath\\Saxby.mpp'
+    await choose(new File(['binary'], 'Saxby.mpp'))
+    await screen.findByRole('alert')
+    expect(value).toBe('')
+  })
+
+  it('shows when a first import moves the project start, and warns that E-Site activities already exist', async () => {
+    const store = fakeStore({ state: state([activityRow('N', { external_uid: null, name: 'Site establishment' })]) })
+    render(<ImportDialog store={store} onClose={vi.fn()} />)
+    await choose(xmlFile())
+    await screen.findByTestId('import-preview')
+    expect(screen.getByTestId('import-project-start').textContent).toBe('Project start: 2026-03-02 → 2026-10-05')
+    expect(screen.getByTestId('import-native').textContent).toMatch(/already has 1 E-Site activity\. They stay/)
+  })
+
+  it('shows neither note when the start stays and the programme has no E-Site activities', async () => {
+    const s = state()
+    s.programme = { ...s.programme, project_start: '2026-10-05' }
+    render(<ImportDialog store={fakeStore({ state: s })} onClose={vi.fn()} />)
+    await choose(xmlFile())
+    await screen.findByTestId('import-preview')
+    expect(screen.queryByTestId('import-project-start')).toBeNull()
+    expect(screen.queryByTestId('import-native')).toBeNull()
   })
 
   it('requires a revision label on a re-import', async () => {
