@@ -984,6 +984,7 @@ The screen is `/projects/[id]/programme` (P3); its nav entry shows only when `PR
 |---|---|---|---|---|---|---|---|
 | `createProgrammeAction` · `saveProgrammeChangesAction` · `recalculateProgrammeAction` | W | W | W | — | — | — | — |
 | `saveBaselineAction` · `setActiveBaselineAction` · `deleteBaselineAction` | W | W | W | — | — | — | — |
+| `recordImportAction` (record an MS Project import: `imports` row + an active revision baseline, `programme.record_import`, migration `00262`) | W | W | W | — | — | — | — |
 | `decideFieldUpdatesAction` (apply, adjust or reject reported progress) | W | W | W | — | — | — | — |
 | `submitFieldUpdateAction` (report progress from site) | W | W | W | W¹ | W¹ | — | — |
 | `moduleSummaryAction` (start, finish, % complete bar) | R | R | R | R | R | R | — |
@@ -1004,7 +1005,8 @@ The screen is `/projects/[id]/programme` (P3); its nav entry shows only when `PR
 > - ¹ **Field-update tag rule (spec 4.6).** `submit_field_update` accepts an editor, or a **contractor or inspector** whose user or organisation is tagged on a code value of that activity. An untagged contractor or inspector, a supplier, or a project manager without edit gets 42501. It records progress as "reported" and moves no date. Deciding is editor only and is `save_changes`' `p_decisions` argument: the decision and the agreed actuals (activity ops in the same call) commit in one transaction under one version check, so a stale version refuses both.
 > - **Delete.** `delete_activity` tombstones an activity that carries history and hard-deletes a bare one. A tombstoned activity cannot be upserted, linked or deleted again until `restore_activity` (editor only) clears the tombstone on the same row, so its field updates, costs and codes stay attached. Restore refuses a live activity and one whose parent is still tombstoned ("Restore its parent first."), and does not recreate links.
 > - **Module summary.** Any project reader may call `module_summary`. The Solar module gate is deliberately not required, so a person without Solar access sees the bar and nothing else.
-> - **Not exposed:** `anon` has no EXECUTE on any `programme` function. The two internals (`write_audit`, `resolve_ref`) are callable by no client role.
+> - **Not exposed:** `anon` has no EXECUTE on any `programme` function. The internals (`write_audit`, `resolve_ref`, and `snapshot_baseline` from `00262`) are callable by no client role.
+> - **Imports (`00262`, number provisional).** `record_import` is gated by `programme.can_edit` under the programme lock, like `save_baseline`, and shares its snapshot (`snapshot_baseline`). `imports.diff` is open to every programme reader, so the function refuses (22023) any diff key outside the `ImportDiff` shape (uids, names, changed-field names, counts) at any level, and a mapping value that is not text. A contractor or anyone without edit gets 42501.
 > - Apply and verification steps: `docs/programme/runbook.md`.
 
 ## MCP tools (`apps/web/src/mcp/*`)

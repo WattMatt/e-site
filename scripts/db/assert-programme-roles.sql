@@ -3,6 +3,8 @@
 -- rolled-back transaction.
 --   Red:   scripts/db/dry-run-migration.sh scripts/db/fixtures/noop.sql scripts/db/assert-programme-roles.sql
 --   Green: scripts/db/dry-run-migration.sh apps/edge-functions/supabase/migrations/00261_programme_schema.sql scripts/db/assert-programme-roles.sql
+--          (section 10, record_import, needs 00262 too: concatenate 00261 + 00262
+--          into one temp file outside the migrations folder and pass that.)
 --
 -- Fixtures are minted here (a fresh org, a contractor company org, auth users,
 -- memberships, two projects, a Solar subscription and one Solar Edit grant);
@@ -112,6 +114,7 @@ DECLARE
   v_tb uuid; v_tf uuid; v_tc uuid; v_tw uuid; v_tp uuid; v_tpc uuid; v_wi uuid; v_mr uuid; v_masg uuid;
   v_fu3 uuid; v_fu4 uuid; v_fu5 uuid;
   v_tables text[]; v_org_tables text[]; v_tbl text;
+  v_imp jsonb; v_imp2 jsonb; v_diff jsonb;
 BEGIN
   -- ── 0. Fixtures (as postgres) ─────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES
@@ -1204,6 +1207,125 @@ BEGIN
     AND pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L$q$, v_prog2)) = 2);
   PERFORM pg_temp.r('audit_has_no_null_actor',
     pg_temp.n(format('SELECT count(*) FROM programme.audit WHERE project_id IN (%L, %L) AND actor_id IS NULL', v_p, v_p2)) = 0);
+  -- ── 10. record_import (00262): the imports row + a revision baseline ──────
+  -- Runs after section 9 so the audit counts above stay what they pin.
+  v_diff := jsonb_build_object(
+    'added', jsonb_build_array(jsonb_build_object('uid', '7', 'name', 'Cable pull')),
+    'changed', jsonb_build_array(jsonb_build_object('uid', '3', 'name', 'Trenching', 'fields', jsonb_build_array('name'))),
+    'removed', '[]'::jsonb, 'linksAdded', 1, 'linksRemoved', 0, 'linksChanged', 2, 'calendarChanged', false,
+    'dataDate', jsonb_build_object('from', NULL, 'to', '2026-03-31'), 'unchanged', 40);
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    v_imp := programme.record_import(v_prog, '  saxby rev C.xml ', ' Rev C ', v_diff, NULL);
+    v_st := 'ok';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('import_owner_records_and_gets_both_ids',
+    v_st = 'ok' AND (v_imp->>'import_id') IS NOT NULL AND (v_imp->>'baseline_id') IS NOT NULL, v_st || ' ' || coalesce(v_imp::text, ''));
+  PERFORM pg_temp.r('import_baseline_is_source_import_active_and_named_from_label',
+    pg_temp.b(format($q$SELECT source = 'import' AND is_active AND name = 'Rev C' FROM programme.baselines WHERE id = %L$q$, v_imp->>'baseline_id'))
+    AND pg_temp.n(format('SELECT count(*) FROM programme.baselines WHERE programme_id = %L AND is_active', v_prog)) = 1);
+  PERFORM pg_temp.r('import_baseline_holds_the_live_snapshot',
+    pg_temp.n(format('SELECT count(*) FROM programme.baseline_activities WHERE baseline_id = %L', v_imp->>'baseline_id'))
+      = pg_temp.n(format('SELECT count(*) FROM programme.activities WHERE programme_id = %L AND NOT is_tombstoned', v_prog))
+    AND pg_temp.n(format('SELECT count(*) FROM programme.baseline_activities WHERE baseline_id = %L', v_imp->>'baseline_id')) >= 1
+    AND pg_temp.n(format('SELECT count(*) FROM programme.baseline_dependencies WHERE baseline_id = %L', v_imp->>'baseline_id'))
+      = pg_temp.n(format($q$SELECT count(*) FROM programme.dependencies d
+                            JOIN programme.activities p ON p.id = d.pred_id AND NOT p.is_tombstoned
+                            JOIN programme.activities s ON s.id = d.succ_id AND NOT s.is_tombstoned
+                           WHERE d.programme_id = %L$q$, v_prog))
+    AND pg_temp.b(format('SELECT budgeted_cost = 9000 FROM programme.baseline_costs WHERE baseline_id = %L AND activity_id = %L', v_imp->>'baseline_id', v_a1)));
+  PERFORM pg_temp.r('import_row_is_mspdi_linked_attributed_and_trimmed',
+    pg_temp.b(format($q$SELECT format = 'mspdi' AND baseline_id = %L AND imported_by = %L AND file_name = 'saxby rev C.xml'
+                        AND revision_label = 'Rev C' AND diff = %L::jsonb AND mapping IS NULL AND project_id = %L
+                   FROM programme.imports WHERE id = %L$q$, v_imp->>'baseline_id', v_owner, v_diff, v_p, v_imp->>'import_id')));
+  PERFORM pg_temp.r('import_audited_once_as_the_caller_with_ids_and_counts',
+    pg_temp.n(format($q$SELECT count(*) FROM programme.audit WHERE programme_id = %L AND verb = 'import.recorded' AND actor_id = %L
+                        AND object_ref->>'import_id' = %L AND object_ref->>'baseline_id' = %L
+                        AND (object_ref->>'added')::int = 1 AND (object_ref->>'activities')::int >= 1$q$,
+                     v_prog, v_owner, v_imp->>'import_id', v_imp->>'baseline_id')) = 1);
+
+  -- A blank label: the baseline is named "Import <file> <date>".
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    v_imp2 := programme.record_import(v_prog, 'p.xml', '  ', v_diff, NULL);
+    v_st := 'ok';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('import_without_label_names_baseline_from_file_and_date',
+    v_st = 'ok' AND pg_temp.b(format($q$SELECT name ~ '^Import p\.xml \d{4}-\d{2}-\d{2}$' AND is_active FROM programme.baselines WHERE id = %L$q$, v_imp2->>'baseline_id'))
+    AND pg_temp.b(format($q$SELECT revision_label IS NULL FROM programme.imports WHERE id = %L$q$, v_imp2->>'import_id'))
+    AND pg_temp.b(format('SELECT NOT is_active FROM programme.baselines WHERE id = %L', v_imp->>'baseline_id')), v_st);
+
+  v_n := pg_temp.n(format('SELECT count(*) FROM programme.imports WHERE programme_id = %L', v_prog));
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Contractor', v_diff, NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('contractor_record_import_REFUSED_42501', v_st = '42501', v_st);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_stranger::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Stranger', v_diff, NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  RESET ROLE;
+  PERFORM pg_temp.r('stranger_record_import_REFUSED_42501', v_st = '42501', v_st);
+  PERFORM pg_temp.r('refused_imports_left_no_row',
+    v_n >= 2 AND pg_temp.n(format('SELECT count(*) FROM programme.imports WHERE programme_id = %L', v_prog)) = v_n, v_n::text);
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Rands', v_diff || jsonb_build_object('cost', 125000), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('import_diff_unknown_key_REFUSED_22023', v_st = '22023', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Nested', jsonb_set(v_diff, '{added,0,budget}', '10'), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('import_diff_nested_unknown_key_REFUSED_22023', v_st = '22023', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Text count', jsonb_set(v_diff, '{unchanged}', '"R40"'), NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('import_diff_non_number_count_REFUSED_22023', v_st = '22023', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, 'p.xml', 'Mapping', v_diff, jsonb_build_object('rate', 450));
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('import_mapping_non_text_value_REFUSED_22023', v_st = '22023', v_st);
+  v_st := NULL;
+  BEGIN
+    PERFORM programme.record_import(v_prog, '   ', 'No file', v_diff, NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN OTHERS THEN v_st := SQLSTATE;
+  END;
+  PERFORM pg_temp.r('import_blank_file_name_REFUSED_22023', v_st = '22023', v_st);
+  RESET ROLE;
 END $$;
 
 SELECT k AS "check", v AS ok FROM _r ORDER BY k;

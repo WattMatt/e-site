@@ -5,7 +5,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 
 import {
   createProgrammeAction, decideFieldUpdatesAction, deleteBaselineAction, moduleSummaryAction, programmeVersionAction,
-  recalculateProgrammeAction, saveBaselineAction, saveProgrammeChangesAction, setActiveBaselineAction, submitFieldUpdateAction,
+  recalculateProgrammeAction, recordImportAction, saveBaselineAction, saveProgrammeChangesAction, setActiveBaselineAction, submitFieldUpdateAction,
 } from './programme.actions'
 import { fakeSupabase, type FakeOptions, type FakeResult } from '@/test/fake-supabase'
 import { activityRow, PRJ, PROG, programmeRow, programmeTables, VERSION } from '@/lib/programme/test-fixtures'
@@ -57,6 +57,7 @@ describe('the PROGRAMME_ENABLED switch', () => {
       decideFieldUpdatesAction({ programmeId: PROG, expectedVersion: VERSION, decisions: [{ id: 'F1', status: 'rejected' }] }),
       moduleSummaryAction({ projectId: PRJ, moduleKey: 'solar' }),
       programmeVersionAction({ programmeId: PROG }),
+      recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'Rev A', diff: {} as never }),
     ])
     for (const r of results) expect(r).toEqual({ ok: false, error: OFF })
     expect(rpcCalls).toHaveLength(0)
@@ -448,5 +449,69 @@ describe('programmeVersionAction', () => {
     setup({ tables: programmeTables({ 'programme.programmes': [] }) })
     await expect(programmeVersionAction({ programmeId: PROG }))
       .resolves.toEqual({ ok: false, error: 'That programme no longer exists, or you do not have access to it.' })
+  })
+})
+
+describe('recordImportAction', () => {
+  const NOT_RECORDED = 'The programme was imported, but the revision record was not saved.'
+  const diff = {
+    added: [{ uid: '7', name: 'Cable pull' }],
+    changed: [{ uid: '3', name: 'Trenching', fields: ['name', 'original_duration'] }],
+    removed: [{ uid: '9', name: 'Old task' }],
+    linksAdded: 1, linksRemoved: 0, linksChanged: 2, calendarChanged: false,
+    dataDate: { from: null, to: '2026-03-31' }, unchanged: 40,
+  }
+  const ok = { data: { import_id: 'imp-1', baseline_id: 'bl-1' }, error: null }
+
+  it('gate, then ONE record_import call with the trimmed names and the diff; returns both ids', async () => {
+    const { rpcCalls } = setup({ rpc: { 'programme.record_import': ok } })
+    await expect(recordImportAction({ programmeId: PROG, fileName: '  saxby rev C.xml ', revisionLabel: ' Rev C ', diff }))
+      .resolves.toEqual({ ok: true, importId: 'imp-1', baselineId: 'bl-1' })
+    expect(programmeCalls(rpcCalls)).toEqual([{ name: 'programme.record_import', args: {
+      p_programme_id: PROG, p_file_name: 'saxby rev C.xml', p_revision_label: 'Rev C', p_diff: diff, p_mapping: null,
+    } }])
+  })
+  it('a blank revision label goes as null (the database names the baseline from the file)', async () => {
+    const { rpcCalls } = setup({ rpc: { 'programme.record_import': ok } })
+    await recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: '   ', diff })
+    expect(programmeCalls(rpcCalls)[0].args.p_revision_label).toBeNull()
+  })
+  it('a contractor is refused before the database, and told the import itself stood', async () => {
+    const { rpcCalls } = setup({ role: 'contractor', rpc: { 'programme.record_import': ok } })
+    await expect(recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff }))
+      .resolves.toEqual({ ok: false, error: `${NOT_RECORDED} You do not have permission to edit programmes on this project.` })
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
+  })
+  it('a diff with any key outside ImportDiff (a rand, say) is refused before the database', async () => {
+    const { rpcCalls } = setup({ rpc: { 'programme.record_import': ok } })
+    const res = await recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff: { ...diff, cost: 125000 } as never })
+    expect(res).toEqual({ ok: false, error: `${NOT_RECORDED} The import summary may hold only counts, activity ids and names.` })
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
+  })
+  it('a nested key outside the shape is refused too', async () => {
+    const { rpcCalls } = setup({ rpc: { 'programme.record_import': ok } })
+    const bad = { ...diff, added: [{ uid: '7', name: 'X', budget: 10 }] }
+    const res = await recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff: bad as never })
+    expect(res.ok).toBe(false)
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
+  })
+  it('a missing file name is refused', async () => {
+    setup({ rpc: { 'programme.record_import': ok } })
+    await expect(recordImportAction({ programmeId: PROG, fileName: '  ', revisionLabel: 'A', diff }))
+      .resolves.toEqual({ ok: false, error: `${NOT_RECORDED} Name the imported file.` })
+  })
+  it('the database sentence passes through; anything else is the plain not-recorded sentence', async () => {
+    setup({ rpc: { 'programme.record_import': { data: null, error: { code: '22023', message: 'The import summary may hold only counts, activity ids and names.' } } } })
+    await expect(recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff }))
+      .resolves.toEqual({ ok: false, error: `${NOT_RECORDED} The import summary may hold only counts, activity ids and names.` })
+    setup({ rpc: { 'programme.record_import': { data: null, error: { code: 'PGRST301', message: 'internal detail' } } } })
+    await expect(recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff }))
+      .resolves.toEqual({ ok: false, error: NOT_RECORDED })
+  })
+  it('a programme the person cannot see is a sentence, with no call', async () => {
+    const { rpcCalls } = setup({ tables: programmeTables({ 'programme.programmes': [] }) })
+    const res = await recordImportAction({ programmeId: PROG, fileName: 'p.xml', revisionLabel: 'A', diff })
+    expect(res).toEqual({ ok: false, error: `${NOT_RECORDED} That programme no longer exists, or you do not have access to it.` })
+    expect(programmeCalls(rpcCalls)).toHaveLength(0)
   })
 })

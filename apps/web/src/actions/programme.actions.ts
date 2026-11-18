@@ -35,7 +35,7 @@ import { PROGRAMME_STALE } from '@/lib/programme/action-types'
 import { ORG_ROLES, ORG_WRITE_ROLES, solarLevelAllows } from '@esite/shared'
 import {
   applyOps, computedForSave, ProgrammeOpError, rowsToProgrammeInput, scheduleProgramme,
-  type ComputedSaveEntry, type ProgrammeOp, type ProgrammeState, type ScheduleIssue,
+  type ComputedSaveEntry, type ImportDiff, type ProgrammeOp, type ProgrammeState, type ScheduleIssue,
 } from '@esite/shared/programme'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -225,6 +225,73 @@ async function baselineCall(baselineId: string, fn: 'set_active_baseline' | 'del
   const { error } = await programmeSchema(supabase).rpc(fn, { p_baseline_id: baselineId })
   if (error) return refuse(dbSentence(error, 'The baseline could not be changed. Try again.'))
   return { ok: true }
+}
+
+const NOT_RECORDED = 'The programme was imported, but the revision record was not saved.'
+const DIFF_REFUSED = 'The import summary may hold only counts, activity ids and names.'
+const DIFF_KEYS = new Set(['added', 'changed', 'removed', 'linksAdded', 'linksRemoved', 'linksChanged', 'calendarChanged', 'dataDate', 'unchanged'])
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+/**
+ * The ImportDiff shape and nothing else, at every level: imports.diff is read
+ * by every programme reader (contractors included) and the cost mask does not
+ * cover it, so no rand may ride along. record_import refuses the same (22023);
+ * this answers first with the same sentence.
+ */
+function isImportDiff(d: unknown): d is ImportDiff {
+  if (!isPlainObject(d)) return false
+  const isStr = (v: unknown) => typeof v === 'string'
+  const items = (v: unknown, extra: (k: string, x: unknown) => boolean) =>
+    Array.isArray(v) && v.every((it) => isPlainObject(it)
+      && Object.entries(it).every(([k, x]) => ((k === 'uid' || k === 'name') && isStr(x)) || extra(k, x)))
+  return Object.entries(d).every(([k, v]) => {
+    if (!DIFF_KEYS.has(k)) return false
+    if (k === 'added' || k === 'removed') return items(v, () => false)
+    if (k === 'changed') return items(v, (fk, x) => fk === 'fields' && Array.isArray(x) && x.every(isStr))
+    if (k === 'calendarChanged') return typeof v === 'boolean'
+    if (k === 'dataDate') return v === null || (isPlainObject(v) && Object.entries(v).every(([dk, x]) => (dk === 'from' || dk === 'to') && (x === null || isStr(x))))
+    return typeof v === 'number' && Number.isFinite(v)
+  })
+}
+
+/**
+ * Records one MS Project import: the imports row plus an ACTIVE revision
+ * baseline (source 'import') snapshotted from the programme as it stands. Run
+ * AFTER saveProgrammeChangesAction has saved the import's ops, so every
+ * refusal says the import itself stood. It is history only: nothing is undone
+ * when it fails.
+ */
+export async function recordImportAction(input: {
+  programmeId: string; fileName: string; revisionLabel?: string | null; diff: ImportDiff
+}): Promise<{ ok: true; importId: string; baselineId: string } | ProgrammeRefusal> {
+  if (!programmeEnabled()) return off()
+  const notRecorded = (reason?: string): ProgrammeRefusal => refuse(reason ? `${NOT_RECORDED} ${reason}` : NOT_RECORDED)
+  const fileName = typeof input?.fileName === 'string' ? input.fileName.trim() : ''
+  if (fileName === '') return notRecorded('Name the imported file.')
+  const label = typeof input.revisionLabel === 'string' ? input.revisionLabel.trim() : ''
+  if (!isImportDiff(input.diff)) return notRecorded(DIFF_REFUSED)
+  const supabase = await signedInClient()
+  if (!supabase) return notRecorded(SIGNED_OUT)
+  const header = await programmeHeader(supabase, input.programmeId)
+  if (!header) return notRecorded(PROGRAMME_GONE)
+  const refusal = await editRefusal(supabase, header)
+  if (refusal) return notRecorded(refusal)
+
+  const { data, error } = await programmeSchema(supabase).rpc('record_import', {
+    p_programme_id: input.programmeId,
+    p_file_name: fileName,
+    p_revision_label: label === '' ? null : label,
+    p_diff: input.diff,
+    p_mapping: null,
+  })
+  if (error) {
+    const sentence = dbSentence(error, '')
+    return notRecorded(sentence || undefined)
+  }
+  const out = (data ?? {}) as { import_id?: string; baseline_id?: string }
+  if (!out.import_id || !out.baseline_id) return notRecorded()
+  return { ok: true, importId: String(out.import_id), baselineId: String(out.baseline_id) }
 }
 
 export async function setActiveBaselineAction(input: { baselineId: string }): Promise<{ ok: true } | ProgrammeRefusal> {
