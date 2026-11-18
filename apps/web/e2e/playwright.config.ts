@@ -42,7 +42,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         storageState: 'e2e/auth.json',
       },
-      testMatch: /0[1-6].*\.spec\.ts/,
+      testMatch: /(0[1-6].*|13-programme)\.spec\.ts/,
       dependencies: ['setup'],
     },
 

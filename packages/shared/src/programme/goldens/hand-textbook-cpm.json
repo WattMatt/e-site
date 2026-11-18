@@ -1,0 +1,55 @@
+{
+  "name": "Textbook CPM: 10 activities, all four link types, positive and negative lags, finish milestone",
+  "source": "hand",
+  "notes": "Worked by hand in goldens/README.md before the engine was run. Calendar C (Mon-Fri), project start Mon 2026-03-02, no progress.",
+  "input": {
+    "projectStart": "2026-03-02",
+    "dataDate": null,
+    "defaultCalendarId": "C",
+    "calendars": [
+      { "id": "C", "workWeekdays": [1, 2, 3, 4, 5], "hoursPerDay": 8, "nonWorkDates": [], "workDates": [], "coverage": { "from": "2026-01-01", "to": "2027-12-31" } }
+    ],
+    "activities": [
+      { "id": "A", "parentId": null, "type": "task", "originalDuration": 3, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "B", "parentId": null, "type": "task", "originalDuration": 4, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "C", "parentId": null, "type": "task", "originalDuration": 2, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "D", "parentId": null, "type": "task", "originalDuration": 5, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "E", "parentId": null, "type": "task", "originalDuration": 3, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "F", "parentId": null, "type": "task", "originalDuration": 6, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "G", "parentId": null, "type": "task", "originalDuration": 4, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "H", "parentId": null, "type": "task", "originalDuration": 2, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "I", "parentId": null, "type": "task", "originalDuration": 3, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null },
+      { "id": "M", "parentId": null, "type": "finish_milestone", "originalDuration": 0, "remainingDuration": null, "calendarId": null, "constraint": null, "deadline": null, "actualStart": null, "actualFinish": null, "fixed": null }
+    ],
+    "dependencies": [
+      { "id": "AB", "predId": "A", "succId": "B", "type": "FS", "lag": 2, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "AC", "predId": "A", "succId": "C", "type": "SS", "lag": 1, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "CD", "predId": "C", "succId": "D", "type": "FS", "lag": -1, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "BE", "predId": "B", "succId": "E", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "DE", "predId": "D", "succId": "E", "type": "FF", "lag": 2, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "DF", "predId": "D", "succId": "F", "type": "SS", "lag": 3, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "FG", "predId": "F", "succId": "G", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "EG", "predId": "E", "succId": "G", "type": "SS", "lag": 1, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "EH", "predId": "E", "succId": "H", "type": "SF", "lag": 5, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "CH", "predId": "C", "succId": "H", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "HI", "predId": "H", "succId": "I", "type": "FF", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "GI", "predId": "G", "succId": "I", "type": "FS", "lag": -2, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "IM", "predId": "I", "succId": "M", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "GM", "predId": "G", "succId": "M", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" },
+      { "id": "HM", "predId": "H", "succId": "M", "type": "FS", "lag": 0, "lagUnit": "working_days", "lagCalendar": "succ" }
+    ],
+    "options": { "rules": "msp", "progress": "retained_logic", "critical": { "kind": "total_float", "threshold": 0 }, "floatOn": "smallest" }
+  },
+  "expected": {
+    "A": { "es": "2026-03-02", "ef": "2026-03-04", "ls": "2026-03-02", "lf": "2026-03-04", "tf": 0 },
+    "B": { "es": "2026-03-09", "ef": "2026-03-12", "ls": "2026-03-10", "lf": "2026-03-13", "tf": 1 },
+    "C": { "es": "2026-03-03", "ef": "2026-03-04", "ls": "2026-03-03", "lf": "2026-03-04", "tf": 0 },
+    "D": { "es": "2026-03-04", "ef": "2026-03-10", "ls": "2026-03-04", "lf": "2026-03-10", "tf": 0 },
+    "E": { "es": "2026-03-13", "ef": "2026-03-17", "ls": "2026-03-16", "lf": "2026-03-18", "tf": 1 },
+    "F": { "es": "2026-03-09", "ef": "2026-03-16", "ls": "2026-03-09", "lf": "2026-03-16", "tf": 0 },
+    "G": { "es": "2026-03-17", "ef": "2026-03-20", "ls": "2026-03-17", "lf": "2026-03-20", "tf": 0 },
+    "H": { "es": "2026-03-18", "ef": "2026-03-19", "ls": "2026-03-20", "lf": "2026-03-23", "tf": 2 },
+    "I": { "es": "2026-03-19", "ef": "2026-03-23", "ls": "2026-03-19", "lf": "2026-03-23", "tf": 0 },
+    "M": { "es": "2026-03-23", "ef": "2026-03-23", "ls": "2026-03-23", "lf": "2026-03-23", "tf": 0 }
+  }
+}

@@ -1,0 +1,120 @@
+import { liveLinks, linkLimit, durationOf, type LateTimes } from './backward'
+import { startOf, type EngineCalendar } from './calendar'
+import { progressContext, progressState, remainingFrom, type Times } from './forward'
+import type { NormalisedProgramme } from './normalise'
+import { ISSUE_SEVERITY } from './types'
+import type { ActivityInput, Instant, ProgrammeInput, ScheduleIssue, ScheduleOptions } from './types'
+
+const EPS = 1e-9
+
+/** Total float in working days on the activity's own calendar. Not rounded (Task 7 rounds at output). */
+export function totalFloat(cal: EngineCalendar, e: Times, l: LateTimes, on: ScheduleOptions['floatOn']): number {
+  const start = cal.workBetween(e.es, l.ls)
+  const finish = cal.workBetween(e.ef, l.lf)
+  if (on === 'start') return start
+  if (on === 'finish') return finish
+  return Math.min(start, finish)
+}
+
+/** Which float an activity reports (Task 6): a complete activity has none (null → 0); an in-progress one
+ *  has started, so only its finish can float, whatever `floatOn` says; otherwise `options.floatOn`. */
+function floatBasis(a: ActivityInput, input: ProgrammeInput, progressActive: boolean): ScheduleOptions['floatOn'] | null {
+  const state = progressActive ? progressState(a) : 'not_started'
+  if (state === 'complete') return null
+  if (state === 'in_progress') return 'finish'
+  return input.options.floatOn
+}
+
+/** Total float of every leaf with `options.floatOn` (progress: see floatBasis). Compute it from the
+ *  PRE-ALAP early dates (ruling 5b). */
+export function totalFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
+  early: Map<string, Times>, late: Map<string, LateTimes>): Map<string, number> {
+  const progressActive = progressContext(input).active
+  const out = new Map<string, number>()
+  for (const a of n.leaves) {
+    const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
+    const on = floatBasis(a, input, progressActive)
+    out.set(a.id, on === null ? 0 : totalFloat(cal, early.get(a.id)!, late.get(a.id)!, on))
+  }
+  return out
+}
+
+/** Free float of every leaf: the smallest slack before any successor's early date moves (or before
+ *  projectFinish, with none), capped at total float (ruling 4c): min(FF, max(TF, 0)), never below 0.
+ *  LOE, ALAP and complete activities get 0. Compute it from the PRE-ALAP early dates (ruling 5b). One pass, O(links). */
+export function freeFloats(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
+  early: Map<string, Times>, late: Map<string, LateTimes>, projectFinish: Instant | null): Map<string, number> {
+  const byId = new Map(n.leaves.map(a => [a.id, a]))
+  const calOf = (x: ActivityInput) => cals.get(x.calendarId ?? input.defaultCalendarId)!
+  const projectCal = cals.get(input.defaultCalendarId)!
+  const progress = progressContext(input)
+  const progressActive = progress.active
+  const override = input.options.progress === 'progress_override'
+  const out = new Map<string, number>()
+  for (const a of n.leaves) {
+    const on = floatBasis(a, input, progressActive)
+    if (a.type === 'level_of_effort' || a.constraint?.type === 'alap' || on === null) {
+      out.set(a.id, 0)
+      continue
+    }
+    const cal = calOf(a)
+    const e = early.get(a.id)!
+    // Ruling 10: a completed successor is not measured against (as in the backward pass); with every
+    // successor skipped, free float runs to projectFinish like an activity with no successors.
+    const startSide = (l: { type: string }) => l.type === 'FS' || l.type === 'SS'
+    const inProgress = (id: string) => progressActive && progressState(byId.get(id)!) === 'in_progress'
+    // Ruling 11: under progress_override a start-side link into an in-progress successor is skipped too.
+    const succs = liveLinks(n.succsOf.get(a.id), byId)
+      .filter(l => !(progressActive && progressState(byId.get(l.succId)!) === 'complete'))
+      .filter(l => !(override && startSide(l) && inProgress(l.succId)))
+    let ff = Infinity
+    for (const link of succs) {
+      const succ = byId.get(link.succId)!
+      const se = early.get(succ.id)!
+      let s = se.es
+      // Ruling 11 (retained_logic): measured to the successor's early resume point, ef − remaining on its
+      // calendar, never to its actual start.
+      if (startSide(link) && inProgress(succ.id)) {
+        const succCal = calOf(succ)
+        const remaining = remainingFrom(succ, succCal, se.es, succCal.snapStart(progress.dataDate))
+        s = succCal.addWork(se.ef, -remaining, 'start')
+      }
+      const { on, at } = linkLimit(link, { s, f: se.ef }, cal, calOf(succ), projectCal, durationOf(a, cal))
+      ff = Math.min(ff, cal.workBetween(on === 'start' ? e.es : e.ef, at))
+    }
+    // projectFinish is non-null whenever a non-LOE leaf exists (ruling 14), as here.
+    if (succs.length === 0) ff = cal.workBetween(e.ef, projectFinish!)
+    const tf = totalFloat(cal, e, late.get(a.id)!, on)
+    out.set(a.id, Math.max(0, Math.min(ff, tf)))
+  }
+  return out
+}
+
+/** `negative_float` (one issue naming every activity whose total float in `tf` is < 0; pass the pre-ALAP
+ *  `totalFloats`) and `deadline_missed` (`early` finish after the deadline; pass the post-ALAP early dates). */
+export function scheduleWarnings(n: NormalisedProgramme, input: ProgrammeInput, cals: Map<string, EngineCalendar>,
+  early: Map<string, Times>, tf: Map<string, number>): ScheduleIssue[] {
+  const negative: string[] = []
+  const missed: string[] = []
+  for (const a of n.leaves) {
+    if (a.type === 'level_of_effort') continue
+    const cal = cals.get(a.calendarId ?? input.defaultCalendarId)!
+    const e = early.get(a.id)!
+    if (tf.get(a.id)! < -EPS) negative.push(a.id)
+    if (a.deadline && cal.workPos(e.ef) > cal.workPos(startOf(a.deadline) + 1) + EPS) missed.push(a.id)
+  }
+  const issues: ScheduleIssue[] = []
+  if (negative.length > 0) {
+    issues.push({
+      code: 'negative_float', severity: ISSUE_SEVERITY.negative_float, activityIds: negative, dependencyIds: [],
+      message: `Negative float: ${negative.join(', ')} cannot meet ${negative.length === 1 ? 'its' : 'their'} constraints or deadlines.`,
+    })
+  }
+  if (missed.length > 0) {
+    issues.push({
+      code: 'deadline_missed', severity: ISSUE_SEVERITY.deadline_missed, activityIds: missed, dependencyIds: [],
+      message: `Deadline missed: ${missed.join(', ')} finish${missed.length === 1 ? 'es' : ''} after the deadline.`,
+    })
+  }
+  return issues
+}
