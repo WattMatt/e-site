@@ -7,9 +7,11 @@ export const PHONE_QUERY = 'screen and (max-width: 767.98px)'
 
 /**
  * True on a phone-width viewport, false on the server and on wider screens.
- * Layout NEVER depends on this — CSS shows and hides the shells. It only stops
- * the hidden phone bar doing network work (project name, Solar access check)
- * on desktop.
+ * The app shell's layout never depends on this — CSS shows and hides the shells;
+ * here it stops the hidden phone bar doing network work (project name, Solar
+ * access check) on desktop. Exception: the programme screen (P3) uses it to show
+ * one pane at a time and to size the grid's phone columns, so its first paint on
+ * a phone is the desktop split until this effect runs.
  */
 export function usePhoneViewport(): boolean {
   const [phone, setPhone] = useState(false)

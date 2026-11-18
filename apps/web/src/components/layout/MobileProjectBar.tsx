@@ -16,15 +16,15 @@ import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
  * the project's sections as a horizontally scrollable chip row — the sidebar's
  * project nav, re-laid out for a thumb. Renders nothing outside a project.
  */
-export function MobileProjectBar({ mvVisible }: { mvVisible: boolean }) {
+export function MobileProjectBar({ mvVisible, programmeEnabled = false }: { mvVisible: boolean; programmeEnabled?: boolean }) {
   return (
     <Suspense fallback={null}>
-      <MobileProjectBarInner mvVisible={mvVisible} />
+      <MobileProjectBarInner mvVisible={mvVisible} programmeEnabled={programmeEnabled} />
     </Suspense>
   )
 }
 
-function MobileProjectBarInner({ mvVisible }: { mvVisible: boolean }) {
+function MobileProjectBarInner({ mvVisible, programmeEnabled }: { mvVisible: boolean; programmeEnabled: boolean }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const projectId = currentProjectId(pathname, searchParams.get('projectId'))
@@ -41,7 +41,9 @@ function MobileProjectBarInner({ mvVisible }: { mvVisible: boolean }) {
   if (!projectId) return null
 
   const items = orderForPhone(
-    projectNav(projectId).filter(({ href }) => mvVisible || !href.includes('/medium-voltage')),
+    projectNav(projectId)
+      .filter(({ href }) => mvVisible || !href.includes('/medium-voltage'))
+      .filter(({ href }) => programmeEnabled || !href.endsWith('/programme')),
   )
 
   return (

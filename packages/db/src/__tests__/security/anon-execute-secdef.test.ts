@@ -58,6 +58,7 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../../apps/edge-functions/supab
  * here is reachable over `/rest/v1/rpc/<fn>` with nothing but the anon key.
  */
 const EXPOSED_SCHEMAS = [
+  'programme',
   'public', 'projects', 'inspections', 'field', 'tenants', 'suppliers',
   'billing', 'marketplace', 'cable_schedule', 'structure', 'gcr',
   // 00222 (WhatsApp): added to db_schema by the WhatsApp runbook §3 PATCH.

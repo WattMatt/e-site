@@ -10,7 +10,7 @@ import { Gavel,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, Package, Store, Lock, ScrollText, Zap,
   ShieldCheck, FileText, BarChart3, Sun, Camera, Calculator,
-  Receipt, Activity,
+  Receipt, Activity, ChartGantt,
 } from 'lucide-react'
 import { SolarNavItem } from './SolarNavItem'
 import { usePhoneViewport } from '@/lib/mobile/use-phone-viewport'
@@ -84,6 +84,7 @@ export function projectNav(id: string) {
     // Site capture is always about one project, so its single entry lives here
     // (E1, 2026-10-05) — never in the global footer.
     { href: `/projects/${id}/capture`,      label: 'Capture',     Icon: Camera,        exact: false },
+    { href: `/projects/${id}/programme`,    label: 'Project Programme', Icon: ChartGantt, exact: false },
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
     { href: `/projects/${id}/quality-control`, label: 'Quality Control', Icon: ShieldCheck, exact: false },
     { href: `/projects/${id}/diary`,        label: 'Site Diary',  Icon: BookOpen,      exact: false },
@@ -139,11 +140,12 @@ interface SidebarContentProps {
   jbccUnlocked: boolean
   mvUnlocked: boolean
   mvVisible: boolean
+  programmeEnabled: boolean
   role: OrgRole | null
   tariffAdmin: boolean
 }
 
-function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, role, tariffAdmin }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, programmeEnabled, role, tariffAdmin }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -182,6 +184,8 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
 
             {projectNav(projectId)
               .filter(({ href }) => mvVisible || !href.includes('/medium-voltage'))
+              // Programme ships dark behind PROGRAMME_ENABLED (computed server-side in the layout).
+              .filter(({ href }) => programmeEnabled || !href.endsWith('/programme'))
               // Tenders are owner/admin/PM only (the page redirects everyone else).
               .filter(({ href }) => !href.endsWith('/tenders') || (role !== null && ORG_WRITE_ROLES.includes(role)))
               .map(({ href, label, Icon, exact }) => {
@@ -283,12 +287,14 @@ interface SidebarProps {
   mvUnlocked?: boolean
   /** Dark-launch: hide the Medium Voltage entry entirely (defaults hidden). */
   mvVisible?: boolean
+  /** Dark-launch: hide the Programme entry unless PROGRAMME_ENABLED (defaults hidden). */
+  programmeEnabled?: boolean
   role?: OrgRole | null
   /** Platform tariff admins (00210 allow-list) see the Tariff library link. The pages gate themselves. */
   tariffAdmin?: boolean
 }
 
-export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, role = null, tariffAdmin = false }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, programmeEnabled = false, role = null, tariffAdmin = false }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -298,7 +304,7 @@ export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvU
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={role} tariffAdmin={tariffAdmin} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} programmeEnabled={programmeEnabled} role={role} tariffAdmin={tariffAdmin} />
       </Suspense>
     </aside>
   )

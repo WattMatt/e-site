@@ -7,6 +7,7 @@ import { hasFeature } from '@/lib/features'
 import { hasMvAccess } from '@/lib/mv-access'
 import { listMyOrganisations } from '@/actions/active-organisation.actions'
 import { touchPresence } from '@/lib/presence'
+import { programmeEnabled } from '@/lib/programme/flag'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
 import { NotificationCentre, NotificationsProvider } from '@/components/ui/NotificationCentre'
@@ -64,6 +65,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // Dark-launch switch: surface the Medium Voltage tab only for entitled users,
   // or for everyone once the Paystack annual plan is configured (so strangers
   // never see a locked tab whose subscribe flow would 503).
+  const programmeOn = programmeEnabled()
   const mvVisible = mvUnlocked || Boolean(process.env.PAYSTACK_PLAN_MV_ANNUAL)
 
   return (
@@ -72,7 +74,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <a href="#main-content" className="skip-link">
           Skip to main content
         </a>
-        <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} tariffAdmin={tariffAdmin} />
+        <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} programmeEnabled={programmeOn} role={primaryRole} tariffAdmin={tariffAdmin} />
         {/* Below 768 px the sidebar is hidden and the page scrolls as a document
             (so phone browser toolbars can collapse); .portal-top sticks instead. */}
         <div className="portal-column">
@@ -91,7 +93,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               </div>
               <NotificationCentre />
             </header>
-            <MobileProjectBar mvVisible={mvVisible} />
+            <MobileProjectBar mvVisible={mvVisible} programmeEnabled={programmeOn} />
           </div>
           <main id="main-content" className="portal-main">
             <PaymentStatusBanner />

@@ -61,6 +61,15 @@ export const GATED: Gated[] = [
     'field.site_forms', 'inspections.inspections', 'tenants.floor_plan_markups', 'projects.load_profiles',
     'projects.load_profile_sources', 'projects.work_items', 'projects.tenders', 'projects.project_settings',
     'tenants.status_plans',
+    // Programme schema (00261): every table that carries project_id. The org
+    // resource library (programme.resources / resource_rates) has none and is
+    // exempt in the coverage check. Held by programme-site-scope.contract.test.ts.
+    ...[
+      'programmes', 'calendars', 'calendar_exceptions', 'activities', 'dependencies', 'code_types',
+      'code_values', 'activity_codes', 'resource_assignments', 'assignment_costs', 'baselines',
+      'baseline_activities', 'baseline_dependencies', 'baseline_costs', 'progress_periods',
+      'progress_period_costs', 'field_updates', 'imports', 'audit',
+    ].map((t) => `programme.${t}`),
   ].map(direct),
   // ── children ──
   child('projects.site_diary_attachments', 'site_diary_entry', 'diary_entry_id'),
