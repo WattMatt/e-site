@@ -1616,7 +1616,7 @@ DECLARE
     -- (no typmod on an array variable: assigning to one re-coerces the WHOLE array)
     v_c_tf numeric[] := '{}'; v_c_ff numeric[] := '{}'; v_c_cr boolean[] := '{}'; v_c_dr boolean[] := '{}';
     v_ops jsonb[]; v_n int := 0; v_i int := 0; v_j int; v_k int; v_pass int;
-    v_b_bad boolean; v_b_keys text[]; v_b_ids uuid[]; v_b_fields jsonb[];
+    v_b_bad boolean; v_state text; v_b_keys text[]; v_b_ids uuid[]; v_b_fields jsonb[];
     v_b_pids uuid[]; v_b_sids uuid[]; v_b_ops jsonb[]; v_map jsonb;
     v_d jsonb; v_status text; v_note text; v_fu_prog uuid; v_fu_status text;
     v_n_decided int := 0; v_decided_ids jsonb := '[]'::jsonb; v_by jsonb := '{}'::jsonb;
@@ -2183,9 +2183,21 @@ BEGIN
     END;
     EXIT;   -- this pass succeeded
     EXCEPTION WHEN OTHERS THEN
-        -- Pass 1 failed anywhere (a batch's doubt, or a refusal): undo it and
-        -- let the per-op pass give the answer. Pass 2's refusal goes out as is.
-        IF v_pass = 2 THEN
+        -- Pass 1 is undone and pass 2 gives the answer ONLY for a refusal of
+        -- the data, i.e. an error pass 2 would raise again at the same op:
+        --   class 22 (data exception: this function's 22023 sentences, casts,
+        --            22003 overflow, 22007/22008 dates, 22P02 text);
+        --   class 23 (integrity: 23505 unique, 23514 check, 23502 not null,
+        --            23503 foreign key, the triggers' 23503);
+        --   42501 (a trigger refusing a row move);
+        --   P0001 (a batch's doubt: 'batch refused');
+        --   P0002 (this function's "no longer exists" sentences).
+        -- Everything else is raised at once, unchanged, never retried: 40P01
+        -- deadlock, 40001 serialization, 55P03 lock not available, 53xxx
+        -- insufficient resources, internal errors. (57014 query_canceled is
+        -- never caught by WHEN OTHERS.) Pass 2's errors all go out as they are.
+        GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE;
+        IF v_pass = 2 OR NOT (left(v_state, 2) IN ('22', '23') OR v_state IN ('42501', 'P0001', 'P0002')) THEN
             RAISE;
         END IF;
     END;
